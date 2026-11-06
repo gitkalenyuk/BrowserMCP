@@ -75,12 +75,13 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
         let runtime_dir = data.runtime();
+        let data_root = data.root().to_path_buf();
         let (dump_ax, api_port) = (cli.dump_ax, cli.api_port);
         Box::new(move |backend: Arc<dyn BrowserBackend>| {
             if dump_ax {
                 handle.spawn(dump_ax_and_quit(backend));
             } else {
-                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir));
+                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir, data_root));
             }
         })
     };
@@ -113,16 +114,32 @@ async fn start_api(
     port: u16,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
+    data_root: std::path::PathBuf,
 ) {
     // One registry for every API surface: built-in commands + API-crate commands.
     let mut registry = bmcp_core::Registry::new();
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
+    // Built-in AI: agents reach the browser through this same registry (API providers) or the
+    // MCP endpoint (Claude Code / Codex).
+    let ai = registry.extensions().insert(bmcp_ai::AiService::new(
+        data_root,
+        format!("http://127.0.0.1:{port}/mcp"),
+    ));
+    bmcp_ai::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
+    let registry = Arc::new(registry);
+    bmcp_ai::attach(&registry);
     let events = bmcp_core::EventBus::new();
-    match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
+    match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
         Ok(server) => {
+            ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
+            // Kill agent and terminal child processes when the browser quits.
+            tokio::spawn(async move {
+                shutdown.cancelled().await;
+                ai.shutdown();
+            });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({
                 "pid": std::process::id(),
