@@ -36,6 +36,18 @@ permissions and download folders. Everything else comes from bmcp-identity:
 `crates/cef` changes: `hooks.rs` lost its worker watcher (`prepare` now does it) — a call-site
 change; `profiles.rs` is unchanged (same `Prefs::to_preferences` / `accept_language` API).
 
+Live check after the unification (debug build, `--api-port 47896`, fake upstream HTTP proxy
+with Basic auth that answers tunnelled requests itself):
+
+| Check | Result |
+|---|---|
+| `profile.create px {proxy: "http://alice:…@127.0.0.1:18768"}`, off-screen tab `http://site-a.test/hello` | `proxy_mode: fixed_servers`, `proxy_server: socks5://127.0.0.1:<port>` (bmcp-identity forwarder); page text `PROXIED site-a.test:80 /hello`; proxy log `CONNECT site-a.test:80 auth=ok` |
+| then `proxy.rules_set px {rules: [{match: "*.routed.test", via: <same proxy>}], default: direct}`, same tab, no restart | re-applied live (`pac_script`): `x.routed.test` → `PROXIED x.routed.test:80 /split`; `site-b.test` went direct (`DNS_PROBE_FINISHED_NXDOMAIN`, nothing in the proxy log) |
+| `profile.create stealthy {identity: idw}` (16 cores, 8 GB, fr-FR), page with a blob worker | page and worker: `cores=16 mem=8 langs=fr-FR,fr,en-US,en`; default profile: 12 / 32 / en-US in both |
+| same tab: `page.snapshot` (OOPIF auto-attach joins), then reload | the new worker is patched again (16 / 8 / fr-FR) |
+
+Mass runs with `proxy_pool` were checked with the fake script host only (no V8 build here).
+
 ## Automation cannot close the last window
 
 `tabs.close` from an agent, script, MCP/REST/WS client or run never closes a window: if the
