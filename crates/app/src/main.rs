@@ -164,13 +164,28 @@ async fn start_api(
         }
     };
     bmcp_data::register(&mut registry);
+    // Built-in AI: agents reach the browser through this same registry (API providers) or the
+    // MCP endpoint (Claude Code / Codex).
+    let ai = registry.extensions().insert(bmcp_ai::AiService::new(
+        data.root(),
+        format!("http://127.0.0.1:{port}/mcp"),
+    ));
+    bmcp_ai::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
+    let registry = Arc::new(registry);
+    bmcp_ai::attach(&registry);
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
-    match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
+    match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
         Ok(server) => {
+            ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
+            // Kill agent and terminal child processes when the browser quits.
+            tokio::spawn(async move {
+                shutdown.cancelled().await;
+                ai.shutdown();
+            });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({
                 "pid": std::process::id(),
