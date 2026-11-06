@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bmcp_core::events::topics;
+use bmcp_core::events::topics::{self, TAB_CLOSED, TAB_UPDATED};
 use bmcp_core::{BrowserBackend, Event, EventBus};
 use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
@@ -24,11 +24,6 @@ use tokio::task::JoinHandle;
 
 use crate::history;
 use crate::store::{DataResult, DataStore};
-
-/// Topic of tab state changes (emitted by the CEF layer).
-pub const TAB_UPDATED: &str = "tab.updated";
-/// Topic of a closed tab.
-pub const TAB_CLOSED: &str = "tab.closed";
 
 /// What we last saw of one tab.
 #[derive(Debug, Default)]

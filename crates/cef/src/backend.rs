@@ -9,9 +9,9 @@ use bmcp_core::{
 };
 use cef::*;
 use serde_json::Value;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
-use crate::bridge::{LoadState, run_on_ui, tab_created, with_ui};
+use crate::bridge::{LoadState, run_on_ui, with_ui};
 
 #[derive(Clone, Default)]
 pub struct CefBackend;
@@ -24,38 +24,56 @@ impl CefBackend {
     }
 
     async fn tab_info(&self, tab: TabId) -> BackendResult<TabInfo> {
-        run_on_ui(move || with_ui(|ui| ui.tabs.get(&tab).map(|t| t.info(tab))))
+        run_on_ui(move || crate::bridge::tab_info(tab))
             .await?
             .ok_or(BackendError::TabNotFound(tab))
+    }
+
+    /// Run `action` on the tab's browser (UI thread).
+    async fn with_browser(
+        &self,
+        tab: TabId,
+        action: impl FnOnce(&Browser) + Send + 'static,
+    ) -> BackendResult<()> {
+        run_on_ui(move || {
+            let browser = with_ui(|ui| ui.tabs.get(&tab).map(|t| t.browser.clone()))
+                .ok_or(BackendError::TabNotFound(tab))?;
+            action(&browser);
+            Ok(())
+        })
+        .await?
     }
 }
 
 impl BrowserBackend for CefBackend {
     fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>> {
-        Box::pin(run_on_ui(|| {
-            with_ui(|ui| ui.tabs.iter().map(|(id, t)| t.info(*id)).collect())
-        }))
+        Box::pin(run_on_ui(crate::bridge::list_tabs))
     }
 
-    fn open_tab(&self, url: String) -> BoxFuture<'_, BackendResult<TabId>> {
+    fn open_tab(&self, url: String, background: bool) -> BoxFuture<'_, BackendResult<TabId>> {
         Box::pin(async move {
-            // Subscribe before creating so the creation event cannot be missed.
-            let mut created = tab_created().subscribe();
-            run_on_ui(move || {
-                let Some(shell) = with_ui(|ui| ui.shell.clone()) else {
-                    return Err(BackendError::ShuttingDown);
-                };
-                crate::shell::open_window(&url, &shell);
-                Ok(())
-            })
-            .await??;
+            // `register_tab` answers on this channel once the browser exists.
+            let (reply, created) = oneshot::channel();
+            run_on_ui(move || crate::shell::open_tab(url, background, reply)).await??;
             let timeout = Duration::from_secs(10);
-            match tokio::time::timeout(timeout, created.recv()).await {
+            match tokio::time::timeout(timeout, created).await {
                 Ok(Ok(id)) => Ok(id),
                 Ok(Err(_)) => Err(BackendError::ShuttingDown),
                 Err(_) => Err(BackendError::Timeout(timeout)),
             }
         })
+    }
+
+    fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        Box::pin(async move { run_on_ui(move || crate::chrome::close_tab(tab)).await? })
+    }
+
+    fn activate_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        Box::pin(async move { run_on_ui(move || crate::chrome::activate_tab(tab)).await? })
+    }
+
+    fn stop_loading(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        Box::pin(self.with_browser(tab, |browser| browser.stop_load()))
     }
 
     fn navigate(
@@ -104,21 +122,30 @@ impl BrowserBackend for CefBackend {
 
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>> {
         Box::pin(run_on_ui(|| {
-            let browsers: Vec<Browser> =
-                with_ui(|ui| ui.tabs.values().map(|t| t.browser.clone()).collect());
-            for mut browser in browsers {
-                // Views-hosted browsers must be closed through their window; closing only
-                // the browser leaves an empty window and cef::shutdown() then never returns.
-                let window =
-                    browser_view_get_for_browser(Some(&mut browser)).and_then(|v| v.window());
-                match window {
-                    Some(window) => window.close(),
-                    None => {
-                        if let Some(host) = browser.host() {
-                            host.close_browser(1);
-                        }
-                    }
+            // Views-hosted browsers must be closed through their window; closing only
+            // the browser leaves an empty window and cef::shutdown() then never returns.
+            let mut windows: Vec<Window> = with_ui(|ui| {
+                ui.windows
+                    .values()
+                    .map(|w| w.views.window.clone())
+                    .collect()
+            });
+            let single: Vec<Browser> = with_ui(|ui| {
+                ui.tabs
+                    .values()
+                    .filter(|t| t.window.is_none())
+                    .map(|t| t.browser.clone())
+                    .collect()
+            });
+            for mut browser in single {
+                if let Some(window) =
+                    browser_view_get_for_browser(Some(&mut browser)).and_then(|v| v.window())
+                {
+                    windows.push(window);
                 }
+            }
+            for window in windows {
+                window.close();
             }
         }))
     }

@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::backend::{TabId, TabInfo};
-use crate::command::{CmdError, Command, Ctx, Meta, Toolset};
+use crate::command::{CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `nav.goto`: load a URL in a tab and wait for it.
 pub struct Goto;
@@ -59,5 +59,38 @@ impl Command for Goto {
             .navigate(tab, args.url, Duration::from_secs(timeout_secs))
             .await?;
         Ok(info)
+    }
+}
+
+/// `nav.stop`: stop loading a page.
+pub struct Stop;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StopArgs {
+    /// Tab id from tabs_list. Default: the most recently opened tab.
+    pub tab: Option<TabId>,
+}
+
+impl Command for Stop {
+    const NAME: &'static str = "nav.stop";
+    type Args = StopArgs;
+    type Output = Empty;
+
+    fn meta() -> Meta {
+        Meta::new("Stop loading the page in a tab.", Toolset::Core)
+            .mutates_tab()
+            .act()
+            .palette("Stop loading")
+    }
+
+    fn target_tab(args: &StopArgs) -> Option<TabId> {
+        args.tab
+    }
+
+    async fn run(ctx: Ctx, args: StopArgs) -> Result<Empty, CmdError> {
+        let tab = ctx.resolve_tab(args.tab).await?;
+        ctx.backend.stop_loading(tab).await?;
+        Ok(Empty {})
     }
 }
