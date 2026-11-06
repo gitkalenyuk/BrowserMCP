@@ -408,3 +408,5 @@ export type EventName = keyof ApiEvents;
 export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: Params<M>];
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+
+export type * from './types-record-runs';

@@ -1,5 +1,6 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
 import { createPanelMocks } from './mock-panels';
+import { createRecordRunsMocks } from './mock-record-runs';
 import type {
   Agent,
   ApiEvents,
@@ -286,6 +287,7 @@ export class MockApi implements BrowserApi {
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,
     ),
+    ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },
