@@ -126,6 +126,8 @@ export interface RpcMethods {
   'nav.forward': { params: TabParam; result: void };
   'nav.reload': { params: TabParam; result: void };
   'nav.stop': { params: TabParam; result: void };
+  /** Vim-style link hints in the page (crates/hints). */
+  'hints.show': { params: TabParam & { mode?: 'click' | 'newtab' | 'focus' | 'copy' }; result: { count: number } };
   'agents.list': { params: void; result: Agent[] };
   'workspaces.list': { params: void; result: { workspaces: Workspace[]; activeId: WorkspaceId } };
   'workspaces.activate': { params: { id: WorkspaceId }; result: void };

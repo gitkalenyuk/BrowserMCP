@@ -22,6 +22,7 @@ export const COMMAND_IDS = [
   'nav.reload',
   'nav.stop',
   'omnibox.focus',
+  'hints.show',
   'palette.open',
   'ui.toggleVerticalTabs',
   'ui.toggleTheme',
@@ -57,6 +58,8 @@ export const DEFAULT_KEYMAP: Keymap = {
   'nav.reload': ['Ctrl+R', 'F5'],
   'nav.stop': [],
   'omnibox.focus': ['Ctrl+L', 'Alt+D', 'F6'],
+  // In pages `f` / `F` show hints (crates/hints, configurable with hints.config).
+  'hints.show': [],
   'palette.open': ['Ctrl+K'],
   'ui.toggleVerticalTabs': ['Ctrl+Shift+E'],
   'ui.toggleTheme': [],

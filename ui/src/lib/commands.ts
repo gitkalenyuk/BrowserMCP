@@ -20,6 +20,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: 'nav.reload', title: 'Reload page' },
   { id: 'nav.stop', title: 'Stop loading' },
   { id: 'omnibox.focus', title: 'Focus address bar' },
+  { id: 'hints.show', title: 'Show link hints' },
   { id: 'ui.toggleVerticalTabs', title: 'Toggle vertical tabs' },
   { id: 'ui.toggleTheme', title: 'Toggle light / dark theme' },
   { id: 'panel.traffic', title: 'Open Traffic panel' },

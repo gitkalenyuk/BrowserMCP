@@ -517,6 +517,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-hints"
+version = "0.1.0"
+dependencies = [
+ "bmcp-browser",
+ "bmcp-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-identity"
 version = "0.1.0"
 dependencies = [
@@ -604,6 +618,7 @@ dependencies = [
  "bmcp-browser",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
@@ -651,6 +666,7 @@ dependencies = [
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-record",

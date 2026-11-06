@@ -232,6 +232,7 @@ export class MockApi implements BrowserApi {
       this.#require(tab);
       this.#update(tab, { loading: false });
     },
+    'hints.show': () => ({ count: 0 }), // the mock has no page to label
     'agents.list': () => this.#agents,
     'workspaces.list': () => ({ workspaces: this.#workspaces, activeId: this.#activeWorkspace }),
     'workspaces.activate': ({ id }) => {
