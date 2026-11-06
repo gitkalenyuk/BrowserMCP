@@ -47,8 +47,8 @@ await browser.page.act({ ref: "@1:e1", action: "tap" });
 await browser.call("tabs.lst");
 // @ts-expect-error -- results are typed: `title` is a string.
 const wrong: number = page.title;
-// @ts-expect-error -- `tabs` has no `close` command (yet).
-await browser.tabs.close({ tab: 1 });
+// @ts-expect-error -- `tabs` has no `nope` command.
+await browser.tabs.nope({ tab: 1 });
 
 console.log(title, snapId, found.total, tabs, version, goto.url, wrong);
 browser.close();

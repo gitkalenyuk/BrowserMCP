@@ -79,20 +79,24 @@ fn list_is_sorted_and_filters_by_toolset() {
         names,
         [
             "nav.goto",
+            "nav.stop",
             "page.text",
             "system.ping",
+            "tabs.activate",
+            "tabs.close",
             "tabs.list",
             "tabs.open"
         ]
     );
 
     let core = registry.list(Some(&[Toolset::Core]));
-    assert_eq!(core.len(), 5);
+    assert_eq!(core.len(), 8);
     assert!(registry.list(Some(&[Toolset::Net])).is_empty());
 
+    // Hidden: the test's secret command and the UI plumbing `ui.layout`.
     let hidden = registry.list(Some(&[Toolset::Hidden]));
-    assert_eq!(hidden.len(), 1);
-    assert_eq!(hidden[0].sensitivity, Sensitivity::Secret);
+    assert_eq!(hidden.len(), 2);
+    assert!(hidden.iter().any(|c| c.sensitivity == Sensitivity::Secret));
 
     let info = registry.get("nav_goto").unwrap();
     assert_eq!(info.name, "nav.goto");
@@ -137,7 +141,7 @@ async fn invalid_params_name_the_field() {
         registry.call(ctx(Caller::Rest, fake.clone()), name, args)
     };
 
-    let err = call("tabs.open", json!({})).await.unwrap_err();
+    let err = call("nav.goto", json!({})).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);
     assert_eq!(err.retry, Retry::No);
     assert!(
@@ -145,7 +149,7 @@ async fn invalid_params_name_the_field() {
         "{}",
         err.message
     );
-    assert!(err.hint.as_deref().unwrap().contains("tabs_open"));
+    assert!(err.hint.as_deref().unwrap().contains("nav_goto"));
 
     let err = call("tabs.open", json!({ "url": 5 })).await.unwrap_err();
     assert!(err.message.contains("`url`"), "{}", err.message);
@@ -181,13 +185,29 @@ async fn unknown_command_is_not_found_with_candidates() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     assert_eq!(err.retry, Retry::No);
-    assert_eq!(err.candidates, vec![json!("tabs_list"), json!("tabs_open")]);
+    assert_eq!(
+        err.candidates,
+        vec![
+            json!("tabs_activate"),
+            json!("tabs_close"),
+            json!("tabs_list"),
+            json!("tabs_open")
+        ]
+    );
 
     let err = registry
         .call(ctx(mcp(), FakeBackend::new()), "tabs.lst", json!({}))
         .await
         .unwrap_err();
-    assert_eq!(err.candidates, vec![json!("tabs.list"), json!("tabs.open")]);
+    assert_eq!(
+        err.candidates,
+        vec![
+            json!("tabs.activate"),
+            json!("tabs.close"),
+            json!("tabs.list"),
+            json!("tabs.open")
+        ]
+    );
 }
 
 /// Tab 1 belongs to agent "owner"; everyone else is refused.
@@ -270,7 +290,7 @@ async fn events_are_emitted_in_seq_order() {
         .await
         .unwrap_err();
     registry
-        .call(context.clone(), "tabs.open", json!({}))
+        .call(context.clone(), "tabs.open", json!({ "url": 5 }))
         .await
         .unwrap_err();
 

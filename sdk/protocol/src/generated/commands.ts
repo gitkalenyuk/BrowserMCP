@@ -3,6 +3,305 @@
 
 import type { CallOptions, Transport } from "../transport.js";
 
+// ---- bookmarks.add ----
+
+/** Arguments of `bookmarks.add`. */
+export interface BookmarksAddArgs {
+  /** Folder id (default 1 = bookmarks bar). */
+  folder?: number | null;
+  /** Title (default: the page title from history, else the URL). */
+  title?: string | null;
+  /** Absolute URL to bookmark. */
+  url: string;
+}
+
+/**
+ * Result of `bookmarks.add`.
+ * A URL bookmark.
+ */
+export interface BookmarksAddOutput {
+  /** Unix ms. */
+  created: number;
+  /** Id of the folder it is in. */
+  folder: number;
+  id: number;
+  /** Index among its siblings (folders and bookmarks share one order). */
+  position: number;
+  title: string;
+  url: string;
+}
+
+// ---- bookmarks.add_folder ----
+
+/** Arguments of `bookmarks.add_folder`. */
+export interface BookmarksAddFolderArgs {
+  /** Parent folder id (default 1 = bookmarks bar). */
+  parent?: number | null;
+  title: string;
+}
+
+/**
+ * Result of `bookmarks.add_folder`.
+ * A bookmark folder.
+ */
+export interface BookmarksAddFolderOutput {
+  /** Number of direct children (folders + bookmarks). */
+  children: number;
+  created: number;
+  id: number;
+  /** Parent folder; `null` for the two root folders. */
+  parent: number | null;
+  position: number;
+  title: string;
+}
+
+// ---- bookmarks.move ----
+
+/** Arguments of `bookmarks.move`. */
+export interface BookmarksMoveArgs {
+  /** Target folder id (default: keep the current folder). */
+  folder?: number | null;
+  /** Bookmark or folder id. */
+  id: number;
+  /** Index among the target folder's children (default: the end). */
+  position?: number | null;
+}
+
+/** Result of `bookmarks.move`. */
+export interface BookmarksMoveOutput {
+  folder: number;
+  id: number;
+  position: number;
+}
+
+// ---- bookmarks.remove ----
+
+/** Arguments of `bookmarks.remove`. */
+export interface BookmarksRemoveArgs {
+  /** Bookmark or folder id. */
+  id: number;
+}
+
+/** Result of `bookmarks.remove`. */
+export interface BookmarksRemoveOutput {
+  /** Rows removed: 1 for a bookmark, 1 + contents for a folder. */
+  removed: number;
+}
+
+// ---- bookmarks.search ----
+
+/** Arguments of `bookmarks.search`. */
+export interface BookmarksSearchArgs {
+  /** Max results (default 100). */
+  limit?: number | null;
+  /** Text to find in titles and URLs. */
+  q: string;
+}
+
+/** Result of `bookmarks.search`. */
+export interface BookmarksSearchOutput {
+  /** Matches in every folder, newest first. */
+  bookmarks: {
+    /** Unix ms. */
+    created: number;
+    /** Id of the folder it is in. */
+    folder: number;
+    id: number;
+    /** Index among its siblings (folders and bookmarks share one order). */
+    position: number;
+    title: string;
+    url: string;
+  }[];
+}
+
+// ---- data.bookmarks ----
+
+/** Arguments of `data.bookmarks`. */
+export interface DataBookmarksArgs {
+  /** Folder id (default 1 = bookmarks bar; 2 = other bookmarks). */
+  folder?: number | null;
+  /** Max bookmarks to return (default 500). */
+  limit?: number | null;
+}
+
+/** Result of `data.bookmarks`. */
+export interface DataBookmarksOutput {
+  /**
+   * URL bookmarks directly in the folder, in order (`{title, url}` is what the new-tab page
+   * renders).
+   */
+  bookmarks: {
+    /** Unix ms. */
+    created: number;
+    /** Id of the folder it is in. */
+    folder: number;
+    id: number;
+    /** Index among its siblings (folders and bookmarks share one order). */
+    position: number;
+    title: string;
+    url: string;
+  }[];
+  /** The listed folder's id. */
+  folder: number;
+  /** Sub-folders directly in the folder, in order. */
+  folders: {
+    /** Number of direct children (folders + bookmarks). */
+    children: number;
+    created: number;
+    id: number;
+    /** Parent folder; `null` for the two root folders. */
+    parent: number | null;
+    position: number;
+    title: string;
+  }[];
+}
+
+// ---- data.top_sites ----
+
+/** Arguments of `data.top_sites`. */
+export interface DataTopSitesArgs {
+  /** How many (default 8, max 100). */
+  limit?: number | null;
+}
+
+/** Result of `data.top_sites`. */
+export interface DataTopSitesOutput {
+  /** Most frecent first; `{title, url}` is what the new-tab page renders. */
+  sites: {
+    last_visit: number;
+    /** Frecency score (higher = shown first). */
+    score: number;
+    /** Page title, or the host name when the page had none. */
+    title: string;
+    url: string;
+    visit_count: number;
+  }[];
+}
+
+// ---- downloads.list ----
+
+/** Arguments of `downloads.list`. */
+export interface DownloadsListArgs {
+  /** Max results (default 100, max 5000). */
+  limit?: number | null;
+}
+
+/** Result of `downloads.list`. */
+export interface DownloadsListOutput {
+  /** Newest first. */
+  downloads: {
+    /** Unix ms; `null` while in progress. */
+    ended: number | null;
+    /** Row id. 0 in [`upsert_download`] means "new row". */
+    id: number;
+    mime: string;
+    /** Target file on disk. */
+    path: string;
+    received_bytes: number;
+    /** Unix ms. */
+    started: number;
+    /** `in_progress`, `complete`, `cancelled` or `interrupted`. */
+    state: string;
+    /** Size in bytes when the server said it. */
+    total_bytes: number | null;
+    url: string;
+  }[];
+}
+
+// ---- history.delete ----
+
+/** Arguments of `history.delete`. */
+export interface HistoryDeleteArgs {
+  /** Forget every visit before this time (Unix ms). Use the current time to clear everything. */
+  before?: number | null;
+  /** Forget this exact URL (all its visits). */
+  url?: string | null;
+}
+
+/** Result of `history.delete`. */
+export interface HistoryDeleteOutput {
+  deleted_urls: number;
+  deleted_visits: number;
+}
+
+// ---- history.search ----
+
+/** Arguments of `history.search`. */
+export interface HistorySearchArgs {
+  /** Max results (default 100, max 5000). */
+  limit?: number | null;
+  /** Text to find in URLs and titles (default: everything). */
+  q?: string | null;
+  /** Only URLs visited at or after this time (Unix ms). */
+  since?: number | null;
+}
+
+/** Result of `history.search`. */
+export interface HistorySearchOutput {
+  /** Matching URLs, most recently visited first. */
+  entries: {
+    /** Unix ms of the newest visit. */
+    last_visit: number;
+    title: string;
+    url: string;
+    visit_count: number;
+  }[];
+}
+
+// ---- import.chrome ----
+
+/** Arguments of `import.chrome`. */
+export interface ImportChromeArgs {
+  /** A cookie export JSON file (needed for `cookies_json`). */
+  cookies_json_path?: string | null;
+  /** What to import; each part is independent. */
+  parts: ("bookmarks" | "history" | "passwords_csv" | "cookies_json")[];
+  /** The CSV exported from Chrome's password manager (needed for `passwords_csv`). */
+  passwords_csv_path?: string | null;
+  /**
+   * Chrome profile folder for bookmarks/history (default: `<Chrome User Data>/Default`;
+   * see import_chrome_detect).
+   */
+  profile_dir?: string | null;
+}
+
+/** Result of `import.chrome`. */
+export interface ImportChromeOutput {
+  /** One entry per requested part, in order. A failed part does not stop the others. */
+  results: {
+    error: string | null;
+    imported: number;
+    ok: boolean;
+    /** What to import. */
+    part: "bookmarks" | "history" | "passwords_csv" | "cookies_json";
+    skipped: number;
+    /** File it read. */
+    source: string;
+  }[];
+}
+
+// ---- import.chrome_detect ----
+
+/** Arguments of `import.chrome_detect`. */
+export interface ImportChromeDetectArgs {
+  /** Chrome "User Data" folder to scan (default: Chrome's standard location on this OS). */
+  user_data_dir?: string | null;
+}
+
+/** Result of `import.chrome_detect`. */
+export interface ImportChromeDetectOutput {
+  profiles: {
+    has_bookmarks: boolean;
+    has_history: boolean;
+    /** Folder name: `Default`, `Profile 1`, … */
+    name: string;
+    /** Full path; pass it as `profile_dir` to import_chrome. */
+    path: string;
+  }[];
+  /** The folders that were scanned. */
+  user_data_dirs: string[];
+}
+
 // ---- input.keys ----
 
 /** Arguments of `input.keys`. */
@@ -40,12 +339,46 @@ export interface NavBackArgs {
   timeout_secs?: number | null;
 }
 
-/** Result of `nav.back`. */
+/**
+ * Result of `nav.back`.
+ * One tab as every API surface sees it. On the wire the fields are camelCase
+ * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
+ */
 export interface NavBackOutput {
+  /**
+   * True for the tab shown in its window (one per window).
+   * @default false
+   */
+  active: boolean;
+  /**
+   * True when `nav.back` would do something.
+   * @default false
+   */
+  canGoBack: boolean;
+  /**
+   * True when `nav.forward` would do something.
+   * @default false
+   */
+  canGoForward: boolean;
+  /**
+   * Favicon URL; null until the page reports one.
+   * @default null
+   */
+  favicon: string | null;
+  /**
+   * Tab group id. Always null for now (tab groups are not implemented yet).
+   * @default null
+   */
+  groupId: string | null;
   /** Tab id, used as `tab` argument by other commands. */
   id: number;
   /** True while the page is still loading. */
   loading: boolean;
+  /**
+   * Agent holding the tab lock. Always null for now (agent locks come later).
+   * @default null
+   */
+  lockedBy: string | null;
   /** Page title. */
   title: string;
   /** Current URL. */
@@ -65,12 +398,46 @@ export interface NavForwardArgs {
   timeout_secs?: number | null;
 }
 
-/** Result of `nav.forward`. */
+/**
+ * Result of `nav.forward`.
+ * One tab as every API surface sees it. On the wire the fields are camelCase
+ * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
+ */
 export interface NavForwardOutput {
+  /**
+   * True for the tab shown in its window (one per window).
+   * @default false
+   */
+  active: boolean;
+  /**
+   * True when `nav.back` would do something.
+   * @default false
+   */
+  canGoBack: boolean;
+  /**
+   * True when `nav.forward` would do something.
+   * @default false
+   */
+  canGoForward: boolean;
+  /**
+   * Favicon URL; null until the page reports one.
+   * @default null
+   */
+  favicon: string | null;
+  /**
+   * Tab group id. Always null for now (tab groups are not implemented yet).
+   * @default null
+   */
+  groupId: string | null;
   /** Tab id, used as `tab` argument by other commands. */
   id: number;
   /** True while the page is still loading. */
   loading: boolean;
+  /**
+   * Agent holding the tab lock. Always null for now (agent locks come later).
+   * @default null
+   */
+  lockedBy: string | null;
   /** Page title. */
   title: string;
   /** Current URL. */
@@ -89,12 +456,46 @@ export interface NavGotoArgs {
   url: string;
 }
 
-/** Result of `nav.goto`. */
+/**
+ * Result of `nav.goto`.
+ * One tab as every API surface sees it. On the wire the fields are camelCase
+ * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
+ */
 export interface NavGotoOutput {
+  /**
+   * True for the tab shown in its window (one per window).
+   * @default false
+   */
+  active: boolean;
+  /**
+   * True when `nav.back` would do something.
+   * @default false
+   */
+  canGoBack: boolean;
+  /**
+   * True when `nav.forward` would do something.
+   * @default false
+   */
+  canGoForward: boolean;
+  /**
+   * Favicon URL; null until the page reports one.
+   * @default null
+   */
+  favicon: string | null;
+  /**
+   * Tab group id. Always null for now (tab groups are not implemented yet).
+   * @default null
+   */
+  groupId: string | null;
   /** Tab id, used as `tab` argument by other commands. */
   id: number;
   /** True while the page is still loading. */
   loading: boolean;
+  /**
+   * Agent holding the tab lock. Always null for now (agent locks come later).
+   * @default null
+   */
+  lockedBy: string | null;
   /** Page title. */
   title: string;
   /** Current URL. */
@@ -114,17 +515,65 @@ export interface NavReloadArgs {
   timeout_secs?: number | null;
 }
 
-/** Result of `nav.reload`. */
+/**
+ * Result of `nav.reload`.
+ * One tab as every API surface sees it. On the wire the fields are camelCase
+ * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
+ */
 export interface NavReloadOutput {
+  /**
+   * True for the tab shown in its window (one per window).
+   * @default false
+   */
+  active: boolean;
+  /**
+   * True when `nav.back` would do something.
+   * @default false
+   */
+  canGoBack: boolean;
+  /**
+   * True when `nav.forward` would do something.
+   * @default false
+   */
+  canGoForward: boolean;
+  /**
+   * Favicon URL; null until the page reports one.
+   * @default null
+   */
+  favicon: string | null;
+  /**
+   * Tab group id. Always null for now (tab groups are not implemented yet).
+   * @default null
+   */
+  groupId: string | null;
   /** Tab id, used as `tab` argument by other commands. */
   id: number;
   /** True while the page is still loading. */
   loading: boolean;
+  /**
+   * Agent holding the tab lock. Always null for now (agent locks come later).
+   * @default null
+   */
+  lockedBy: string | null;
   /** Page title. */
   title: string;
   /** Current URL. */
   url: string;
 }
+
+// ---- nav.stop ----
+
+/** Arguments of `nav.stop`. */
+export interface NavStopArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `nav.stop`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type NavStopOutput = Record<string, never>;
 
 // ---- nav.wait ----
 
@@ -464,6 +913,93 @@ export interface PageTextOutput {
   truncated: boolean;
 }
 
+// ---- passwords.delete ----
+
+/** Arguments of `passwords.delete`. */
+export interface PasswordsDeleteArgs {
+  /** Entry id from passwords_list. */
+  id: number;
+}
+
+/** Result of `passwords.delete`. */
+export interface PasswordsDeleteOutput {
+  deleted: boolean;
+}
+
+// ---- passwords.get ----
+
+/** Arguments of `passwords.get`. */
+export interface PasswordsGetArgs {
+  /** Site URL or origin, e.g. `https://github.com/login`. */
+  origin: string;
+}
+
+/** Result of `passwords.get`. */
+export interface PasswordsGetOutput {
+  entries: {
+    /** Unix ms. */
+    created: number;
+    id: number;
+    note: string;
+    /** `scheme://host[:port]`. */
+    origin: string;
+    /** The password in plain text — only when revealed, otherwise `null`. */
+    password: string | null;
+    updated: number;
+    username: string;
+  }[];
+}
+
+// ---- passwords.list ----
+
+/** Arguments of `passwords.list`. */
+export interface PasswordsListArgs {
+  /** Only this site (URL or origin). Default: all sites. */
+  origin?: string | null;
+  /**
+   * Include the plain-text passwords (default false: `password` is null).
+   * @default false
+   */
+  reveal?: boolean;
+}
+
+/** Result of `passwords.list`. */
+export interface PasswordsListOutput {
+  entries: {
+    /** Unix ms. */
+    created: number;
+    id: number;
+    note: string;
+    /** `scheme://host[:port]`. */
+    origin: string;
+    /** The password in plain text — only when revealed, otherwise `null`. */
+    password: string | null;
+    updated: number;
+    username: string;
+  }[];
+}
+
+// ---- passwords.save ----
+
+/** Arguments of `passwords.save`. */
+export interface PasswordsSaveArgs {
+  /** Optional free text. */
+  note?: string | null;
+  /** Site URL or origin. */
+  origin: string;
+  password: string;
+  username: string;
+}
+
+/** Result of `passwords.save`. */
+export interface PasswordsSaveOutput {
+  /** False when an existing login (same origin + username) was updated. */
+  created: boolean;
+  id: number;
+  /** The normalized origin it was saved under. */
+  origin: string;
+}
+
 // ---- system.ping ----
 
 /**
@@ -480,6 +1016,40 @@ export interface SystemPingOutput {
   version: string;
 }
 
+// ---- tabs.activate ----
+
+/**
+ * Arguments of `tabs.activate`.
+ * Arguments of commands that act on exactly one tab.
+ */
+export interface TabsActivateArgs {
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.activate`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TabsActivateOutput = Record<string, never>;
+
+// ---- tabs.close ----
+
+/**
+ * Arguments of `tabs.close`.
+ * Arguments of commands that act on exactly one tab.
+ */
+export interface TabsCloseArgs {
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.close`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TabsCloseOutput = Record<string, never>;
+
 // ---- tabs.list ----
 
 /**
@@ -490,12 +1060,53 @@ export type TabsListArgs = Record<string, never>;
 
 /** Result of `tabs.list`. */
 export interface TabsListOutput {
-  /** Open tabs, oldest first. */
+  /** The tab the user is looking at, or null when no tab is open. */
+  activeId: number | null;
+  /** Tab groups (always empty for now). */
+  groups: {
+    /** Set for agent-owned groups. */
+    agentId: string | null;
+    /** grey | blue | red | yellow | green | pink | purple | cyan | orange */
+    color: string;
+    id: string;
+    name: string;
+  }[];
+  /** Open tabs in tab-strip order. */
   tabs: {
+    /**
+     * True for the tab shown in its window (one per window).
+     * @default false
+     */
+    active: boolean;
+    /**
+     * True when `nav.back` would do something.
+     * @default false
+     */
+    canGoBack: boolean;
+    /**
+     * True when `nav.forward` would do something.
+     * @default false
+     */
+    canGoForward: boolean;
+    /**
+     * Favicon URL; null until the page reports one.
+     * @default null
+     */
+    favicon: string | null;
+    /**
+     * Tab group id. Always null for now (tab groups are not implemented yet).
+     * @default null
+     */
+    groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
     /** True while the page is still loading. */
     loading: boolean;
+    /**
+     * Agent holding the tab lock. Always null for now (agent locks come later).
+     * @default null
+     */
+    lockedBy: string | null;
     /** Page title. */
     title: string;
     /** Current URL. */
@@ -507,18 +1118,105 @@ export interface TabsListOutput {
 
 /** Arguments of `tabs.open`. */
 export interface TabsOpenArgs {
-  /** URL to open in a new tab. */
+  /** Open without switching to it (default false: the new tab becomes active). */
+  background?: boolean | null;
+  /** URL to open. Default: the new tab page. */
+  url?: string | null;
+}
+
+/**
+ * Result of `tabs.open`.
+ * One tab as every API surface sees it. On the wire the fields are camelCase
+ * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
+ */
+export interface TabsOpenOutput {
+  /**
+   * True for the tab shown in its window (one per window).
+   * @default false
+   */
+  active: boolean;
+  /**
+   * True when `nav.back` would do something.
+   * @default false
+   */
+  canGoBack: boolean;
+  /**
+   * True when `nav.forward` would do something.
+   * @default false
+   */
+  canGoForward: boolean;
+  /**
+   * Favicon URL; null until the page reports one.
+   * @default null
+   */
+  favicon: string | null;
+  /**
+   * Tab group id. Always null for now (tab groups are not implemented yet).
+   * @default null
+   */
+  groupId: string | null;
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** True while the page is still loading. */
+  loading: boolean;
+  /**
+   * Agent holding the tab lock. Always null for now (agent locks come later).
+   * @default null
+   */
+  lockedBy: string | null;
+  /** Id of the new tab (same as `id`; kept for older clients). */
+  tab: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
   url: string;
 }
 
-/** Result of `tabs.open`. */
-export interface TabsOpenOutput {
-  /** Id of the new tab. */
-  tab: number;
+// ---- ui.layout ----
+
+/** Arguments of `ui.layout`. */
+export interface UiLayoutArgs {
+  /** `devicePixelRatio` of the UI view. */
+  dpr?: number | null;
+  h: number;
+  w: number;
+  /** Left edge of the page area, CSS px relative to the UI view. */
+  x: number;
+  y: number;
 }
+
+/**
+ * Result of `ui.layout`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type UiLayoutOutput = Record<string, never>;
 
 /** Every command by dotted name, with its argument and result types. */
 export interface Commands {
+  /** Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark. */
+  "bookmarks.add": { args: BookmarksAddArgs; output: BookmarksAddOutput };
+  /** Create a bookmark folder at the end of a parent folder (default: the bookmarks bar). Returns the new folder. */
+  "bookmarks.add_folder": { args: BookmarksAddFolderArgs; output: BookmarksAddFolderOutput };
+  /** Move a bookmark or folder to another folder and/or position. Returns its new {folder, position}. */
+  "bookmarks.move": { args: BookmarksMoveArgs; output: BookmarksMoveOutput };
+  /** Remove a bookmark, or a folder with everything inside it. Returns {removed}. */
+  "bookmarks.remove": { args: BookmarksRemoveArgs; output: BookmarksRemoveOutput };
+  /** Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first. */
+  "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
+  /** List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}. */
+  "data.bookmarks": { args: DataBookmarksArgs; output: DataBookmarksOutput };
+  /** The most frequently and recently visited pages (frecency), as shown on the new-tab page. Returns {sites:[{title,url,visit_count,last_visit,score}]}. */
+  "data.top_sites": { args: DataTopSitesArgs; output: DataTopSitesOutput };
+  /** List downloads, newest first: url, path, mime, sizes, state, start/end time. */
+  "downloads.list": { args: DownloadsListArgs; output: DownloadsListOutput };
+  /** Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed. */
+  "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
+  /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
+  "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
+  /** Import from Chrome: bookmarks and history from a profile folder, passwords from Chrome's exported CSV, cookies from a JSON export (stored until applied to the browser). Re-importing adds no duplicates. Returns per-part counts. */
+  "import.chrome": { args: ImportChromeArgs; output: ImportChromeOutput };
+  /** Find Chrome profiles that can be imported (Default, Profile 1, …). Lists folders only; reads no data. Returns {user_data_dirs, profiles:[{name,path,has_bookmarks,has_history}]}. */
+  "import.chrome_detect": { args: ImportChromeDetectArgs; output: ImportChromeDetectOutput };
   /** Press keys or shortcuts on the focused element ("Enter", "Control+A", "Tab Tab Enter"). To type text into a field use page_act fill/type. */
   "input.keys": { args: InputKeysArgs; output: InputKeysOutput };
   /** Go back one page in the tab's history and wait for it to load. Old refs become stale: take a new page_snapshot. */
@@ -529,6 +1227,8 @@ export interface Commands {
   "nav.goto": { args: NavGotoArgs; output: NavGotoOutput };
   /** Reload the page and wait for it to load. Old refs become stale. */
   "nav.reload": { args: NavReloadArgs; output: NavReloadOutput };
+  /** Stop loading the page in a tab. */
+  "nav.stop": { args: NavStopArgs; output: NavStopOutput };
   /** Wait until the page has loaded, a text appears, an element (ref) is visible, or the URL contains a value. TIMEOUT if it does not happen in time. */
   "nav.wait": { args: NavWaitArgs; output: NavWaitOutput };
   /** Act on an element by ref: click, dblclick, fill, type, select, check, uncheck, hover, press, scroll, focus. Checks the element is visible, enabled and not covered (else NOT_INTERACTABLE naming what is in the way), uses real input events, waits for the page, and returns a one-line diff of what changed. */
@@ -549,12 +1249,26 @@ export interface Commands {
   "page.snapshot": { args: PageSnapshotArgs; output: PageSnapshotOutput };
   /** Visible text of the page (document.body.innerText), cut to `limit` characters. */
   "page.text": { args: PageTextArgs; output: PageTextOutput };
+  /** Delete a saved login by id. Returns {deleted: true}. */
+  "passwords.delete": { args: PasswordsDeleteArgs; output: PasswordsDeleteOutput };
+  /** Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved. */
+  "passwords.get": { args: PasswordsGetArgs; output: PasswordsGetOutput };
+  /** List saved logins (origin, username, note, times). Passwords are null unless reveal=true. */
+  "passwords.list": { args: PasswordsListArgs; output: PasswordsListOutput };
+  /** Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}. */
+  "passwords.save": { args: PasswordsSaveArgs; output: PasswordsSaveOutput };
   /** Check that BrowserMCP is running. Returns its name and version. */
   "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
-  /** List open tabs (oldest first): id, title, url, loading. */
+  /** Switch the window to this tab (make it the active, visible tab). */
+  "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
+  /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
+  "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
+  /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
   "tabs.list": { args: TabsListArgs; output: TabsListOutput };
-  /** Open a URL in a new tab. Returns the new tab id. */
+  /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
   "tabs.open": { args: TabsOpenArgs; output: TabsOpenOutput };
+  /** Internal: the browser UI reports its page area. No effect over the API. */
+  "ui.layout": { args: UiLayoutArgs; output: UiLayoutOutput };
 }
 
 /** A dotted command name such as `"tabs.list"`. */
@@ -578,6 +1292,114 @@ export interface CommandMeta {
 
 /** Metadata of every command, by dotted name. */
 export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
+  "bookmarks.add": {
+    wireName: "bookmarks_add",
+    description: "Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: "Add bookmark…",
+    defaultKeys: [],
+  },
+  "bookmarks.add_folder": {
+    wireName: "bookmarks_add_folder",
+    description: "Create a bookmark folder at the end of a parent folder (default: the bookmarks bar). Returns the new folder.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "bookmarks.move": {
+    wireName: "bookmarks_move",
+    description: "Move a bookmark or folder to another folder and/or position. Returns its new {folder, position}.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "bookmarks.remove": {
+    wireName: "bookmarks_remove",
+    description: "Remove a bookmark, or a folder with everything inside it. Returns {removed}.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "bookmarks.search": {
+    wireName: "bookmarks_search",
+    description: "Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "data.bookmarks": {
+    wireName: "data_bookmarks",
+    description: "List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "data.top_sites": {
+    wireName: "data_top_sites",
+    description: "The most frequently and recently visited pages (frecency), as shown on the new-tab page. Returns {sites:[{title,url,visit_count,last_visit,score}]}.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "downloads.list": {
+    wireName: "downloads_list",
+    description: "List downloads, newest first: url, path, mime, sizes, state, start/end time.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: "Downloads",
+    defaultKeys: [],
+  },
+  "history.delete": {
+    wireName: "history_delete",
+    description: "Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "history.search": {
+    wireName: "history_search",
+    description: "Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms).",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: "Search history…",
+    defaultKeys: [],
+  },
+  "import.chrome": {
+    wireName: "import_chrome",
+    description: "Import from Chrome: bookmarks and history from a profile folder, passwords from Chrome's exported CSV, cookies from a JSON export (stored until applied to the browser). Re-importing adds no duplicates. Returns per-part counts.",
+    toolset: "data",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: "Import from Chrome…",
+    defaultKeys: [],
+  },
+  "import.chrome_detect": {
+    wireName: "import_chrome_detect",
+    description: "Find Chrome profiles that can be imported (Default, Profile 1, …). Lists folders only; reads no data. Returns {user_data_dirs, profiles:[{name,path,has_bookmarks,has_history}]}.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "input.keys": {
     wireName: "input_keys",
     description: "Press keys or shortcuts on the focused element (\"Enter\", \"Control+A\", \"Tab Tab Enter\"). To type text into a field use page_act fill/type.",
@@ -621,6 +1443,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: true,
     palette: "Reload",
+    defaultKeys: [],
+  },
+  "nav.stop": {
+    wireName: "nav_stop",
+    description: "Stop loading the page in a tab.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: "Stop loading",
     defaultKeys: [],
   },
   "nav.wait": {
@@ -713,6 +1544,42 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "passwords.delete": {
+    wireName: "passwords_delete",
+    description: "Delete a saved login by id. Returns {deleted: true}.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "passwords.get": {
+    wireName: "passwords_get",
+    description: "Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved.",
+    toolset: "data",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "passwords.list": {
+    wireName: "passwords_list",
+    description: "List saved logins (origin, username, note, times). Passwords are null unless reveal=true.",
+    toolset: "data",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: "Passwords",
+    defaultKeys: [],
+  },
+  "passwords.save": {
+    wireName: "passwords_save",
+    description: "Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}.",
+    toolset: "data",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "system.ping": {
     wireName: "system_ping",
     description: "Check that BrowserMCP is running. Returns its name and version.",
@@ -722,9 +1589,27 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "tabs.activate": {
+    wireName: "tabs_activate",
+    description: "Switch the window to this tab (make it the active, visible tab).",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "tabs.close": {
+    wireName: "tabs_close",
+    description: "Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser).",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: "Close tab",
+    defaultKeys: [],
+  },
   "tabs.list": {
     wireName: "tabs_list",
-    description: "List open tabs (oldest first): id, title, url, loading.",
+    description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.",
     toolset: "core",
     sensitivity: "read",
     mutatesTab: false,
@@ -733,11 +1618,20 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "tabs.open": {
     wireName: "tabs_open",
-    description: "Open a URL in a new tab. Returns the new tab id.",
+    description: "Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`.",
     toolset: "core",
     sensitivity: "act",
     mutatesTab: false,
     palette: "Open URL in new tab…",
+    defaultKeys: [],
+  },
+  "ui.layout": {
+    wireName: "ui_layout",
+    description: "Internal: the browser UI reports its page area. No effect over the API.",
+    toolset: "hidden",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
     defaultKeys: [],
   },
 };
@@ -751,6 +1645,93 @@ export type CallArgs<N extends CommandName> = {} extends CommandArgs<N>
 export interface Browser {
   /** Call a command by its dotted name: `browser.call("tabs.list")`. */
   call<N extends CommandName>(name: N, ...args: CallArgs<N>): Promise<CommandOutput<N>>;
+  /** Commands `bookmarks.*`. */
+  bookmarks: {
+    /**
+     * Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark.
+     *
+     * `bookmarks.add` (MCP: `bookmarks_add`): toolset `data`, act.
+     */
+    add(args: BookmarksAddArgs, options?: CallOptions): Promise<BookmarksAddOutput>;
+    /**
+     * Create a bookmark folder at the end of a parent folder (default: the bookmarks bar). Returns the new folder.
+     *
+     * `bookmarks.add_folder` (MCP: `bookmarks_add_folder`): toolset `data`, act.
+     */
+    add_folder(args: BookmarksAddFolderArgs, options?: CallOptions): Promise<BookmarksAddFolderOutput>;
+    /**
+     * Move a bookmark or folder to another folder and/or position. Returns its new {folder, position}.
+     *
+     * `bookmarks.move` (MCP: `bookmarks_move`): toolset `data`, act.
+     */
+    move(args: BookmarksMoveArgs, options?: CallOptions): Promise<BookmarksMoveOutput>;
+    /**
+     * Remove a bookmark, or a folder with everything inside it. Returns {removed}.
+     *
+     * `bookmarks.remove` (MCP: `bookmarks_remove`): toolset `data`, act.
+     */
+    remove(args: BookmarksRemoveArgs, options?: CallOptions): Promise<BookmarksRemoveOutput>;
+    /**
+     * Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first.
+     *
+     * `bookmarks.search` (MCP: `bookmarks_search`): toolset `data`, read.
+     */
+    search(args: BookmarksSearchArgs, options?: CallOptions): Promise<BookmarksSearchOutput>;
+  };
+  /** Commands `data.*`. */
+  data: {
+    /**
+     * List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}.
+     *
+     * `data.bookmarks` (MCP: `data_bookmarks`): toolset `data`, read.
+     */
+    bookmarks(args?: DataBookmarksArgs, options?: CallOptions): Promise<DataBookmarksOutput>;
+    /**
+     * The most frequently and recently visited pages (frecency), as shown on the new-tab page. Returns {sites:[{title,url,visit_count,last_visit,score}]}.
+     *
+     * `data.top_sites` (MCP: `data_top_sites`): toolset `data`, read.
+     */
+    top_sites(args?: DataTopSitesArgs, options?: CallOptions): Promise<DataTopSitesOutput>;
+  };
+  /** Commands `downloads.*`. */
+  downloads: {
+    /**
+     * List downloads, newest first: url, path, mime, sizes, state, start/end time.
+     *
+     * `downloads.list` (MCP: `downloads_list`): toolset `data`, read.
+     */
+    list(args?: DownloadsListArgs, options?: CallOptions): Promise<DownloadsListOutput>;
+  };
+  /** Commands `history.*`. */
+  history: {
+    /**
+     * Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed.
+     *
+     * `history.delete` (MCP: `history_delete`): toolset `data`, act.
+     */
+    delete(args?: HistoryDeleteArgs, options?: CallOptions): Promise<HistoryDeleteOutput>;
+    /**
+     * Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms).
+     *
+     * `history.search` (MCP: `history_search`): toolset `data`, read.
+     */
+    search(args?: HistorySearchArgs, options?: CallOptions): Promise<HistorySearchOutput>;
+  };
+  /** Commands `import.*`. */
+  import: {
+    /**
+     * Import from Chrome: bookmarks and history from a profile folder, passwords from Chrome's exported CSV, cookies from a JSON export (stored until applied to the browser). Re-importing adds no duplicates. Returns per-part counts.
+     *
+     * `import.chrome` (MCP: `import_chrome`): toolset `data`, secret.
+     */
+    chrome(args: ImportChromeArgs, options?: CallOptions): Promise<ImportChromeOutput>;
+    /**
+     * Find Chrome profiles that can be imported (Default, Profile 1, …). Lists folders only; reads no data. Returns {user_data_dirs, profiles:[{name,path,has_bookmarks,has_history}]}.
+     *
+     * `import.chrome_detect` (MCP: `import_chrome_detect`): toolset `data`, read.
+     */
+    chrome_detect(args?: ImportChromeDetectArgs, options?: CallOptions): Promise<ImportChromeDetectOutput>;
+  };
   /** Commands `input.*`. */
   input: {
     /**
@@ -786,6 +1767,12 @@ export interface Browser {
      * `nav.reload` (MCP: `nav_reload`): toolset `core`, act, mutates the tab.
      */
     reload(args?: NavReloadArgs, options?: CallOptions): Promise<NavReloadOutput>;
+    /**
+     * Stop loading the page in a tab.
+     *
+     * `nav.stop` (MCP: `nav_stop`): toolset `core`, act, mutates the tab.
+     */
+    stop(args?: NavStopArgs, options?: CallOptions): Promise<NavStopOutput>;
     /**
      * Wait until the page has loaded, a text appears, an element (ref) is visible, or the URL contains a value. TIMEOUT if it does not happen in time.
      *
@@ -851,6 +1838,33 @@ export interface Browser {
      */
     text(args?: PageTextArgs, options?: CallOptions): Promise<PageTextOutput>;
   };
+  /** Commands `passwords.*`. */
+  passwords: {
+    /**
+     * Delete a saved login by id. Returns {deleted: true}.
+     *
+     * `passwords.delete` (MCP: `passwords_delete`): toolset `data`, act.
+     */
+    delete(args: PasswordsDeleteArgs, options?: CallOptions): Promise<PasswordsDeleteOutput>;
+    /**
+     * Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved.
+     *
+     * `passwords.get` (MCP: `passwords_get`): toolset `data`, secret.
+     */
+    get(args: PasswordsGetArgs, options?: CallOptions): Promise<PasswordsGetOutput>;
+    /**
+     * List saved logins (origin, username, note, times). Passwords are null unless reveal=true.
+     *
+     * `passwords.list` (MCP: `passwords_list`): toolset `data`, secret.
+     */
+    list(args?: PasswordsListArgs, options?: CallOptions): Promise<PasswordsListOutput>;
+    /**
+     * Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}.
+     *
+     * `passwords.save` (MCP: `passwords_save`): toolset `data`, secret.
+     */
+    save(args: PasswordsSaveArgs, options?: CallOptions): Promise<PasswordsSaveOutput>;
+  };
   /** Commands `system.*`. */
   system: {
     /**
@@ -863,17 +1877,39 @@ export interface Browser {
   /** Commands `tabs.*`. */
   tabs: {
     /**
-     * List open tabs (oldest first): id, title, url, loading.
+     * Switch the window to this tab (make it the active, visible tab).
+     *
+     * `tabs.activate` (MCP: `tabs_activate`): toolset `core`, act.
+     */
+    activate(args: TabsActivateArgs, options?: CallOptions): Promise<TabsActivateOutput>;
+    /**
+     * Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser).
+     *
+     * `tabs.close` (MCP: `tabs_close`): toolset `core`, act, mutates the tab.
+     */
+    close(args: TabsCloseArgs, options?: CallOptions): Promise<TabsCloseOutput>;
+    /**
+     * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.
      *
      * `tabs.list` (MCP: `tabs_list`): toolset `core`, read.
      */
     list(args?: TabsListArgs, options?: CallOptions): Promise<TabsListOutput>;
     /**
-     * Open a URL in a new tab. Returns the new tab id.
+     * Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`.
      *
      * `tabs.open` (MCP: `tabs_open`): toolset `core`, act.
      */
-    open(args: TabsOpenArgs, options?: CallOptions): Promise<TabsOpenOutput>;
+    open(args?: TabsOpenArgs, options?: CallOptions): Promise<TabsOpenOutput>;
+  };
+  /** Commands `ui.*`. */
+  ui: {
+    /**
+     * Internal: the browser UI reports its page area. No effect over the API.
+     *
+     * `ui.layout` (MCP: `ui_layout`): toolset `hidden`, read.
+     * Internal (hidden toolset): not listed to agents by default.
+     */
+    layout(args: UiLayoutArgs, options?: CallOptions): Promise<UiLayoutOutput>;
   };
 }
 
@@ -884,6 +1920,28 @@ export function createBrowser(transport: Transport): Browser {
   return {
     call: ((name: string, args?: object, options?: CallOptions) =>
       call(name, args, options)) as Browser["call"],
+    bookmarks: {
+      add: (args, options) => call<BookmarksAddOutput>("bookmarks.add", args, options),
+      add_folder: (args, options) => call<BookmarksAddFolderOutput>("bookmarks.add_folder", args, options),
+      move: (args, options) => call<BookmarksMoveOutput>("bookmarks.move", args, options),
+      remove: (args, options) => call<BookmarksRemoveOutput>("bookmarks.remove", args, options),
+      search: (args, options) => call<BookmarksSearchOutput>("bookmarks.search", args, options),
+    },
+    data: {
+      bookmarks: (args, options) => call<DataBookmarksOutput>("data.bookmarks", args, options),
+      top_sites: (args, options) => call<DataTopSitesOutput>("data.top_sites", args, options),
+    },
+    downloads: {
+      list: (args, options) => call<DownloadsListOutput>("downloads.list", args, options),
+    },
+    history: {
+      delete: (args, options) => call<HistoryDeleteOutput>("history.delete", args, options),
+      search: (args, options) => call<HistorySearchOutput>("history.search", args, options),
+    },
+    import: {
+      chrome: (args, options) => call<ImportChromeOutput>("import.chrome", args, options),
+      chrome_detect: (args, options) => call<ImportChromeDetectOutput>("import.chrome_detect", args, options),
+    },
     input: {
       keys: (args, options) => call<InputKeysOutput>("input.keys", args, options),
     },
@@ -892,6 +1950,7 @@ export function createBrowser(transport: Transport): Browser {
       forward: (args, options) => call<NavForwardOutput>("nav.forward", args, options),
       goto: (args, options) => call<NavGotoOutput>("nav.goto", args, options),
       reload: (args, options) => call<NavReloadOutput>("nav.reload", args, options),
+      stop: (args, options) => call<NavStopOutput>("nav.stop", args, options),
       wait: (args, options) => call<NavWaitOutput>("nav.wait", args, options),
     },
     page: {
@@ -905,12 +1964,23 @@ export function createBrowser(transport: Transport): Browser {
       snapshot: (args, options) => call<PageSnapshotOutput>("page.snapshot", args, options),
       text: (args, options) => call<PageTextOutput>("page.text", args, options),
     },
+    passwords: {
+      delete: (args, options) => call<PasswordsDeleteOutput>("passwords.delete", args, options),
+      get: (args, options) => call<PasswordsGetOutput>("passwords.get", args, options),
+      list: (args, options) => call<PasswordsListOutput>("passwords.list", args, options),
+      save: (args, options) => call<PasswordsSaveOutput>("passwords.save", args, options),
+    },
     system: {
       ping: (args, options) => call<SystemPingOutput>("system.ping", args, options),
     },
     tabs: {
+      activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),
+      close: (args, options) => call<TabsCloseOutput>("tabs.close", args, options),
       list: (args, options) => call<TabsListOutput>("tabs.list", args, options),
       open: (args, options) => call<TabsOpenOutput>("tabs.open", args, options),
+    },
+    ui: {
+      layout: (args, options) => call<UiLayoutOutput>("ui.layout", args, options),
     },
   };
 }

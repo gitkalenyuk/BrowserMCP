@@ -10,3 +10,4 @@ publish.workspace = true
 bmcp-core.workspace = true
 bmcp-api.workspace = true
 bmcp-browser.workspace = true
+bmcp-data = { path = "../data" }

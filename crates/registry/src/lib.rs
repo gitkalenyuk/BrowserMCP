@@ -15,6 +15,7 @@ pub fn build_registry() -> Registry {
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
+    bmcp_data::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }
@@ -26,7 +27,13 @@ mod tests {
     #[test]
     fn has_the_builtin_and_page_commands() {
         let registry = build_registry();
-        for name in ["tabs.list", "nav.goto", "page.snapshot", "page.ax_tree"] {
+        for name in [
+            "tabs.list",
+            "nav.goto",
+            "page.snapshot",
+            "page.ax_tree",
+            "bookmarks.add",
+        ] {
             assert!(registry.get(name).is_some(), "{name} missing");
         }
     }

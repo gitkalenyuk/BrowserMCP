@@ -14,9 +14,11 @@ use crate::backend::{
 };
 use crate::command::{Caller, Ctx};
 use crate::events::EventBus;
+use crate::tabs::TabStrip;
 
-/// A browser that keeps tabs in a `Vec`. Navigation finishes instantly; the page title becomes
-/// the URL; `Runtime.evaluate` returns the text set with [`FakeBackend::set_text`].
+/// A browser with one window. Navigation finishes instantly; the page title becomes the URL;
+/// `Runtime.evaluate` returns the text set with [`FakeBackend::set_text`]. Tab order and the
+/// active tab follow the real rules ([`TabStrip`]).
 ///
 /// Other CDP methods can be scripted with [`FakeBackend::on_cdp`]; every CDP call is logged with
 /// its parameters ([`FakeBackend::cdp_calls`]).
@@ -31,7 +33,10 @@ pub type CdpHandler = Box<dyn Fn(TabId, &str, &Value) -> Option<BackendResult<Va
 
 #[derive(Default)]
 struct FakeState {
-    tabs: Vec<TabInfo>,
+    /// Tab data by id (order lives in `strip`).
+    tabs: HashMap<TabId, TabInfo>,
+    strip: TabStrip,
+    next_id: i32,
     texts: HashMap<TabId, String>,
     /// Returned (once) by the next backend call instead of doing the work.
     fail_next: Option<BackendError>,
@@ -49,13 +54,16 @@ impl FakeBackend {
         Arc::new(Self::default())
     }
 
-    /// Backend with one tab per URL (ids 1, 2, …).
+    /// Backend with one tab per URL (ids 1, 2, …); the first one is active.
     pub fn with_tabs(urls: &[&str]) -> Arc<Self> {
         let fake = Self::default();
         {
             let mut state = fake.lock();
             for url in urls {
-                state.add_tab(url.to_string());
+                state.add_tab(url.to_string(), true);
+            }
+            if let Some(first) = state.strip.tabs().first().copied() {
+                state.strip.activate(first);
             }
             state.calls.clear();
         }
@@ -111,8 +119,9 @@ impl FakeBackend {
         self.lock().calls.clone()
     }
 
+    /// Tabs in strip order, with `active` filled in.
     pub fn tabs(&self) -> Vec<TabInfo> {
-        self.lock().tabs.clone()
+        self.lock().list()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, FakeState> {
@@ -136,15 +145,28 @@ impl FakeBackend {
 }
 
 impl FakeState {
-    fn add_tab(&mut self, url: String) -> TabId {
-        let id = TabId(self.tabs.iter().map(|t| t.id.0).max().unwrap_or(0) + 1);
-        self.tabs.push(TabInfo {
-            id,
-            title: url.clone(),
-            url,
-            loading: false,
-        });
+    fn add_tab(&mut self, url: String, background: bool) -> TabId {
+        self.next_id += 1;
+        let id = TabId(self.next_id);
+        self.tabs.insert(id, TabInfo::new(id, url));
+        self.strip.insert(id, None);
+        if !background {
+            self.strip.activate(id);
+        }
         id
+    }
+
+    fn list(&self) -> Vec<TabInfo> {
+        let active = self.strip.active();
+        self.strip
+            .tabs()
+            .iter()
+            .filter_map(|id| self.tabs.get(id))
+            .map(|t| TabInfo {
+                active: Some(t.id) == active,
+                ..t.clone()
+            })
+            .collect()
     }
 
     fn event_sender(&mut self, tab: TabId) -> tokio::sync::broadcast::Sender<CdpEvent> {
@@ -156,19 +178,47 @@ impl FakeState {
 
     fn tab_mut(&mut self, tab: TabId) -> BackendResult<&mut TabInfo> {
         self.tabs
-            .iter_mut()
-            .find(|t| t.id == tab)
+            .get_mut(&tab)
             .ok_or(BackendError::TabNotFound(tab))
     }
 }
 
 impl BrowserBackend for FakeBackend {
     fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>> {
-        self.with_state("list_tabs".into(), |s| Ok(s.tabs.clone()))
+        self.with_state("list_tabs".into(), |s| Ok(s.list()))
     }
 
-    fn open_tab(&self, url: String) -> BoxFuture<'_, BackendResult<TabId>> {
-        self.with_state(format!("open_tab {url}"), |s| Ok(s.add_tab(url)))
+    fn open_tab(&self, url: String, background: bool) -> BoxFuture<'_, BackendResult<TabId>> {
+        let call = if background {
+            format!("open_tab {url} background")
+        } else {
+            format!("open_tab {url}")
+        };
+        self.with_state(call, |s| Ok(s.add_tab(url, background)))
+    }
+
+    fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        self.with_state(format!("close_tab {tab}"), |s| {
+            s.tab_mut(tab)?;
+            s.tabs.remove(&tab);
+            s.strip.remove(tab);
+            Ok(())
+        })
+    }
+
+    fn activate_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        self.with_state(format!("activate_tab {tab}"), |s| {
+            s.tab_mut(tab)?;
+            s.strip.activate(tab);
+            Ok(())
+        })
+    }
+
+    fn stop_loading(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        self.with_state(format!("stop_loading {tab}"), |s| {
+            s.tab_mut(tab)?.loading = false;
+            Ok(())
+        })
     }
 
     fn navigate(
@@ -181,6 +231,7 @@ impl BrowserBackend for FakeBackend {
             let info = s.tab_mut(tab)?;
             info.title = url.clone();
             info.url = url;
+            info.can_go_back = true;
             Ok(info.clone())
         })
     }

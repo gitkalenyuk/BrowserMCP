@@ -12,11 +12,15 @@ mod bridge;
 mod chrome;
 mod scheme;
 mod shell;
+mod switches;
+mod ui_files;
 
 pub use backend::CefBackend;
 pub use shell::ReadyCallback;
 
-use bmcp_core::{DataDir, ProfileId};
+use std::path::PathBuf;
+
+use bmcp_core::{DataDir, EventBus, ProfileId};
 use cef::{CefString, Settings, api_hash, args::Args, execute_process, sys};
 
 /// Which CEF runtime style windows use.
@@ -34,11 +38,23 @@ pub enum Style {
 /// How a browser window is composed (spike S1, see docs/spikes/S1-S2-S3.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowLayout {
-    /// UI strip (`bmcp://ui/`) on top, the page below, Ctrl+K palette overlay.
+    /// The Svelte chrome (`bmcp://ui/`) around the tabs' pages, Ctrl+K palette overlay.
     #[default]
     Chrome,
-    /// Phase 0: the page fills the window, no UI of our own.
+    /// Phase 0: the page fills the window, no UI of our own; every tab is a window.
     Single,
+}
+
+/// Where the browser's own UI pages come from and where they find the API.
+#[derive(Debug, Clone, Default)]
+pub struct UiOptions {
+    /// `ws://127.0.0.1:<port>/v1/ws`, handed to every `bmcp://ui/` page.
+    pub api_ws: Option<String>,
+    /// Serve `bmcp://ui/` from this folder instead of the embedded build (`--ui-dir`).
+    pub dir: Option<PathBuf>,
+    /// Load the chrome and palette from a Vite dev server instead (`--ui-dev
+    /// http://localhost:5173`, needs `BMCP_DEV_UI=1` for the API origin check).
+    pub dev_url: Option<String>,
 }
 
 /// Options for the browser process.
@@ -48,6 +64,10 @@ pub struct LaunchOptions {
     pub profile: ProfileId,
     pub style: Style,
     pub layout: WindowLayout,
+    pub ui: UiOptions,
+    /// Bus for `tab.*` events. Pass the same bus to the API server so WS clients (the UI)
+    /// receive them.
+    pub events: EventBus,
     /// Runs on the UI thread once the first window exists. Hand the backend to async
     /// code (API servers, scripts) from here; do not block.
     pub on_ready: Option<ReadyCallback>,
@@ -109,6 +129,9 @@ impl Browser {
             persist_session_cookies: 1,
             ..Default::default()
         };
+
+        bridge::set_events(opts.events);
+        scheme::configure(&opts.ui);
 
         let mut app = shell::ShellApp::new(std::sync::Arc::new(shell::StartConfig {
             url: opts.start_url,
