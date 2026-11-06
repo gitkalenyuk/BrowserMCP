@@ -37,7 +37,8 @@ run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
            heal?: true, profile?: "default"}      → run (id, options.parallel, counts …)
 ```
 
-* Each row → one script process with `--input <column>=<value>` (`inputs.<column>`, strings).
+* Each row → one script process; its inputs (`inputs.<column>`, strings) go in a temporary
+  JSON file passed as `--inputs-file` (no command-line length limit, NUL bytes allowed).
   CSV/Excel: first row = header (Excel: first sheet); JSON: array of objects.
 * `parallel` is limited to `min(requested, CPUs/2, free RAM/400 MB)` (and 32).
 * Failed rows are retried `retries` times with backoff 1 s, 2 s, 4 s … (max 30 s).
@@ -59,9 +60,12 @@ proposes a fix and calls `run.heal_apply {id, patched_code}`: the code is saved 
 `<name>.v2.ts` (then `.v3` …), the waiting rows go back into the queue and the run continues
 with the new version. `run.resume` instead skips the fix (those rows count as failed).
 
-**Exports.** `run.export {id, to: csv|xlsx|json|sqlite|webhook, path?, url?, status?, batch_size?}`.
+**Exports.** `run.export {id, to: csv|xlsx|json|sqlite|webhook, path?, url?, status?, batch_size?, raw?}`.
 Files default to `data/runs/<id>/results.<ext>`; columns `row, status, <inputs>, <result keys>,
-error_code, error, attempts, duration_ms`. Webhook: `POST {run, script, batch, batches, rows}`
+error_code, error, attempts, duration_ms`, unique ignoring case (`input.status`,
+`result.<key>`, then `_2`, … on clashes). CSV cells starting with `= + - @` tab or CR get a
+leading `'` (XLSX: the quote-prefix flag) so spreadsheets do not run scraped formulas;
+`raw: true` writes them unchanged. Webhook: `POST {run, script, batch, batches, rows}`
 batches (100 rows), 3 attempts on network errors/408/429/5xx. `google_sheets` →
 `NOT_IMPLEMENTED` (needs OAuth).
 

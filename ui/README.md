@@ -12,7 +12,8 @@ pnpm install            # once, from the repo root or ui/
 pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page
 pnpm build              # -> ui/dist (index.html + palette.html + newtab.html, relative paths)
 pnpm check              # svelte-check, fails on warnings
-pnpm test               # vitest: fuzzy matcher, keymap, tab reducer, omnibox input
+pnpm test               # vitest: fuzzy matcher, keymap, tab reducer, omnibox input, AI stream
+                        # folding, net text parsers, request filter, rule/resume payloads
 ```
 
 From the repo root: `pnpm ui:dev`, `pnpm ui:build`, `pnpm ui:check`, `pnpm ui:test`.
@@ -114,8 +115,41 @@ interface BrowserApi {
 
 Methods: `tabs.list | open | close | activate | unlock`, `nav.goto | back | forward | reload | stop`,
 `agents.list`, `workspaces.list | activate`, `runs.list | patch.approve | patch.reject`,
-`scripts.list | run`, `data.bookmarks | topSites`, `ai.prompt`, `ui.layout`. Full params and results
-are in `src/lib/api/types.ts` and will be replaced by the generated `@browsermcp/protocol`.
+`scripts.list | run`, `data.bookmarks | top_sites`, `ui.layout`, and for the side panels
+`ai.providers | provider_set | provider_test | session_start | session_send | session_stop |
+sessions_list | session_transcript`, `term.open | write | resize | close | list`,
+`net.capture | list | get | search | ws_frames | har_export | rule_add | rule_list | rule_remove |
+breakpoint | paused_list | resume`. Events: `tab.*`, `tabs.reset`, `agents.updated`, …, `ai.message
+| tool_call | tool_result | done | session`, `term.output | exit`, `net.paused | pause_timeout |
+intercept_error | lagged`. Full params and results are in `src/lib/api/types.ts` (they mirror the Rust
+structs; will be replaced by the generated `@browsermcp/protocol`). `mock-panels.ts` fakes the
+panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic without a backend.
+
+`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*"]}` (a notification) after every
+(re)connect, on top of the server's default topics.
+
+### Side panels
+
+* **AI** (`panels/AiPanel.svelte`, `ai/store.svelte.ts`, `ai/thread.ts`): provider picker from
+  `ai.providers`, a settings sub-view (`AiSettings.svelte`: key / base URL / model / CLI path via
+  `ai.provider_set`, free check via `ai.provider_test`), sessions as colored chips, one thread per
+  session folded from `ai.*` events (`text_delta` streams, `text` replaces and closes the row; tool
+  calls are collapsible rows), stop button. New chat = `ai.session_start`, reply = `ai.session_send`.
+* **Terminal** (`TerminalPanel.svelte`, `XTermView.svelte`, `term/store.svelte.ts`): xterm.js +
+  fit addon per terminal tab, shell picker (pwsh / cmd / bash), resize follows the panel
+  (`term.resize`, debounced). Output is buffered from chrome start, also for terminals opened over
+  REST or by agents, and replayed when a view attaches (without `ESC[6n` queries; the core answers
+  ConPTY's first one itself).
+* **Traffic** (`TrafficPanel.svelte`, `NetDetails`, `NetRules`, `NetBreakpoints`, `net/*.ts`):
+  capture toggle for the active tab, `net.list` polled every second with a cursor (re-reading from
+  the oldest pending request), virtualized list with filter (`method:post status:4xx -word`) and
+  type chips, details (headers / request / response bodies via `net.get` parts, WS frames), HAR
+  export to `data/har/`, rules (block / redirect / mock / rewrite body) and breakpoints with an
+  editor that resumes with only the changed fields (`net.resume`). The net commands return compact
+  text for agents; `net/parse.ts` reads it.
+
+`VITE_BMCP_PANEL=traffic pnpm build` opens that panel on a profile without saved settings
+(screenshots of a fresh profile).
 
 Wire format: requests `{jsonrpc:"2.0", id, method, params}`, responses `{id, result}` or
 `{id, error:{code, message, data}}`, events are notifications `{jsonrpc:"2.0", method:"tab.updated", params}`.
