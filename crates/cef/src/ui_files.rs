@@ -94,16 +94,19 @@ pub fn mime_for(path: &str) -> &'static str {
 /// Insert `<script>window.__BMCP__=…</script>` right after `<head>` (or at the very start
 /// if there is no `<head>`). `</` is escaped so the JSON cannot end the script early.
 pub fn inject_config(html: &[u8], config_json: &str) -> Vec<u8> {
-    let script = format!(
-        "<script>window.__BMCP__={};</script>",
-        config_json.replace("</", "<\\/")
-    );
+    let script = format!("<script>{}</script>", config_script(config_json));
     let at = find_head_end(html).unwrap_or(0);
     let mut out = Vec::with_capacity(html.len() + script.len());
     out.extend_from_slice(&html[..at]);
     out.extend_from_slice(script.as_bytes());
     out.extend_from_slice(&html[at..]);
     out
+}
+
+/// The text inside the injected `<script>` (its SHA-256 is allowed by the pages' CSP, see
+/// `scheme::content_security_policy`).
+pub fn config_script(config_json: &str) -> String {
+    format!("window.__BMCP__={};", config_json.replace("</", "<\\/"))
 }
 
 /// Byte offset just after the opening `<head …>` tag (ASCII case-insensitive).
