@@ -14,7 +14,7 @@ Date: 2026-11-06. CEF 156 Alloy, Windows 11. Follow-ups requested by `crates/adb
 | Adblock gate | `adblock.*` unchanged; `adblock.apply` now only does the cosmetic part (`report.network = "cef"`) | `GetResourceRequestHandler` → `OnBeforeResourceLoad` (`RV_CANCEL`), `GetResourceHandler` (redirect body), `OnResourceLoadComplete` (bytes), content settings for `js`/`images` before the navigation commits |
 | Cookies | `cookies.get {profile?, incognito?, domain?}`, `cookies.set {…, cookies}`, `cookies.delete {…, domain?, name?}`, `cookies.apply_pending` | `CefCookieManager` visitor / `SetCookie`; `pending_cookies` are applied at startup and after every `import.chrome` |
 | Downloads | `downloads.list` (filled now), events `download.started/progress/done` | `DownloadHandler`: no dialog, `data/runs/<run>/downloads/` or `data/downloads/` |
-| Permissions | `permissions.set {origin, kind, allow?}`, `permissions.list` | `OnShowPermissionPrompt`, `OnRequestMediaAccessPermission`: rules, else deny (`bmcp://ui` keeps its loopback grant) |
+| Permissions | `permissions.set {origin, kind, allow?}`, `permissions.list`, `permissions.pending`, `permissions.answer` | `OnShowPermissionPrompt`, `OnRequestMediaAccessPermission`: rules, else the permission bar asks (window tabs) / deny (off-screen); `bmcp://ui` keeps its loopback grant, also in content tabs |
 | Identity auto-apply | `profile.create {identity}` / `identity.assign` | new tabs and popups of such a profile start on `about:blank`, get `stealth.fingerprint_set`, then load; workers via `Target.setAutoAttach {waitForDebuggerOnStart, flatten}` |
 | External CDP | `browsermcp --cdp-port <n>` | `Settings.remote_debugging_port`; refused while any profile has an identity |
 
@@ -113,8 +113,8 @@ with `ERR_ABORTED`, so its `blocked` column stays 0 — use `adblock.stats` for 
 * `getUserMedia` in an *off-screen* tab never settles (no permission callback arrives).
 * `webrtc.multiple_routes_enabled` / `webrtc.nonproxied_udp_enabled` are not registered in
   this CEF build; only `webrtc.ip_handling_policy` is set.
-* Off-screen tabs appear in `tabs.list` (with `active: true`), so the UI's tab strip may show
-  them while a run is going.
+* Off-screen tabs appear in `tabs.list` (with `active: true`) — now flagged `offscreen: true`, and
+  the UI's tab strip leaves them out (`docs/phase2/chrome-features.md`).
 * Popups re-opened for identity profiles / off-screen openers lose `window.opener`.
 * Accept-Language of the global (launch) profile can only follow `profile.create {id:
   "default", accept_language}` once its context exists; identity tabs use the CDP override.

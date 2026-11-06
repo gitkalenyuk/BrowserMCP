@@ -2228,6 +2228,8 @@ declare namespace BrowserMCP {
     groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
+    /** In-memory profile (nothing written to disk). Absent = false. */
+    incognito?: boolean;
     /** True while the page is still loading. */
     loading: boolean;
     /**
@@ -2235,10 +2237,33 @@ declare namespace BrowserMCP {
      * @default null
      */
     lockedBy: string | null;
+    /**
+     * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+     * Absent = false.
+     */
+    offscreen?: boolean;
+    /**
+     * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+     * profiles.
+     */
+    profile?: string | null;
+    /** Set while the tab is one half of a split view (`tabs.split`). */
+    split?: {
+      /** The tab in the other half. */
+      other: number;
+      /** Width of the left half as a fraction of the page area (0.15–0.85). */
+      ratio: number;
+      /** The half this tab is shown in. */
+      side: "left" | "right";
+    } | null;
     /** Page title. */
     title: string;
     /** Current URL. */
     url: string;
+    /** Browser window that shows the tab. Absent for off-screen tabs. */
+    window?: number | null;
+    /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+    zoom?: number | null;
   }
 
   // ---- nav.forward ----
@@ -2287,6 +2312,8 @@ declare namespace BrowserMCP {
     groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
+    /** In-memory profile (nothing written to disk). Absent = false. */
+    incognito?: boolean;
     /** True while the page is still loading. */
     loading: boolean;
     /**
@@ -2294,10 +2321,33 @@ declare namespace BrowserMCP {
      * @default null
      */
     lockedBy: string | null;
+    /**
+     * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+     * Absent = false.
+     */
+    offscreen?: boolean;
+    /**
+     * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+     * profiles.
+     */
+    profile?: string | null;
+    /** Set while the tab is one half of a split view (`tabs.split`). */
+    split?: {
+      /** The tab in the other half. */
+      other: number;
+      /** Width of the left half as a fraction of the page area (0.15–0.85). */
+      ratio: number;
+      /** The half this tab is shown in. */
+      side: "left" | "right";
+    } | null;
     /** Page title. */
     title: string;
     /** Current URL. */
     url: string;
+    /** Browser window that shows the tab. Absent for off-screen tabs. */
+    window?: number | null;
+    /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+    zoom?: number | null;
   }
 
   // ---- nav.goto ----
@@ -2345,6 +2395,8 @@ declare namespace BrowserMCP {
     groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
+    /** In-memory profile (nothing written to disk). Absent = false. */
+    incognito?: boolean;
     /** True while the page is still loading. */
     loading: boolean;
     /**
@@ -2352,10 +2404,33 @@ declare namespace BrowserMCP {
      * @default null
      */
     lockedBy: string | null;
+    /**
+     * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+     * Absent = false.
+     */
+    offscreen?: boolean;
+    /**
+     * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+     * profiles.
+     */
+    profile?: string | null;
+    /** Set while the tab is one half of a split view (`tabs.split`). */
+    split?: {
+      /** The tab in the other half. */
+      other: number;
+      /** Width of the left half as a fraction of the page area (0.15–0.85). */
+      ratio: number;
+      /** The half this tab is shown in. */
+      side: "left" | "right";
+    } | null;
     /** Page title. */
     title: string;
     /** Current URL. */
     url: string;
+    /** Browser window that shows the tab. Absent for off-screen tabs. */
+    window?: number | null;
+    /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+    zoom?: number | null;
   }
 
   // ---- nav.reload ----
@@ -2404,6 +2479,8 @@ declare namespace BrowserMCP {
     groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
+    /** In-memory profile (nothing written to disk). Absent = false. */
+    incognito?: boolean;
     /** True while the page is still loading. */
     loading: boolean;
     /**
@@ -2411,10 +2488,33 @@ declare namespace BrowserMCP {
      * @default null
      */
     lockedBy: string | null;
+    /**
+     * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+     * Absent = false.
+     */
+    offscreen?: boolean;
+    /**
+     * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+     * profiles.
+     */
+    profile?: string | null;
+    /** Set while the tab is one half of a split view (`tabs.split`). */
+    split?: {
+      /** The tab in the other half. */
+      other: number;
+      /** Width of the left half as a fraction of the page area (0.15–0.85). */
+      ratio: number;
+      /** The half this tab is shown in. */
+      side: "left" | "right";
+    } | null;
     /** Page title. */
     title: string;
     /** Current URL. */
     url: string;
+    /** Browser window that shows the tab. Absent for off-screen tabs. */
+    window?: number | null;
+    /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+    zoom?: number | null;
   }
 
   // ---- nav.stop ----
@@ -3928,6 +4028,32 @@ declare namespace BrowserMCP {
     via: string;
   }
 
+  // ---- page.zoom ----
+
+  /** Arguments of `page.zoom`. */
+  export interface PageZoomArgs {
+    /**
+     * Zoom presets to step: +1 = zoom in (Ctrl+=), -1 = zoom out (Ctrl+-), 0 = reset
+     * (Ctrl+0). Ignored when `level` is given. Without both: just report the zoom.
+     */
+    delta?: number | null;
+    /** New zoom in percent, 25-500 (100 = normal size). */
+    level?: number | null;
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /** Result of `page.zoom`. */
+  export interface PageZoomOutput {
+    /** Zoom in percent after the change. */
+    level: number;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }
+
   // ---- passwords.delete ----
 
   /** Arguments of `passwords.delete`. */
@@ -4015,6 +4141,41 @@ declare namespace BrowserMCP {
     origin: string;
   }
 
+  // ---- permissions.answer ----
+
+  /** Arguments of `permissions.answer`. */
+  export interface PermissionsAnswerArgs {
+    allow: boolean;
+    /** Prompt id (permission.prompt event / permissions_pending). */
+    id: number;
+    /** Also store the answer as a rule for the site (permissions_set), default false. */
+    remember?: boolean | null;
+  }
+
+  /** Result of `permissions.answer`. */
+  export interface PermissionsAnswerOutput {
+    /** False when the request was gone already (page closed or navigated away). */
+    answered: boolean;
+    id: number;
+    /** Rules stored because of `remember`. */
+    remembered: {
+      allow: boolean;
+      /**
+       * One kind of permission a page can ask for.
+       *
+       * - `"screen_capture"`: Screen/tab/window capture (`getDisplayMedia`).
+       * - `"storage_access"`: Storage access (incl. top-level) for third-party frames.
+       * - `"multiple_downloads"`: Several downloads from one page.
+       * - `"local_network"`: Talk to devices on the local network / localhost.
+       * - `"sensors"`: Motion/orientation sensors.
+       * - `"other"`: Anything else (AR/VR, protocol handlers, app install, protected media id, …).
+       */
+      kind: "camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other";
+      /** `https://example.com`, or `*` for every site. */
+      origin: string;
+    }[];
+  }
+
   // ---- permissions.list ----
 
   /**
@@ -4041,6 +4202,30 @@ declare namespace BrowserMCP {
       kind: "camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other";
       /** `https://example.com`, or `*` for every site. */
       origin: string;
+    }[];
+  }
+
+  // ---- permissions.pending ----
+
+  /**
+   * Arguments of `permissions.pending`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type PermissionsPendingArgs = Record<string, never>;
+
+  /** Result of `permissions.pending`. */
+  export interface PermissionsPendingOutput {
+    prompts: {
+      /** Prompt id for `permissions.answer`. */
+      id: number;
+      kinds: ("camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other")[];
+      /** Origin of the page that asks, e.g. `https://maps.example.com`. */
+      origin: string;
+      /**
+       * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+       * On the wire it is a plain number: `3`.
+       */
+      tab: number;
     }[];
   }
 
@@ -4606,11 +4791,15 @@ declare namespace BrowserMCP {
   export interface ProfileListOutput {
     profiles: {
       accept_language: string | null;
+      /** Workspace color in the UI (profile_update color); null = default. */
+      color: string | null;
       id: string;
       /** Identity applied to its new tabs (identity_assign). */
       identity: string | null;
       /** In memory only. */
       incognito: boolean;
+      /** Name shown in the UI (profile_update label; default: the id). */
+      label: string;
       /** The profile the browser started with. */
       launch: boolean;
       /** The browser has it loaded (it has, or had, tabs). */
@@ -4623,6 +4812,25 @@ declare namespace BrowserMCP {
       stored: boolean;
       tabs: number[];
     }[];
+  }
+
+  // ---- profile.update ----
+
+  /** Arguments of `profile.update`. */
+  export interface ProfileUpdateArgs {
+    /** grey, blue, red, yellow, green, pink, purple, cyan or orange; "" = default. */
+    color?: string | null;
+    /** Profile id. A profile without stored settings (e.g. "default") gets an entry. */
+    id: string;
+    /** Name shown in the UI (1-40 characters); "" = back to the id. */
+    label?: string | null;
+  }
+
+  /** Result of `profile.update`. */
+  export interface ProfileUpdateOutput {
+    color: string | null;
+    id: string;
+    label: string;
   }
 
   // ---- proxy.forward_list ----
@@ -6621,6 +6829,8 @@ declare namespace BrowserMCP {
       groupId: string | null;
       /** Tab id, used as `tab` argument by other commands. */
       id: number;
+      /** In-memory profile (nothing written to disk). Absent = false. */
+      incognito?: boolean;
       /** True while the page is still loading. */
       loading: boolean;
       /** Agent lock of the tab; null when no agent owns it. */
@@ -6645,10 +6855,33 @@ declare namespace BrowserMCP {
        * @default null
        */
       lockedBy: string | null;
+      /**
+       * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+       * Absent = false.
+       */
+      offscreen?: boolean;
+      /**
+       * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+       * profiles.
+       */
+      profile?: string | null;
+      /** Set while the tab is one half of a split view (`tabs.split`). */
+      split?: {
+        /** The tab in the other half. */
+        other: number;
+        /** Width of the left half as a fraction of the page area (0.15–0.85). */
+        ratio: number;
+        /** The half this tab is shown in. */
+        side: "left" | "right";
+      } | null;
       /** Page title. */
       title: string;
       /** Current URL. */
       url: string;
+      /** Browser window that shows the tab. Absent for off-screen tabs. */
+      window?: number | null;
+      /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+      zoom?: number | null;
     }[];
   }
 
@@ -6758,6 +6991,8 @@ declare namespace BrowserMCP {
     groupId: string | null;
     /** Tab id, used as `tab` argument by other commands. */
     id: number;
+    /** In-memory profile (nothing written to disk). Absent = false. */
+    incognito?: boolean;
     /** True while the page is still loading. */
     loading: boolean;
     /**
@@ -6765,12 +7000,76 @@ declare namespace BrowserMCP {
      * @default null
      */
     lockedBy: string | null;
+    /**
+     * Off-screen (windowless automation) tab: not shown in any window's tab strip.
+     * Absent = false.
+     */
+    offscreen?: boolean;
+    /**
+     * Profile (= workspace in the UI) the tab runs in. Absent for backends without
+     * profiles.
+     */
+    profile?: string | null;
+    /** Set while the tab is one half of a split view (`tabs.split`). */
+    split?: {
+      /** The tab in the other half. */
+      other: number;
+      /** Width of the left half as a fraction of the page area (0.15–0.85). */
+      ratio: number;
+      /** The half this tab is shown in. */
+      side: "left" | "right";
+    } | null;
     /** Id of the new tab (same as `id`; kept for older clients). */
     tab: number;
     /** Page title. */
     title: string;
     /** Current URL. */
     url: string;
+    /** Browser window that shows the tab. Absent for off-screen tabs. */
+    window?: number | null;
+    /** Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-). */
+    zoom?: number | null;
+  }
+
+  // ---- tabs.restore_closed ----
+
+  /**
+   * Arguments of `tabs.restore_closed`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type TabsRestoreClosedArgs = Record<string, never>;
+
+  /** Result of `tabs.restore_closed`. */
+  export interface TabsRestoreClosedOutput {
+    /** The re-opened tab; null when no closed tab is remembered. */
+    tab: number | null;
+  }
+
+  // ---- tabs.split ----
+
+  /** Arguments of `tabs.split`. */
+  export interface TabsSplitArgs {
+    /** Tab shown in the left half. */
+    left: number;
+    /** Width of the left half as a fraction of the page area, 0.15–0.85 (default 0.5). */
+    ratio?: number | null;
+    /** Tab shown in the right half (same window as `left`). */
+    right: number;
+  }
+
+  /** Result of `tabs.split`. */
+  export interface TabsSplitOutput {
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    left: number;
+    ratio: number;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    right: number;
   }
 
   // ---- tabs.unlock ----
@@ -6808,6 +7107,20 @@ declare namespace BrowserMCP {
      * On the wire it is a plain number: `3`.
      */
     tab: number;
+  }
+
+  // ---- tabs.unsplit ----
+
+  /** Arguments of `tabs.unsplit`. */
+  export interface TabsUnsplitArgs {
+    /** A tab of the split view to end. Default: the split view of the window used last. */
+    tab?: number | null;
+  }
+
+  /** Result of `tabs.unsplit`. */
+  export interface TabsUnsplitOutput {
+    /** The tabs that were split (empty when there was no split view). */
+    tabs: number[];
   }
 
   // ---- term.close ----
@@ -7560,6 +7873,8 @@ declare namespace BrowserMCP {
     "page.text": { args: PageTextArgs; output: PageTextOutput };
     /** Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist. */
     "page.upload": { args: PageUploadArgs; output: PageUploadOutput };
+    /** Page zoom of a tab in percent: level sets it (25-500), delta steps through Chrome's presets (+1 in, -1 out, 0 reset); without both it only reports the zoom. Remembered per host. */
+    "page.zoom": { args: PageZoomArgs; output: PageZoomOutput };
     /** Delete a saved login by id. Returns {deleted: true}. */
     "passwords.delete": { args: PasswordsDeleteArgs; output: PasswordsDeleteOutput };
     /** Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved. */
@@ -7568,8 +7883,12 @@ declare namespace BrowserMCP {
     "passwords.list": { args: PasswordsListArgs; output: PasswordsListOutput };
     /** Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}. */
     "passwords.save": { args: PasswordsSaveArgs; output: PasswordsSaveOutput };
+    /** Answer a page's waiting permission request (allow or block); remember: true also stores the answer for that site. */
+    "permissions.answer": { args: PermissionsAnswerArgs; output: PermissionsAnswerOutput };
     /** List the stored site permission rules (everything else is denied). */
     "permissions.list": { args: PermissionsListArgs; output: PermissionsListOutput };
+    /** Permission requests of pages that wait for a person (the browser's permission bar): id, tab, origin, kinds. Answer with permissions_answer. */
+    "permissions.pending": { args: PermissionsPendingArgs; output: PermissionsPendingOutput };
     /** Allow or deny a permission (camera, microphone, geolocation, notifications, …) for a site; without a rule every permission request of a web page is denied. */
     "permissions.set": { args: PermissionsSetArgs; output: PermissionsSetOutput };
     /** Disable a plugin: stop its process and revoke its connection token. */
@@ -7596,6 +7915,8 @@ declare namespace BrowserMCP {
     "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
     /** List browser profiles: stored settings (proxy, language), assigned identity, and which are open with which tabs (incl. in-memory/incognito ones). */
     "profile.list": { args: ProfileListArgs; output: ProfileListOutput };
+    /** Rename a profile (its workspace name in the browser UI) and/or set its color. Proxy, identity and language stay as they are (profile_create changes those). */
+    "profile.update": { args: ProfileUpdateArgs; output: ProfileUpdateOutput };
     /** List running local proxy forwarders. */
     "proxy.forward_list": { args: ProxyForwardListArgs; output: ProxyForwardListOutput };
     /** Start a local proxy on 127.0.0.1 (SOCKS5 and HTTP, no auth) that forwards through an authenticated upstream proxy — Chromium cannot do SOCKS5 auth itself. Returns the local address to configure as the browser proxy. */
@@ -7706,8 +8027,14 @@ declare namespace BrowserMCP {
     "tabs.lock": { args: TabsLockArgs; output: TabsLockOutput };
     /** Open a URL in a new tab (background: true keeps the current tab shown). Optional: profile (own cookies/proxy/identity), incognito (in memory), window: "new" | "offscreen" (own window / no window, for parallel automation). Returns the new tab; its id is in `tab` and `id`. */
     "tabs.open": { args: TabsOpenArgs; output: TabsOpenOutput };
+    /** Re-open the most recently closed tab (URL and profile, at its old place). Returns null when nothing is left to restore. */
+    "tabs.restore_closed": { args: TabsRestoreClosedArgs; output: TabsRestoreClosedOutput };
+    /** Split view: show two tabs of the same window side by side (left | right, ratio = width of the left half, default 0.5). Each half keeps its own tab; activating either shows both. Calling it again changes the pair or the ratio. */
+    "tabs.split": { args: TabsSplitArgs; output: TabsSplitOutput };
     /** Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues). */
     "tabs.unlock": { args: TabsUnlockArgs; output: TabsUnlockOutput };
+    /** End a split view: both tabs stay open, the focused one is shown alone. */
+    "tabs.unsplit": { args: TabsUnsplitArgs; output: TabsUnsplitOutput };
     /** Close a terminal (kills its shell). */
     "term.close": { args: TermCloseArgs; output: TermCloseOutput };
     /** List open terminals (id, shell, size, pid, exit code). */
@@ -8376,6 +8703,12 @@ declare namespace BrowserMCP {
        * `page.upload` (MCP: `page_upload`): toolset `core`, act, mutates the tab.
        */
       upload(args: PageUploadArgs): Promise<PageUploadOutput>;
+      /**
+       * Page zoom of a tab in percent: level sets it (25-500), delta steps through Chrome's presets (+1 in, -1 out, 0 reset); without both it only reports the zoom. Remembered per host.
+       *
+       * `page.zoom` (MCP: `page_zoom`): toolset `core`, act.
+       */
+      zoom(args?: PageZoomArgs): Promise<PageZoomOutput>;
     };
     /** Commands `passwords.*`. */
     passwords: {
@@ -8407,11 +8740,23 @@ declare namespace BrowserMCP {
     /** Commands `permissions.*`. */
     permissions: {
       /**
+       * Answer a page's waiting permission request (allow or block); remember: true also stores the answer for that site.
+       *
+       * `permissions.answer` (MCP: `permissions_answer`): toolset `profile`, act.
+       */
+      answer(args: PermissionsAnswerArgs): Promise<PermissionsAnswerOutput>;
+      /**
        * List the stored site permission rules (everything else is denied).
        *
        * `permissions.list` (MCP: `permissions_list`): toolset `profile`, read.
        */
       list(args?: PermissionsListArgs): Promise<PermissionsListOutput>;
+      /**
+       * Permission requests of pages that wait for a person (the browser's permission bar): id, tab, origin, kinds. Answer with permissions_answer.
+       *
+       * `permissions.pending` (MCP: `permissions_pending`): toolset `profile`, read.
+       */
+      pending(args?: PermissionsPendingArgs): Promise<PermissionsPendingOutput>;
       /**
        * Allow or deny a permission (camera, microphone, geolocation, notifications, …) for a site; without a rule every permission request of a web page is denied.
        *
@@ -8496,6 +8841,12 @@ declare namespace BrowserMCP {
        * `profile.list` (MCP: `profile_list`): toolset `profile`, read.
        */
       list(args?: ProfileListArgs): Promise<ProfileListOutput>;
+      /**
+       * Rename a profile (its workspace name in the browser UI) and/or set its color. Proxy, identity and language stay as they are (profile_create changes those).
+       *
+       * `profile.update` (MCP: `profile_update`): toolset `profile`, act.
+       */
+      update(args: ProfileUpdateArgs): Promise<ProfileUpdateOutput>;
     };
     /** Commands `proxy.*`. */
     proxy: {
@@ -8851,11 +9202,29 @@ declare namespace BrowserMCP {
        */
       open(args?: TabsOpenArgs): Promise<TabsOpenOutput>;
       /**
+       * Re-open the most recently closed tab (URL and profile, at its old place). Returns null when nothing is left to restore.
+       *
+       * `tabs.restore_closed` (MCP: `tabs_restore_closed`): toolset `core`, act.
+       */
+      restore_closed(args?: TabsRestoreClosedArgs): Promise<TabsRestoreClosedOutput>;
+      /**
+       * Split view: show two tabs of the same window side by side (left | right, ratio = width of the left half, default 0.5). Each half keeps its own tab; activating either shows both. Calling it again changes the pair or the ratio.
+       *
+       * `tabs.split` (MCP: `tabs_split`): toolset `core`, act.
+       */
+      split(args: TabsSplitArgs): Promise<TabsSplitOutput>;
+      /**
        * Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues).
        *
        * `tabs.unlock` (MCP: `tabs_unlock`): toolset `core`, act.
        */
       unlock(args: TabsUnlockArgs): Promise<TabsUnlockOutput>;
+      /**
+       * End a split view: both tabs stay open, the focused one is shown alone.
+       *
+       * `tabs.unsplit` (MCP: `tabs_unsplit`): toolset `core`, act.
+       */
+      unsplit(args?: TabsUnsplitArgs): Promise<TabsUnsplitOutput>;
     };
     /** Commands `term.*`. */
     term: {

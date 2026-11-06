@@ -66,11 +66,12 @@ tabs and side panels work without extra views** (S1 used a fixed top strip).
 
 ## Not done / known gaps
 
-* One `tabs.list` for all windows; a second window (only via `--layout single` today) would show
-  all tabs in each UI. Per-window filtering needs a window id in the UI.
-* Menus/dropdowns of the chrome that reach into the page area are hidden under the page.
+* ~~One `tabs.list` for all windows~~: tabs now carry `window`, the chrome filters by its
+  `?window=` key (`docs/phase2/chrome-features.md`).
+* ~~Menus/dropdowns hidden under the page~~: the page is hidden while one is open (same doc).
 * Shortcuts from pages use the default keymap only (no `keymap.json` yet).
 * Closing a window whose tabs cancel `beforeunload` leaves the window open with the other tabs
   detached one by one (not tested with a real prompt).
-* Session restore, tab groups (`groups` is always `[]`), drag-reorder (`tabs.move`) are later.
+* Session restore is done (`docs/phase2/chrome-features.md`); tab groups (`groups` is always
+  `[]`), drag-reorder (`tabs.move`) are later.
 * `cef::shutdown()` still sometimes takes ~15–20 s (seen once in this phase, S1 pitfall).
