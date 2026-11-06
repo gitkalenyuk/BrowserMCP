@@ -104,6 +104,7 @@ impl Inner {
                 script: &path,
                 inputs,
                 timeout,
+                kill_grace: self.config.kill_grace,
             },
             cancel,
         )

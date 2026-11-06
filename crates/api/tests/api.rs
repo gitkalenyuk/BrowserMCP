@@ -323,12 +323,13 @@ async fn send_json(socket: &mut Socket, value: Value) {
     socket.send(Message::text(value.to_string())).await.unwrap();
 }
 
-/// Next JSON message from the server (fails the test after 5 s).
+/// Next JSON message from the server (fails the test after 30 s: only a real hang, never a
+/// busy machine, gets there).
 async fn next_json(socket: &mut Socket) -> Value {
     loop {
-        let message = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        let message = tokio::time::timeout(Duration::from_secs(30), socket.next())
             .await
-            .expect("no message within 5 s")
+            .expect("no message within 30 s")
             .expect("socket closed")
             .unwrap();
         if let Message::Text(text) = message {
@@ -472,7 +473,7 @@ async fn websocket_json_rpc_and_events() {
 
     // Shutdown closes the connection.
     shutdown.cancel();
-    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+    let closed = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(Ok(message)) = socket.next().await {
             if message.is_close() {
                 break;

@@ -338,7 +338,7 @@ async fn stop_cancels_a_running_model_call() {
     .await
     .unwrap();
     // Wait until the session is running, then stop it.
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         while rx.recv().await.unwrap().data["status"] != "running" {}
     })
     .await

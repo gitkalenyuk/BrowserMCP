@@ -153,13 +153,28 @@ mod tests {
 
     use super::*;
 
+    /// Upper bound for every wait below. ping.exe runs for ~10 minutes, so "stdout closed
+    /// within PATIENCE" can only mean it was killed, however busy the machine is.
+    const PATIENCE: Duration = Duration::from_secs(90);
+
     /// `cmd /c ping` = cmd.exe with a ping.exe grandchild that shares our stdout pipe, the same
     /// shape as an npm `claude.cmd` shim running node.exe.
     fn spawn_shim_like_tree() -> tokio::process::Child {
         crate::cli::command(std::path::Path::new("cmd.exe"), &std::env::temp_dir())
-            .args(["/c", "ping -n 60 127.0.0.1"])
+            .args(["/c", "ping -n 600 127.0.0.1"])
             .spawn()
             .expect("start cmd.exe")
+    }
+
+    /// Wait until ping.exe runs: `cmd /c` prints nothing itself, so any output is ping's.
+    /// Killing before that would race with cmd.exe still creating its child.
+    async fn wait_for_ping(stdout: &mut tokio::process::ChildStdout) {
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(PATIENCE, stdout.read(&mut buf))
+            .await
+            .expect("ping output")
+            .unwrap();
+        assert!(n > 0, "stdout closed before ping printed anything");
     }
 
     #[tokio::test]
@@ -168,19 +183,13 @@ mod tests {
         let tree = ProcessTree::new(child.id());
         assert!(tree.job.is_some(), "job object should be available");
         let mut stdout = child.stdout.take().unwrap();
-        // Wait until ping runs (it prints its first line).
-        let mut buf = [0u8; 64];
-        let n = tokio::time::timeout(Duration::from_secs(10), stdout.read(&mut buf))
-            .await
-            .expect("ping output")
-            .unwrap();
-        assert!(n > 0);
+        wait_for_ping(&mut stdout).await;
 
         tree.kill();
         let _ = child.kill().await;
         // Only ping.exe could keep the pipe open: EOF means it is gone too.
         let mut rest = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), stdout.read_to_end(&mut rest))
+        tokio::time::timeout(PATIENCE, stdout.read_to_end(&mut rest))
             .await
             .expect("stdout should close once the whole tree is killed")
             .unwrap();
@@ -190,11 +199,15 @@ mod tests {
     async fn taskkill_fallback_kills_the_tree_too() {
         let mut child = spawn_shim_like_tree();
         let mut stdout = child.stdout.take().unwrap();
-        let mut buf = [0u8; 64];
-        let _ = tokio::time::timeout(Duration::from_secs(10), stdout.read(&mut buf)).await;
-        taskkill_tree(child.id().unwrap());
+        wait_for_ping(&mut stdout).await;
+        let pid = child.id().unwrap();
+        // taskkill is synchronous and can be slow on a loaded machine: keep it off the
+        // runtime threads.
+        tokio::task::spawn_blocking(move || taskkill_tree(pid))
+            .await
+            .unwrap();
         let mut rest = Vec::new();
-        tokio::time::timeout(Duration::from_secs(5), stdout.read_to_end(&mut rest))
+        tokio::time::timeout(PATIENCE, stdout.read_to_end(&mut rest))
             .await
             .expect("stdout should close after taskkill /T")
             .unwrap();

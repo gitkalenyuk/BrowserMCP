@@ -43,9 +43,9 @@ pub const HOST_EXE: &str = if cfg!(windows) {
     "bmcp-script-host"
 };
 
-/// Extra time after `--timeout-secs` before we kill the process ourselves (the host normally
-/// stops on its own and exits with 124).
-const KILL_GRACE: Duration = Duration::from_secs(5);
+/// Default extra time after `--timeout-secs` before we kill the process ourselves (the host
+/// normally stops on its own and exits with 124). See [`HostRun::kill_grace`].
+pub const DEFAULT_KILL_GRACE: Duration = Duration::from_secs(5);
 /// How much of stdout / stderr we keep.
 const STDOUT_TAIL: usize = 4 * 1024;
 const STDERR_TAIL: usize = 16 * 1024;
@@ -176,6 +176,8 @@ pub struct HostRun<'a> {
     pub script: &'a Path,
     pub inputs: &'a [(String, String)],
     pub timeout: Duration,
+    /// Kill the process if it is still running `timeout + kill_grace` after the start.
+    pub kill_grace: Duration,
 }
 
 /// A run's inputs as a temporary JSON object file for `--inputs-file`; deleted on drop.
@@ -277,7 +279,7 @@ pub async fn run_host(run: HostRun<'_>, cancel: &CancellationToken) -> HostOutco
 
     let status = tokio::select! {
         status = child.wait() => Some(status),
-        _ = tokio::time::sleep(run.timeout + KILL_GRACE) => None,
+        _ = tokio::time::sleep(run.timeout + run.kill_grace) => None,
         _ = cancel.cancelled() => None,
     };
     if status.is_none() {

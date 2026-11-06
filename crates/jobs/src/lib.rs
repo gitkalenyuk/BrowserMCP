@@ -84,6 +84,9 @@ pub struct JobsConfig {
     pub auto_limit: bool,
     /// Hard upper limit of worker slots per run.
     pub max_parallel: usize,
+    /// Extra time after a script's timeout before its host process is killed (the host
+    /// normally stops on its own and exits with 124). Default [`host::DEFAULT_KILL_GRACE`].
+    pub kill_grace: Duration,
 }
 
 impl JobsConfig {
@@ -99,6 +102,7 @@ impl JobsConfig {
             retry_backoff: Duration::from_secs(1),
             auto_limit: true,
             max_parallel: 32,
+            kill_grace: host::DEFAULT_KILL_GRACE,
         }
     }
 }

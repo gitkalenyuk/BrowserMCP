@@ -390,7 +390,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let shim = dir.path().join("claude.cmd");
-        std::fs::write(&shim, "@ping -n 60 127.0.0.1\r\n").unwrap();
+        std::fs::write(&shim, "@ping -n 600 127.0.0.1\r\n").unwrap();
         let (session, input) = Session::new(
             "cc-test".into(),
             "claude-code".into(),
@@ -416,14 +416,15 @@ mod tests {
 
         let stopped = Instant::now();
         session.cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(30), task)
+        tokio::time::timeout(Duration::from_secs(120), task)
             .await
             .expect("the session task must finish after stop")
             .unwrap();
-        // Well below the (test) reader grace of 20 s: stdout closed because ping.exe died too,
-        // not because the grace ran out. Generous margin for a busy CI/dev machine.
+        // Well below the (test) reader grace of 60 s (ping itself would run ~10 min): stdout
+        // closed because ping.exe died too, not because the grace ran out. Generous margin
+        // for a busy CI/dev machine.
         assert!(
-            stopped.elapsed() < Duration::from_secs(12),
+            stopped.elapsed() < Duration::from_secs(40),
             "took {:?}",
             stopped.elapsed()
         );
