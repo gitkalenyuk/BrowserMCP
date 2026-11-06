@@ -58,7 +58,10 @@
       <button class="icon-btn" aria-label="Dismiss" onclick={() => (chrome.lastError = null)}><Icon name="x" size={14} /></button>
     </div>
   {/if}
-  <CommandPalette />
+  {#if !chrome.host}
+    <!-- Inside the browser the palette is its own overlay view (palette.html). -->
+    <CommandPalette />
+  {/if}
 </div>
 
 <style>
@@ -122,5 +125,11 @@
   }
   :global(body.embedded) {
     background: transparent;
+  }
+  /* Inside the browser the page covers everything below the toolbar, so the toast sits
+     over the tab strip instead of at the bottom. */
+  :global(body.embedded) .toast {
+    top: 4px;
+    bottom: auto;
   }
 </style>

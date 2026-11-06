@@ -31,6 +31,8 @@ export interface TabInfo {
   groupId: GroupId | null;
   /** Agent currently holding the tab lock; null when the human is in control. */
   lockedBy: AgentId | null;
+  /** Sent by the core in tabs.list / tab.created (the UI uses TabsSnapshot.activeId instead). */
+  active?: boolean;
 }
 
 export interface TabGroup {
@@ -90,7 +92,8 @@ export interface Script {
 
 export interface Bookmark {
   title: string;
-  url: string;
+  /** Null for folders. */
+  url: string | null;
 }
 
 export interface Rect {
@@ -112,7 +115,8 @@ type TabParam = { tab: TabId };
 /** Every JSON-RPC method the chrome calls: name -> params / result. */
 export interface RpcMethods {
   'tabs.list': { params: void; result: TabsSnapshot };
-  'tabs.open': { params: { url?: string; activate?: boolean }; result: TabInfo };
+  /** `background: true` opens without switching to it (default: the new tab becomes active). */
+  'tabs.open': { params: { url?: string; background?: boolean }; result: TabInfo };
   'tabs.close': { params: TabParam; result: void };
   'tabs.activate': { params: TabParam; result: void };
   /** Human takes the tab back from an agent (releases the agent lock). */
@@ -130,8 +134,9 @@ export interface RpcMethods {
   'runs.patch.reject': { params: { id: string }; result: void };
   'scripts.list': { params: void; result: Script[] };
   'scripts.run': { params: { id: string }; result: { runId: string } };
-  'data.bookmarks': { params: void; result: Bookmark[] };
-  'data.topSites': { params: void; result: Bookmark[] };
+  // Shapes follow the Rust commands (crates/data): object outputs, folders have no url.
+  'data.bookmarks': { params: void; result: { bookmarks: Bookmark[] } };
+  'data.top_sites': { params: void; result: { sites: Bookmark[] } };
   'ai.prompt': { params: { text: string; provider: string }; result: { sessionId: string } };
   /** Reports the page area's bounds (CSS px, relative to the UI view) so the core can place the content view. */
   'ui.layout': { params: Rect & { dpr: number }; result: void };

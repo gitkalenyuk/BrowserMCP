@@ -58,9 +58,29 @@ Emitted today (by the registry, `crates/core/src/command/registry.rs`), for ever
 | `command.rejected` | `{call_id, name, caller, args, error, message}` (unknown command, bad args, tab locked) |
 | `bus.lagged` | `{missed}` — WS only, generated per connection |
 
-**Not emitted yet:** tab lifecycle events. They will come from the CEF layer (`crates/cef`
-emitting on the `EventBus`); the WS server forwards them unchanged. The UI
-(`ui/src/lib/api/types.ts`, `ApiEvents`) expects exactly these payloads:
+Emitted by `crates/net` (subscribe with `events.subscribe {"topics":["net.*"]}`):
+
+| Topic | Data |
+|---|---|
+| `net.paused` | `{pause_id, tab, rule, stage, method, url, resource_type, headers, post_data?, status?, response_headers?}` — a breakpoint holds a request; answer with `net.resume` |
+| `net.pause_timeout` | `{pause_id, tab, url, warning}` — not resumed within 60 s, continued unchanged |
+| `net.intercept_error` | `{tab, request_id, call, error, warning}` — a rule/resume change failed; the request was continued unchanged |
+| `net.lagged` | `{tab, missed, warning}` — the capture fell behind and lost CDP events |
+
+Tab lifecycle events come from the CEF layer (`crates/cef/src/bridge.rs`) on the same
+`EventBus` (created in `crates/app/src/main.rs` and passed to both CEF and `serve`); the WS
+server forwards them unchanged. Payloads are built in one place,
+`bmcp_core::events::tab` (unit-tested):
+
+| Topic | Data |
+|---|---|
+| `tab.created` | `{tab: TabInfo, index}` (index in the window's tab strip) |
+| `tab.updated` | `{id, title, url, loading, favicon, canGoBack, canGoForward}` — full set, every change, no debounce |
+| `tab.closed` | `{id}` |
+| `tab.activated` | `{id}` |
+
+Not emitted yet: `tabs.reset`, `agents.updated`, `workspace.activated`, `runs.updated`.
+The UI (`ui/src/lib/api/types.ts`, `ApiEvents`) expects exactly these payloads:
 
 ```ts
 'tab.created':   { tab: TabInfo; index: number };

@@ -1,0 +1,32 @@
+[package]
+name = "bmcp-ai"
+description = "BrowserMCP built-in AI: model providers, agent loop, Claude Code / Codex adapters, PTY terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+# `process` + `io-util`: Claude Code / Codex child processes talk JSON lines over stdio.
+tokio = { workspace = true, features = ["process", "io-util"] }
+# HTTPS to the model APIs. rustls with the `ring` provider (no C toolchain needed beyond cc);
+# `stream` for SSE responses.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+futures-util = "0.3"
+# Real pseudo-terminals (ConPTY on Windows) for `term.*`.
+portable-pty = "0.9"
+# Finds `claude` / `codex` on PATH (handles .exe / .cmd on Windows).
+which = "6"
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+# Mock HTTP servers for the provider adapters: no real (paid) model calls in tests.
+wiremock = "0.6"
+tempfile.workspace = true

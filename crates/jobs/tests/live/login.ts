@@ -2,7 +2,9 @@
 // Signs in on tests/fixtures/sites/login.html with inputs.email / inputs.password and
 // reports the welcome text with browser.output(). A wrong password throws, so the row fails.
 //
-// Each row opens its own tab: rows run in parallel and share the default profile.
+// Each row opens (and closes) its own tab; all rows share the default profile. NOTE: with
+// parallel > 1 rows currently interfere (keyboard input reaches the wrong background tab), so
+// run it with parallel: 1 until rows get isolated profiles/windows.
 
 const url = inputs.url ?? "http://127.0.0.1:8765/login.html";
 const { tab } = (await browser.tabs.open({ url })) as { tab: number };
@@ -21,15 +23,19 @@ async function find(args: Record<string, unknown>): Promise<string> {
   return ref;
 }
 
-await browser.page.act({ tab, ref: await find({ role: "textbox", name: "Email" }), action: "fill", value: inputs.email });
-await browser.page.act({ tab, ref: await find({ role: "textbox", name: "Password" }), action: "fill", value: inputs.password });
-await browser.page.act({ tab, ref: await find({ role: "button", name: "Sign in" }), action: "click" });
+try {
+  await browser.page.act({ tab, ref: await find({ role: "textbox", name: "Email" }), action: "fill", value: inputs.email });
+  await browser.page.act({ tab, ref: await find({ role: "textbox", name: "Password" }), action: "fill", value: inputs.password });
+  await browser.page.act({ tab, ref: await find({ role: "button", name: "Sign in" }), action: "click" });
 
-const welcome = (await browser.page.find({ tab, role: "heading", text: "Welcome" })) as Found;
-if (welcome.total === 0) {
-  const alert = (await browser.page.find({ tab, text: "Wrong password" })) as Found;
-  throw new Error(alert.total > 0 ? "login failed: Wrong password" : "login failed: no welcome heading");
+  const welcome = (await browser.page.find({ tab, role: "heading", text: "Welcome" })) as Found;
+  if (welcome.total === 0) {
+    const alert = (await browser.page.find({ tab, text: "Wrong password" })) as Found;
+    throw new Error(alert.total > 0 ? "login failed: Wrong password" : "login failed: no welcome heading");
+  }
+  const text = welcome.text.match(/"([^"]+)"/)?.[1] ?? welcome.text;
+  console.log(`signed in as ${inputs.email}`);
+  browser.output({ welcome: text, tab });
+} finally {
+  await browser.tabs.close({ tab });
 }
-const text = welcome.text.match(/"([^"]+)"/)?.[1] ?? welcome.text;
-console.log(`signed in as ${inputs.email}`);
-browser.output({ welcome: text, tab });

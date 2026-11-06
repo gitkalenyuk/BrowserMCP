@@ -1,0 +1,9 @@
+---
+source: crates/perception/tests/fixtures.rs
+assertion_line: 550
+expression: result.to_text()
+---
+find 1: 3 of 40 matches (narrow the filter to see the rest)
+- button "Add to cart" @1:e1 in main > list "Products" > listitem "Product 1 $11.99 Add to cart"
+- button "Add to cart" @1:e2 in main > list "Products" > listitem "Product 2 $12.99 Add to cart"
+- button "Add to cart" @1:e3 in main > list "Products" > listitem "Product 3 $13.99 Add to cart"

@@ -47,6 +47,10 @@ run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
   continues it.
 * **Profiles:** today all rows share the browser's default profile (each row should open its
   own tab). `profile` only accepts `"default"`; TODO: isolated per-row profiles.
+  **Known issue:** with `parallel > 1`, rows that type into pages interfere: `page.act fill`
+  input lands in another (background) tab and background tabs report "no box". The live test
+  below had to run with `parallel: 1` for correct results; parallel rows need isolated
+  windows/profiles (or tab-targeted input) first.
 
 **Self-healing.** When a row fails (after its retries) with `NOT_FOUND`, `NOT_INTERACTABLE`,
 `STALE_REF`, `TIMEOUT` or `AMBIGUOUS_TARGET` from a `page.*` call, the row becomes `needs_heal`,
