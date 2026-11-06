@@ -46,13 +46,13 @@ it — `bmcp_record::video::find_ffmpeg`), filter lists (downloaded into `data/f
 
 ### Sizes (0.1.0, CEF 156.0.15)
 
-Measured 2026-11-06 with the default `--locales en-US,uk`:
+Measured 2026-11-06 (after merging main) with the default `--locales en-US,uk`:
 
 | Entry | Size |
 |---|---|
 | `libcef.dll` | 280.7 MB |
 | `bmcp-script-host.exe` | 54.4 MB |
-| `browsermcp.exe` (UI embedded) | 50.5 MB |
+| `browsermcp.exe` (UI embedded) | 52.5 MB |
 | `dxcompiler.dll` | 24.8 MB |
 | `resources.pak` | 23.5 MB |
 | `icudtl.dat` | 10.3 MB |
@@ -62,8 +62,8 @@ Measured 2026-11-06 with the default `--locales en-US,uk`:
 | `chrome_elf.dll` | 2.7 MB |
 | `locales/` (8 of 220 files; all would be ~50 MB) | 1.8 MB |
 | everything else (`vulkan-1.dll`, 100/200 % paks, snapshot, THIRD_PARTY.txt 0.8 MB, README) | 3.9 MB |
-| **folder total** | **467.4 MB** |
-| **`BrowserMCP-0.1.0-win64.zip`** | **208.4 MB** |
+| **folder total** | **469.4 MB** |
+| **`BrowserMCP-0.1.0-win64.zip`** | **209.1 MB** |
 
 THIRD_PARTY.txt: 408 Rust crates and 8 npm packages, 260 distinct license texts.
 
@@ -71,26 +71,26 @@ Ways to shrink further if it ever matters: `--skip-script-host` (−54 MB, no sc
 `dxcompiler.dll` (−25 MB, WebGPU loses its D3D12 shader compiler), `vk_swiftshader*` (−5 MB, no
 software WebGL fallback). Not done by default: they are cheap insurance on unusual machines.
 
-## Verification (done on the 0.1.0 build)
+## Verification (done on the 0.1.0 build, before and again after merging main)
 
 Ran the packaged `browsermcp.exe` from `dist/BrowserMCP-0.1.0-win64/` (working directory
 `%TEMP%`, so a cwd-relative path would have shown up there) with `--api-port 47891`:
 
-* `GET /v1/health` → `{"ok":true,"name":"BrowserMCP","version":"0.1.0","commands":178}`.
+* `GET /v1/health` → `{"ok":true,"name":"BrowserMCP","version":"0.1.0","commands":190}`.
 * MCP over Streamable HTTP: `initialize` → 200 with `Mcp-Session-Id`, serverInfo `browsermcp 0.1.0`;
-  `tools/list` → 34 tools (default toolsets).
+  `tools/list` → 36 tools (default toolsets).
 * REST `tabs.open {"url":"https://example.com/"}` → new tab; `tabs.list` a few seconds later shows
   it loaded ("Example Domain"). The first start also opened the `bmcp://ui/library.html` import
   page, i.e. the embedded Svelte UI (not the placeholder) is served.
 * REST `script.run` with inline TypeScript (`browser.tabs.list()` + `browser.output(...)`) →
-  `{"ok":true,"exit_code":0,"result":{"tabs":3,"sum":42}}` in 651 ms: `bmcp-script-host.exe` was
+  `{"ok":true,"exit_code":0,"result":{"tabs":3,"sum":42}}` in 586 ms: `bmcp-script-host.exe` was
   found next to `browsermcp.exe` and talked back over the WebSocket.
 * `browsermcp.exe mcp-stdio --api-port 47892` (against a second packaged instance): `initialize`
   and `tools/list` answered on stdout although the release exe is a GUI-subsystem binary.
 * Stopped with `taskkill /PID <pid> /T /F` (own PIDs only); no package process left. A forced kill
   leaves `data/runtime/endpoint.json` behind (a normal window close removes it).
 * Writes outside the package: every file under `%APPDATA%` and `%LOCALAPPDATA%` (Temp excluded)
-  modified during the run belonged to other programs (Claude desktop/CLI, PowerShell, pnpm); no new
+  modified during the run belonged to other programs (Claude desktop/CLI, PowerShell, npm/pnpm caches, Windows Terminal, the OS WebCache); no new
   `HKCU\Software` key. Everything of ours was under `data/`: `config/notify.json`,
   `db/browsermcp.sqlite`, `db/runs.sqlite`, `logs/cef.log`, `profiles/` (Chromium's `Local State`,
   component data, GPU caches, `profiles/default`), `runtime/endpoint.json`. `script.run` writes its
