@@ -150,7 +150,6 @@ async fn create_with_proxy_uses_a_local_forwarder() {
         last.prefs.accept_language.as_deref(),
         Some("de-DE,de;q=0.9")
     );
-    assert!(last.proxy_auth.is_none());
 
     // Stored with the password (masked only in output).
     let text = std::fs::read_to_string(s.dir.path().join("config/profiles.json")).unwrap();
@@ -196,12 +195,20 @@ async fn create_rejects_bad_input() {
 }
 
 #[tokio::test]
-async fn http_proxy_without_forwarder_answers_auth() {
+async fn http_proxy_without_forwarder_only_without_password() {
     let s = setup();
-    call(
+    let err = call(
         &s,
         "profile.create",
         json!({"id": "h", "proxy": "http://bob:pw@proxy.test:3128", "forward": false}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+    call(
+        &s,
+        "profile.create",
+        json!({"id": "h", "proxy": "http://proxy.test:3128", "forward": false}),
     )
     .await
     .unwrap();
@@ -210,7 +217,6 @@ async fn http_proxy_without_forwarder_answers_auth() {
         last.prefs.proxy_server.as_deref(),
         Some("http://proxy.test:3128")
     );
-    assert_eq!(last.proxy_auth.unwrap().password, "pw");
 }
 
 #[tokio::test]

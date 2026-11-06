@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use bmcp_core::{CmdError, Ctx, ErrorCode};
-use bmcp_identity::proxy::Scheme;
+
 use bmcp_identity::store::JsonStore;
 use bmcp_identity::{Forwarder, ProxyConfig};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{ProfileBackend, ProfileSettings, ProxyAuth};
+use crate::backend::{ProfileBackend, ProfileSettings};
 use crate::prefs::Prefs;
 
 /// Settings of one profile as stored on disk.
@@ -22,7 +22,7 @@ pub struct ProfileConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
     /// Go through the local forwarder (default true). `false` = Chromium talks to the proxy
-    /// itself (HTTP proxies only; the password is answered in `GetAuthCredentials`).
+    /// itself (only for proxies without a password).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forward: Option<bool>,
     /// Hosts that skip the proxy (Chromium syntax, `;`-separated, e.g. `<local>;*.lan`).
@@ -48,10 +48,9 @@ pub enum ProxyPlan {
     Direct,
     /// Through a local forwarder chained to this upstream.
     Forward(ProxyConfig),
-    /// Chromium uses `server` itself, answering proxy auth with `auth`.
+    /// Chromium uses `server` itself (only proxies without a password).
     Fixed {
         server: String,
-        auth: Option<ProxyAuth>,
     },
 }
 
@@ -70,17 +69,16 @@ pub fn plan_proxy(config: &ProfileConfig) -> Result<ProxyPlan, CmdError> {
     if config.forward.unwrap_or(true) {
         return Ok(ProxyPlan::Forward(proxy));
     }
-    if proxy.scheme == Scheme::Socks5 && proxy.has_auth() {
+    if proxy.has_auth() {
+        // Live finding (CEF 156): `CefRequestHandler::GetAuthCredentials` is not called for
+        // proxy challenges of our contexts; Chromium's own login prompt takes over, has no UI
+        // in Alloy and crashed the browser. So the password always goes through the forwarder.
         return Err(CmdError::invalid_params(
-            "Chromium cannot log in to a SOCKS5 proxy: keep forward: true (the default)",
+            "a proxy with a password needs the local forwarder: keep forward: true (the default)",
         ));
     }
     let server = format!("{}://{}", proxy.scheme.as_str(), proxy.host_port());
-    let auth = proxy.username.clone().map(|username| ProxyAuth {
-        username,
-        password: proxy.password.clone().unwrap_or_default(),
-    });
-    Ok(ProxyPlan::Fixed { server, auth })
+    Ok(ProxyPlan::Fixed { server })
 }
 
 /// Shared state of the profile commands (in the registry's extensions).
@@ -157,14 +155,14 @@ impl ProfilesService {
             .get(id)
             .cloned()
             .unwrap_or_default();
-        let (server, auth) = match plan_proxy(&config)? {
+        let server = match plan_proxy(&config)? {
             ProxyPlan::Direct => {
                 self.stop_forwarder(id);
-                (None, None)
+                None
             }
-            ProxyPlan::Fixed { server, auth } => {
+            ProxyPlan::Fixed { server } => {
                 self.stop_forwarder(id);
-                (Some(server), auth)
+                Some(server)
             }
             ProxyPlan::Forward(upstream) => {
                 // Reuse a running forwarder to the same upstream (its port stays the same).
@@ -184,7 +182,7 @@ impl ProfilesService {
                         url
                     }
                 };
-                (Some(url), None)
+                Some(url)
             }
         };
         let settings = ProfileSettings {
@@ -194,7 +192,6 @@ impl ProfilesService {
                 proxy_bypass: config.proxy_bypass.clone(),
                 accept_language: config.accept_language.clone().or(identity_language),
             },
-            proxy_auth: auth,
         };
         match self.backend() {
             Ok(backend) => backend.configure(settings).await.map_err(CmdError::from),
@@ -225,21 +222,12 @@ mod tests {
             plan_proxy(&config("socks5://u:p@h:1080", None)).unwrap(),
             ProxyPlan::Forward(_)
         ));
-        assert_eq!(
-            plan_proxy(&config("http://u:p@h:3128", Some(false))).unwrap(),
-            ProxyPlan::Fixed {
-                server: "http://h:3128".into(),
-                auth: Some(ProxyAuth {
-                    username: "u".into(),
-                    password: "p".into()
-                })
-            }
-        );
+        // A password always needs the forwarder (Chromium's own proxy login crashes in Alloy).
+        assert!(plan_proxy(&config("http://u:p@h:3128", Some(false))).is_err());
         assert_eq!(
             plan_proxy(&config("h:8080", Some(false))).unwrap(),
             ProxyPlan::Fixed {
                 server: "http://h:8080".into(),
-                auth: None
             }
         );
         assert!(plan_proxy(&config("socks5://u:p@h:1", Some(false))).is_err());

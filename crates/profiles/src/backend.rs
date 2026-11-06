@@ -8,26 +8,12 @@ use serde::Serialize;
 use crate::cookies::CookieInfo;
 use crate::prefs::Prefs;
 
-/// Username/password for an HTTP proxy that is used directly (without our forwarder).
-/// Answered from CEF's `GetAuthCredentials` when the proxy asks.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ProxyAuth {
-    pub username: String,
-    pub password: String,
-}
-
-impl std::fmt::Debug for ProxyAuth {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ProxyAuth({}:***)", self.username)
-    }
-}
-
-/// Everything the browser applies to one profile's request context.
+/// Everything the browser applies to one profile's request context. Proxy passwords never
+/// reach the browser: they stay in the local forwarder (see `service::plan_proxy`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileSettings {
     pub id: String,
     pub prefs: Prefs,
-    pub proxy_auth: Option<ProxyAuth>,
 }
 
 /// A profile the browser has a live request context for.

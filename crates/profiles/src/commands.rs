@@ -135,8 +135,8 @@ pub struct CreateArgs {
     /// Upstream proxy: socks5://user:pass@host:port, http://user:pass@host:port or
     /// host:port:user:pass. "" removes it.
     pub proxy: Option<String>,
-    /// Use the local forwarder for the proxy (default true; needed for SOCKS5 with a
-    /// password). false: Chromium connects to an HTTP proxy itself.
+    /// Use the local forwarder for the proxy (default true; required when the proxy has a
+    /// password). false: Chromium connects to a password-less proxy itself.
     pub forward: Option<bool>,
     /// Hosts that skip the proxy, e.g. "<local>;*.lan".
     pub proxy_bypass: Option<String>,

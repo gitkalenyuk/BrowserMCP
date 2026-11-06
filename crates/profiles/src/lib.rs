@@ -32,7 +32,7 @@ mod tests;
 
 use bmcp_core::{Ctx, Registry};
 
-pub use backend::{CookieTarget, OpenProfile, ProfileBackend, ProfileSettings, ProxyAuth};
+pub use backend::{CookieTarget, OpenProfile, ProfileBackend, ProfileSettings};
 pub use cookies::CookieInfo;
 pub use hooks::{IdentityPreparer, TabPreparer, WorkerOverrides};
 pub use permissions::{PermissionKind, PermissionStore};
