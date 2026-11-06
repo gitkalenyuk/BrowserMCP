@@ -5,6 +5,7 @@ name: CI
 #           (+ no tracked file is gitignored)
 #   node:   pnpm install, pnpm -r build, pnpm -r test, pnpm -C ui check
 #   script: cargo test -p bmcp-script (V8, slow) — only when the script host can be affected
+#   e2e:    cargo xtask e2e (tests/e2e against browsermcp --headless), after rust
 #   release: cargo xtask dist (portable zip) on v* tags and manual runs, after rust + node
 # The jobs run in parallel.
 
@@ -193,3 +194,41 @@ jobs:
           # Already deflated.
           compression-level: 0
           if-no-files-found: error
+
+  # End-to-end suite (tests/e2e): builds the debug browser, then vitest + the SDK against
+  # `browsermcp --headless` on local fixture sites (no windows, no network). The V8 script
+  # host is not built here, so the record→script and mass-run tests are skipped.
+  e2e:
+    needs: rust
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CEF_PATH: ${{ github.workspace }}/.cef
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Cache CEF binaries
+        uses: actions/cache@v6
+        with:
+          path: .cef
+          key: cef-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: E2E (headless)
+        run: cargo xtask e2e

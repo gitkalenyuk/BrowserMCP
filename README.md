@@ -65,15 +65,23 @@ pnpm install                # once: UI + SDK dependencies
 pnpm -C ui build            # the browser chrome (ui/dist is embedded at build time)
 cargo xtask run             # build + open https://example.com
 cargo xtask run -- https://github.com --profile work
+cargo xtask run -- --headless --window-size 1280x800   # no windows: automation host
 cargo build -p bmcp-script  # the script host (V8), needed for script.run / run.start
+cargo xtask e2e             # build, then the end-to-end suite (tests/e2e) against --headless
 ```
 
 The first build downloads CEF (~500 MB; set `CEF_PATH` to share one download between
 checkouts) and copies its runtime next to `target/debug/browsermcp.exe`. Without `ui/dist` the
 build embeds a small placeholder UI. `browsermcp --help` lists the options (`--data-dir`,
-`--profile`, `--api-port`, `--cdp-port`, `--ui-dir`, `--ui-dev`, …); unknown `--switches` go
-to Chromium. `--cdp-port <PORT>` opens Chromium's DevTools port for Playwright/Puppeteer
-(`connectOverCDP`); it is off by default and refused while a profile uses a stealth identity.
+`--profile`, `--api-port`, `--cdp-port`, `--headless`, `--ui-dir`, `--ui-dev`, …); unknown
+`--switches` go to Chromium. `--cdp-port <PORT>` opens Chromium's DevTools port for
+Playwright/Puppeteer (`connectOverCDP`); it is off by default and refused while a profile uses a
+stealth identity.
+
+`--headless` opens no window at all: every tab is an off-screen page (screenshots, screencast
+video and CDP input work), popups become tabs, and the process keeps running after its last tab
+closes until `system.quit` (`--device-scale <f>` sets the pixel ratio; `browsermcp mcp-stdio
+--headless` starts the browser that way).
 
 ## Portable release
 
@@ -284,6 +292,7 @@ cargo clippy --workspace --exclude bmcp-script --all-targets -- -D warnings
 cargo xtask test                 # Rust tests without the V8 script host
 cargo test -p bmcp-script        # the script host (V8: ~200 MB download, slow first build)
 cargo xtask gen-sdk --check      # generated TypeScript is up to date
+cargo xtask e2e                  # optional: end-to-end suite against a --headless browser
 pnpm install && pnpm -r build && pnpm -r test
 pnpm -C ui check                 # svelte-check, fails on warnings
 ```
@@ -338,8 +347,9 @@ Other parts:
 | [ui/](ui/README.md) | Svelte 5 browser chrome, new-tab page, library, side panels (`pnpm ui:dev`) |
 | [sdk/protocol](sdk/protocol/README.md) | `@browsermcp/protocol`: generated command types and the `createBrowser` wrapper |
 | [sdk/ts](sdk/ts/README.md) | `@browsermcp/sdk`: WebSocket / HTTP transports, events, `connect()` |
-| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk/bench/dist/bump-cef` |
+| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk/bench/e2e/dist/bump-cef` |
 | `scripts/examples/` | Example scripts, a plugin and a userscript |
 | `tests/fixtures/` | Local test pages and recorded CDP data |
 | [tests/bench/](tests/bench/README.md) | The MVP agent benchmark |
+| `tests/e2e/` | End-to-end suite (vitest + SDK against `browsermcp --headless`; `cargo xtask e2e`) |
 | [docs/](docs/README.md) | Plan, spike notes, phase notes |

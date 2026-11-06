@@ -6,9 +6,12 @@
 //!    small App that registers the `bmcp://` scheme, which every process must know).
 //! 2. Otherwise it is the browser process: initialize CEF, open the shell window and run
 //!    the message loop on the main thread (the CEF UI thread) until every window closed.
+//!    Headless (`LaunchOptions::headless`): no window at all, the first tab is off-screen and
+//!    the loop runs until `quit` (see `osr.rs`).
 
 mod backend;
 mod bridge;
+mod cdp_port;
 mod chrome;
 mod cookies;
 mod downloads;
@@ -23,6 +26,7 @@ mod ui_files;
 
 pub use backend::CefBackend;
 pub use hooks::set_tab_preparer;
+pub use osr::HeadlessOptions;
 pub use shell::ReadyCallback;
 
 use std::path::PathBuf;
@@ -97,6 +101,9 @@ pub struct LaunchOptions {
     /// Off by default; the caller must not combine it with stealth profiles (a debugging
     /// port is easy to detect).
     pub cdp_port: Option<u16>,
+    /// `--headless`: no window or view at all; every tab is an off-screen page of this size,
+    /// and the process keeps running without tabs until `system.quit` (see `osr.rs`).
+    pub headless: Option<HeadlessOptions>,
 }
 
 /// What [`start`] found out about the current process.
@@ -169,7 +176,11 @@ impl Browser {
         if let Some(permissions) = opts.permissions {
             let _ = PERMISSIONS.set(permissions);
         }
+        if let Some(headless) = opts.headless {
+            osr::configure_headless(headless);
+        }
         if let Some(port) = opts.cdp_port {
+            cdp_port::configure(port);
             tracing::warn!(
                 port,
                 "remote debugging port open: any local program can control this browser"
