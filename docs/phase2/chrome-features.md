@@ -62,6 +62,14 @@ tab reach the API, web pages still do not (they have another origin).
 | Off-screen tab right-click via CDP with `BMCP_MENU_AUTORUN` | menu: Open link in new tab, Open link in workspace ▸, Copy link address, Ask AI about this link, Inspect. Ask AI → AI panel opened with "About this link on "Example Domain" …"; Copy link → clipboard `https://iana.org/help/example-domains`; workspace → the link opened in profile `work`; Inspect → a `DevTools` browser (not a tab) |
 | All tabs closed through the UI's WS (a person) | windows, DevTools and the off-screen tab close, `CEF shut down`, process gone; `session.json` keeps the last state |
 
+## Headless (`--headless`)
+
+There is no window and no chrome UI, so: no session restore and no session file (there are no
+composed windows to snapshot; `restore_session` is off), `tabs.split` answers "needs tabs of a
+browser window", the context menu of the off-screen tabs is only logged (no "Inspect": DevTools
+would open a window), permission requests without a rule are denied, workspaces exist only as
+`profile.*` / `tabs.open {profile}`. `page.zoom` works per tab as usual.
+
 ## Known gaps
 
 * **Ctrl+wheel zoom** is not verified: CDP-synthesized Ctrl+wheel does not zoom in Alloy, and
