@@ -263,15 +263,15 @@ export class MockApi implements BrowserApi {
       this.#emitRuns();
       return { runId };
     },
-    'data.bookmarks': (): Bookmark[] => [
+    'data.bookmarks': (): { bookmarks: Bookmark[] } => ({ bookmarks: [
       { title: 'GitHub', url: 'https://github.com/' },
       { title: 'MDN', url: 'https://developer.mozilla.org/' },
       { title: 'Svelte', url: 'https://svelte.dev/docs' },
       { title: 'docs.rs', url: 'https://docs.rs/' },
       { title: 'crates.io', url: 'https://crates.io/' },
       { title: 'CEF forum', url: 'https://magpcss.org/ceforum/' },
-    ],
-    'data.topSites': (): Bookmark[] => [
+    ] }),
+    'data.top_sites': (): { sites: Bookmark[] } => ({ sites: [
       { title: 'Hacker News', url: 'https://news.ycombinator.com/' },
       { title: 'YouTube', url: 'https://www.youtube.com/' },
       { title: 'Gmail', url: 'https://mail.google.com/' },
@@ -280,7 +280,7 @@ export class MockApi implements BrowserApi {
       { title: 'Claude', url: 'https://claude.ai/' },
       { title: 'OpenAI', url: 'https://chatgpt.com/' },
       { title: 'Linear', url: 'https://linear.app/' },
-    ],
+    ] }),
     'ai.prompt': ({ text, provider }) => {
       console.info('[mock] ai.prompt', { provider, text });
       return { sessionId: `ai-${Date.now().toString(36)}` };

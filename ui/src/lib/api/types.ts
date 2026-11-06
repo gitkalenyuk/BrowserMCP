@@ -92,7 +92,8 @@ export interface Script {
 
 export interface Bookmark {
   title: string;
-  url: string;
+  /** Null for folders. */
+  url: string | null;
 }
 
 export interface Rect {
@@ -133,8 +134,9 @@ export interface RpcMethods {
   'runs.patch.reject': { params: { id: string }; result: void };
   'scripts.list': { params: void; result: Script[] };
   'scripts.run': { params: { id: string }; result: { runId: string } };
-  'data.bookmarks': { params: void; result: Bookmark[] };
-  'data.topSites': { params: void; result: Bookmark[] };
+  // Shapes follow the Rust commands (crates/data): object outputs, folders have no url.
+  'data.bookmarks': { params: void; result: { bookmarks: Bookmark[] } };
+  'data.top_sites': { params: void; result: { sites: Bookmark[] } };
   'ai.prompt': { params: { text: string; provider: string }; result: { sessionId: string } };
   /** Reports the page area's bounds (CSS px, relative to the UI view) so the core can place the content view. */
   'ui.layout': { params: Rect & { dpr: number }; result: void };
