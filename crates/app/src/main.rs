@@ -191,6 +191,12 @@ async fn start_api(
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
     }
+    // Self-healing of runs and page.extract (data/extract-cache).
+    registry
+        .extensions()
+        .insert(bmcp_heal::HealService::new(bmcp_heal::HealConfig::new(
+            &data,
+        )));
     // Notifications: UI toasts, Windows toasts, Telegram bot, webhook (data/config/notify.json).
     // Routes bus events (run.finished, run.heal_needed, …) by its rules; serves ui.ask_user.
     let notify = registry
@@ -208,6 +214,8 @@ async fn start_api(
     bmcp_pagetools::start(&registry, backend.clone(), events.clone());
     // Notification buttons (heal: Skip row / Stop run) run commands through the registry.
     bmcp_notify::attach(&registry, backend.clone());
+    // Watches run.heal_needed (proposes patches) and takes the page snapshot of broken rows.
+    bmcp_heal::attach(&registry, backend.clone(), events.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));

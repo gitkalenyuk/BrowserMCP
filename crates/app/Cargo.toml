@@ -24,6 +24,7 @@ bmcp-jobs = { path = "../jobs" }
 bmcp-governor = { path = "../governor" }
 # Dialog watcher (Page.enable + auto-handling on every tab); commands are in bmcp-registry.
 bmcp-pagetools = { path = "../pagetools" }
+bmcp-heal = { path = "../heal" }
 bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }
 serde_json.workspace = true

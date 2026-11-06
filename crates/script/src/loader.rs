@@ -16,6 +16,43 @@ use deno_core::{
 };
 use deno_error::JsErrorBox;
 
+/// `bmcp-script-host check <file>`: parse and transpile one TypeScript/JavaScript file without
+/// running it (no V8). Used by self-healing to validate an AI patch. Returns the first syntax
+/// error with its position.
+pub fn check_file(path: &std::path::Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let specifier = ModuleSpecifier::from_file_path(
+        std::path::absolute(path).map_err(|e| format!("{}: {e}", path.display()))?,
+    )
+    .map_err(|_| format!("bad path {}", path.display()))?;
+    let media_type = match MediaType::from_path(path) {
+        MediaType::Unknown => MediaType::TypeScript,
+        other => other,
+    };
+    let parsed = deno_ast::parse_module(ParseParams {
+        specifier,
+        text: text.into(),
+        media_type,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|e| e.to_string())?;
+    // Errors the parser could recover from are still errors for a script.
+    if let Some(diagnostic) = parsed.diagnostics().first() {
+        return Err(diagnostic.to_string());
+    }
+    parsed
+        .transpile(
+            &deno_ast::TranspileOptions::default(),
+            &TranspileModuleOptions { module_kind: None },
+            &EmitOptions::default(),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct TsModuleLoader {
     /// Source map per module URL (only for transpiled modules).

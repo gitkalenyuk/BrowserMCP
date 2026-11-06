@@ -33,7 +33,7 @@ use crate::Inner;
 use crate::data::Row;
 use crate::host::{HostOutcome, HostRun, ScriptFailure, locate_host, run_host};
 use crate::store::{
-    ClaimedRow, Counts, RowStatus, RowUpdate, RunOptions, RunRecord, RunStatus, now_ms,
+    ClaimedRow, Counts, HealMode, RowStatus, RowUpdate, RunOptions, RunRecord, RunStatus, now_ms,
 };
 use crate::topics;
 
@@ -69,9 +69,30 @@ pub struct StartRequest {
     pub retries: Option<u32>,
     pub timeout_secs: Option<u64>,
     pub stop_on_error: bool,
-    pub heal: bool,
+    pub heal: HealMode,
     pub profile: Option<String>,
 }
+
+/// How long the heal hook may take before `run.heal_needed` goes out without a snapshot.
+const HEAL_HOOK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// A row that broke on a selector error and opened a heal request; given to the heal hook.
+#[derive(Debug, Clone)]
+pub struct HealTrigger {
+    pub run: String,
+    pub row: u64,
+    /// The script (version) the row ran.
+    pub script: String,
+    pub error: Option<ScriptFailure>,
+    pub mode: HealMode,
+    /// The `run.heal_needed` event data.
+    pub payload: Value,
+}
+
+/// Called once per heal request, before `run.heal_needed` is emitted. Returns the text of a
+/// page snapshot of the row's tab (stored with [`crate::store::Store::save_heal_snapshot`]).
+pub type HealHook =
+    Arc<dyn Fn(HealTrigger) -> bmcp_core::BoxFuture<'static, Option<String>> + Send + Sync>;
 
 /// How a worker finished its row.
 struct RowEnd {
@@ -149,7 +170,8 @@ impl Inner {
             retries: req.retries.unwrap_or(1),
             timeout_secs: req.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1),
             stop_on_error: req.stop_on_error,
-            heal: req.heal,
+            heal: req.heal != HealMode::Off,
+            heal_mode: Some(req.heal),
             profile: req.profile,
         };
         let run = RunRecord {
@@ -291,7 +313,7 @@ impl Inner {
     }
 
     /// After every finished row: progress event, stop_on_error, heal pause.
-    fn after_row(&self, id: &str, end: &RowEnd) -> Result<(), CmdError> {
+    fn after_row(self: &Arc<Self>, id: &str, end: &RowEnd) -> Result<(), CmdError> {
         let run = self.store.run(id)?;
         let counts = self.store.counts(id)?;
         self.events
@@ -308,6 +330,7 @@ impl Inner {
             // The first broken row of a pause opens the heal request; later ones just wait.
             RowStatus::NeedsHeal if run.heal.is_none() && !run.status.is_final() => {
                 let error = end.error.clone();
+                let mode = run.options.heal_mode.unwrap_or(HealMode::Ask);
                 let heal = json!({
                     "id": id,
                     "row": end.idx,
@@ -315,6 +338,7 @@ impl Inner {
                     "error": error,
                     "step": error.as_ref().and_then(|e| e.command.clone()),
                     "line": error.as_ref().and_then(|e| e.line),
+                    "mode": mode.as_str(),
                 });
                 self.store.set_heal(id, Some(&heal))?;
                 self.store.set_status(
@@ -324,11 +348,49 @@ impl Inner {
                         "waiting for a patched script: call run_heal_apply (or run_resume to skip)",
                     ),
                 )?;
-                self.events.emit(topics::RUN_HEAL_NEEDED, heal);
+                self.announce_heal(HealTrigger {
+                    run: id.to_string(),
+                    row: end.idx,
+                    script: run.script.clone(),
+                    error,
+                    mode,
+                    payload: heal,
+                });
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Emit `run.heal_needed`. With a snapshot hook installed (see
+    /// [`crate::JobsService::set_heal_hook`]) the page snapshot is taken and stored first, so
+    /// whoever reacts to the event finds it in the database.
+    fn announce_heal(self: &Arc<Self>, trigger: HealTrigger) {
+        let hook = self
+            .heal_hook
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(hook) = hook else {
+            self.events.emit(topics::RUN_HEAL_NEEDED, trigger.payload);
+            return;
+        };
+        let inner = self.clone();
+        tokio::spawn(async move {
+            // A hanging snapshot must not hold the heal request back for long.
+            let snapshot = tokio::time::timeout(HEAL_HOOK_TIMEOUT, hook(trigger.clone()))
+                .await
+                .ok()
+                .flatten();
+            if let Some(text) = snapshot
+                && let Err(err) = inner
+                    .store
+                    .save_heal_snapshot(&trigger.run, trigger.row, &text)
+            {
+                tracing::warn!(run = %trigger.run, %err, "cannot store the heal snapshot");
+            }
+            inner.events.emit(topics::RUN_HEAL_NEEDED, trigger.payload);
+        });
     }
 
     fn emit_finished(&self, run: &RunRecord) {

@@ -4,6 +4,7 @@
 //! bmcp-script-host run <file.ts> [--input key=value]... [--inputs-file <file.json>]
 //!                      [--mock | --ws <url>] [--timeout-secs N] [--timings]
 //!                      [--inspect pipe|<port>]
+//! bmcp-script-host check <file.ts>    # syntax check + transpile only (exit 0 ok, 1 errors)
 //! ```
 //!
 //! `--inputs-file` reads a JSON object (`{"key": "value", …}`); programs that start the host
@@ -26,6 +27,7 @@ use deno_core::serde_json::Value;
 
 const USAGE: &str = "\
 usage: bmcp-script-host run <file.ts> [options]
+       bmcp-script-host check <file.ts>   (syntax check + transpile, no run)
 
 options:
   --input key=value   expose `inputs.key = \"value\"` to the script (repeatable)
@@ -142,8 +144,31 @@ fn read_inputs_file(path: &Path) -> anyhow::Result<Vec<(String, String)>> {
         .collect())
 }
 
+/// `bmcp-script-host check <file.ts>`: syntax check + transpile only, no V8.
+/// Exit 0 = ok, 1 = the file has errors (printed as `error: …`), 2 = usage error.
+fn check(args: &[String]) -> ExitCode {
+    let [file] = args else {
+        eprintln!("usage: bmcp-script-host check <file.ts>");
+        return ExitCode::from(2);
+    };
+    match bmcp_script::loader::check_file(Path::new(file)) {
+        Ok(()) => {
+            println!("ok");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn main() -> ExitCode {
-    let cli = match parse_args(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("check") {
+        return check(&args[1..]);
+    }
+    let cli = match parse_args(args) {
         Ok(cli) => cli,
         Err(err) => {
             eprintln!("{err:#}");

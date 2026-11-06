@@ -6,7 +6,8 @@
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
 //! * [`session`] — agent id, color, status, transcript, touched tabs, `ai.*` events;
 //! * [`term`] — PTY terminals (`term.*`);
-//! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects).
+//! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects);
+//! * [`oneshot`] — one-shot text completions (no tools) for self-healing and `page.extract`.
 //!
 //! Wiring (in `crates/app`):
 //!
@@ -22,6 +23,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod model;
+pub mod oneshot;
 pub mod proc_tree;
 pub mod session;
 pub mod term;

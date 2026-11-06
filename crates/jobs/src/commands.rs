@@ -27,7 +27,7 @@ use crate::export::{ExportArgs, ExportOutput};
 use crate::host::HostOutcome;
 use crate::runner::{DEFAULT_TIMEOUT_SECS, ScriptSource, StartRequest};
 use crate::scripts::ScriptInfo;
-use crate::store::{Counts, RowRecord, RowStatus, RunRecord};
+use crate::store::{Counts, HealMode, RowRecord, RowStatus, RunRecord};
 use crate::triggers::{TriggerInfo, TriggerKind};
 use crate::{Inner, JobsService};
 
@@ -285,6 +285,14 @@ pub struct RunIdArgs {
 
 pub struct RunStart;
 
+/// `heal` of `run.start`: a mode, or the older on/off flag.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum HealArg {
+    Flag(bool),
+    Mode(HealMode),
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunStartArgs {
@@ -300,9 +308,11 @@ pub struct RunStartArgs {
     pub timeout_secs: Option<u64>,
     /// Stop the run at the first failed row (default false).
     pub stop_on_error: Option<bool>,
-    /// Pause and emit run.heal_needed when a row breaks on a page.* selector error
-    /// (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
-    pub heal: Option<bool>,
+    /// Self-healing when a row breaks on a page.* selector error (NOT_FOUND,
+    /// NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET): "ask" (default: pause, an AI
+    /// proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
+    /// are applied) or "off". `true` = "ask", `false` = "off".
+    pub heal: Option<HealArg>,
     /// Browser profile for the rows. Only "default" for now (all rows share it); isolated
     /// per-row profiles come later.
     pub profile: Option<String>,
@@ -333,7 +343,11 @@ impl Command for RunStart {
             retries: args.retries,
             timeout_secs: args.timeout_secs,
             stop_on_error: args.stop_on_error.unwrap_or(false),
-            heal: args.heal.unwrap_or(true),
+            heal: match args.heal {
+                None | Some(HealArg::Flag(true)) => HealMode::Ask,
+                Some(HealArg::Flag(false)) => HealMode::Off,
+                Some(HealArg::Mode(mode)) => mode,
+            },
             profile: args.profile,
         })?;
         run_info(&inner, &run.id)

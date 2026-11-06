@@ -1,0 +1,33 @@
+[package]
+name = "bmcp-heal"
+description = "BrowserMCP self-healing of mass runs (AI patch → one confirmation → rest of the run) and page.extract with a cached selector plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Test double for `bmcp-script-host` (no V8): a tiny line DSL for `run`, plus `check`. Only the
+# tests use it.
+[[bin]]
+name = "bmcp-heal-fake-host"
+path = "src/bin/fake_host.rs"
+test = false
+
+[dependencies]
+bmcp-core.workspace = true
+bmcp-jobs = { path = "../jobs" }
+bmcp-ai = { path = "../ai" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "fs"] }
+tracing.workspace = true
+regex = "1"
+# Line diffs of the original vs. the patched script (already used by insta in the workspace).
+similar = "2"
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+# Mock OpenAI-compatible server: the real provider path without paid calls.
+wiremock = "0.6"
