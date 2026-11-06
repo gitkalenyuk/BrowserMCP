@@ -1,5 +1,5 @@
 // Prelude: runs once in every isolate before the user's script.
-// Defines the globals scripts use: `browser`, `inputs`, `console`, `sleep`.
+// Defines the globals scripts use: `browser` (incl. `browser.output`), `inputs`, `console`, `sleep`.
 // Types for editors live in crates/script/types/browser.d.ts.
 
 import {
@@ -33,9 +33,18 @@ function namespace(ns) {
   return proxy;
 }
 
-const browser = new Proxy(Object.freeze({ call }), {
+/**
+ * Report a structured result to whoever started the script (script.run, a run.start row):
+ * prints one stdout line `##bmcp:result <json>`. Several calls are merged (object keys
+ * combine, later values win). See crates/jobs/src/host.rs.
+ */
+function output(value) {
+  op_bmcp_log("##bmcp:result " + JSON.stringify(value === undefined ? null : value), false);
+}
+
+const browser = new Proxy(Object.freeze({ call, output }), {
   get(target, ns) {
-    if (ns === "call") return target.call;
+    if (ns === "call" || ns === "output") return target[ns];
     if (typeof ns !== "string" || ns === "then") return undefined;
     return namespace(ns);
   },

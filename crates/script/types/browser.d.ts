@@ -14,6 +14,9 @@ type BrowserNamespace = {
 declare const browser: {
   /** Low level: `browser.call("tabs.list", {})`. */
   call(name: string, args?: unknown): Promise<unknown>;
+  /** Structured result for script.run / run.start rows (prints `##bmcp:result <json>`;
+   *  several calls merge object keys). */
+  output(value: unknown): void;
   tabs: BrowserNamespace;
   nav: BrowserNamespace;
   page: BrowserNamespace;

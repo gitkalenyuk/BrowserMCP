@@ -74,13 +74,13 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
 
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
-        let runtime_dir = data.runtime();
+        let data = data.clone();
         let (dump_ax, api_port) = (cli.dump_ax, cli.api_port);
         Box::new(move |backend: Arc<dyn BrowserBackend>| {
             if dump_ax {
                 handle.spawn(dump_ax_and_quit(backend));
             } else {
-                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir));
+                handle.spawn(start_api(backend, api_port, shutdown, data.clone()));
             }
         })
     };
@@ -112,17 +112,29 @@ async fn start_api(
     backend: Arc<dyn BrowserBackend>,
     port: u16,
     shutdown: CancellationToken,
-    runtime_dir: std::path::PathBuf,
+    data: DataDir,
 ) {
     // One registry for every API surface: built-in commands + API-crate commands.
     let mut registry = bmcp_core::Registry::new();
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
-    tracing::info!(commands = registry.len(), "command registry ready");
     let events = bmcp_core::EventBus::new();
+    // Scripts, mass runs, triggers: their service needs the event bus and the data folder.
+    let jobs =
+        bmcp_jobs::JobsService::start(bmcp_jobs::JobsConfig::new(&data, port), events.clone())
+            .inspect_err(|err| tracing::error!(%err, "jobs service not started"))
+            .ok();
+    if let Some(jobs) = &jobs {
+        registry.extensions().insert(jobs.clone());
+    }
+    bmcp_jobs::register(&mut registry);
+    tracing::info!(commands = registry.len(), "command registry ready");
     match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
         Ok(server) => {
+            if let Some(jobs) = &jobs {
+                jobs.set_ws_url(server.ws_url());
+            }
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({
                 "pid": std::process::id(),
@@ -131,7 +143,7 @@ async fn start_api(
                 "ws": server.ws_url(),
             });
             if let Err(err) =
-                std::fs::write(runtime_dir.join("endpoint.json"), endpoint.to_string())
+                std::fs::write(data.runtime().join("endpoint.json"), endpoint.to_string())
             {
                 tracing::warn!(%err, "cannot write endpoint.json");
             }

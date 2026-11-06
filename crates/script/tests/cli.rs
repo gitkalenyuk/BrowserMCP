@@ -115,3 +115,14 @@ fn missing_file_is_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("script not found"));
 }
+
+#[test]
+fn output_prints_result_lines() {
+    let script = repo_root().join("crates/script/tests/fixtures/output.ts");
+    let out = run(script, &["--input", "email=a@x.test"]);
+    assert!(out.status.success(), "stderr:\n{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "##bmcp:result {\"email\":\"a@x.test\",\"step\":1}\nplain log line\n##bmcp:result {\"step\":2}\n"
+    );
+}

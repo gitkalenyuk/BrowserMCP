@@ -49,6 +49,8 @@ pub enum ErrorCode {
     InvalidParams,
     /// The browser is shutting down.
     ShuttingDown,
+    /// The command exists but this option is not built yet (see `hint`).
+    NotImplemented,
     /// A bug or an unexpected failure.
     Internal,
 }
@@ -72,6 +74,7 @@ impl ErrorCode {
             ErrorCode::BlockedInStealth => "BLOCKED_IN_STEALTH",
             ErrorCode::InvalidParams => "INVALID_PARAMS",
             ErrorCode::ShuttingDown => "SHUTTING_DOWN",
+            ErrorCode::NotImplemented => "NOT_IMPLEMENTED",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -94,6 +97,7 @@ impl ErrorCode {
             | ErrorCode::BlockedInStealth
             | ErrorCode::InvalidParams
             | ErrorCode::ShuttingDown
+            | ErrorCode::NotImplemented
             | ErrorCode::Internal => Retry::No,
         }
     }
