@@ -75,12 +75,13 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
         let runtime_dir = data.runtime();
+        let data = data.clone();
         let (dump_ax, api_port) = (cli.dump_ax, cli.api_port);
         Box::new(move |backend: Arc<dyn BrowserBackend>| {
             if dump_ax {
                 handle.spawn(dump_ax_and_quit(backend));
             } else {
-                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir));
+                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir, data));
             }
         })
     };
@@ -113,14 +114,30 @@ async fn start_api(
     port: u16,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
+    data: DataDir,
 ) {
     // One registry for every API surface: built-in commands + API-crate commands.
     let mut registry = bmcp_core::Registry::new();
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
+    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite.
+    let store = match bmcp_data::DataStore::open_in(&data) {
+        Ok(store) => {
+            registry.extensions().insert(store.clone());
+            Some(store)
+        }
+        Err(err) => {
+            tracing::error!(%err, "cannot open browsermcp.sqlite; data commands disabled");
+            None
+        }
+    };
+    bmcp_data::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
     let events = bmcp_core::EventBus::new();
+    if let Some(store) = store {
+        bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
+    }
     match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
         Ok(server) => {
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
