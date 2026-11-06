@@ -132,7 +132,7 @@ deno_core::extension!(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use deno_core::serde_json::{self, json};
 
     use super::with_tab_defaults;
 
