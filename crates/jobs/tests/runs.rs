@@ -51,6 +51,18 @@ async fn script_run_passes_inputs_and_reads_results() {
     assert_eq!(out["result"]["x"], 1);
     assert_eq!(out["stdout"], "hello Ada\n");
 
+    // Regression: a value far past the Windows 32K command-line limit, with a NUL byte, still
+    // reaches the host (inputs travel in a temp JSON file, not as `--input` arguments).
+    let long = format!("{}{}tail", "y".repeat(40_000), char::from(0));
+    let out = env
+        .ok(
+            "script.run",
+            json!({"name": "hello", "inputs": {"name": "Ada", "body": long}}),
+        )
+        .await;
+    assert_eq!(out["ok"], true, "{out:#}");
+    assert_eq!(out["result"]["inputs"]["body"], long.as_str());
+
     // Inline code; temp file is removed afterwards and not listed.
     let out = env
         .ok("script.run", json!({"code": "result {\"inline\": true}"}))

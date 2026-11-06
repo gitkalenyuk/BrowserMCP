@@ -25,6 +25,16 @@ portable-pty = "0.9"
 # Finds `claude` / `codex` on PATH (handles .exe / .cmd on Windows).
 which = "6"
 
+[target.'cfg(windows)'.dependencies]
+# Job Objects: stopping a session kills the whole process tree (npm `.cmd` shims start the
+# real agent as a grandchild).
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 bmcp-core = { workspace = true, features = ["testing"] }
 # Mock HTTP servers for the provider adapters: no real (paid) model calls in tests.
