@@ -38,11 +38,15 @@ export interface AdblockApplyOutput {
     avg_roundtrip_ms: number;
     /** Answered with `Fetch.failRequest`. */
     blocked: number;
-    /** Answered with `Fetch.continueRequest`. */
+    /** Let through (continued, or answered by another interception client such as net rules). */
     continued: number;
     errors: number;
     /** Answered with `Fetch.fulfillRequest` (redirect resources). */
     fulfilled: number;
+    /**
+     * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+     * recovered by the shared Fetch coordinator).
+     */
     lagged: number;
     max_decision_us: number;
     max_roundtrip_ms: number;
@@ -223,11 +227,15 @@ export interface AdblockStatsOutput {
       avg_roundtrip_ms: number;
       /** Answered with `Fetch.failRequest`. */
       blocked: number;
-      /** Answered with `Fetch.continueRequest`. */
+      /** Let through (continued, or answered by another interception client such as net rules). */
       continued: number;
       errors: number;
       /** Answered with `Fetch.fulfillRequest` (redirect resources). */
       fulfilled: number;
+      /**
+       * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+       * recovered by the shared Fetch coordinator).
+       */
       lagged: number;
       max_decision_us: number;
       max_roundtrip_ms: number;
