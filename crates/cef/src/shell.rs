@@ -5,18 +5,22 @@
 //!   [`crate::chrome`].
 //! * `Single` (Phase 0): one BrowserView per top-level window, title follows the page.
 //!
-//! The app quits when the last browser (of any kind) closes.
+//! Plus off-screen (windowless) tabs for automation, see [`crate::osr`].
+//!
+//! The app quits when the last browser (of any kind) closes; when the last *window* closes,
+//! the remaining off-screen tabs are closed too.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bmcp_core::{BackendError, BrowserBackend, TabId};
+use bmcp_core::{BackendError, BrowserBackend, OpenTabOptions, TabId, WindowTarget};
 use cef::*;
 use tokio::sync::oneshot;
 
 use crate::bridge::{self, LoadState, PendingTab, ShellContext};
 use crate::chrome::{self, ViewKind, protocol};
+use crate::profiles::ProfileKey;
 use crate::{Style, WindowLayout};
 
 /// Called once on the UI thread when CEF is ready and the first window exists.
@@ -40,6 +44,8 @@ fn runtime_style(style: Style) -> RuntimeStyle {
 #[derive(Default)]
 pub(crate) struct Browsers {
     open: AtomicUsize,
+    /// Browsers inside a window (everything except off-screen tabs).
+    windowed: AtomicUsize,
 }
 
 wrap_app! {
@@ -81,7 +87,7 @@ wrap_browser_process_handler! {
                 browsers: Arc::new(Browsers::default()),
             };
             bridge::with_ui(|ui| ui.shell = Some(ctx.clone()));
-            open_window(&self.config.url, &ctx, None);
+            open_window(PendingTab::new(&self.config.url, ProfileKey::default(), None), &ctx);
 
             let ready = self.config.on_ready.lock().unwrap_or_else(|e| e.into_inner()).take();
             if let Some(ready) = ready {
@@ -91,21 +97,22 @@ wrap_browser_process_handler! {
     }
 }
 
-/// Open a new top-level window showing `url`, in the configured layout. `reply` learns
-/// the id of its (first) tab.
-pub(crate) fn open_window(url: &str, ctx: &ShellContext, reply: Option<oneshot::Sender<TabId>>) {
+/// Open a new top-level window whose first tab is `pending`, in the configured layout.
+/// `pending.reply` learns the id of that tab.
+pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
     match ctx.layout {
-        WindowLayout::Chrome => chrome::open_window(url, ctx, reply),
+        WindowLayout::Chrome => chrome::open_window(pending, ctx),
         WindowLayout::Single => {
-            if let Some(view) = create_browser_view(url, ViewKind::Content, ctx) {
+            let url = pending.initial_url().to_owned();
+            if let Some(view) = create_browser_view(&url, ViewKind::Content, ctx, &pending.profile)
+            {
                 let view_id = bridge::next_view_id();
                 view.set_id(view_id);
                 let pending = PendingTab {
                     window: None,
                     index: None,
                     activate: true,
-                    url: url.to_owned(),
-                    reply,
+                    ..pending
                 };
                 bridge::with_ui(|ui| ui.pending.insert(view_id, pending));
                 open_single_window(view, ctx.style);
@@ -114,44 +121,111 @@ pub(crate) fn open_window(url: &str, ctx: &ShellContext, reply: Option<oneshot::
     }
 }
 
-/// `tabs.open`: a tab in the current window (composed layout) or a new window (single).
+/// `tabs.open`: a tab in the current window, a new window, or off-screen.
 pub(crate) fn open_tab(
     url: String,
-    background: bool,
+    options: OpenTabOptions,
     reply: oneshot::Sender<TabId>,
 ) -> Result<(), BackendError> {
     let ctx = bridge::with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
-    match ctx.layout {
-        WindowLayout::Chrome => chrome::open_tab(url, background, reply),
-        WindowLayout::Single => {
-            open_window(&url, &ctx, Some(reply));
-            Ok(())
+    let profile = ProfileKey::from_options(options.profile.as_deref(), options.incognito)?;
+    let mut pending = PendingTab::new(&url, profile.clone(), options.run);
+    pending.activate = !options.background;
+    pending.reply = Some(reply);
+    let window = options.window;
+    // A fresh profile's request context must finish initializing before a browser can use it.
+    crate::profiles::when_ready(
+        &profile,
+        Box::new(move || {
+            let result = match (window, ctx.layout) {
+                (WindowTarget::Offscreen, _) => crate::osr::open(pending, &ctx),
+                (WindowTarget::New, _) | (WindowTarget::Current, WindowLayout::Single) => {
+                    open_window(pending, &ctx);
+                    Ok(())
+                }
+                (WindowTarget::Current, WindowLayout::Chrome) => chrome::open_tab(pending),
+            };
+            if let Err(err) = result {
+                // `tabs.open` then fails: its reply channel was dropped with `pending`.
+                tracing::error!(%err, "tab not created");
+            }
+        }),
+    );
+    Ok(())
+}
+
+/// A popup we do not let CEF create (its opener is off-screen, or its profile wants new tabs
+/// prepared first): open `url` as our own tab next to the opener instead. The popup loses
+/// `window.opener` (documented trade-off). UI thread, outside CEF callbacks.
+fn reopen_popup(opener: TabId, url: String, background: bool) {
+    let Some(ctx) = bridge::with_ui(|ui| ui.shell.clone()) else {
+        return;
+    };
+    let entry = bridge::with_ui(|ui| {
+        let t = ui.tabs.get(&opener)?;
+        Some((t.profile.clone(), t.run.clone(), t.window, t.offscreen))
+    });
+    let Some((profile, run, window, offscreen)) = entry else {
+        return;
+    };
+    let mut pending = PendingTab::new(&url, profile, run);
+    pending.activate = !background;
+    // The opener's context is initialized already (it has a tab).
+    if offscreen {
+        if let Err(err) = crate::osr::open(pending, &ctx) {
+            tracing::error!(%err, "popup not re-opened");
         }
+    } else if let Some(key) = window {
+        chrome::add_tab_after(&ctx, key, opener, pending);
+    } else {
+        open_window(pending, &ctx);
     }
 }
 
-/// Create a BrowserView of the given kind. The browser itself is created by CEF once
-/// the view is added to a window.
+/// Create a BrowserView of the given kind in `profile`'s request context. The browser itself
+/// is created by CEF once the view is added to a window.
 pub(crate) fn create_browser_view(
     url: &str,
     kind: ViewKind,
     ctx: &ShellContext,
+    profile: &ProfileKey,
 ) -> Option<BrowserView> {
-    let mut client = ShellClient::new(ctx.browsers.clone(), kind);
+    let mut client = ShellClient::new(ctx.browsers.clone(), kind, profile.clone(), false, 0);
     let mut view_delegate = ShellBrowserViewDelegate::new(ctx.clone(), kind);
     let mut settings = BrowserSettings::default();
     if kind != ViewKind::Content {
         // Dark background so our chrome does not flash white before its page paints.
         settings.background_color = 0xFF20_2124;
     }
+    // Our own views always use the global context (where bmcp://ui is served from).
+    let mut context = match kind {
+        ViewKind::Content => crate::profiles::context_for(profile),
+        _ => None,
+    };
     browser_view_create(
         Some(&mut client),
         Some(&CefString::from(url)),
         Some(&settings),
         None,
-        None,
+        context.as_mut(),
         Some(&mut view_delegate),
     )
+}
+
+/// Close every off-screen tab (the last window closed). UI thread.
+fn close_offscreen_tabs() {
+    let browsers: Vec<Browser> = bridge::with_ui(|ui| {
+        ui.tabs
+            .values()
+            .filter(|t| t.offscreen)
+            .map(|t| t.browser.clone())
+            .collect()
+    });
+    for browser in browsers {
+        if let Some(host) = browser.host() {
+            host.close_browser(1);
+        }
+    }
 }
 
 /// Phase 0 layout: the BrowserView fills a window of its own.
@@ -280,9 +354,15 @@ wrap_browser_view_delegate! {
 }
 
 wrap_client! {
-    struct ShellClient {
+    // Handlers of one browser. `profile` = its request context's profile (popups share
+    // their opener's client); `offscreen` = windowless (has a render handler); `pending` =
+    // key of its PendingTab for off-screen tabs (0 otherwise; views are found by view id).
+    pub(crate) struct ShellClient {
         browsers: Arc<Browsers>,
         kind: ViewKind,
+        profile: ProfileKey,
+        offscreen: bool,
+        pending: i32,
     }
 
     impl Client {
@@ -291,7 +371,12 @@ wrap_client! {
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(ShellLifeSpanHandler::new(self.browsers.clone(), self.kind))
+            Some(ShellLifeSpanHandler::new(
+                self.browsers.clone(),
+                self.kind,
+                self.offscreen,
+                self.pending,
+            ))
         }
 
         fn load_handler(&self) -> Option<LoadHandler> {
@@ -311,18 +396,30 @@ wrap_client! {
         }
 
         fn permission_handler(&self) -> Option<PermissionHandler> {
-            Some(ShellPermissionHandler::new())
+            Some(ShellPermissionHandler::new(self.kind))
+        }
+
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            (self.kind == ViewKind::Content).then(crate::downloads::handler)
+        }
+
+        fn render_handler(&self) -> Option<RenderHandler> {
+            self.offscreen.then(crate::osr::render_handler)
         }
     }
 }
 
 wrap_permission_handler! {
-    struct ShellPermissionHandler;
+    struct ShellPermissionHandler {
+        kind: ViewKind,
+    }
 
     impl PermissionHandler {
         /// Alloy shows no permission UI, and an unanswered prompt waits forever — e.g.
         /// every connection from a page to 127.0.0.1 (Local Network Access) hung, so the
-        /// UI could never reach the API. Answer at once: see `scheme::allow_permission`.
+        /// UI could never reach the API. Answer at once: our own views see
+        /// `scheme::allow_permission`; web pages get the stored rules (`permissions.set`),
+        /// everything else is denied.
         fn on_show_permission_prompt(
             &self,
             _browser: Option<&mut Browser>,
@@ -333,7 +430,12 @@ wrap_permission_handler! {
         ) -> i32 {
             let Some(callback) = callback else { return 0 };
             let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
-            let allow = crate::scheme::allow_permission(&origin, requested_permissions);
+            let allow = if self.kind == ViewKind::Content {
+                let kinds = bmcp_profiles::permissions::kinds_from_prompt_bits(requested_permissions);
+                crate::permission_store().is_some_and(|s| s.decide_all(&origin, &kinds))
+            } else {
+                crate::scheme::allow_permission(&origin, requested_permissions)
+            };
             tracing::debug!(origin, requested_permissions, allow, "permission prompt");
             callback.cont(if allow {
                 PermissionRequestResult::ACCEPT
@@ -342,6 +444,47 @@ wrap_permission_handler! {
             });
             1
         }
+
+        /// Camera / microphone / screen capture (`getUserMedia`, `getDisplayMedia`): denied
+        /// unless a rule allows every requested kind (Alloy would grant it otherwise, and
+        /// pages could then read device labels).
+        fn on_request_media_access_permission(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut MediaAccessCallback>,
+        ) -> i32 {
+            let Some(callback) = callback else { return 0 };
+            let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
+            let kinds = bmcp_profiles::permissions::kinds_from_media_bits(requested_permissions);
+            let allow = self.kind == ViewKind::Content
+                && crate::permission_store().is_some_and(|s| s.decide_all(&origin, &kinds));
+            tracing::debug!(origin, requested_permissions, allow, "media permission");
+            // All or nothing: a partial grant is invalid for getUserMedia.
+            callback.cont(if allow { requested_permissions } else { 0 });
+            1
+        }
+    }
+}
+
+/// A request's transition type as raw bits (`cef_transition_type_t`): one source value OR-ed
+/// with qualifier flags. Such a combination is not one of the Rust enum's variants, so it is
+/// read through the C function as a plain integer instead of `Request::transition_type()`.
+fn transition_bits(request: &Request) -> u32 {
+    let raw = ImplRequest::get_raw(request);
+    if raw.is_null() {
+        return 0;
+    }
+    // SAFETY: `raw` is a live cef_request_t (we hold a reference); the C function returns a
+    // 32-bit enum, which has the same ABI as an i32.
+    unsafe {
+        let Some(get) = (*raw).get_transition_type else {
+            return 0;
+        };
+        let get: unsafe extern "C" fn(*mut sys::_cef_request_t) -> i32 = std::mem::transmute(get);
+        get(raw) as u32
     }
 }
 
@@ -456,6 +599,8 @@ wrap_life_span_handler! {
     struct ShellLifeSpanHandler {
         browsers: Arc<Browsers>,
         kind: ViewKind,
+        offscreen: bool,
+        pending: i32,
     }
 
     impl LifeSpanHandler {
@@ -477,12 +622,23 @@ wrap_life_span_handler! {
         ) -> i32 {
             let url = target_url.map(CefString::to_string).unwrap_or_default();
             if self.kind == ViewKind::Content {
+                let Some(opener) = browser else { return 0 };
+                let background = target_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
+                let opener_id = TabId(opener.identifier());
+                // Off-screen openers have no window to put a CEF popup in, and tabs of a
+                // profile with an identity must get it before their first script: open the
+                // URL as our own tab instead.
+                let profile = bridge::with_ui(|ui| ui.tabs.get(&opener_id).map(|t| t.profile.name()));
+                let reopen = self.offscreen
+                    || profile.is_some_and(|p| crate::hooks::wants_prepare(&p));
+                if reopen && (url.starts_with("http") || url.is_empty()) {
+                    let url = if url.is_empty() { "about:blank".to_owned() } else { url };
+                    bridge::post_to_ui(Box::new(move || reopen_popup(opener_id, url, background)));
+                    return 1;
+                }
                 // Allowed; it becomes a tab in on_popup_browser_view_created. Remember
                 // whether it should open in the background (Ctrl+click, middle click).
-                if let Some(opener) = browser {
-                    let background = target_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
-                    bridge::with_ui(|ui| ui.popups.insert(opener.identifier(), (background, url)));
-                }
+                bridge::with_ui(|ui| ui.popups.insert(opener.identifier(), (background, url)));
                 return 0;
             }
             // Our chrome pages never open windows.
@@ -493,12 +649,15 @@ wrap_life_span_handler! {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             if let Some(browser) = browser {
                 match self.kind {
-                    ViewKind::Content => bridge::register_tab(browser),
+                    ViewKind::Content => bridge::register_tab(browser, self.offscreen, self.pending),
                     kind => bridge::register_chrome_view(browser, kind),
                 }
             }
             let open = self.browsers.open.fetch_add(1, Ordering::SeqCst) + 1;
-            tracing::debug!(open, kind = ?self.kind, "browser created");
+            if !self.offscreen {
+                self.browsers.windowed.fetch_add(1, Ordering::SeqCst);
+            }
+            tracing::debug!(open, kind = ?self.kind, offscreen = self.offscreen, "browser created");
         }
 
         fn do_close(&self, browser: Option<&mut Browser>) -> i32 {
@@ -519,6 +678,11 @@ wrap_life_span_handler! {
             tracing::debug!(open, kind = ?self.kind, "browser closed");
             if open == 0 {
                 quit_message_loop();
+            } else if !self.offscreen
+                && self.browsers.windowed.fetch_sub(1, Ordering::SeqCst) == 1
+            {
+                // The last window is gone: off-screen tabs must not keep the app alive.
+                bridge::post_to_ui(Box::new(close_offscreen_tabs));
             }
         }
     }
@@ -602,20 +766,34 @@ wrap_request_handler! {
             frame: Option<&mut Frame>,
             request: Option<&mut Request>,
             _user_gesture: i32,
-            _is_redirect: i32,
+            is_redirect: i32,
         ) -> i32 {
             let (Some(browser), Some(frame), Some(request)) = (browser, frame, request) else {
                 return 0;
             };
             let url = CefString::from(&request.url()).to_string();
             if self.kind == ViewKind::Content {
-                // A tab may show our new tab page, but never the chrome/palette pages
-                // (they have full API access) nor send bmcp://cmd navigations.
-                if crate::scheme::is_allowed_in_content(&url) {
-                    return 0;
+                // A tab may show our exact new tab page — when the browser itself loads it —
+                // but never the chrome/palette pages (they have full API access), never
+                // bmcp://cmd, and a web page can never send a tab to bmcp:// at all.
+                let current = CefString::from(&frame.url()).to_string();
+                let transition = transition_bits(request);
+                let allowed = crate::scheme::content_navigation_allowed(
+                    &url,
+                    &current,
+                    transition,
+                    is_redirect == 1,
+                    frame.is_main() == 1,
+                );
+                if !allowed {
+                    tracing::warn!(url, current, transition, "blocked bmcp:// navigation in a tab");
+                    return 1;
                 }
-                tracing::warn!(url, "blocked bmcp:// page in a tab");
-                return 1;
+                if frame.is_main() == 1 {
+                    // Site policy js/images → content settings, before the page commits.
+                    crate::net::apply_content_settings(browser, &url);
+                }
+                return 0;
             }
             if frame.is_main() == 0 || crate::scheme::is_chrome_url(&url) {
                 return 0;
@@ -624,6 +802,24 @@ wrap_request_handler! {
             // to leave bmcp://ui/) opens in the shown tab instead.
             chrome::open_in_content(browser, &url);
             1
+        }
+
+        /// Every request of a web page goes through the adblock / site-policy gate
+        /// (`net.rs`). Our own views are never filtered.
+        fn resource_request_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _is_navigation: ::std::os::raw::c_int,
+            _is_download: ::std::os::raw::c_int,
+            _request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+        ) -> Option<ResourceRequestHandler> {
+            if self.kind != ViewKind::Content {
+                return None;
+            }
+            crate::net::request_handler()
         }
     }
 }

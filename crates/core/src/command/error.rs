@@ -224,6 +224,8 @@ impl From<BackendError> for CmdError {
             BackendError::ShuttingDown => CmdError::new(ErrorCode::ShuttingDown, message),
             // A raw CDP failure is unexpected for a well-formed command: report it as-is.
             BackendError::Cdp(_) => CmdError::new(ErrorCode::Internal, message),
+            BackendError::Unsupported(_) => CmdError::new(ErrorCode::NotImplemented, message),
+            BackendError::Invalid(_) => CmdError::new(ErrorCode::InvalidParams, message),
         }
     }
 }

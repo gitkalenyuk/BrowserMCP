@@ -546,23 +546,60 @@ async fn csv_and_xlsx_data_reach_the_script() {
     assert_eq!(err.code, ErrorCode::NotFound);
 }
 
+/// Each row's host gets `BMCP_TAB_DEFAULTS` (merged into its `tabs.open` calls).
+async fn tab_defaults_of(env: &Env, profile: Option<&str>) -> Vec<Value> {
+    let mut args = json!({"script": "a", "data": {"rows": id_rows(2)}, "parallel": 2});
+    if let Some(profile) = profile {
+        args["profile"] = json!(profile);
+    }
+    let run = env.ok("run.start", args).await;
+    let id = run["id"].as_str().unwrap().to_string();
+    env.wait_status(&id, &["finished"]).await;
+    let mut rows = env.rows(&id).await;
+    rows.sort_by_key(|r| r["row"].as_u64());
+    rows.iter()
+        .map(|r| {
+            let mut d = r["result"]["tab_defaults"].clone();
+            // The run id differs per run: check it, then compare the rest.
+            assert_eq!(d["run"], id.as_str());
+            if let Some(p) = d.get("profile").and_then(Value::as_str)
+                && p.starts_with(&id)
+            {
+                d["profile"] = json!(p.replacen(&id, "RUN", 1));
+            }
+            d.as_object_mut().unwrap().remove("run");
+            d
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn only_the_default_profile_for_now() {
+async fn rows_get_their_profile_through_tab_defaults() {
     let env = Env::new();
-    env.save("s", "out x").await;
+    env.save("a", "args").await;
+    // "isolated": a fresh in-memory profile per row attempt, off-screen tabs.
+    assert_eq!(
+        tab_defaults_of(&env, Some("isolated")).await,
+        vec![
+            json!({"profile": "RUN-r0-a1", "incognito": true, "window": "offscreen"}),
+            json!({"profile": "RUN-r1-a1", "incognito": true, "window": "offscreen"}),
+        ]
+    );
+    // A named profile is shared; default adds only the run id (downloads folder).
+    assert_eq!(
+        tab_defaults_of(&env, Some("work")).await,
+        vec![json!({"profile": "work"}), json!({"profile": "work"})]
+    );
+    assert_eq!(
+        tab_defaults_of(&env, None).await,
+        vec![json!({}), json!({})]
+    );
     let err = env
         .call(
             "run.start",
-            json!({"script": "s", "data": {"rows": id_rows(1)}, "profile": "isolated"}),
+            json!({"script": "a", "data": {"rows": id_rows(1)}, "profile": "Bad Name"}),
         )
         .await
         .unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotImplemented);
-    let run = env
-        .ok(
-            "run.start",
-            json!({"script": "s", "data": {"rows": id_rows(1)}, "profile": "default"}),
-        )
-        .await;
-    assert_eq!(run["options"]["profile"], "default");
+    assert_eq!(err.code, ErrorCode::InvalidParams);
 }

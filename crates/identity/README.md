@@ -83,6 +83,17 @@ Headless / background tabs and emulation leave tells; `stealth.check` probes the
 
 ## For the `cef` crate (per-profile wiring)
 
+Status (cef crate, `docs/phase2/profiles.md`): per-profile `CefRequestContext`s exist, with
+proxy / WebRTC / Accept-Language prefs set by `bmcp-profiles` (`profile.create {proxy,
+identity, accept_language}`, its own proxy setting through this crate's `Forwarder`); new tabs
+and popups of a profile with an assigned identity start on `about:blank`, get
+`stealth.fingerprint_set`, then load; dedicated workers are auto-attached
+(`waitForDebuggerOnStart`, `flatten`) and get the UA override plus a `navigator` patch (cores,
+memory, languages) before they run — verified live. **Not wired yet** (they arrived in main
+after that work): `profile_proxy_pref` / `proxy.rules_set` routes + `proxy.routes_changed`,
+`cef_prefs::profile_prefs`, `identity_for_profile` and `worker_commands` below; bmcp-profiles
+still uses its own equivalents.
+
 All functions are on `bmcp_identity::Services` (`Services::from_ctx(&ctx)` or
 `registry.extensions().get::<Services>()`), CEF-agnostic and tested here:
 
@@ -131,15 +142,13 @@ Leases are stored in `proxies.json`, so a resumed run keeps its rows' IPs.
 
 ## Known gaps
 
-* Workers until the cef wiring lands: `Emulation.setHardwareConcurrencyOverride` on the tab
-  does not reach dedicated workers (`stealth.check` warns). With the wiring, the worker patch
-  covers cores, memory, UA, platform, languages and WebGL, but not the timezone (no clean JS
-  patch for `Intl`) or `navigator.userAgentData` if the CDP overrides do not reach the worker.
-  Which `Emulation.*` methods work on worker sessions is not verified live yet.
+* Workers: `Emulation.setHardwareConcurrencyOverride` on the tab does not reach dedicated
+  workers. Tabs of a profile with an assigned identity get the CEF worker patch (cores,
+  memory, UA, languages — verified live); a tab that only got `stealth.fingerprint_set` by hand
+  still shows the real values in its workers. Timezone and WebGL in workers are not patched.
 * No H.264 in the CEF build (sannysoft `VIDEO_CODECS` warns); real Chrome has it.
-* Pages can list media devices with their real labels (CEF grants media permission); the
-  per-profile permission handling in the `cef` crate should deny or prompt instead
-  (`stealth.check` reports it).
+* Camera/microphone are denied unless `permissions.set` allows them for the site, so pages no
+  longer get device labels by default.
 * Fonts are the host's (`stealth.check` reports a mismatch with the claimed OS).
 * The macOS avail size assumes a hidden or side dock (menu bar only).
 * `geo.lookup` / `fit_to_proxy` use ip-api.com's free endpoint, which is plain HTTP (the

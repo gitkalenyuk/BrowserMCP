@@ -310,9 +310,11 @@ impl Command for Apply {
 
     fn meta() -> Meta {
         Meta::new(
-            "Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and \
-             cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads \
-             the filter lists on first use. Reload the page to see the full effect.",
+            "Enforce adblock + site policies in a tab now: cosmetic CSS in an isolated world; \
+             requests are blocked by the browser's network hook for every tab (report.network \
+             = \"cef\"), or by CDP Fetch interception of this tab where that hook is missing \
+             (\"cdp\"). Downloads the filter lists on first use. Reload the page to see the \
+             full effect.",
             Toolset::Data,
         )
         .mutates_tab()

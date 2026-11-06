@@ -9,7 +9,16 @@ publish.workspace = true
 [dependencies]
 bmcp-core.workspace = true
 bmcp-cdp.workspace = true
+# The ResourceGate (adblock + site policies) asked from OnBeforeResourceLoad.
+bmcp-adblock = { path = "../adblock" }
+# Profile settings, cookie/permission/download policies (all CEF-free, see that crate).
+bmcp-profiles = { path = "../profiles" }
+# Topic names of the download events (recorded by bmcp-data).
+bmcp-data = { path = "../data" }
 cef.workspace = true
+# CSP hash of the config script injected into our UI pages.
+sha2 = "0.11"
+base64 = "0.22"
 # Embeds the Svelte UI build (ui/dist) into the executable, see src/ui_files.rs.
 include_dir = "0.7"
 serde_json.workspace = true

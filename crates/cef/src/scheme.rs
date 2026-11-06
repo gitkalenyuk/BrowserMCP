@@ -35,6 +35,8 @@ struct Config {
     /// Vite dev server base (`http://localhost:5173`) for the chrome and palette.
     dev_url: Option<String>,
     api_ws: Option<String>,
+    /// `Content-Security-Policy` of every HTML page, see [`content_security_policy`].
+    csp: String,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -45,12 +47,14 @@ fn config() -> &'static Config {
         config_json: "{}".into(),
         dev_url: None,
         api_ws: None,
+        csp: content_security_policy("{}", None),
     })
 }
 
 /// Remember the UI options (call before CEF starts).
 pub(crate) fn configure(ui: &crate::UiOptions) {
     let config_json = serde_json::json!({ "ws": ui.api_ws }).to_string();
+    let csp = content_security_policy(&config_json, ui.api_ws.as_deref());
     let _ = CONFIG.set(Config {
         source: ui.dir.clone().map_or(Source::Embedded, Source::Folder),
         config_json,
@@ -59,7 +63,38 @@ pub(crate) fn configure(ui: &crate::UiOptions) {
             .as_ref()
             .map(|u| u.trim_end_matches('/').to_owned()),
         api_ws: ui.api_ws.clone(),
+        csp,
     });
+}
+
+/// Base64 of the SHA-256 of `bytes` (CSP hash sources).
+fn sha256_base64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    use sha2::Digest;
+    base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(bytes))
+}
+
+/// The CSP of our pages: they talk to the API with full rights, so they may run only our
+/// own scripts (files from `bmcp://ui` + the one injected config script, by hash — no other
+/// inline script, no `javascript:` URLs, no eval) and connect only to our own origin, the
+/// `bmcp://cmd` channel and the local API port (no foreign WebSocket endpoints).
+pub(crate) fn content_security_policy(config_json: &str, api_ws: Option<&str>) -> String {
+    let hash = sha256_base64(crate::ui_files::config_script(config_json).as_bytes());
+    // `ws://127.0.0.1:47800/v1/ws` → `127.0.0.1:47800`.
+    let api = api_ws
+        .and_then(|ws| ws.split_once("://"))
+        .map(|(_, rest)| rest.split('/').next().unwrap_or(rest).to_string())
+        .filter(|host| !host.is_empty());
+    let connect = match api {
+        Some(host) => format!("'self' bmcp://cmd ws://{host} http://{host}"),
+        None => "'self' bmcp://cmd".to_string(),
+    };
+    format!(
+        "default-src 'self'; script-src 'self' 'sha256-{hash}'; \
+         style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; \
+         font-src 'self' data:; connect-src {connect}; object-src 'none'; base-uri 'none'; \
+         frame-ancestors 'none'"
+    )
 }
 
 /// URL of one of our chrome pages (`index.html`, `palette.html`), honouring `--ui-dev`.
@@ -84,13 +119,57 @@ pub(crate) fn is_chrome_url(url: &str) -> bool {
             .is_some_and(|dev| url.starts_with(&format!("{dev}/")))
 }
 
-/// May a web page (content view) show this URL? Only the new tab page of our own pages:
-/// the chrome and palette pages have no business inside a tab.
+/// The new tab page, exactly (no query, no fragment: the UI reads its API endpoint from the
+/// query in dev mode, so `newtab.html?ws=wss://evil` must never load in a tab).
+pub(crate) fn newtab_url() -> String {
+    format!("{UI_PREFIX}{NEWTAB_PAGE}")
+}
+
+/// May a web page (content view) show this URL? Of our own pages only the exact new tab
+/// page: the chrome and palette pages have no business inside a tab.
 pub(crate) fn is_allowed_in_content(url: &str) -> bool {
-    match url.strip_prefix(UI_PREFIX) {
-        Some(rest) => rest.split(['?', '#']).next() == Some(NEWTAB_PAGE) || rest == "library.html",
-        None => !url.starts_with(CMD_PREFIX),
+    if url.starts_with("bmcp:") {
+        // The script library page may also be opened in a tab (exactly, no query).
+        return url == newtab_url() || url == format!("{UI_PREFIX}library.html");
     }
+    true
+}
+
+/// `cef_transition_type_t` bits used by [`content_navigation_allowed`].
+const TT_SOURCE_MASK: u32 = 0xFF;
+const TT_RELOAD: u32 = 8;
+const TT_FORWARD_BACK_FLAG: u32 = 0x0100_0000;
+/// "Loaded a URL directly via CreateBrowser, LoadURL or LoadRequest" = browser-initiated.
+const TT_DIRECT_LOAD_FLAG: u32 = 0x0200_0000;
+const TT_IS_REDIRECT_MASK: u32 = 0xC000_0000;
+
+/// May a content view navigate to `target`? (`current` = the frame's URL before it.)
+///
+/// Web URLs: always. `bmcp://`: only the exact new tab page, only in the main frame, never
+/// through a redirect, and only when the browser itself started the load (new tab, `nav.goto`,
+/// back/forward, reload) or the tab already shows one of our pages — a page on some web
+/// origin cannot send a tab to `bmcp://` (link, `location = …`, form, redirect).
+pub(crate) fn content_navigation_allowed(
+    target: &str,
+    current: &str,
+    transition: u32,
+    is_redirect: bool,
+    is_main_frame: bool,
+) -> bool {
+    if !target.starts_with("bmcp:") {
+        return true;
+    }
+    if !is_allowed_in_content(target) || !is_main_frame {
+        return false;
+    }
+    if is_redirect || transition & TT_IS_REDIRECT_MASK != 0 {
+        return false;
+    }
+    let browser_initiated = transition & (TT_DIRECT_LOAD_FLAG | TT_FORWARD_BACK_FLAG) != 0
+        || transition & TT_SOURCE_MASK == TT_RELOAD;
+    let current_is_ours =
+        current.is_empty() || current == "about:blank" || current.starts_with(UI_PREFIX);
+    browser_initiated || current_is_ours
 }
 
 /// `cef_permission_request_types_t` bits for "talk to localhost / the local network"
@@ -125,10 +204,13 @@ fn chrome_origin() -> String {
 /// `App::on_register_custom_schemes` in every process.
 pub(crate) fn register_custom_schemes(registrar: Option<&mut SchemeRegistrar>) {
     let Some(registrar) = registrar else { return };
+    // DISPLAY_ISOLATED: only `bmcp://` pages may link to / frame / navigate to `bmcp://`
+    // (browser-initiated loads like a new tab or `nav.goto` still work).
     let options = SchemeOptions::STANDARD.get_raw()
         | SchemeOptions::SECURE.get_raw()
         | SchemeOptions::CORS_ENABLED.get_raw()
-        | SchemeOptions::FETCH_ENABLED.get_raw();
+        | SchemeOptions::FETCH_ENABLED.get_raw()
+        | SchemeOptions::DISPLAY_ISOLATED.get_raw();
     registrar.add_custom_scheme(Some(&CefString::from(SCHEME)), options);
 }
 
@@ -151,6 +233,20 @@ pub(crate) fn register_handler() {
         register_scheme_handler_factory(Some(&CefString::from(SCHEME)), None, Some(&mut factory));
     if ok != 1 {
         tracing::error!("could not register the bmcp:// scheme handler");
+    }
+}
+
+/// Install the `bmcp://` handler on a profile's own request context (non-global contexts
+/// do not see the global registration).
+pub(crate) fn register_on(context: &RequestContext) {
+    let mut factory = BmcpSchemeFactory::new();
+    let ok = context.register_scheme_handler_factory(
+        Some(&CefString::from(SCHEME)),
+        None,
+        Some(&mut factory),
+    );
+    if ok != 1 {
+        tracing::error!("could not register bmcp:// on a profile context");
     }
 }
 
@@ -199,11 +295,38 @@ fn command_response(sender: Option<i32>, url: &str) -> ResourceHandler {
 }
 
 fn bytes_response(status: i32, mime: &'static str, body: Vec<u8>) -> ResourceHandler {
+    let mut headers = vec![
+        ("Cache-Control".to_string(), "no-store".to_string()),
+        // UI pages (origin bmcp://ui) fetch bmcp://cmd/..., which is cross-origin.
+        ("Access-Control-Allow-Origin".to_string(), chrome_origin()),
+        // Never let a web page frame our pages (clickjacking).
+        ("X-Frame-Options".to_string(), "DENY".to_string()),
+    ];
+    // HTML pages get the full policy (see `content_security_policy`), the rest at least
+    // frame-ancestors.
+    let csp = if mime.starts_with("text/html") {
+        config().csp.clone()
+    } else {
+        "frame-ancestors 'none'".to_string()
+    };
+    headers.push(("Content-Security-Policy".to_string(), csp));
     StaticResource::new(
         status,
+        mime.to_string(),
+        Arc::new(body),
+        Arc::new(headers),
+        Arc::new(Mutex::new(0)),
+    )
+}
+
+/// A plain `200` answer with `body` (adblock redirect resources served instead of a request).
+pub(crate) fn data_response(mime: String, body: Vec<u8>) -> ResourceHandler {
+    let headers = vec![("Access-Control-Allow-Origin".to_string(), "*".to_string())];
+    StaticResource::new(
+        200,
         mime,
         Arc::new(body),
-        chrome_origin(),
+        Arc::new(headers),
         Arc::new(Mutex::new(0)),
     )
 }
@@ -214,9 +337,9 @@ fn bytes_response(status: i32, mime: &'static str, body: Vec<u8>) -> ResourceHan
 wrap_resource_handler! {
     struct StaticResource {
         status: i32,
-        mime: &'static str,
+        mime: String,
         body: Arc<Vec<u8>>,
-        allow_origin: String,
+        headers: Arc<Vec<(String, String)>>,
         offset: Arc<Mutex<usize>>,
     }
 
@@ -241,19 +364,13 @@ wrap_resource_handler! {
         ) {
             if let Some(response) = response {
                 response.set_status(self.status);
-                response.set_mime_type(Some(&CefString::from(self.mime)));
+                response.set_mime_type(Some(&CefString::from(self.mime.as_str())));
                 response.set_charset(Some(&CefString::from("utf-8")));
-                let header = |name: &str, value: &str| {
-                    let (name, value) = (CefString::from(name), CefString::from(value));
+                for (name, value) in self.headers.iter() {
+                    let name = CefString::from(name.as_str());
+                    let value = CefString::from(value.as_str());
                     response.set_header_by_name(Some(&name), Some(&value), 1);
-                };
-                header("Cache-Control", "no-store");
-                // UI pages (origin bmcp://ui) fetch bmcp://cmd/..., which is cross-origin.
-                header("Access-Control-Allow-Origin", &self.allow_origin);
-                // Our pages talk to the API with full rights: never let a web page frame
-                // them (clickjacking).
-                header("Content-Security-Policy", "frame-ancestors 'none'");
-                header("X-Frame-Options", "DENY");
+                }
             }
             if let Some(length) = response_length {
                 *length = self.body.len() as i64;
@@ -293,7 +410,11 @@ mod tests {
     #[test]
     fn content_views_may_only_show_the_new_tab_page() {
         assert!(is_allowed_in_content("bmcp://ui/newtab.html"));
-        assert!(is_allowed_in_content("bmcp://ui/newtab.html?x=1"));
+        assert!(!is_allowed_in_content("bmcp://ui/newtab.html?x=1"));
+        assert!(!is_allowed_in_content(
+            "bmcp://ui/newtab.html?api=ws&ws=wss://evil/rpc"
+        ));
+        assert!(!is_allowed_in_content("bmcp://ui/newtab.html#x"));
         assert!(!is_allowed_in_content("bmcp://ui/index.html"));
         assert!(!is_allowed_in_content("bmcp://ui/palette.html"));
         assert!(!is_allowed_in_content("bmcp://cmd/palette"));
@@ -309,5 +430,115 @@ mod tests {
         // Our pages get nothing else (camera = 4) without a real prompt.
         assert!(!allow_permission("bmcp://ui", loopback | 4));
         assert!(!allow_permission("bmcp://ui", 0));
+    }
+
+    #[test]
+    fn web_pages_cannot_send_a_tab_to_bmcp() {
+        let newtab = "bmcp://ui/newtab.html";
+        let direct = TT_DIRECT_LOAD_FLAG | 1; // LoadURL / CreateBrowser (TT_EXPLICIT)
+        let link = 0; // TT_LINK
+        // Browser-initiated: new tab, nav.goto from a web page, back/forward, reload.
+        assert!(content_navigation_allowed(newtab, "", direct, false, true));
+        assert!(content_navigation_allowed(
+            newtab,
+            "https://a.test/",
+            direct,
+            false,
+            true
+        ));
+        assert!(content_navigation_allowed(
+            newtab,
+            "https://a.test/",
+            TT_FORWARD_BACK_FLAG,
+            false,
+            true
+        ));
+        assert!(content_navigation_allowed(
+            newtab, newtab, TT_RELOAD, false, true
+        ));
+        // Renderer-initiated from a web origin: link, location=, redirects, iframes.
+        assert!(!content_navigation_allowed(
+            newtab,
+            "https://evil.test/",
+            link,
+            false,
+            true
+        ));
+        assert!(!content_navigation_allowed(
+            newtab,
+            "https://evil.test/",
+            0x4000_0000, // client redirect
+            false,
+            true
+        ));
+        assert!(!content_navigation_allowed(
+            newtab,
+            "https://evil.test/",
+            direct,
+            true,
+            true
+        ));
+        assert!(!content_navigation_allowed(
+            newtab, "", direct, false, false
+        ));
+        // Never with a query, never other pages.
+        assert!(!content_navigation_allowed(
+            "bmcp://ui/newtab.html?ws=wss://evil",
+            "",
+            direct,
+            false,
+            true
+        ));
+        assert!(!content_navigation_allowed(
+            "bmcp://ui/index.html",
+            "",
+            direct,
+            false,
+            true
+        ));
+        assert!(!content_navigation_allowed(
+            "bmcp://cmd/palette",
+            "",
+            direct,
+            false,
+            true
+        ));
+        // Links from our own new tab page are fine; web URLs always.
+        assert!(content_navigation_allowed(
+            newtab, newtab, link, false, true
+        ));
+        assert!(content_navigation_allowed(
+            "https://b.test/",
+            "https://a.test/",
+            link,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn csp_allows_only_our_config_script_and_api() {
+        let json = r#"{"ws":"ws://127.0.0.1:47800/v1/ws"}"#;
+        let csp = content_security_policy(json, Some("ws://127.0.0.1:47800/v1/ws"));
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains(
+            "connect-src 'self' bmcp://cmd ws://127.0.0.1:47800 http://127.0.0.1:47800;"
+        ));
+        // The hash of exactly the injected script text.
+        let script = crate::ui_files::config_script(json);
+        let expected = format!("'sha256-{}'", sha256_base64(script.as_bytes()));
+        assert!(
+            csp.contains(&format!("script-src 'self' {expected};")),
+            "{csp}"
+        );
+        // Known SHA-256 (of "abc"), base64.
+        assert_eq!(
+            sha256_base64(b"abc"),
+            "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+        );
+        // Without an API port nothing but our own origin is reachable.
+        let csp = content_security_policy("{}", None);
+        assert!(csp.contains("connect-src 'self' bmcp://cmd;"));
     }
 }

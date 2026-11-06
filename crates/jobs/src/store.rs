@@ -37,8 +37,8 @@ pub struct RunOptions {
     /// (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heal_mode: Option<HealMode>,
-    /// Browser profile the rows run in. Today always the default profile (shared by all
-    /// rows); isolated per-row profiles come later.
+    /// Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+    /// profile + off-screen tabs per row attempt), or a profile id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
 }
