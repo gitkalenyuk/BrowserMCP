@@ -1,24 +1,41 @@
 <script lang="ts">
   import { useChrome } from '../state/chrome.svelte';
+  import { lockState } from '../state/tabs';
   import Icon from './Icon.svelte';
 
   const chrome = useChrome();
   const tab = $derived(chrome.active);
-  const agent = $derived(chrome.agent(tab?.lockedBy ?? null));
+  // The tab's agent lock: active (agent drives), handoff (agent waits for you), paused (you took over).
+  const state = $derived(tab ? lockState(tab) : null);
+  const agent = $derived(chrome.agent(tab?.lock?.owner ?? tab?.lockedBy ?? null));
 </script>
 
-{#if tab && agent}
+{#if tab && agent && state === 'handoff'}
+  <div class="banner handoff" role="alert" style:--agent="var(--g-{agent.color})">
+    <Icon name="hand" size={14} stroke={2} />
+    <span class="who">{agent.name} needs you</span>
+    <span class="task">{tab.lock?.reason ?? 'Finish this step in the page.'}</span>
+    <span class="note">Click Done when you are finished; {agent.name} continues.</span>
+    <button class="btn takeover" onclick={() => chrome.finishHandoff(tab.id)}>Done</button>
+  </div>
+{:else if tab && agent && state === 'active'}
   <div class="banner" role="status" style:--agent="var(--g-{agent.color})">
     <span class="live" aria-hidden="true"></span>
     <span class="who">{agent.name} is controlling this tab</span>
     {#if agent.task}
       <span class="task">{agent.task}</span>
     {/if}
-    <span class="note">Your input is blocked until you take over.</span>
+    <span class="note">Other agents are locked out. Take over to pause it.</span>
     <button class="btn takeover" onclick={() => chrome.takeOver(tab.id)}>
       <Icon name="hand" size={14} stroke={2} />
       Take over
     </button>
+  </div>
+{:else if tab && agent && state === 'paused'}
+  <div class="banner paused" role="status" style:--agent="var(--g-{agent.color})">
+    <span class="who">You took over from {agent.name}</span>
+    <span class="note">{agent.name} cannot change this tab until you give it back.</span>
+    <button class="btn takeover" onclick={() => chrome.giveBack(tab.id)}>Give back</button>
   </div>
 {/if}
 
@@ -34,6 +51,12 @@
     font-size: var(--fs-sm);
     white-space: nowrap;
     overflow: hidden;
+  }
+  .banner.paused {
+    background: var(--toolbar);
+  }
+  .banner.handoff {
+    background: color-mix(in oklab, var(--agent) 22%, var(--toolbar));
   }
   .live {
     position: relative;

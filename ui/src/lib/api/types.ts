@@ -20,6 +20,19 @@ export type GroupColor =
   | 'cyan'
   | 'orange';
 
+/**
+ * Agent lock of a tab (crates/core/src/agents.rs):
+ * `active` — the agent drives the tab; `paused` — the human took over;
+ * `handoff` — the agent waits for the human ("Done" gives the tab back).
+ */
+export interface TabLock {
+  owner: AgentId;
+  state: 'active' | 'paused' | 'handoff';
+  /** handoff: what the agent asks the human to do. */
+  reason: string | null;
+  sinceMs: number;
+}
+
 export interface TabInfo {
   id: TabId;
   title: string;
@@ -32,6 +45,8 @@ export interface TabInfo {
   groupId: GroupId | null;
   /** Agent currently holding the tab lock; null when the human is in control. */
   lockedBy: AgentId | null;
+  /** Lock details; null/absent when no agent owns the tab. */
+  lock?: TabLock | null;
   /** Sent by the core in tabs.list / tab.created (the UI uses TabsSnapshot.activeId instead). */
   active?: boolean;
 }
@@ -51,6 +66,10 @@ export interface Agent {
   status: 'idle' | 'running' | 'waiting' | 'error';
   /** Short description of what it is doing right now. */
   task: string | null;
+  /** Its tab group (`agent:<id>`). Sent by the core. */
+  groupId?: GroupId;
+  /** Tabs in its group. Sent by the core. */
+  tabs?: TabId[];
 }
 
 export interface TabsSnapshot {
@@ -120,8 +139,14 @@ export interface RpcMethods {
   'tabs.open': { params: { url?: string; background?: boolean }; result: TabInfo };
   'tabs.close': { params: TabParam; result: void };
   'tabs.activate': { params: TabParam; result: void };
-  /** Human takes the tab back from an agent (releases the agent lock). */
-  'tabs.unlock': { params: TabParam; result: void };
+  /**
+   * Human: "Take over" an agent's tab (its lock pauses) or "Done" after a handoff (the agent
+   * continues). Agent: release its own tab.
+   */
+  'tabs.unlock': { params: TabParam; result: { tab: TabId; lock: TabLock | null } };
+  /** Human: give a taken-over tab back to its agent (or to `agent`). */
+  'tabs.lock': { params: TabParam & { agent?: AgentId }; result: { tab: TabId; lock: TabLock | null } };
+  'tabs.groups': { params: void; result: { groups: Array<TabGroup & { tabs: TabId[] }> } };
   'nav.goto': { params: TabParam & { url: string }; result: void };
   'nav.back': { params: TabParam; result: void };
   'nav.forward': { params: TabParam; result: void };
@@ -129,7 +154,9 @@ export interface RpcMethods {
   'nav.stop': { params: TabParam; result: void };
   /** Vim-style link hints in the page (crates/hints). */
   'hints.show': { params: TabParam & { mode?: 'click' | 'newtab' | 'focus' | 'copy' }; result: { count: number } };
-  'agents.list': { params: void; result: Agent[] };
+  'agents.list': { params: void; result: { agents: Agent[] } };
+  /** Unlock the agent's tabs and drop its group. */
+  'agents.forget': { params: { id: AgentId }; result: { released: TabId[] } };
   'workspaces.list': { params: void; result: { workspaces: Workspace[]; activeId: WorkspaceId } };
   'workspaces.activate': { params: { id: WorkspaceId }; result: void };
   'runs.list': { params: void; result: { runs: Run[]; patches: Patch[] } };
@@ -201,6 +228,8 @@ export interface ApiEvents {
   /** Whole tab set replaced (e.g. workspace switch). */
   'tabs.reset': TabsSnapshot;
   'agents.updated': { agents: Agent[] };
+  /** An agent asks the human to do something in a tab (the banner shows it). */
+  'ai.handoff': { tab: TabId; agent: AgentId; reason: string };
   'workspace.activated': { id: WorkspaceId };
   'runs.updated': { runs: Run[]; patches: Patch[] };
   // ai.* / term.* / net.* (WsApi subscribes to them with events.subscribe on connect)

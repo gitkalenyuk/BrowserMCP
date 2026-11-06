@@ -40,10 +40,11 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::{HeaderMap, header};
 use axum::response::Response;
 use axum::routing::get;
-use bmcp_core::events::Event;
-use bmcp_core::{Caller, CmdError, ErrorCode};
+use bmcp_core::events::{Event, topics};
+use bmcp_core::{Agents, Caller, CmdError, ErrorCode, TabId};
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
 
@@ -84,14 +85,26 @@ pub fn router() -> axum::Router<ApiState> {
     axum::Router::new().route("/v1/ws", get(upgrade))
 }
 
-async fn upgrade(State(state): State<ApiState>, ws: WebSocketUpgrade) -> Response {
+async fn upgrade(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
     let conn = state.next_conn_id();
-    ws.on_upgrade(move |socket| run_connection(state, conn, socket))
+    // The guard in front of this route lets an `Origin` header through only for the browser's
+    // own UI pages (`bmcp://ui`, the dev server). So "has an Origin" = a person clicking in
+    // the browser UI: such calls are `Caller::Ui` and win over agent tab locks.
+    let caller = if headers.contains_key(header::ORIGIN) {
+        Caller::Ui
+    } else {
+        Caller::Ws { conn }
+    };
+    ws.on_upgrade(move |socket| run_connection(state, conn, caller, socket))
 }
 
 /// One connection. This task owns the socket: it reads requests and writes everything that
 /// arrives on the outbox (responses from call tasks, notifications from the event forwarder).
-async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
+async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: WebSocket) {
     tracing::debug!(conn, "WebSocket connected");
     let subs = Arc::new(Mutex::new(Subscriptions::with_defaults()));
     let (outbox, mut outgoing) = mpsc::channel::<String>(OUTBOX);
@@ -100,6 +113,7 @@ async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
         state.events.subscribe(),
         subs.clone(),
         outbox.clone(),
+        state.registry.extensions().get::<Agents>(),
     ));
 
     loop {
@@ -113,7 +127,7 @@ async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
                     // Close frame, end of stream or a broken connection.
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
-                handle_message(&state, conn, &subs, &outbox, &text);
+                handle_message(&state, &caller, &subs, &outbox, &text);
             }
             Some(message) = outgoing.recv() => {
                 if socket.send(Message::Text(message.into())).await.is_err() {
@@ -134,7 +148,7 @@ async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
 /// because this runs inside the loop that drains the outbox (awaiting here could deadlock).
 fn handle_message(
     state: &ApiState,
-    conn: u64,
+    caller: &Caller,
     subs: &Arc<Mutex<Subscriptions>>,
     outbox: &mpsc::Sender<String>,
     text: &str,
@@ -156,14 +170,14 @@ fn handle_message(
                 send_later(outbox, message);
             }
         }
-        _ => spawn_call(state, conn, outbox, request),
+        _ => spawn_call(state, caller, outbox, request),
     }
 }
 
 /// Run a registry command in its own task and send the response when it is done.
-fn spawn_call(state: &ApiState, conn: u64, outbox: &mpsc::Sender<String>, request: Request) {
+fn spawn_call(state: &ApiState, caller: &Caller, outbox: &mpsc::Sender<String>, request: Request) {
     let unknown_method = state.registry.get(&request.method).is_none();
-    let ctx = state.ctx(Caller::Ws { conn });
+    let ctx = state.ctx(caller.clone());
     let call = state.registry.call(ctx, &request.method, request.params);
     let outbox = outbox.clone();
     let method = request.method;
@@ -206,6 +220,7 @@ async fn forward_events(
     mut events: broadcast::Receiver<Event>,
     subs: Arc<Mutex<Subscriptions>>,
     outbox: mpsc::Sender<String>,
+    agents: Option<Arc<Agents>>,
 ) {
     loop {
         let message = match events.recv().await {
@@ -213,7 +228,11 @@ async fn forward_events(
                 if !lock(&subs).matches(&event.topic) {
                     continue;
                 }
-                notification(&event.topic, with_seq(event.data, event.seq))
+                let data = match &agents {
+                    Some(agents) => with_tab_lock(agents, &event.topic, event.data),
+                    None => event.data,
+                };
+                notification(&event.topic, with_seq(data, event.seq))
             }
             Err(broadcast::error::RecvError::Lagged(missed)) => {
                 if lock(&subs).is_empty() {
@@ -227,6 +246,33 @@ async fn forward_events(
             break; // connection gone
         }
     }
+}
+
+/// `tab.created` / `tab.updated` from the CEF layer don't know about agents: add the tab's
+/// `groupId`, `lockedBy` and `lock` from the agent registry, so the UI always gets them.
+/// (Events the agent registry sends itself already carry `lock`.)
+fn with_tab_lock(agents: &Agents, topic: &str, mut data: Value) -> Value {
+    let tab_field = match topic {
+        topics::TAB_UPDATED if data.get("lock").is_none() => None,
+        topics::TAB_CREATED => Some("tab"),
+        _ => return data,
+    };
+    let target = match tab_field {
+        Some(field) => &mut data[field],
+        None => &mut data,
+    };
+    let Some(id) = target.get("id").and_then(Value::as_i64) else {
+        return data;
+    };
+    let lock = agents.tab_event(TabId(id as i32));
+    if let (Some(target), Some(lock)) = (target.as_object_mut(), lock.as_object()) {
+        for (key, value) in lock {
+            if key != "id" {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    data
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -340,13 +386,13 @@ struct Request {
     params: Value,
 }
 
-/// Parse a frame; on failure return `(id to answer with, JSON-RPC code, error)`.
-fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
+/// Parse a frame; on failure return `(id to answer with, JSON-RPC code, error)` (boxed: small `Err`).
+fn parse_request(text: &str) -> Result<Request, (Value, i64, Box<CmdError>)> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
         (
             Value::Null,
             PARSE_ERROR,
-            CmdError::invalid_params(format!("not valid JSON: {e}")),
+            Box::new(CmdError::invalid_params(format!("not valid JSON: {e}"))),
         )
     })?;
     let Value::Object(mut obj) = value else {
@@ -355,7 +401,11 @@ fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
         } else {
             "a JSON-RPC request must be a JSON object"
         };
-        return Err((Value::Null, INVALID_REQUEST, CmdError::invalid_params(what)));
+        return Err((
+            Value::Null,
+            INVALID_REQUEST,
+            Box::new(CmdError::invalid_params(what)),
+        ));
     };
     let id = obj.remove("id");
     let reply_id = id.clone().unwrap_or(Value::Null);
@@ -363,7 +413,7 @@ fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
         Err((
             reply_id.clone(),
             INVALID_REQUEST,
-            CmdError::invalid_params(msg),
+            Box::new(CmdError::invalid_params(msg)),
         ))
     };
     if obj.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
@@ -458,6 +508,39 @@ mod tests {
         assert_eq!(code, INVALID_REQUEST);
         let (id, code, _) = parse_request(r#"{"id":5,"method":"tabs.list"}"#).unwrap_err();
         assert_eq!((id, code), (json!(5), INVALID_REQUEST));
+    }
+
+    #[test]
+    fn tab_events_get_the_lock_fields() {
+        let agents = Agents::new();
+        // Nothing owned: null fields are added.
+        let created = with_tab_lock(
+            &agents,
+            topics::TAB_CREATED,
+            json!({ "index": 0, "tab": { "id": 3, "url": "x" } }),
+        );
+        assert_eq!(created["tab"]["groupId"], Value::Null);
+        assert_eq!(created["tab"]["lock"], Value::Null);
+        assert_eq!(created["tab"]["url"], "x");
+        let updated = with_tab_lock(
+            &agents,
+            topics::TAB_UPDATED,
+            json!({ "id": 3, "title": "T" }),
+        );
+        assert_eq!(
+            updated,
+            json!({ "id": 3, "title": "T", "groupId": null, "lockedBy": null, "lock": null })
+        );
+        // Events that already carry `lock`, and other topics, pass unchanged.
+        let own = json!({ "id": 3, "lock": { "owner": "a" } });
+        assert_eq!(
+            with_tab_lock(&agents, topics::TAB_UPDATED, own.clone()),
+            own
+        );
+        assert_eq!(
+            with_tab_lock(&agents, "tab.closed", json!({ "id": 3 })),
+            json!({ "id": 3 })
+        );
     }
 
     #[test]

@@ -188,6 +188,7 @@ fn cmd_error_schema() -> Value {
             "retry": { "type": "string", "enum": ["now", "after_wait", "after_snapshot", "no"] },
             "hint": { "type": "string" },
             "candidates": { "type": "array", "description": "Possible intended targets/names." },
+            "owner": { "type": "string", "description": "TAB_LOCKED: agent id holding the tab, or \"user\"." },
         },
         "required": ["code", "message", "retry"],
     })

@@ -4,7 +4,8 @@
 //!
 //! 1. find the command by dotted name (`tabs.list`) or wire name (`tabs_list`);
 //! 2. deserialize the JSON arguments into `C::Args` (errors → `INVALID_PARAMS` with the field path);
-//! 3. lock check through the [`LockPolicy`] if the command mutates a tab (→ `TAB_LOCKED`);
+//! 3. lock check through the [`LockPolicy`] if the command mutates a tab (→ `TAB_LOCKED`;
+//!    `LockPolicy::acquire` may also claim the tab for an agent);
 //! 4. emit `command.started`, run, emit `command.finished` (with `duration_ms` and the error code).
 //!
 //! A call refused in steps 1–3 emits a single `command.rejected` event instead.
@@ -241,8 +242,17 @@ impl fmt::Debug for Registry {
     }
 }
 
-/// The typed half of the pipeline for one command type `C` (steps 2–4).
+/// The typed half of the pipeline for one command type `C` (steps 2–4), wrapped in the lock
+/// policy's `started` / `finished` hooks (agent activity).
 async fn invoke<C: Command>(ctx: Ctx, raw_args: Value) -> Result<Value, CmdError> {
+    let hooks = ctx.clone();
+    hooks.lock.started(&hooks, C::NAME);
+    let result = invoke_checked::<C>(ctx, raw_args).await;
+    hooks.lock.finished(&hooks, C::NAME, result.is_ok());
+    result
+}
+
+async fn invoke_checked<C: Command>(ctx: Ctx, raw_args: Value) -> Result<Value, CmdError> {
     let args: C::Args = match parse_args(C::NAME, &raw_args) {
         Ok(args) => args,
         Err(err) => {
@@ -253,7 +263,7 @@ async fn invoke<C: Command>(ctx: Ctx, raw_args: Value) -> Result<Value, CmdError
 
     let tab = C::target_tab(&args);
     if ctx.mutates_tab
-        && let Err(err) = ctx.lock.check(&ctx.caller, tab)
+        && let Err(err) = ctx.lock.acquire(&ctx, tab)
     {
         emit_rejected(&ctx, C::NAME, &raw_args, &err);
         return Err(err);

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orders – October</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  td, th { padding: 4px 10px; text-align: left; }
+  td.num { text-align: right; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Orders – October</h1>
+<table>
+  <caption>All orders this month</caption>
+  <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Amount</th></tr></thead>
+  <tbody>
+    <tr><td>#1001</td><td>Ann Lee</td><td>Shipped</td><td class="num">$120.50</td></tr>
+    <tr><td>#1002</td><td>Bo Chen</td><td>Pending</td><td class="num">$64.00</td></tr>
+    <tr><td>#1003</td><td>Cy Diaz</td><td>Shipped</td><td class="num">$75.25</td></tr>
+    <tr><td>#1004</td><td>Di Evans</td><td>Cancelled</td><td class="num">$199.99</td></tr>
+    <tr><td>#1005</td><td>Ed Fox</td><td>Shipped</td><td class="num">$310.00</td></tr>
+    <tr><td>#1006</td><td>Flo Gray</td><td>Pending</td><td class="num">$12.80</td></tr>
+    <tr><td>#1007</td><td>Gus Hill</td><td>Shipped</td><td class="num">$42.10</td></tr>
+    <tr><td>#1008</td><td>Hal Ito</td><td>Refunded</td><td class="num">$55.00</td></tr>
+    <tr><td>#1009</td><td>Ivy Jones</td><td>Shipped</td><td class="num">$18.15</td></tr>
+    <tr><td>#1010</td><td>Jo King</td><td>Pending</td><td class="num">$230.40</td></tr>
+  </tbody>
+</table>
+<h2>Report</h2>
+<label>Total of shipped orders <input id="total" autocomplete="off"></label>
+<button id="send">Submit total</button>
+<script>
+  document.getElementById('send').onclick = () =>
+    benchSubmit('table', { total: document.getElementById('total').value.trim() });
+</script>
+</body>
+</html>

@@ -10,7 +10,16 @@ import { NetStore } from '../net/store.svelte';
 import { TerminalStore } from '../term/store.svelte';
 import { settings, type PanelId } from '../settings.svelte';
 import { NEWTAB_URL, resolveOmniboxInput } from '../urls';
-import { activeTab, cycleTab, emptyTabs, reduceTabs, tabByNumber, type TabsAction, type TabsState } from './tabs';
+import {
+  activeTab,
+  cycleTab,
+  emptyTabs,
+  groupsWithAgents,
+  reduceTabs,
+  tabByNumber,
+  type TabsAction,
+  type TabsState,
+} from './tabs';
 
 export interface ChromeOptions {
   /** The browser window around this page (null in the dev mock / a normal browser). */
@@ -70,7 +79,7 @@ export class ChromeController {
       api.on('tab.closed', (payload) => dispatch({ type: 'closed', payload })),
       api.on('tab.activated', (payload) => dispatch({ type: 'activated', payload })),
       api.on('tabs.reset', (snapshot) => dispatch({ type: 'reset', snapshot })),
-      api.on('agents.updated', ({ agents }) => (this.agents = agents)),
+      api.on('agents.updated', ({ agents }) => this.#setAgents(agents)),
       api.on('workspace.activated', ({ id }) => (this.workspaceId = id)),
     );
     if (this.role === 'chrome') {
@@ -101,11 +110,17 @@ export class ChromeController {
     } else {
       this.lastError = snapshot.reason instanceof Error ? snapshot.reason.message : String(snapshot.reason);
     }
-    if (agents.status === 'fulfilled') this.agents = agents.value;
+    if (agents.status === 'fulfilled') this.#setAgents(agents.value.agents);
     if (ws.status === 'fulfilled') {
       this.workspaces = ws.value.workspaces;
       this.workspaceId = ws.value.activeId;
     }
+  }
+
+  /** New agent list: also refresh the agents' tab groups (a tab may join a new group). */
+  #setAgents(agents: Agent[]): void {
+    this.agents = agents;
+    this.tabs = { ...this.tabs, groups: groupsWithAgents(this.tabs.groups, agents) };
   }
 
   async #guard<T>(p: Promise<T>): Promise<T | undefined> {
@@ -154,7 +169,18 @@ export class ChromeController {
     this.collapsed = { ...this.collapsed, [id]: !this.collapsed[id] };
   }
 
+  /** "Take over": the agent's lock on this tab pauses; the human is in control. */
   takeOver(id: TabId): void {
+    void this.#guard(this.api.call('tabs.unlock', { tab: id }));
+  }
+
+  /** "Give back": a taken-over tab goes back to its agent. */
+  giveBack(id: TabId): void {
+    void this.#guard(this.api.call('tabs.lock', { tab: id }));
+  }
+
+  /** "Done" on a handoff banner: the agent continues in this tab. */
+  finishHandoff(id: TabId): void {
     void this.#guard(this.api.call('tabs.unlock', { tab: id }));
   }
 
