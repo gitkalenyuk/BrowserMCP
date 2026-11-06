@@ -576,11 +576,11 @@ async fn perform_on(
         Action::Scroll => {
             let dir = scroll_direction(value)?;
             if dir == "into_view" {
-                scroll_into_view(ctx, tab, &target).await;
+                scroll_into_view(ctx, tab, target).await;
                 return Ok(format!("scrolled {} into view", target.label));
             }
             let pos = if state.human.is_some() && matches!(dir, "up" | "down") {
-                wheel_scroll(ctx, tab, state, Scroller::Element(&target), dir).await?
+                wheel_scroll(ctx, tab, state, Scroller::Element(target), dir).await?
             } else {
                 let (session, object) = (target.session(), target.object_id.as_str());
                 cdp::call_function(ctx, tab, session, object, SCROLL_JS, &[json!(dir)]).await?
