@@ -567,13 +567,13 @@ pub(crate) fn do_close(browser: &Browser) -> i32 {
         tracing::info!(%id, window = key, "last tab of the window closed: window closes");
         return 0;
     }
-    let others_ready = || {
-        others
-            .iter()
-            .all(|b| b.host().is_some_and(|h| h.is_ready_to_be_closed() == 1))
-    };
-    if closing && others_ready() {
-        return 0; // the whole window is closing and every other tab agreed too
+    if closing {
+        // The whole window is closing: let CEF ask the window again (`can_close` checks
+        // every tab) instead of detaching views. Pitfall: detaching here raced with the
+        // window's own teardown — when every DoClose arrived in one burst, the posted
+        // detaches ran after the window was destroyed, the removed views' browsers never
+        // closed and `quit` hung. The window's teardown closes all its tab browsers.
+        return 0;
     }
     // Remove the view after this callback returns (not from inside CEF's close path).
     post_to_ui(Box::new(move || detach_tab(key, id)));

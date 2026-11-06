@@ -62,6 +62,16 @@ tab reach the API, web pages still do not (they have another origin).
 | Off-screen tab right-click via CDP with `BMCP_MENU_AUTORUN` | menu: Open link in new tab, Open link in workspace ▸, Copy link address, Ask AI about this link, Inspect. Ask AI → AI panel opened with "About this link on "Example Domain" …"; Copy link → clipboard `https://iana.org/help/example-domains`; workspace → the link opened in profile `work`; Inspect → a `DevTools` browser (not a tab) |
 | All tabs closed through the UI's WS (a person) | windows, DevTools and the off-screen tab close, `CEF shut down`, process gone; `session.json` keeps the last state |
 
+## Fix: `quit` hung with several tabs in a window
+
+Found after merging `system.quit`: with 4 tabs, every tab's `DoClose` arrived in one burst; the
+first ones posted `detach_tab`, the last one let the window close, and the posted detaches then
+removed views of an already destroyed window — those tab browsers never closed and the process
+kept running. `chrome::do_close` now never detaches while the whole window is closing (it hands
+the decision back to `can_close`, the window teardown closes every tab). Checked: 4 tabs →
+`system.quit` → exit after ~2 s (main's build: ~3 s; before the fix: hung); the restored live
+session (2 windows, split, 6 tabs) → `system.quit` → exit after ~2 s, `session.json` intact.
+
 ## Headless (`--headless`)
 
 There is no window and no chrome UI, so: no session restore and no session file (there are no
