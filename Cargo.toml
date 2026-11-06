@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Pinned exactly: crate version tracks a specific CEF build (156.0.15 / Chromium 156).
+# Bump monthly with `cargo xtask bump-cef` (planned), then run the e2e tests.
+cef = { version = "=156.3.0", default-features = false }
+
+bmcp-core = { path = "crates/core" }
+bmcp-cef = { path = "crates/cef" }
+
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
+
+[profile.dev]
+# CEF itself is prebuilt; keep our own code fast to compile.
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

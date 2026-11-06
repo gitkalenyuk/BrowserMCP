@@ -1,0 +1,13 @@
+[package]
+name = "bmcp-core"
+description = "BrowserMCP core: domain model, portable paths, command registry (no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

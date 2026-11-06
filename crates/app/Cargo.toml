@@ -1,0 +1,18 @@
+[package]
+name = "browsermcp"
+description = "BrowserMCP: a browser that people and AI agents both drive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "browsermcp"
+path = "src/main.rs"
+
+[dependencies]
+bmcp-core.workspace = true
+bmcp-cef.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
