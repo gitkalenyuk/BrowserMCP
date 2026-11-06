@@ -1,0 +1,17 @@
+---
+source: crates/perception/tests/fixtures.rs
+expression: snap.text
+---
+snap 1 tab=1 "Shop – Acme" https://shop.acme.com/products
+! 3878 chars is over the 2000 budget: skeleton depth 2 shown; drill down with root=@1:gN or use find
+- banner
+  - link "Acme Shop" @1:e1
+  - search
+    - searchbox "Search products" @1:e2
+  - link "Cart (0)" @1:e3
+- nav "Categories"
+  - list (collapsed, 6 refs) → @1:g1
+- main
+  - heading "All products" h1
+  - list "Products" (collapsed, 80 refs) → @1:g2
+  - nav "Pagination" (collapsed, 4 refs) → @1:g3

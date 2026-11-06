@@ -1,0 +1,3120 @@
+{
+ "nodes": [
+  {
+   "nodeId": "1",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "RootWebArea"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 144
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Understanding Accessibility Trees – Acme Blog",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Understanding Accessibility Trees – Acme Blog"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/ax-trees"
+     }
+    }
+   ],
+   "childIds": [
+    "2"
+   ],
+   "backendDOMNodeId": 1,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "2",
+   "ignored": true,
+   "ignoredReasons": [
+    {
+     "name": "uninteresting",
+     "value": {
+      "type": "boolean",
+      "value": true
+     }
+    }
+   ],
+   "role": {
+    "type": "role",
+    "value": "none"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 0
+   },
+   "childIds": [
+    "3",
+    "34",
+    "74",
+    "91"
+   ],
+   "parentId": "1",
+   "backendDOMNodeId": 2,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "3",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "banner"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 7
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "4",
+    "7",
+    "29"
+   ],
+   "parentId": "2",
+   "backendDOMNodeId": 3,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "4",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Acme Blog",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Acme Blog"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/"
+     }
+    }
+   ],
+   "childIds": [
+    "5"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 4,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "5",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Acme Blog"
+   },
+   "properties": [],
+   "childIds": [
+    "6"
+   ],
+   "parentId": "4",
+   "backendDOMNodeId": 5,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "6",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Acme Blog"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "5",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "7",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "navigation"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 128
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Primary",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Primary"
+      }
+     }
+    ]
+   },
+   "properties": [],
+   "childIds": [
+    "8"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 6,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "8",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "list"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 111
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "9",
+    "13",
+    "17",
+    "21",
+    "25"
+   ],
+   "parentId": "7",
+   "backendDOMNodeId": 7,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "9",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "10"
+   ],
+   "parentId": "8",
+   "backendDOMNodeId": 8,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "10",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Home",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Home"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/home"
+     }
+    }
+   ],
+   "childIds": [
+    "11"
+   ],
+   "parentId": "9",
+   "backendDOMNodeId": 9,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "11",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Home"
+   },
+   "properties": [],
+   "childIds": [
+    "12"
+   ],
+   "parentId": "10",
+   "backendDOMNodeId": 10,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "12",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Home"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "11",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "13",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "14"
+   ],
+   "parentId": "8",
+   "backendDOMNodeId": 11,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "14",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Articles",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Articles"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/articles"
+     }
+    }
+   ],
+   "childIds": [
+    "15"
+   ],
+   "parentId": "13",
+   "backendDOMNodeId": 12,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "15",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Articles"
+   },
+   "properties": [],
+   "childIds": [
+    "16"
+   ],
+   "parentId": "14",
+   "backendDOMNodeId": 13,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "16",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Articles"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "15",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "17",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "18"
+   ],
+   "parentId": "8",
+   "backendDOMNodeId": 14,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "18",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Tutorials",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Tutorials"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/tutorials"
+     }
+    }
+   ],
+   "childIds": [
+    "19"
+   ],
+   "parentId": "17",
+   "backendDOMNodeId": 15,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "19",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Tutorials"
+   },
+   "properties": [],
+   "childIds": [
+    "20"
+   ],
+   "parentId": "18",
+   "backendDOMNodeId": 16,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "20",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Tutorials"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "19",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "21",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "22"
+   ],
+   "parentId": "8",
+   "backendDOMNodeId": 17,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "22",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "About",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "About"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/about"
+     }
+    }
+   ],
+   "childIds": [
+    "23"
+   ],
+   "parentId": "21",
+   "backendDOMNodeId": 18,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "23",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "About"
+   },
+   "properties": [],
+   "childIds": [
+    "24"
+   ],
+   "parentId": "22",
+   "backendDOMNodeId": 19,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "24",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "About"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "23",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "25",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "26"
+   ],
+   "parentId": "8",
+   "backendDOMNodeId": 20,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "26",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Contact",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Contact"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/contact"
+     }
+    }
+   ],
+   "childIds": [
+    "27"
+   ],
+   "parentId": "25",
+   "backendDOMNodeId": 21,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "27",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Contact"
+   },
+   "properties": [],
+   "childIds": [
+    "28"
+   ],
+   "parentId": "26",
+   "backendDOMNodeId": 22,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "28",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Contact"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "27",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "29",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "search"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 148
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "30",
+    "31"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 23,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "30",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "searchbox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 149
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Search articles",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Search articles"
+      }
+     }
+    ]
+   },
+   "value": {
+    "type": "string",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "invalid",
+     "value": {
+      "type": "token",
+      "value": "false"
+     }
+    },
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "editable",
+     "value": {
+      "type": "token",
+      "value": "plaintext"
+     }
+    },
+    {
+     "name": "settable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "multiline",
+     "value": {
+      "type": "boolean",
+      "value": false
+     }
+    },
+    {
+     "name": "readonly",
+     "value": {
+      "type": "boolean",
+      "value": false
+     }
+    },
+    {
+     "name": "required",
+     "value": {
+      "type": "boolean",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [],
+   "parentId": "29",
+   "backendDOMNodeId": 24,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "31",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "button"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 9
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Search",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Search"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    }
+   ],
+   "childIds": [
+    "32"
+   ],
+   "parentId": "29",
+   "backendDOMNodeId": 25,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "32",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Search"
+   },
+   "properties": [],
+   "childIds": [
+    "33"
+   ],
+   "parentId": "31",
+   "backendDOMNodeId": 26,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "33",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Search"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "32",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "34",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "main"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 118
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "35",
+    "60"
+   ],
+   "parentId": "2",
+   "backendDOMNodeId": 27,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "35",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "article"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 4
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "36",
+    "39",
+    "42",
+    "52"
+   ],
+   "parentId": "34",
+   "backendDOMNodeId": 28,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "36",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "heading"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 96
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Understanding Accessibility Trees",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Understanding Accessibility Trees"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "37"
+   ],
+   "parentId": "35",
+   "backendDOMNodeId": 29,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "37",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Understanding Accessibility Trees"
+   },
+   "properties": [],
+   "childIds": [
+    "38"
+   ],
+   "parentId": "36",
+   "backendDOMNodeId": 30,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "38",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Understanding Accessibility Trees"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "37",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "39",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "paragraph"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 133
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "40"
+   ],
+   "parentId": "35",
+   "backendDOMNodeId": 31,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "40",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Browsers expose a tree of semantic objects to assistive technology."
+   },
+   "properties": [],
+   "childIds": [
+    "41"
+   ],
+   "parentId": "39",
+   "backendDOMNodeId": 32,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "41",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Browsers expose a tree of semantic objects to assistive technology."
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "40",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "42",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "tablist"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 165
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "orientation",
+     "value": {
+      "type": "token",
+      "value": "horizontal"
+     }
+    }
+   ],
+   "childIds": [
+    "43",
+    "46",
+    "49"
+   ],
+   "parentId": "35",
+   "backendDOMNodeId": 33,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "43",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "tab"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 163
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Overview",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Overview"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    }
+   ],
+   "childIds": [
+    "44"
+   ],
+   "parentId": "42",
+   "backendDOMNodeId": 34,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "44",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Overview"
+   },
+   "properties": [],
+   "childIds": [
+    "45"
+   ],
+   "parentId": "43",
+   "backendDOMNodeId": 35,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "45",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Overview"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "44",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "46",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "tab"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 163
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Details",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Details"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [
+    "47"
+   ],
+   "parentId": "42",
+   "backendDOMNodeId": 36,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "47",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Details"
+   },
+   "properties": [],
+   "childIds": [
+    "48"
+   ],
+   "parentId": "46",
+   "backendDOMNodeId": 37,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "48",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Details"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "47",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "49",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "tab"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 163
+   },
+   "name": {
+    "type": "computedString",
+    "value": "FAQ",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "FAQ"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [
+    "50"
+   ],
+   "parentId": "42",
+   "backendDOMNodeId": 38,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "50",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "FAQ"
+   },
+   "properties": [],
+   "childIds": [
+    "51"
+   ],
+   "parentId": "49",
+   "backendDOMNodeId": 39,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "51",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "FAQ"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "50",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "52",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "tabpanel"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 166
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Overview",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Overview"
+      }
+     }
+    ]
+   },
+   "properties": [],
+   "childIds": [
+    "53",
+    "56"
+   ],
+   "parentId": "35",
+   "backendDOMNodeId": 40,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "53",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "paragraph"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 133
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "54"
+   ],
+   "parentId": "52",
+   "backendDOMNodeId": 41,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "54",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "The accessibility tree is derived from the DOM."
+   },
+   "properties": [],
+   "childIds": [
+    "55"
+   ],
+   "parentId": "53",
+   "backendDOMNodeId": 42,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "55",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "The accessibility tree is derived from the DOM."
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "54",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "56",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "group"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 94
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "57"
+   ],
+   "parentId": "52",
+   "backendDOMNodeId": 43,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "57",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "DisclosureTriangle"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 36
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Show more",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Show more"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "expanded",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [
+    "58"
+   ],
+   "parentId": "56",
+   "backendDOMNodeId": 44,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "58",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Show more"
+   },
+   "properties": [],
+   "childIds": [
+    "59"
+   ],
+   "parentId": "57",
+   "backendDOMNodeId": 45,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "59",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Show more"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "58",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "60",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "region"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 140
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Comments",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Comments"
+      }
+     }
+    ]
+   },
+   "properties": [],
+   "childIds": [
+    "61",
+    "64"
+   ],
+   "parentId": "34",
+   "backendDOMNodeId": 46,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "61",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "heading"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 96
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Comments",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Comments"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 2
+     }
+    }
+   ],
+   "childIds": [
+    "62"
+   ],
+   "parentId": "60",
+   "backendDOMNodeId": 47,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "62",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Comments"
+   },
+   "properties": [],
+   "childIds": [
+    "63"
+   ],
+   "parentId": "61",
+   "backendDOMNodeId": 48,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "63",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Comments"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "62",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "64",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "form"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 85
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Add comment",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Add comment"
+      }
+     }
+    ]
+   },
+   "properties": [],
+   "childIds": [
+    "65",
+    "66",
+    "71"
+   ],
+   "parentId": "60",
+   "backendDOMNodeId": 49,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "65",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "textbox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 170
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Comment",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Comment"
+      }
+     }
+    ]
+   },
+   "value": {
+    "type": "string",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "invalid",
+     "value": {
+      "type": "token",
+      "value": "false"
+     }
+    },
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "editable",
+     "value": {
+      "type": "token",
+      "value": "plaintext"
+     }
+    },
+    {
+     "name": "settable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "multiline",
+     "value": {
+      "type": "boolean",
+      "value": true
+     }
+    },
+    {
+     "name": "readonly",
+     "value": {
+      "type": "boolean",
+      "value": false
+     }
+    },
+    {
+     "name": "required",
+     "value": {
+      "type": "boolean",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [],
+   "parentId": "64",
+   "backendDOMNodeId": 50,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "66",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "combobox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 18
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Sort by",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Sort by"
+      }
+     }
+    ]
+   },
+   "value": {
+    "type": "string",
+    "value": "Newest"
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "expanded",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    },
+    {
+     "name": "hasPopup",
+     "value": {
+      "type": "token",
+      "value": "menu"
+     }
+    }
+   ],
+   "childIds": [
+    "67"
+   ],
+   "parentId": "64",
+   "backendDOMNodeId": 51,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "67",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "MenuListPopup"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 122
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "68",
+    "69",
+    "70"
+   ],
+   "parentId": "66",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "68",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "option"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 131
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Newest",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Newest"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    }
+   ],
+   "childIds": [],
+   "parentId": "67",
+   "backendDOMNodeId": 52,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "69",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "option"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 131
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Oldest",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Oldest"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [],
+   "parentId": "67",
+   "backendDOMNodeId": 53,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "70",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "option"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 131
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Top rated",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Top rated"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "selected",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": false
+     }
+    }
+   ],
+   "childIds": [],
+   "parentId": "67",
+   "backendDOMNodeId": 54,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "71",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "button"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 9
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Post comment",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Post comment"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    }
+   ],
+   "childIds": [
+    "72"
+   ],
+   "parentId": "64",
+   "backendDOMNodeId": 55,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "72",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Post comment"
+   },
+   "properties": [],
+   "childIds": [
+    "73"
+   ],
+   "parentId": "71",
+   "backendDOMNodeId": 56,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "73",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Post comment"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "72",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "74",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "complementary"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 21
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "75",
+    "78"
+   ],
+   "parentId": "2",
+   "backendDOMNodeId": 57,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "75",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "heading"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 96
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Related",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Related"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 2
+     }
+    }
+   ],
+   "childIds": [
+    "76"
+   ],
+   "parentId": "74",
+   "backendDOMNodeId": 58,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "76",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Related"
+   },
+   "properties": [],
+   "childIds": [
+    "77"
+   ],
+   "parentId": "75",
+   "backendDOMNodeId": 59,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "77",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Related"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "76",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "78",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "list"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 111
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "79",
+    "83",
+    "87"
+   ],
+   "parentId": "74",
+   "backendDOMNodeId": 60,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "79",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "80"
+   ],
+   "parentId": "78",
+   "backendDOMNodeId": 61,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "80",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "What is ARIA?",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "What is ARIA?"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/r"
+     }
+    }
+   ],
+   "childIds": [
+    "81"
+   ],
+   "parentId": "79",
+   "backendDOMNodeId": 62,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "81",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "What is ARIA?"
+   },
+   "properties": [],
+   "childIds": [
+    "82"
+   ],
+   "parentId": "80",
+   "backendDOMNodeId": 63,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "82",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "What is ARIA?"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "81",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "83",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "84"
+   ],
+   "parentId": "78",
+   "backendDOMNodeId": 64,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "84",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Landmarks 101",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Landmarks 101"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/r"
+     }
+    }
+   ],
+   "childIds": [
+    "85"
+   ],
+   "parentId": "83",
+   "backendDOMNodeId": 65,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "85",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Landmarks 101"
+   },
+   "properties": [],
+   "childIds": [
+    "86"
+   ],
+   "parentId": "84",
+   "backendDOMNodeId": 66,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "86",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Landmarks 101"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "85",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "87",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "listitem"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 115
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "88"
+   ],
+   "parentId": "78",
+   "backendDOMNodeId": 67,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "88",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Testing with screen readers",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Testing with screen readers"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/r"
+     }
+    }
+   ],
+   "childIds": [
+    "89"
+   ],
+   "parentId": "87",
+   "backendDOMNodeId": 68,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "89",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Testing with screen readers"
+   },
+   "properties": [],
+   "childIds": [
+    "90"
+   ],
+   "parentId": "88",
+   "backendDOMNodeId": 69,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "90",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Testing with screen readers"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "89",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "91",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "contentinfo"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 23
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "92"
+   ],
+   "parentId": "2",
+   "backendDOMNodeId": 70,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "92",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "navigation"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 128
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Footer",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Footer"
+      }
+     }
+    ]
+   },
+   "properties": [],
+   "childIds": [
+    "93",
+    "96",
+    "99"
+   ],
+   "parentId": "91",
+   "backendDOMNodeId": 71,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "93",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Privacy",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Privacy"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/privacy"
+     }
+    }
+   ],
+   "childIds": [
+    "94"
+   ],
+   "parentId": "92",
+   "backendDOMNodeId": 72,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "94",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Privacy"
+   },
+   "properties": [],
+   "childIds": [
+    "95"
+   ],
+   "parentId": "93",
+   "backendDOMNodeId": 73,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "95",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Privacy"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "94",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "96",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Terms",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Terms"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/terms"
+     }
+    }
+   ],
+   "childIds": [
+    "97"
+   ],
+   "parentId": "92",
+   "backendDOMNodeId": 74,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "97",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Terms"
+   },
+   "properties": [],
+   "childIds": [
+    "98"
+   ],
+   "parentId": "96",
+   "backendDOMNodeId": 75,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "98",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Terms"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "97",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "99",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "RSS",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "RSS"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://blog.acme.com/rss"
+     }
+    }
+   ],
+   "childIds": [
+    "100"
+   ],
+   "parentId": "92",
+   "backendDOMNodeId": 76,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "100",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "RSS"
+   },
+   "properties": [],
+   "childIds": [
+    "101"
+   ],
+   "parentId": "99",
+   "backendDOMNodeId": 77,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "101",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "RSS"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "100",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  }
+ ]
+}

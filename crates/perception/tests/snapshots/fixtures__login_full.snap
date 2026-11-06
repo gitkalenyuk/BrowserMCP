@@ -1,0 +1,27 @@
+---
+source: crates/perception/tests/fixtures.rs
+expression: snap.text
+---
+snap 1 tab=3 "Sign in – Acme" https://acme.com/login vp=1280x720 y=0/1840 mode=full
+- banner
+  - link "Home" @1:e1
+- main
+  - heading "Sign in" h1
+  - paragraph "Welcome back! Please sign in to continue."
+  - form
+    - textbox "Email" @1:e2 req focused
+    - textbox "Password" @1:e3 pwd
+    - checkbox "Remember me" @1:e4 off
+    - button "Sign in" @1:e5 disabled
+  - list "Providers" 12 items, 3 shown → @1:g1
+    - button "Google" @1:e6
+    - button "GitHub" @1:e7
+    - button "Microsoft" @1:e8
+- footer
+  - text "© 2026 Acme Inc."
+  - link "Privacy" @1:e9
+  - link "Terms" @1:e10
+- dialog "Cookies"
+  - paragraph "We use cookies to keep you signed in."
+  - button "Accept all" @1:e11
+  - button "Reject all" @1:e12
