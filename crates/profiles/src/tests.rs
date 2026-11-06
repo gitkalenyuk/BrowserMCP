@@ -13,7 +13,9 @@ use bmcp_identity::Services;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::backend::{CookieTarget, OpenProfile, ProfileBackend, ProfileSettings};
+use crate::backend::{
+    CookieTarget, OpenProfile, PermissionPrompt, ProfileBackend, ProfileSettings,
+};
 use crate::cookies::{CookieInfo, domain_matches};
 use crate::permissions::PermissionStore;
 use crate::rows::{RowProfiles, RowRequest};
@@ -27,6 +29,9 @@ struct MockBackend {
     jar: Mutex<Vec<CookieInfo>>,
     /// Profiles that still have tabs (forget fails).
     busy: Mutex<Vec<String>>,
+    /// Waiting permission requests; answered ones are removed (with the answer logged).
+    prompts: Mutex<Vec<PermissionPrompt>>,
+    answers: Mutex<Vec<(u64, bool)>>,
 }
 
 impl MockBackend {
@@ -128,6 +133,27 @@ impl ProfileBackend for MockBackend {
         });
         let deleted = before - jar.len();
         Box::pin(async move { Ok(deleted) })
+    }
+
+    fn pending_permissions(&self) -> BoxFuture<'_, BackendResult<Vec<PermissionPrompt>>> {
+        let prompts = self.prompts.lock().unwrap().clone();
+        Box::pin(async move { Ok(prompts) })
+    }
+
+    fn answer_permission(
+        &self,
+        id: u64,
+        allow: bool,
+    ) -> BoxFuture<'_, BackendResult<Option<PermissionPrompt>>> {
+        let mut prompts = self.prompts.lock().unwrap();
+        let found = prompts
+            .iter()
+            .position(|p| p.id == id)
+            .map(|i| prompts.remove(i));
+        if found.is_some() {
+            self.answers.lock().unwrap().push((id, allow));
+        }
+        Box::pin(async move { Ok(found) })
     }
 }
 
@@ -856,6 +882,100 @@ async fn permission_rules() {
         .await
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn update_sets_label_and_color() {
+    let s = setup();
+    // The launch profile has no stored settings yet: it gets an entry.
+    let out = call(
+        &s,
+        "profile.update",
+        json!({"id": "default", "label": "  Personal ", "color": "Blue"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        json!({"id": "default", "label": "Personal", "color": "blue"})
+    );
+    let list = call(&s, "profile.list", json!({})).await.unwrap();
+    let entry = &list["profiles"][0];
+    assert_eq!(
+        (entry["id"].as_str(), entry["label"].as_str()),
+        (Some("default"), Some("Personal"))
+    );
+    assert_eq!(entry["color"], "blue");
+    // The browser got the label (context menu).
+    let configured = s.backend.configured.lock().unwrap().clone();
+    assert_eq!(
+        configured.last().unwrap().label.as_deref(),
+        Some("Personal")
+    );
+    // "" clears; a profile without a label shows its id.
+    let out = call(
+        &s,
+        "profile.update",
+        json!({"id": "default", "label": "", "color": ""}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        json!({"id": "default", "label": "default", "color": null})
+    );
+    // Bad color / label / id.
+    for args in [
+        json!({"id": "default", "color": "teal"}),
+        json!({"id": "default", "label": "x".repeat(41)}),
+        json!({"id": "Bad Id", "label": "x"}),
+    ] {
+        assert!(
+            call(&s, "profile.update", args.clone()).await.is_err(),
+            "{args}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn permission_prompts_are_answered_and_remembered() {
+    let s = setup();
+    s.backend.prompts.lock().unwrap().push(PermissionPrompt {
+        id: 7,
+        tab: TabId(3),
+        origin: "https://maps.test".into(),
+        kinds: vec![crate::PermissionKind::Geolocation],
+    });
+    let out = call(&s, "permissions.pending", json!({})).await.unwrap();
+    assert_eq!(out["prompts"][0]["kinds"], json!(["geolocation"]));
+    let out = call(
+        &s,
+        "permissions.answer",
+        json!({"id": 7, "allow": true, "remember": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["answered"], true);
+    assert_eq!(
+        out["remembered"],
+        json!([{"origin": "https://maps.test", "kind": "geolocation", "allow": true}])
+    );
+    assert_eq!(*s.backend.answers.lock().unwrap(), vec![(7, true)]);
+    let store = s.registry.extensions().get::<PermissionStore>().unwrap();
+    assert_eq!(
+        store.decide("https://maps.test", crate::PermissionKind::Geolocation),
+        Some(true)
+    );
+    // Gone already: answered false, nothing stored.
+    let out = call(
+        &s,
+        "permissions.answer",
+        json!({"id": 7, "allow": false, "remember": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["answered"], false);
+    assert_eq!(out["remembered"], json!([]));
 }
 
 #[test]

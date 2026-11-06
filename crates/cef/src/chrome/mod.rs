@@ -6,9 +6,18 @@
 //! │                 Draws tab strip, toolbar, optional vertical tabs / side panel, and
 //! │                 leaves a transparent "page slot" whose rectangle it reports.
 //! ├─ pages panel    placed exactly over that page slot (on top of the UI view).
-//! │  └─ one content BrowserView per tab (FillLayout); only the active one is visible
+//! │  └─ one content BrowserView per tab, placed by [`layout_pages`]: only the active one
+//! │     is visible — or both halves of a split view, side by side with a gap where the UI
+//! │     view (and its divider) shows through
 //! └─ overlay        Window::add_overlay_view(palette view, CUSTOM docking), Ctrl+K
 //! ```
+//!
+//! * Split view (`tabs.split`): `ChromeWindow::split` names the two tabs and the ratio.
+//!   Activating either tab shows both; the focused half is the strip's active tab
+//!   (`on_got_focus` → [`pane_focused`]); Ctrl+Alt+Left/Right moves the focus between them.
+//! * Chrome dropdowns (workspace menu, settings menu) are drawn by the UI page, i.e. UNDER
+//!   the native page views. While one is open the UI sends `cover?on=1` and the pages panel
+//!   is hidden ([`set_cover`]) — the page keeps its size (no reflow), it is just not drawn.
 //!
 //! * The UI reports the page slot with `bmcp://cmd/layout?x&y&w&h&vw&vh`; we turn it into
 //!   insets from the window edges ([`protocol::Insets`]), so a window resize moves the page
@@ -31,7 +40,7 @@ use cef::*;
 use crate::bridge::{PendingTab, ShellContext, next_view_id, post_to_ui, with_ui};
 use crate::profiles::ProfileKey;
 use crate::scheme::{PALETTE_PAGE, UI_PAGE, ui_page_url};
-use protocol::{Bounds, Command, Insets, PaletteAction, Shortcut};
+use protocol::{Bounds, Command, Insets, PaletteAction, Pane, Shortcut};
 
 /// What a browser is used for. Decides which handlers apply and whether it is a tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +51,16 @@ pub(crate) enum ViewKind {
     Ui,
     /// The Ctrl+K palette overlay.
     Palette,
+    /// A DevTools window ("Inspect"): neither a tab nor part of our chrome.
+    DevTools,
+}
+
+/// The split view of a window: `left` | `right`, `ratio` = width share of the left half.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SplitState {
+    pub left: TabId,
+    pub right: TabId,
+    pub ratio: f64,
 }
 
 /// A UI or palette browser (never a tab).
@@ -71,6 +90,10 @@ pub(crate) struct ChromeWindow {
     pub size: (i32, i32),
     /// Set once the user (or `quit`) asked to close the whole window.
     pub closing: bool,
+    /// Two tabs side by side (`tabs.split`).
+    pub split: Option<SplitState>,
+    /// A chrome dropdown is open: the pages panel is hidden (see the module docs).
+    pub covered: bool,
 }
 
 /// Views created before the window exists; moved into the window in `on_window_created`.
@@ -140,6 +163,11 @@ fn remember_pending(view: &BrowserView, pending: PendingTab) {
 
 /// Open a composed window whose first tab is `pending`.
 pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
+    open_window_key(pending, ctx);
+}
+
+/// [`open_window`], returning the new window's key (None if the views could not be made).
+pub(crate) fn open_window_key(pending: PendingTab, ctx: &ShellContext) -> Option<i32> {
     let key = next_view_id();
     let pending = PendingTab {
         window: Some(key),
@@ -147,11 +175,12 @@ pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
         activate: true,
         ..pending
     };
-    let Some(first_tab) = create_content_view(ctx, pending) else {
-        return;
-    };
+    let first_tab = create_content_view(ctx, pending)?;
     let ours = ProfileKey::default(); // our own views always use the global context
-    let ui = crate::shell::create_browser_view(&ui_page_url(UI_PAGE), ViewKind::Ui, ctx, &ours);
+    // The chrome learns its window key from its URL (`?window=`): `tabs.list` reports each
+    // tab's window, and every window's UI shows only its own tabs.
+    let ui_url = crate::scheme::with_window_key(&ui_page_url(UI_PAGE), key);
+    let ui = crate::shell::create_browser_view(&ui_url, ViewKind::Ui, ctx, &ours);
     let palette = crate::shell::create_browser_view(
         &ui_page_url(PALETTE_PAGE),
         ViewKind::Palette,
@@ -161,9 +190,10 @@ pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
     let pages = panel_create(None);
     let (Some(ui), Some(palette), Some(pages)) = (ui, palette, pages) else {
         tracing::error!("could not create the chrome views");
-        return;
+        return None;
     };
-    pages.set_to_fill_layout();
+    // No layout manager: `layout_pages` places the tab views (one, or the two halves of a
+    // split view).
     let parts = Parts {
         ui,
         pages,
@@ -172,6 +202,7 @@ pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
     };
     let mut delegate = ChromeWindowDelegate::new(key, RefCell::new(Some(parts)), ctx.style);
     window_create_top_level(Some(&mut delegate));
+    Some(key)
 }
 
 /// `tabs.open`: a new tab in the window used last (or a new window if there is none).
@@ -190,7 +221,7 @@ pub(crate) fn open_tab(pending: PendingTab) -> Result<(), BackendError> {
 }
 
 /// Add `pending` as a new tab of window `key` (at `pending.index`, None = end).
-fn add_tab(ctx: &ShellContext, key: i32, pending: PendingTab) {
+pub(crate) fn add_tab(ctx: &ShellContext, key: i32, pending: PendingTab) {
     let Some(views) = views(key) else { return };
     let activate = pending.activate;
     let pending = PendingTab {
@@ -216,11 +247,9 @@ fn insert_view(views: &Views, view: &BrowserView, activate: bool) {
         view.set_visible(0);
     }
     views.pages.add_child_view(Some(&mut View::from(view)));
-    if !activate {
-        // The layout skips hidden views: give the page the real size anyway, so a
-        // background tab has a layout (boxes, scroll sizes) before it is first shown.
-        size_like_panel(views, view);
-    }
+    // Give the page the real size at once (also hidden ones), so a background tab has a
+    // layout (boxes, scroll sizes) before it is first shown.
+    size_like_panel(views, view);
 }
 
 /// Bounds of the pages panel (0,0-based) for one of its child views.
@@ -236,23 +265,80 @@ fn size_like_panel(views: &Views, view: &BrowserView) {
     }
 }
 
-/// After a resize: hidden tabs follow the panel size too (see [`insert_view`]).
-fn size_hidden_tabs(key: i32, views: &Views) {
-    let hidden: Vec<TabId> = with_ui(|ui| {
-        let Some(w) = ui.windows.get(&key) else {
-            return Vec::new();
-        };
-        let active = w.strip.active();
-        w.strip
-            .tabs()
-            .iter()
-            .copied()
-            .filter(|id| Some(*id) != active)
-            .collect()
+/// Where a tab's view goes in the pages panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Slot {
+    /// The whole page area (the one shown tab).
+    Full,
+    /// A half of the split view.
+    Half(Pane),
+    /// Not shown (sized like the panel anyway, see [`insert_view`]).
+    Hidden,
+}
+
+/// Which slot each tab of a window gets (pure): the active tab fills the page area, unless
+/// it is part of the split view — then both halves are shown.
+pub(crate) fn slots(
+    tabs: &[TabId],
+    active: Option<TabId>,
+    split: Option<SplitState>,
+) -> Vec<(TabId, Slot)> {
+    let split_shown = split.filter(|s| active == Some(s.left) || active == Some(s.right));
+    tabs.iter()
+        .map(|id| {
+            let slot = match split_shown {
+                Some(s) if *id == s.left => Slot::Half(Pane::Left),
+                Some(s) if *id == s.right => Slot::Half(Pane::Right),
+                Some(_) => Slot::Hidden,
+                None if Some(*id) == active => Slot::Full,
+                None => Slot::Hidden,
+            };
+            (*id, slot)
+        })
+        .collect()
+}
+
+/// Place every tab view of window `key` (see [`slots`]). UI thread.
+pub(crate) fn layout_pages(key: i32) {
+    let state = with_ui(|ui| {
+        let w = ui.windows.get(&key)?;
+        let ratio = w.split.map_or(0.5, |s| s.ratio);
+        Some((
+            w.views.clone(),
+            slots(w.strip.tabs(), w.strip.active(), w.split),
+            ratio,
+        ))
     });
-    for id in hidden {
+    let Some((views, slots, ratio)) = state else {
+        return;
+    };
+    let panel = views.pages.bounds();
+    let full = Bounds {
+        x: 0,
+        y: 0,
+        width: panel.width,
+        height: panel.height,
+    };
+    let (left, right) = protocol::split_bounds(panel.width, panel.height, ratio);
+    // Hide first, then show: never two pages on top of each other for a frame.
+    for (id, slot) in &slots {
+        if *slot == Slot::Hidden
+            && let Some(view) = tab_view(*id)
+        {
+            view.set_visible(0);
+            view.set_bounds(Some(&cef_rect(full)));
+        }
+    }
+    for (id, slot) in slots {
+        let bounds = match slot {
+            Slot::Full => full,
+            Slot::Half(Pane::Left) => left,
+            Slot::Half(Pane::Right) => right,
+            Slot::Hidden => continue,
+        };
         if let Some(view) = tab_view(id) {
-            size_like_panel(views, &view);
+            view.set_bounds(Some(&cef_rect(bounds)));
+            view.set_visible(1);
         }
     }
 }
@@ -288,6 +374,7 @@ pub(crate) fn adopt_popup(opener: &Browser, popup: &BrowserView) -> bool {
             profile,
             run,
             then_load: None,
+            restore: None,
         },
     );
     insert_view(&views, popup, !background);
@@ -301,17 +388,13 @@ pub(crate) fn adopt_popup(opener: &Browser, popup: &BrowserView) -> bool {
 pub(crate) fn show_tab(key: i32, id: TabId) {
     let state = with_ui(|ui| {
         let w = ui.windows.get_mut(&key)?;
-        let previous = w.strip.active();
-        w.strip.activate(id).then(|| (w.views.clone(), previous))
+        w.strip.activate(id).then(|| w.views.clone())
     });
-    let Some((views, previous)) = state else {
+    let Some(views) = state else {
         return;
     };
     let Some(view) = tab_view(id) else { return };
-    view.set_visible(1);
-    if let Some(prev) = previous.filter(|p| *p != id).and_then(tab_view) {
-        prev.set_visible(0);
-    }
+    layout_pages(key);
     let url = with_ui(|ui| ui.tabs.get(&id).map(|t| t.url.clone())).unwrap_or_default();
     if url.starts_with(NEW_TAB_URL) {
         focus_omnibox(&views);
@@ -484,13 +567,13 @@ pub(crate) fn do_close(browser: &Browser) -> i32 {
         tracing::info!(%id, window = key, "last tab of the window closed: window closes");
         return 0;
     }
-    let others_ready = || {
-        others
-            .iter()
-            .all(|b| b.host().is_some_and(|h| h.is_ready_to_be_closed() == 1))
-    };
-    if closing && others_ready() {
-        return 0; // the whole window is closing and every other tab agreed too
+    if closing {
+        // The whole window is closing: let CEF ask the window again (`can_close` checks
+        // every tab) instead of detaching views. Pitfall: detaching here raced with the
+        // window's own teardown — when every DoClose arrived in one burst, the posted
+        // detaches ran after the window was destroyed, the removed views' browsers never
+        // closed and `quit` hung. The window's teardown closes all its tab browsers.
+        return 0;
     }
     // Remove the view after this callback returns (not from inside CEF's close path).
     post_to_ui(Box::new(move || detach_tab(key, id)));
@@ -502,9 +585,43 @@ pub(crate) fn do_close(browser: &Browser) -> i32 {
 /// browser (`on_before_close` → `bridge::unregister_tab`).
 fn detach_tab(key: i32, id: TabId) {
     let Some(view) = tab_view(id) else { return };
+    // Ctrl+Shift+T can bring it back (not when the whole window is closing: the session
+    // keeps that window).
+    let index = with_ui(|ui| {
+        let w = ui.windows.get(&key)?;
+        if w.closing {
+            None
+        } else {
+            w.strip.index_of(id)
+        }
+    });
+    if let Some(index) = index {
+        crate::session::remember_closed(key, index, id);
+    }
+    end_split_with(key, id);
     let state = with_ui(|ui| {
+        let profile = ui.tabs.get(&id).map(|t| t.profile.name());
         let w = ui.windows.get_mut(&key)?;
-        let next = w.strip.remove(id).and_then(|r| r.new_active);
+        let removed = w.strip.remove(id);
+        let mut next = removed.as_ref().and_then(|r| r.new_active);
+        // Stay in the closed tab's workspace (profile) when it has another tab here.
+        if let (Some(removed), Some(profile), Some(_)) = (&removed, &profile, next) {
+            let order: Vec<(TabId, String)> = w
+                .strip
+                .tabs()
+                .iter()
+                .map(|t| {
+                    (
+                        *t,
+                        ui.tabs.get(t).map(|e| e.profile.name()).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            if let Some(better) = same_profile_neighbour(&order, removed.index, profile) {
+                w.strip.activate(better);
+                next = Some(better);
+            }
+        }
         // Re-checked after every removal: when several tabs close at the same time, each
         // `do_close` saw the others as "still there" and none let the window close.
         let empty = w.strip.tabs().is_empty();
@@ -564,7 +681,19 @@ pub(crate) fn handle_command(sender: i32, command: Command) {
             }
         }
         Command::Palette(action) => set_palette(key, action),
-        Command::FocusContent => focus_content(key),
+        Command::FocusContent => {
+            set_cover(key, false);
+            focus_content(key);
+        }
+        Command::SplitRatio { ratio, done } => set_split_ratio(key, ratio, done),
+        Command::FocusPane(pane) => {
+            focus_pane(key, pane);
+        }
+        Command::Cover(on) => {
+            if kind == ViewKind::Ui {
+                set_cover(key, on);
+            }
+        }
         Command::FocusOmnibox => {
             if let Some(views) = views(key) {
                 set_palette(key, PaletteAction::Hide);
@@ -630,6 +759,11 @@ pub(crate) fn handle_shortcut(browser: &Browser, shortcut: Shortcut) -> bool {
             views.ui.request_focus();
             run_js(&views.ui, &protocol::run_script("find.open"));
         }
+        Shortcut::FocusPane(pane) => {
+            if !focus_pane(key, pane) {
+                return false; // no split view: Ctrl+Alt+arrows belong to the page
+            }
+        }
         Shortcut::Ui(command) => {
             set_palette(key, PaletteAction::Hide);
             // Same code path as pressing the key in the UI itself (its keymap + WS calls).
@@ -661,8 +795,198 @@ fn place_views(key: i32) {
     }));
     let page = protocol::page_bounds(width, height, insets);
     views.pages.set_bounds(Some(&cef_rect(page)));
-    size_hidden_tabs(key, &views);
+    layout_pages(key);
     position_palette(&views, page);
+}
+
+// ------------------------------------------------------------------ split view
+
+/// `tabs.split`: show `left` | `right` side by side. Both must be tabs of the same window.
+pub(crate) fn split_tabs(left: TabId, right: TabId, ratio: f64) -> Result<(), BackendError> {
+    let windows = with_ui(|ui| {
+        let l = ui.tabs.get(&left).map(|t| t.window);
+        let r = ui.tabs.get(&right).map(|t| t.window);
+        (l, r)
+    });
+    let key = match windows {
+        (None, _) => return Err(BackendError::TabNotFound(left)),
+        (_, None) => return Err(BackendError::TabNotFound(right)),
+        (Some(Some(a)), Some(Some(b))) if a == b => a,
+        (Some(Some(_)), Some(Some(_))) => {
+            return Err(BackendError::Invalid(
+                "split view: both tabs must be in the same window".into(),
+            ));
+        }
+        _ => {
+            return Err(BackendError::Invalid(
+                "split view needs tabs of a browser window (not off-screen tabs)".into(),
+            ));
+        }
+    };
+    let (previous, active) = with_ui(|ui| {
+        let w = ui.windows.get_mut(&key)?;
+        let previous = w.split.replace(SplitState { left, right, ratio });
+        Some((previous, w.strip.active()))
+    })
+    .ok_or(BackendError::ShuttingDown)?;
+    tracing::info!(%left, %right, ratio, window = key, "split view");
+    // Keep the focused half if it is one of the two, else focus the left one.
+    let focus = if active == Some(right) { right } else { left };
+    show_tab(key, focus);
+    announce(&[Some(left), Some(right)]);
+    if let Some(p) = previous {
+        announce(&[Some(p.left), Some(p.right)]);
+    }
+    Ok(())
+}
+
+/// `tabs.unsplit`: end the split view of `tab`'s window (or the window used last).
+pub(crate) fn unsplit(tab: Option<TabId>) -> Result<Vec<TabId>, BackendError> {
+    let key = match tab {
+        Some(id) => {
+            with_ui(|ui| ui.tabs.get(&id).map(|t| t.window)).ok_or(BackendError::TabNotFound(id))?
+        }
+        None => with_ui(|ui| {
+            ui.last_window
+                .or_else(|| ui.windows.keys().next_back().copied())
+        }),
+    };
+    let Some(key) = key else {
+        return Ok(Vec::new());
+    };
+    let removed = with_ui(|ui| {
+        let w = ui.windows.get_mut(&key)?;
+        let split = w.split?;
+        if tab.is_some_and(|id| id != split.left && id != split.right) {
+            return None; // that tab is not part of the split view
+        }
+        w.split.take()
+    });
+    let Some(split) = removed else {
+        return Ok(Vec::new());
+    };
+    layout_pages(key);
+    focus_content(key);
+    announce(&[Some(split.left), Some(split.right)]);
+    Ok(vec![split.left, split.right])
+}
+
+/// Tab `id` is going away: if it is half of window `key`'s split view, the split ends.
+pub(crate) fn end_split_with(key: i32, id: TabId) {
+    let other = with_ui(|ui| {
+        let w = ui.windows.get_mut(&key)?;
+        let split = w.split?;
+        let other = if split.left == id {
+            split.right
+        } else if split.right == id {
+            split.left
+        } else {
+            return None;
+        };
+        w.split = None;
+        Some(other)
+    });
+    if let Some(other) = other {
+        layout_pages(key);
+        announce(&[Some(other)]);
+    }
+}
+
+/// `tab.updated` for these tabs (their `split` changed).
+fn announce(ids: &[Option<TabId>]) {
+    for id in ids.iter().flatten() {
+        crate::bridge::emit_updated(*id);
+    }
+}
+
+/// The divider was dragged (`bmcp://cmd/split?ratio=`).
+fn set_split_ratio(key: i32, ratio: f64, done: bool) {
+    let ratio = bmcp_core::commands::tabs::clamp_split_ratio(Some(ratio));
+    let split = with_ui(|ui| {
+        let w = ui.windows.get_mut(&key)?;
+        let s = w.split.as_mut()?;
+        s.ratio = ratio;
+        Some(*s)
+    });
+    let Some(split) = split else { return };
+    layout_pages(key);
+    if done {
+        announce(&[Some(split.left), Some(split.right)]);
+    }
+}
+
+/// Keyboard focus to one half of the split view. False when the window shows no split.
+fn focus_pane(key: i32, pane: Pane) -> bool {
+    let target = with_ui(|ui| {
+        let w = ui.windows.get(&key)?;
+        let s = w.split?;
+        let active = w.strip.active()?;
+        if active != s.left && active != s.right {
+            return None; // the split view is not on screen
+        }
+        Some(match pane {
+            Pane::Left => s.left,
+            Pane::Right => s.right,
+        })
+    });
+    match target {
+        Some(id) => {
+            show_tab(key, id);
+            true
+        }
+        None => false,
+    }
+}
+
+/// A page got keyboard focus (click into a half of the split view): it becomes the
+/// active tab (omnibox, Ctrl+W, … follow it). Nothing moves on screen.
+pub(crate) fn pane_focused(id: TabId) {
+    let key = with_ui(|ui| {
+        let key = ui.tabs.get(&id)?.window?;
+        let w = ui.windows.get_mut(&key)?;
+        let s = w.split?;
+        let in_split = id == s.left || id == s.right;
+        (in_split && w.strip.active() != Some(id) && w.strip.activate(id)).then_some(key)
+    });
+    if let Some(key) = key {
+        update_window_title(key);
+        crate::bridge::emit_activated(id);
+    }
+}
+
+/// Hide (`on`) or show the pages panel while a chrome dropdown is open.
+pub(crate) fn set_cover(key: i32, on: bool) {
+    let views = with_ui(|ui| {
+        let w = ui.windows.get_mut(&key)?;
+        let changed = w.covered != on;
+        w.covered = on;
+        changed.then(|| w.views.clone())
+    });
+    if let Some(views) = views {
+        views.pages.set_visible(i32::from(!on));
+        if !on {
+            layout_pages(key);
+        }
+    }
+}
+
+/// The chrome page of `browser` (re)loads: a dropdown it had open is gone.
+pub(crate) fn chrome_reloaded(browser: &Browser) {
+    if let Some(key) = window_key(browser) {
+        set_cover(key, false);
+    }
+}
+
+/// After closing a tab at `index` (already removed from `order`), the nearest remaining
+/// tab of the same `profile`: right first, then left. Pure.
+pub(crate) fn same_profile_neighbour(
+    order: &[(TabId, String)],
+    index: usize,
+    profile: &str,
+) -> Option<TabId> {
+    let right = order.iter().skip(index).find(|(_, p)| p == profile);
+    let left = || order.iter().take(index).rev().find(|(_, p)| p == profile);
+    right.or_else(left).map(|(id, _)| *id)
 }
 
 fn palette_visible(views: &Views) -> bool {
@@ -759,6 +1083,8 @@ wrap_window_delegate! {
                         insets: Insets::DEFAULT,
                         size: (0, 0),
                         closing: false,
+                        split: None,
+                        covered: false,
                     },
                 );
                 ui.last_window = Some(self.key);
@@ -866,7 +1192,59 @@ wrap_window_delegate! {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeepWindowPlan, keep_window_plan};
+    use super::{
+        KeepWindowPlan, Pane, Slot, SplitState, TabId, keep_window_plan, same_profile_neighbour,
+        slots,
+    };
+
+    #[test]
+    fn split_view_shows_both_halves_only_when_one_is_active() {
+        let tabs = [TabId(1), TabId(2), TabId(3)];
+        let split = Some(SplitState {
+            left: TabId(1),
+            right: TabId(3),
+            ratio: 0.5,
+        });
+        assert_eq!(
+            slots(&tabs, Some(TabId(3)), split),
+            [
+                (TabId(1), Slot::Half(Pane::Left)),
+                (TabId(2), Slot::Hidden),
+                (TabId(3), Slot::Half(Pane::Right)),
+            ]
+        );
+        // Another tab active: it fills the page area, the split waits.
+        assert_eq!(
+            slots(&tabs, Some(TabId(2)), split),
+            [
+                (TabId(1), Slot::Hidden),
+                (TabId(2), Slot::Full),
+                (TabId(3), Slot::Hidden),
+            ]
+        );
+        assert_eq!(
+            slots(&tabs, Some(TabId(1)), None)[0],
+            (TabId(1), Slot::Full)
+        );
+        assert!(
+            slots(&tabs, None, None)
+                .iter()
+                .all(|(_, s)| *s == Slot::Hidden)
+        );
+    }
+
+    #[test]
+    fn closing_a_tab_stays_in_its_workspace() {
+        let order = |v: &[(i32, &str)]| -> Vec<(TabId, String)> {
+            v.iter().map(|(i, p)| (TabId(*i), p.to_string())).collect()
+        };
+        // [1 work][2 home][3 work]: closed a work tab that sat at index 1.
+        let tabs = order(&[(1, "work"), (2, "home"), (3, "work")]);
+        assert_eq!(same_profile_neighbour(&tabs, 1, "work"), Some(TabId(3)));
+        assert_eq!(same_profile_neighbour(&tabs, 3, "work"), Some(TabId(3)));
+        assert_eq!(same_profile_neighbour(&tabs, 1, "home"), Some(TabId(2)));
+        assert_eq!(same_profile_neighbour(&tabs, 0, "shop"), None);
+    }
 
     #[test]
     fn automation_never_closes_the_last_window() {

@@ -55,6 +55,8 @@ struct FakeState {
     cdp_handler: Option<CdpHandler>,
     /// One CDP event channel per tab, created on first subscription or emit.
     cdp_events: HashMap<TabId, tokio::sync::broadcast::Sender<CdpEvent>>,
+    /// URLs of closed tabs, most recent last (`restore_closed`).
+    closed: Vec<String>,
 }
 
 impl FakeBackend {
@@ -243,9 +245,71 @@ impl BrowserBackend for FakeBackend {
     fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
         self.with_state(format!("close_tab {tab}"), |s| {
             s.tab_mut(tab)?;
-            s.tabs.remove(&tab);
+            if let Some(info) = s.tabs.remove(&tab) {
+                s.closed.push(info.url);
+            }
             s.strip.remove(tab);
             Ok(())
+        })
+    }
+
+    /// Marks both tabs with their half; the ratio is stored as given.
+    fn split_tabs(
+        &self,
+        left: TabId,
+        right: TabId,
+        ratio: Option<f64>,
+    ) -> BoxFuture<'_, BackendResult<()>> {
+        self.with_state(format!("split_tabs {left} {right}"), move |s| {
+            s.tab_mut(left)?;
+            s.tab_mut(right)?;
+            let ratio = ratio.unwrap_or(0.5);
+            for (tab, side, other) in [
+                (left, crate::backend::SplitSide::Left, right),
+                (right, crate::backend::SplitSide::Right, left),
+            ] {
+                s.tab_mut(tab)?.split = Some(crate::backend::TabSplit { side, other, ratio });
+            }
+            Ok(())
+        })
+    }
+
+    fn unsplit(&self, tab: Option<TabId>) -> BoxFuture<'_, BackendResult<Vec<TabId>>> {
+        self.with_state(format!("unsplit {tab:?}"), |s| {
+            let mut out: Vec<TabId> = s
+                .tabs
+                .values_mut()
+                .filter(|t| t.split.is_some())
+                .map(|t| {
+                    t.split = None;
+                    t.id
+                })
+                .collect();
+            out.sort();
+            Ok(out)
+        })
+    }
+
+    fn restore_closed(&self) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        self.with_state("restore_closed".into(), |s| {
+            Ok(s.closed.pop().map(|url| s.add_tab(url, false)))
+        })
+    }
+
+    fn zoom(
+        &self,
+        tab: TabId,
+        change: crate::backend::ZoomChange,
+    ) -> BoxFuture<'_, BackendResult<f64>> {
+        self.with_state(format!("zoom {tab} {change:?}"), move |s| {
+            let info = s.tab_mut(tab)?;
+            let current = info.zoom.map_or(100.0, f64::from);
+            let level = match change {
+                crate::backend::ZoomChange::Percent(p) => crate::zoom::clamp_percent(p),
+                crate::backend::ZoomChange::Steps(n) => crate::zoom::step(current, n),
+            };
+            info.zoom = (!crate::zoom::is_default(level)).then_some(level as u16);
+            Ok(level)
         })
     }
 

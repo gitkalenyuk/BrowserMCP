@@ -110,6 +110,12 @@ pub(crate) fn ui_page_url(page: &str) -> String {
     }
 }
 
+/// `url` with `window=<key>` added to its query (the chrome page reads its window key).
+pub(crate) fn with_window_key(url: &str, key: i32) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}window={key}")
+}
+
 /// May a chrome view (UI / palette) show this URL?
 pub(crate) fn is_chrome_url(url: &str) -> bool {
     url.starts_with(UI_PREFIX)
@@ -408,6 +414,18 @@ wrap_resource_handler! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_key_goes_into_the_query() {
+        assert_eq!(
+            with_window_key("bmcp://ui/index.html", 7),
+            "bmcp://ui/index.html?window=7"
+        );
+        assert_eq!(
+            with_window_key("http://localhost:5173/index.html?api=ws", 7),
+            "http://localhost:5173/index.html?api=ws&window=7"
+        );
+    }
 
     #[test]
     fn content_views_may_only_show_the_new_tab_page() {

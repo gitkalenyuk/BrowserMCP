@@ -59,6 +59,10 @@ impl ProxyView {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ProfileEntry {
     pub id: String,
+    /// Name shown in the UI (profile_update label; default: the id).
+    pub label: String,
+    /// Workspace color in the UI (profile_update color); null = default.
+    pub color: Option<String>,
     #[serde(flatten)]
     pub proxy: ProxyView,
     pub accept_language: Option<String>,
@@ -121,6 +125,10 @@ impl Command for List {
                 let config = stored.get(&id);
                 let live = open.iter().find(|p| p.id == id && p.incognito == incognito);
                 ProfileEntry {
+                    label: config
+                        .and_then(|c| c.label.clone())
+                        .unwrap_or_else(|| id.clone()),
+                    color: config.and_then(|c| c.color.clone()),
                     proxy: ProxyView::of(services.as_deref(), service.applied(&id).as_ref(), &id),
                     accept_language: config.and_then(|c| c.accept_language.clone()),
                     identity: assigned.get(&id).cloned(),
@@ -262,6 +270,101 @@ impl Command for Create {
             data_dir: service.profile_dir(&args.id).display().to_string(),
             warning,
             created,
+            id: args.id,
+        })
+    }
+}
+
+/// `profile.update`: the workspace name and color of a profile.
+pub struct Update;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateArgs {
+    /// Profile id. A profile without stored settings (e.g. "default") gets an entry.
+    pub id: String,
+    /// Name shown in the UI (1-40 characters); "" = back to the id.
+    pub label: Option<String>,
+    /// grey, blue, red, yellow, green, pink, purple, cyan or orange; "" = default.
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UpdateOutput {
+    pub id: String,
+    pub label: String,
+    pub color: Option<String>,
+}
+
+/// Check and normalize a label (pure): trimmed, at most 40 characters; "" = none.
+pub fn clean_label(label: &str) -> Result<Option<String>, CmdError> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Ok(None);
+    }
+    if label.chars().count() > 40 || label.chars().any(char::is_control) {
+        return Err(CmdError::invalid_params(
+            "label: at most 40 characters, no control characters",
+        ));
+    }
+    Ok(Some(label.to_string()))
+}
+
+/// Check a color name (pure): one of [`crate::service::COLORS`]; "" = none.
+pub fn clean_color(color: &str) -> Result<Option<String>, CmdError> {
+    let color = color.trim().to_ascii_lowercase();
+    if color.is_empty() {
+        return Ok(None);
+    }
+    if !crate::service::COLORS.contains(&color.as_str()) {
+        return Err(CmdError::invalid_params(format!(
+            "color must be one of {}",
+            crate::service::COLORS.join(", ")
+        )));
+    }
+    Ok(Some(color))
+}
+
+impl Command for Update {
+    const NAME: &'static str = "profile.update";
+    type Args = UpdateArgs;
+    type Output = UpdateOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Rename a profile (its workspace name in the browser UI) and/or set its color. \
+             Proxy, identity and language stay as they are (profile_create changes those).",
+            Toolset::Profile,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: UpdateArgs) -> Result<UpdateOutput, CmdError> {
+        check_id(&args.id)?;
+        let label = args.label.as_deref().map(clean_label).transpose()?;
+        let color = args.color.as_deref().map(clean_color).transpose()?;
+        let service = ProfilesService::from_ctx(&ctx)?;
+        let config = service.store.update(|file| {
+            let entry = file
+                .profiles
+                .entry(args.id.clone())
+                .or_insert_with(|| ProfileConfig {
+                    created_ms: now_ms(),
+                    ..Default::default()
+                });
+            if let Some(label) = label {
+                entry.label = label;
+            }
+            if let Some(color) = color {
+                entry.color = color;
+            }
+            Ok(entry.clone())
+        })?;
+        // The browser shows the label too (page context menu): hand it the settings again.
+        service.apply(&args.id).await?;
+        Ok(UpdateOutput {
+            label: config.label.unwrap_or_else(|| args.id.clone()),
+            color: config.color,
             id: args.id,
         })
     }
@@ -658,6 +761,99 @@ impl Command for PermissionsList {
     ) -> Result<PermissionsOutput, CmdError> {
         Ok(PermissionsOutput {
             rules: permission_store(&ctx)?.rules(),
+        })
+    }
+}
+
+/// `permissions.pending`: requests waiting for an answer (the permission bar).
+pub struct PermissionsPending;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PendingOutput {
+    pub prompts: Vec<crate::backend::PermissionPrompt>,
+}
+
+impl Command for PermissionsPending {
+    const NAME: &'static str = "permissions.pending";
+    type Args = bmcp_core::command::Empty;
+    type Output = PendingOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Permission requests of pages that wait for a person (the browser's permission \
+             bar): id, tab, origin, kinds. Answer with permissions_answer.",
+            Toolset::Profile,
+        )
+    }
+
+    async fn run(ctx: Ctx, _args: bmcp_core::command::Empty) -> Result<PendingOutput, CmdError> {
+        let service = ProfilesService::from_ctx(&ctx)?;
+        let prompts = match service.backend() {
+            Ok(backend) => backend.pending_permissions().await?,
+            Err(_) => Vec::new(),
+        };
+        Ok(PendingOutput { prompts })
+    }
+}
+
+/// `permissions.answer`: Allow / Block on the permission bar.
+pub struct PermissionsAnswer;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerArgs {
+    /// Prompt id (permission.prompt event / permissions_pending).
+    pub id: u64,
+    pub allow: bool,
+    /// Also store the answer as a rule for the site (permissions_set), default false.
+    pub remember: Option<bool>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AnswerOutput {
+    pub id: u64,
+    /// False when the request was gone already (page closed or navigated away).
+    pub answered: bool,
+    /// Rules stored because of `remember`.
+    pub remembered: Vec<PermissionRule>,
+}
+
+impl Command for PermissionsAnswer {
+    const NAME: &'static str = "permissions.answer";
+    type Args = AnswerArgs;
+    type Output = AnswerOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Answer a page's waiting permission request (allow or block); remember: true also \
+             stores the answer for that site.",
+            Toolset::Profile,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: AnswerArgs) -> Result<AnswerOutput, CmdError> {
+        let service = ProfilesService::from_ctx(&ctx)?;
+        let prompt = service
+            .backend()?
+            .answer_permission(args.id, args.allow)
+            .await?;
+        let mut remembered = Vec::new();
+        if let (Some(prompt), true) = (&prompt, args.remember.unwrap_or(false)) {
+            let store = permission_store(&ctx)?;
+            for kind in &prompt.kinds {
+                store.set(&prompt.origin, *kind, Some(args.allow))?;
+                remembered.push(PermissionRule {
+                    origin: crate::permissions::normalize_origin(&prompt.origin),
+                    kind: *kind,
+                    allow: args.allow,
+                });
+            }
+        }
+        Ok(AnswerOutput {
+            id: args.id,
+            answered: prompt.is_some(),
+            remembered,
         })
     }
 }

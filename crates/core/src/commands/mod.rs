@@ -31,9 +31,13 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<tabs::Open>()
         .add::<tabs::Close>()
         .add::<tabs::Activate>()
+        .add::<tabs::Split>()
+        .add::<tabs::Unsplit>()
+        .add::<tabs::RestoreClosed>()
         .add::<nav::Goto>()
         .add::<nav::Stop>()
         .add::<page::Text>()
+        .add::<page::Zoom>()
         .add::<ui::Layout>();
     // page.snapshot / page.find / page.act, nav.back/forward/reload/wait ... live in the
     // `bmcp-browser` crate.
@@ -159,6 +163,94 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::TabNotFound);
+    }
+
+    #[tokio::test]
+    async fn split_unsplit_and_errors() {
+        let fake = FakeBackend::with_tabs(&["https://a.test/", "https://b.test/"]);
+        let out = call(
+            &fake,
+            "tabs.split",
+            json!({ "left": 1, "right": 2, "ratio": 0.95 }),
+        )
+        .await;
+        assert_eq!(out, json!({ "left": 1, "right": 2, "ratio": 0.85 }));
+        let list = call(&fake, "tabs.list", json!({})).await;
+        assert_eq!(
+            list["tabs"][0]["split"],
+            json!({ "side": "left", "other": 2, "ratio": 0.85 })
+        );
+        assert_eq!(list["tabs"][1]["split"]["side"], "right");
+        let out = call(&fake, "tabs.unsplit", json!({})).await;
+        assert_eq!(out, json!({ "tabs": [1, 2] }));
+        assert!(
+            call(&fake, "tabs.list", json!({})).await["tabs"][0]
+                .get("split")
+                .is_none()
+        );
+        // Same tab twice, unknown tab.
+        let err = registry()
+            .call(
+                ctx(Caller::Rest, fake.clone()),
+                "tabs.split",
+                json!({ "left": 1, "right": 1 }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        let err = registry()
+            .call(
+                ctx(Caller::Rest, fake.clone()),
+                "tabs.split",
+                json!({ "left": 1, "right": 9 }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::TabNotFound);
+    }
+
+    #[tokio::test]
+    async fn restore_closed_reopens_the_last_one() {
+        let fake = FakeBackend::with_tabs(&["https://a.test/", "https://b.test/"]);
+        call(&fake, "tabs.close", json!({ "tab": 2 })).await;
+        let out = call(&fake, "tabs.restore_closed", json!({})).await;
+        assert_eq!(out, json!({ "tab": 3 }));
+        let list = call(&fake, "tabs.list", json!({})).await;
+        assert_eq!(list["tabs"][1]["url"], "https://b.test/");
+        // Nothing left.
+        let out = call(&fake, "tabs.restore_closed", json!({})).await;
+        assert_eq!(out, json!({ "tab": null }));
+    }
+
+    #[tokio::test]
+    async fn page_zoom_levels_and_steps() {
+        let fake = FakeBackend::with_tabs(&["https://a.test/"]);
+        let out = call(&fake, "page.zoom", json!({ "tab": 1 })).await;
+        assert_eq!(out, json!({ "tab": 1, "level": 100.0 }));
+        let out = call(&fake, "page.zoom", json!({ "tab": 1, "delta": 1 })).await;
+        assert_eq!(out["level"], 110.0);
+        let out = call(&fake, "page.zoom", json!({ "tab": 1, "level": 150 })).await;
+        assert_eq!(out["level"], 150.0);
+        assert_eq!(
+            call(&fake, "tabs.list", json!({})).await["tabs"][0]["zoom"],
+            150
+        );
+        let out = call(&fake, "page.zoom", json!({ "tab": 1, "delta": 0 })).await;
+        assert_eq!(out["level"], 100.0);
+        assert!(
+            call(&fake, "tabs.list", json!({})).await["tabs"][0]
+                .get("zoom")
+                .is_none()
+        );
+        let err = registry()
+            .call(
+                ctx(Caller::Rest, fake.clone()),
+                "page.zoom",
+                json!({ "tab": 1, "level": 5 }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams);
     }
 
     #[tokio::test]

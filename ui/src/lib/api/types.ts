@@ -49,6 +49,60 @@ export interface TabInfo {
   lock?: TabLock | null;
   /** Sent by the core in tabs.list / tab.created (the UI uses TabsSnapshot.activeId instead). */
   active?: boolean;
+  /** Profile = workspace of the tab (absent: the launch profile / an old core). */
+  profile?: string;
+  incognito?: boolean;
+  /** Off-screen automation tab: never shown in a tab strip. */
+  offscreen?: boolean;
+  /** Browser window showing the tab (absent for off-screen tabs). */
+  window?: number;
+  /** Set while the tab is one half of a split view (`tabs.split`). */
+  split?: TabSplit | null;
+  /** Page zoom in percent when it is not 100. */
+  zoom?: number | null;
+}
+
+export interface TabSplit {
+  side: 'left' | 'right';
+  /** The tab in the other half. */
+  other: TabId;
+  /** Width share of the left half (0.15–0.85). */
+  ratio: number;
+}
+
+/** One entry of `profile.list` (crates/profiles/src/commands.rs). */
+export interface ProfileEntry {
+  id: string;
+  /** Workspace name (profile.update label; default: the id). */
+  label: string;
+  color: GroupColor | null;
+  /** Upstream proxy, password masked. */
+  proxy: string | null;
+  proxy_server: string | null;
+  accept_language: string | null;
+  identity: string | null;
+  stored: boolean;
+  open: boolean;
+  incognito: boolean;
+  tabs: TabId[];
+  launch: boolean;
+}
+
+/** A page's permission request waiting for the permission bar. */
+export interface PermissionPrompt {
+  id: number;
+  tab: TabId;
+  origin: string;
+  kinds: string[];
+}
+
+/** "Ask AI about this" from the page context menu. */
+export interface AskAi {
+  tab: TabId;
+  url: string;
+  title: string;
+  kind: 'selection' | 'link' | 'image' | 'page';
+  text: string;
 }
 
 export interface TabGroup {
@@ -78,6 +132,7 @@ export interface TabsSnapshot {
   activeId: TabId | null;
 }
 
+/** A workspace = a profile (own cookies, proxy, identity), as the chrome shows it. */
 export interface Workspace {
   id: WorkspaceId;
   name: string;
@@ -85,6 +140,10 @@ export interface Workspace {
   /** Human readable proxy label, e.g. "Direct" or "socks5 · DE pool". */
   proxy: string;
   color: GroupColor;
+  /** Assigned stealth identity, if any. */
+  identity?: string | null;
+  /** The profile the browser started with (cannot be deleted). */
+  launch?: boolean;
 }
 
 export interface Run {
@@ -136,7 +195,21 @@ type TabParam = { tab: TabId };
 export interface RpcMethods {
   'tabs.list': { params: void; result: TabsSnapshot };
   /** `background: true` opens without switching to it (default: the new tab becomes active). */
-  'tabs.open': { params: { url?: string; background?: boolean }; result: TabInfo };
+  'tabs.open': { params: { url?: string; background?: boolean; profile?: string }; result: TabInfo };
+  'tabs.split': { params: { left: TabId; right: TabId; ratio?: number }; result: { left: TabId; right: TabId; ratio: number } };
+  'tabs.unsplit': { params: { tab?: TabId }; result: { tabs: TabId[] } };
+  'tabs.restore_closed': { params: void; result: { tab: TabId | null } };
+  'page.zoom': { params: { tab?: TabId; level?: number; delta?: number }; result: { tab: TabId; level: number } };
+  // ---- profiles = workspaces (crates/profiles) -----------------------------------------------
+  'profile.list': { params: void; result: { profiles: ProfileEntry[] } };
+  'profile.create': { params: { id: string }; result: { id: string; created: boolean } };
+  'profile.update': { params: { id: string; label?: string; color?: string }; result: { id: string; label: string; color: string | null } };
+  'profile.delete': { params: { id: string; keep_data?: boolean }; result: { id: string; removed: boolean } };
+  'permissions.pending': { params: void; result: { prompts: PermissionPrompt[] } };
+  'permissions.answer': {
+    params: { id: number; allow: boolean; remember?: boolean };
+    result: { id: number; answered: boolean };
+  };
   'tabs.close': { params: TabParam; result: void };
   'tabs.activate': { params: TabParam; result: void };
   /**
@@ -157,8 +230,6 @@ export interface RpcMethods {
   'agents.list': { params: void; result: { agents: Agent[] } };
   /** Unlock the agent's tabs and drop its group. */
   'agents.forget': { params: { id: AgentId }; result: { released: TabId[] } };
-  'workspaces.list': { params: void; result: { workspaces: Workspace[]; activeId: WorkspaceId } };
-  'workspaces.activate': { params: { id: WorkspaceId }; result: void };
   'runs.list': { params: void; result: { runs: Run[]; patches: Patch[] } };
   'runs.patch.approve': { params: { id: string }; result: void };
   'runs.patch.reject': { params: { id: string }; result: void };
@@ -236,7 +307,11 @@ export interface ApiEvents {
   'agents.updated': { agents: Agent[] };
   /** An agent asks the human to do something in a tab (the banner shows it). */
   'ai.handoff': { tab: TabId; agent: AgentId; reason: string };
-  'workspace.activated': { id: WorkspaceId };
+  /** A page asks for a permission (geolocation, camera…): the permission bar shows it. */
+  'permission.prompt': PermissionPrompt;
+  'permission.prompt_closed': { id: number; allow: boolean | null };
+  /** Page context menu "Ask AI about this". */
+  'ui.ask_ai': AskAi;
   'runs.updated': { runs: Run[]; patches: Patch[] };
   // ai.* / term.* / net.* (WsApi subscribes to them with events.subscribe on connect)
   'ai.message': AiMessageEvent;

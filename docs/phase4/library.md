@@ -96,14 +96,10 @@ plain WS connection (default topics only) received `bookmarks.changed {op:"updat
 
 ## Gaps
 
-* Shortcuts pressed while a web page has focus go through the native mirror of the keymap
-  (`crates/cef/src/chrome/protocol.rs`, owned elsewhere): Ctrl+D, Ctrl+H, Ctrl+J, Ctrl+Shift+O,
-  Ctrl+Shift+B are not in it yet, so they only work while the chrome (or the palette) has focus.
-  Needed lines, e.g. `VK_D if ctrl => Ui("bookmark.toggle")`, `VK_H if ctrl => Ui("library.history")`,
-  `VK_J if ctrl => Ui("library.downloads")`, `VK_O if ctrl_shift => Ui("library.bookmarks")`,
-  `VK_B if ctrl_shift => Ui("ui.toggleBookmarksBar")`.
-* The menu's Library section sits in the existing dropdown, which the page view covers in the
-  real browser (known chrome gap); the toolbar button and the palette work there.
+* ~~Shortcuts while a web page has focus~~: Ctrl+D, Ctrl+H, Ctrl+J, Ctrl+Shift+O, Ctrl+Shift+B
+  are in the native keymap mirror now (`crates/cef/src/chrome/protocol.rs`).
+* ~~The menu's Library section is covered by the page~~: the page is hidden while a chrome
+  dropdown is open (`docs/phase2/chrome-features.md`).
 * Bookmarks-bar folders open the library at that folder instead of a dropdown (same reason).
   No drag and drop on the bar itself.
 * Downloads: `downloads.list` is filled by a later CEF hook, so the live list is empty. The

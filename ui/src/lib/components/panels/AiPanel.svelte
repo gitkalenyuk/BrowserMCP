@@ -11,7 +11,8 @@
   const ai = chrome.ai;
 
   let view = $state<'chat' | 'settings'>('chat');
-  let draft = $state('');
+  // The draft lives in the store: the page context menu ("Ask AI about this") fills it.
+  const draft = $derived(ai.draft);
   let sending = $state(false);
   let error = $state<string | null>(null);
   let log = $state<HTMLDivElement>();
@@ -54,7 +55,7 @@
     error = null;
     try {
       await ai.send(text);
-      draft = '';
+      ai.draft = '';
       stick = true;
     } catch (err) {
       error = (err as Error).message;
@@ -221,7 +222,7 @@
       }}
     >
       <textarea
-        bind:value={draft}
+        bind:value={ai.draft}
         rows="2"
         placeholder={ended
           ? 'This session has ended. Write to start a new chat…'

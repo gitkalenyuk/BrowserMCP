@@ -243,6 +243,32 @@ pub(crate) fn configure(settings: ProfileSettings) {
     }
 }
 
+/// Workspaces a link can be opened in (page context menu): `(profile id, label)` of the
+/// launch profile, every configured profile and every loaded on-disk profile. UI thread.
+pub(crate) fn workspaces() -> Vec<(String, String)> {
+    let launch = launch().profile.clone();
+    with_ui(|ui| {
+        let mut out: BTreeMap<String, String> = BTreeMap::new();
+        let mut add = |id: &str| {
+            let label = ui
+                .profiles
+                .settings
+                .get(id)
+                .and_then(|s| s.label.clone())
+                .unwrap_or_else(|| id.to_string());
+            out.insert(id.to_string(), label);
+        };
+        add(&launch);
+        for id in ui.profiles.settings.keys() {
+            add(id);
+        }
+        for key in ui.profiles.contexts.keys().filter(|k| !k.incognito) {
+            add(&key.name());
+        }
+        out.into_iter().collect()
+    })
+}
+
 /// `ProfileBackend::forget`: refuse while tabs are open, else drop the context(s).
 pub(crate) fn forget(name: &str) -> Result<(), BackendError> {
     let busy = with_ui(|ui| {
@@ -258,6 +284,10 @@ pub(crate) fn forget(name: &str) -> Result<(), BackendError> {
     }
     let removed: Vec<RequestContext> = with_ui(|ui| {
         ui.profiles.settings.remove(name);
+        // Ctrl+Shift+T must not bring the deleted profile back.
+        ui.session
+            .closed
+            .retain(|c| c.profile.as_deref() != Some(name));
         let keys: Vec<ProfileKey> = ui
             .profiles
             .contexts

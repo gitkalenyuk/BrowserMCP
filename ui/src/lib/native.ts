@@ -7,6 +7,10 @@
 //   palette         show / hide / toggle the Ctrl+K overlay (a separate view on top)
 //   focus-content   keyboard focus back to the page (after Enter in the omnibox)
 //   focus-omnibox   keyboard focus to the chrome's omnibox (from the palette)
+//   split           the split-view divider was dragged (ratio, done)
+//   focus-pane      keyboard focus to the left / right half of the split view
+//   cover           a dropdown of the chrome is open: hide the page (it would cover the
+//                   dropdown, which this page draws under the native page view)
 // The other direction: the browser calls window.bmcp.run(commandId) for shortcuts pressed
 // while a web page has focus, and bmcp.onShow() / bmcp.onHide() in the palette page.
 
@@ -36,6 +40,16 @@ export interface NativeHost {
   palette(action: 'show' | 'hide' | 'toggle'): void;
   focusContent(): void;
   focusOmnibox(): void;
+  splitRatio(ratio: number, done: boolean): void;
+  focusPane(side: 'left' | 'right'): void;
+  cover(on: boolean): void;
+}
+
+/** This chrome page's window key (the browser adds `?window=<key>` to its URL). */
+export function windowKey(search: string = typeof location === 'undefined' ? '' : location.search): number | null {
+  const v = new URLSearchParams(search).get('window');
+  const n = v === null ? NaN : Number(v);
+  return Number.isInteger(n) ? n : null;
 }
 
 /** True when served by the browser itself (bmcp://ui/ or a --ui-dev page inside CEF). */
@@ -55,6 +69,9 @@ export const nativeHost: NativeHost = {
   palette: (action) => send('palette', { action }),
   focusContent: () => send('focus-content'),
   focusOmnibox: () => send('focus-omnibox'),
+  splitRatio: (ratio, done) => send('split', done ? { ratio, done: 1 } : { ratio }),
+  focusPane: (side) => send('focus-pane', { side }),
+  cover: (on) => send('cover', { on: on ? 1 : 0 }),
 };
 
 /** Install the hooks the browser calls (merged with ones installed earlier). */

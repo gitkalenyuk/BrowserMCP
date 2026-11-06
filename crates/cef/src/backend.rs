@@ -6,9 +6,11 @@ use std::time::Duration;
 use bmcp_cdp::CdpClient;
 use bmcp_core::{
     BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvents, OpenTabOptions, TabId,
-    TabInfo, WindowTarget,
+    TabInfo, WindowTarget, ZoomChange,
 };
-use bmcp_profiles::{CookieInfo, CookieTarget, OpenProfile, ProfileBackend, ProfileSettings};
+use bmcp_profiles::{
+    CookieInfo, CookieTarget, OpenProfile, PermissionPrompt, ProfileBackend, ProfileSettings,
+};
 use cef::*;
 use serde_json::Value;
 use tokio::sync::{oneshot, watch};
@@ -210,6 +212,42 @@ impl BrowserBackend for CefBackend {
         Box::pin(async move { Ok(self.tab_cdp(tab).await?.subscribe()) })
     }
 
+    fn split_tabs(
+        &self,
+        left: TabId,
+        right: TabId,
+        ratio: Option<f64>,
+    ) -> BoxFuture<'_, BackendResult<()>> {
+        let ratio = bmcp_core::commands::tabs::clamp_split_ratio(ratio);
+        Box::pin(
+            async move { run_on_ui(move || crate::chrome::split_tabs(left, right, ratio)).await? },
+        )
+    }
+
+    fn unsplit(&self, tab: Option<TabId>) -> BoxFuture<'_, BackendResult<Vec<TabId>>> {
+        Box::pin(async move { run_on_ui(move || crate::chrome::unsplit(tab)).await? })
+    }
+
+    fn restore_closed(&self) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        Box::pin(async move {
+            let (reply, created) = oneshot::channel();
+            let started = run_on_ui(move || crate::session::reopen_closed(reply)).await??;
+            if !started {
+                return Ok(None);
+            }
+            let timeout = Duration::from_secs(30);
+            match tokio::time::timeout(timeout, created).await {
+                Ok(Ok(id)) => Ok(Some(id)),
+                Ok(Err(_)) => Err(BackendError::ShuttingDown),
+                Err(_) => Err(BackendError::Timeout(timeout)),
+            }
+        })
+    }
+
+    fn zoom(&self, tab: TabId, change: ZoomChange) -> BoxFuture<'_, BackendResult<f64>> {
+        Box::pin(async move { run_on_ui(move || crate::zoom::change(tab, change)).await? })
+    }
+
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>> {
         Box::pin(run_on_ui(|| {
             tracing::info!("quit requested: closing every window");
@@ -256,6 +294,7 @@ impl BrowserBackend for CefBackend {
             for window in windows {
                 window.close();
             }
+            crate::devtools::close_all();
         }))
     }
 }
@@ -325,6 +364,18 @@ impl ProfileBackend for CefBackend {
         name: Option<String>,
     ) -> BoxFuture<'_, BackendResult<usize>> {
         Box::pin(crate::cookies::delete(target, domain, name))
+    }
+
+    fn pending_permissions(&self) -> BoxFuture<'_, BackendResult<Vec<PermissionPrompt>>> {
+        Box::pin(run_on_ui(crate::prompts::pending))
+    }
+
+    fn answer_permission(
+        &self,
+        id: u64,
+        allow: bool,
+    ) -> BoxFuture<'_, BackendResult<Option<PermissionPrompt>>> {
+        Box::pin(run_on_ui(move || crate::prompts::answer(id, allow)))
     }
 }
 

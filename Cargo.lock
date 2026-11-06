@@ -498,11 +498,13 @@ dependencies = [
  "bmcp-profiles",
  "cef",
  "include_dir",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

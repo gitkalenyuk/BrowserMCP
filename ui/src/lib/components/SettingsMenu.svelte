@@ -7,6 +7,12 @@
   const chrome = useChrome();
   let open = $state(false);
   let root: HTMLDivElement;
+  // Inside the browser the page is hidden while the menu is open (it would cover it).
+  $effect(() => {
+    if (!open) return;
+    chrome.dropdown(true);
+    return () => chrome.dropdown(false);
+  });
 
   const LIBRARY: { id: CommandId; label: string }[] = [
     { id: 'library.bookmarks', label: 'Bookmarks' },

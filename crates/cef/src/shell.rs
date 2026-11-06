@@ -28,6 +28,8 @@ pub type ReadyCallback = Box<dyn FnOnce(Arc<dyn BrowserBackend>) + Send>;
 
 pub struct StartConfig {
     pub url: String,
+    /// Open the saved session (`data/runtime/session.json`) instead of `url`.
+    pub restore: bool,
     pub style: Style,
     pub layout: WindowLayout,
     pub on_ready: Mutex<Option<ReadyCallback>>,
@@ -96,9 +98,24 @@ wrap_browser_process_handler! {
             bridge::with_ui(|ui| ui.shell = Some(ctx.clone()));
             let first = PendingTab::new(&self.config.url, ProfileKey::default(), None);
             if crate::osr::headless() {
-                crate::osr::open_first_tab(first, &ctx); // no window, no chrome UI
+                // No window, no chrome UI, no session restore (automation starts clean).
+                crate::osr::open_first_tab(first, &ctx);
             } else {
-                open_window(first, &ctx);
+                // The saved session if there is one (Chrome layout only), else the start page.
+                let restored = match crate::session::load() {
+                    Some(file) if self.config.restore && ctx.layout == WindowLayout::Chrome => {
+                        crate::session::restore(file, &ctx)
+                    }
+                    Some(file) => {
+                        // Not restored: keep at least the closed-tabs stack.
+                        bridge::with_ui(|ui| ui.session.closed = file.closed);
+                        false
+                    }
+                    None => false,
+                };
+                if !restored {
+                    open_window(first, &ctx);
+                }
             }
 
             let ready = self.config.on_ready.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -321,6 +338,7 @@ wrap_browser_view_delegate! {
                     Size { width, height }
                 }
                 ViewKind::Ui | ViewKind::Content => Size { width: 1, height: 1 },
+                ViewKind::DevTools => Size { width: 1100, height: 760 },
             }
         }
     }
@@ -331,10 +349,11 @@ wrap_browser_view_delegate! {
             _browser_view: Option<&mut BrowserView>,
             _settings: Option<&BrowserSettings>,
             _client: Option<&mut Client>,
-            _is_devtools: i32,
+            is_devtools: i32,
         ) -> Option<BrowserViewDelegate> {
-            // Popups are web pages, whatever opened them.
-            Some(ShellBrowserViewDelegate::new(self.ctx.clone(), ViewKind::Content))
+            // Popups are web pages, whatever opened them (or DevTools, "Inspect").
+            let kind = if is_devtools == 1 { ViewKind::DevTools } else { ViewKind::Content };
+            Some(ShellBrowserViewDelegate::new(self.ctx.clone(), kind))
         }
 
         fn on_popup_browser_view_created(
@@ -404,11 +423,15 @@ wrap_client! {
         }
 
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
-            Some(ShellContextMenuHandler::new(self.kind))
+            Some(ShellContextMenuHandler::new(self.kind, self.offscreen))
         }
 
         fn permission_handler(&self) -> Option<PermissionHandler> {
             Some(ShellPermissionHandler::new(self.kind))
+        }
+
+        fn focus_handler(&self) -> Option<FocusHandler> {
+            (self.kind == ViewKind::Content).then(ShellFocusHandler::new)
         }
 
         fn download_handler(&self) -> Option<DownloadHandler> {
@@ -433,40 +456,64 @@ wrap_permission_handler! {
     impl PermissionHandler {
         /// Alloy shows no permission UI, and an unanswered prompt waits forever — e.g.
         /// every connection from a page to 127.0.0.1 (Local Network Access) hung, so the
-        /// UI could never reach the API. Answer at once: our own views see
-        /// `scheme::allow_permission`; web pages get the stored rules (`permissions.set`),
-        /// everything else is denied.
+        /// UI could never reach the API. Our own pages see `scheme::allow_permission`; web
+        /// pages get the stored rules (`permissions.set`), and without a rule the browser
+        /// UI's permission bar asks (`prompts.rs`; off-screen tabs: denied).
         fn on_show_permission_prompt(
             &self,
-            _browser: Option<&mut Browser>,
-            _prompt_id: u64,
+            browser: Option<&mut Browser>,
+            prompt_id: u64,
             requesting_origin: Option<&CefString>,
             requested_permissions: u32,
             callback: Option<&mut PermissionPromptCallback>,
         ) -> i32 {
             let Some(callback) = callback else { return 0 };
             let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
-            let allow = if self.kind == ViewKind::Content {
-                let kinds = bmcp_profiles::permissions::kinds_from_prompt_bits(requested_permissions);
-                crate::permission_store().is_some_and(|s| s.decide_all(&origin, &kinds))
-            } else {
-                crate::scheme::allow_permission(&origin, requested_permissions)
+            // Our own pages — the chrome, the palette, and bmcp://ui pages shown in a tab
+            // (library, settings) — may reach the API on 127.0.0.1 (Local Network Access).
+            let ours = crate::scheme::allow_permission(&origin, requested_permissions);
+            let allow = match (self.kind, browser) {
+                _ if ours => Some(true),
+                (ViewKind::Content, Some(browser)) => {
+                    let kinds =
+                        bmcp_profiles::permissions::kinds_from_prompt_bits(requested_permissions);
+                    let decided = crate::prompts::decide(browser, &origin, &kinds);
+                    if decided.is_none() {
+                        // Nobody decided yet: the permission bar asks the person.
+                        let answer = crate::prompts::Answer::Prompt(callback.clone());
+                        crate::prompts::wait(browser, Some(prompt_id), &origin, kinds, answer);
+                    }
+                    decided
+                }
+                _ => Some(false),
             };
-            tracing::debug!(origin, requested_permissions, allow, "permission prompt");
-            callback.cont(if allow {
-                PermissionRequestResult::ACCEPT
-            } else {
-                PermissionRequestResult::DENY
-            });
+            tracing::debug!(origin, requested_permissions, ?allow, "permission prompt");
+            if let Some(allow) = allow {
+                callback.cont(if allow {
+                    PermissionRequestResult::ACCEPT
+                } else {
+                    PermissionRequestResult::DENY
+                });
+            }
             1
         }
 
-        /// Camera / microphone / screen capture (`getUserMedia`, `getDisplayMedia`): denied
-        /// unless a rule allows every requested kind (Alloy would grant it otherwise, and
-        /// pages could then read device labels).
-        fn on_request_media_access_permission(
+        /// CEF dropped a prompt itself (the page navigated or went away).
+        fn on_dismiss_permission_prompt(
             &self,
             _browser: Option<&mut Browser>,
+            prompt_id: u64,
+            _result: PermissionRequestResult,
+        ) {
+            crate::prompts::dismissed(prompt_id);
+        }
+
+        /// Camera / microphone / screen capture (`getUserMedia`, `getDisplayMedia`): the
+        /// rules decide, else the permission bar asks (Alloy would grant it otherwise, and
+        /// pages could then read device labels); off-screen tabs are denied.
+        fn on_request_media_access_permission(
+            &self,
+            browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             requesting_origin: Option<&CefString>,
             requested_permissions: u32,
@@ -475,11 +522,23 @@ wrap_permission_handler! {
             let Some(callback) = callback else { return 0 };
             let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
             let kinds = bmcp_profiles::permissions::kinds_from_media_bits(requested_permissions);
-            let allow = self.kind == ViewKind::Content
-                && crate::permission_store().is_some_and(|s| s.decide_all(&origin, &kinds));
-            tracing::debug!(origin, requested_permissions, allow, "media permission");
+            let allow = match (self.kind, browser) {
+                (ViewKind::Content, Some(browser)) => {
+                    let decided = crate::prompts::decide(browser, &origin, &kinds);
+                    if decided.is_none() {
+                        let answer =
+                            crate::prompts::Answer::Media(callback.clone(), requested_permissions);
+                        crate::prompts::wait(browser, None, &origin, kinds, answer);
+                    }
+                    decided
+                }
+                _ => Some(false),
+            };
+            tracing::debug!(origin, requested_permissions, ?allow, "media permission");
             // All or nothing: a partial grant is invalid for getUserMedia.
-            callback.cont(if allow { requested_permissions } else { 0 });
+            if let Some(allow) = allow {
+                callback.cont(if allow { requested_permissions } else { 0 });
+            }
             1
         }
     }
@@ -516,6 +575,20 @@ fn origin_of(url: &str) -> &str {
     }
 }
 
+wrap_focus_handler! {
+    struct ShellFocusHandler;
+
+    impl FocusHandler {
+        /// A page got keyboard focus: in a split view that half becomes the active tab.
+        fn on_got_focus(&self, browser: Option<&mut Browser>) {
+            if let Some(browser) = browser {
+                let id = TabId(browser.identifier());
+                bridge::post_to_ui(Box::new(move || chrome::pane_focused(id)));
+            }
+        }
+    }
+}
+
 wrap_display_handler! {
     struct ShellDisplayHandler {
         kind: ViewKind,
@@ -539,6 +612,9 @@ wrap_display_handler! {
                     tab.url = url;
                     true
                 });
+                // The host's remembered zoom (outside this callback).
+                let id = TabId(browser.identifier());
+                bridge::post_to_ui(Box::new(move || crate::zoom::apply_stored(id)));
             }
         }
 
@@ -575,7 +651,7 @@ wrap_display_handler! {
             source: Option<&CefString>,
             line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            if self.kind != ViewKind::Content {
+            if self.kind == ViewKind::Ui || self.kind == ViewKind::Palette {
                 let message = message.map(CefString::to_string).unwrap_or_default();
                 let source = source.map(CefString::to_string).unwrap_or_default();
                 let kind = self.kind;
@@ -666,11 +742,14 @@ wrap_life_span_handler! {
             if let Some(browser) = browser {
                 match self.kind {
                     ViewKind::Content => bridge::register_tab(browser, self.offscreen, self.pending),
+                    ViewKind::DevTools => bridge::with_ui(|ui| {
+                        ui.devtools.insert(browser.identifier(), browser.clone());
+                    }),
                     kind => bridge::register_chrome_view(browser, kind),
                 }
             }
             let open = self.browsers.open.fetch_add(1, Ordering::SeqCst) + 1;
-            if !self.offscreen {
+            if self.keeps_app_alive() {
                 self.browsers.windowed.fetch_add(1, Ordering::SeqCst);
             }
             tracing::debug!(open, kind = ?self.kind, offscreen = self.offscreen, "browser created");
@@ -687,6 +766,10 @@ wrap_life_span_handler! {
             if let Some(browser) = browser {
                 match self.kind {
                     ViewKind::Content => bridge::unregister_tab(browser),
+                    ViewKind::DevTools => {
+                        let removed = bridge::with_ui(|ui| ui.devtools.remove(&browser.identifier()));
+                        drop(removed);
+                    }
                     _ => bridge::unregister_chrome_view(browser),
                 }
             }
@@ -698,13 +781,25 @@ wrap_life_span_handler! {
                     quit_message_loop();
                     crate::cdp_port::release_keep_alive(); // else --cdp-port keeps us alive
                 }
-            } else if !self.offscreen
+            } else if self.keeps_app_alive()
                 && self.browsers.windowed.fetch_sub(1, Ordering::SeqCst) == 1
             {
-                // The last window is gone: off-screen tabs must not keep the app alive.
-                bridge::post_to_ui(Box::new(close_offscreen_tabs));
+                // The last window is gone: off-screen tabs and DevTools windows must not
+                // keep the app alive.
+                bridge::post_to_ui(Box::new(|| {
+                    close_offscreen_tabs();
+                    crate::devtools::close_all();
+                }));
             }
         }
+    }
+}
+
+impl ShellLifeSpanHandler {
+    /// Browsers in a real window count as "a window is open"; off-screen tabs and DevTools
+    /// do not.
+    fn keeps_app_alive(&self) -> bool {
+        !self.offscreen && self.kind != ViewKind::DevTools
     }
 }
 
@@ -722,6 +817,10 @@ wrap_load_handler! {
             can_go_forward: ::std::os::raw::c_int,
         ) {
             let Some(browser) = browser else { return };
+            if self.kind == ViewKind::Ui && is_loading == 1 {
+                // A reloading chrome page has no dropdown open any more.
+                chrome::chrome_reloaded(browser);
+            }
             if self.kind != ViewKind::Content {
                 return;
             }
@@ -757,6 +856,16 @@ wrap_keyboard_handler! {
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
             let (Some(browser), Some(event)) = (browser, event) else { return 0 };
+            if self.kind == ViewKind::DevTools {
+                return 0;
+            }
+            // Releasing Ctrl ends a Ctrl+wheel zoom: read the zoom back (zoom.rs).
+            if event.type_ == KeyEventType::KEYUP
+                && event.windows_key_code == protocol::VK_CONTROL
+                && let Some(key) = chrome::window_key(browser)
+            {
+                bridge::post_to_ui(Box::new(move || crate::zoom::check_after_ctrl(key)));
+            }
             if self.kind == ViewKind::Ui || event.type_ != KeyEventType::RAWKEYDOWN {
                 return 0;
             }
@@ -792,6 +901,9 @@ wrap_request_handler! {
                 return 0;
             };
             let url = CefString::from(&request.url()).to_string();
+            if self.kind == ViewKind::DevTools {
+                return 0; // devtools:// pages
+            }
             if self.kind == ViewKind::Content {
                 // A tab may show our exact new tab page — when the browser itself loads it —
                 // but never the chrome/palette pages (they have full API access), never
@@ -847,24 +959,66 @@ wrap_request_handler! {
 wrap_context_menu_handler! {
     struct ShellContextMenuHandler {
         kind: ViewKind,
+        offscreen: bool,
     }
 
     impl ContextMenuHandler {
         fn on_before_context_menu(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>,
             model: Option<&mut MenuModel>,
         ) {
-            // Alloy's default menu (Back, Reload, View source, ...) makes no sense on our
-            // chrome; keep it only for text fields (cut/copy/paste).
-            let editable = params.is_some_and(|p| p.is_editable() == 1);
-            if self.kind != ViewKind::Content
-                && !editable
-                && let Some(model) = model
-            {
-                model.clear();
+            let (Some(params), Some(model)) = (params, model) else { return };
+            match self.kind {
+                // Web pages: our own menu (menu.rs), drawn natively over the page.
+                ViewKind::Content => {
+                    if let Some(browser) = browser {
+                        crate::menu::fill(browser, params, model);
+                    }
+                }
+                ViewKind::DevTools => {}
+                // Alloy's default menu (Back, Reload, View source, ...) makes no sense on
+                // our chrome; keep it only for text fields (cut/copy/paste).
+                ViewKind::Ui | ViewKind::Palette => {
+                    if params.is_editable() != 1 {
+                        model.clear();
+                    }
+                }
+            }
+        }
+
+        /// Windowed tabs: CEF draws the native menu. Off-screen tabs have no screen for it
+        /// (see `menu::run_offscreen`).
+        fn run_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+            callback: Option<&mut RunContextMenuCallback>,
+        ) -> ::std::os::raw::c_int {
+            match (self.offscreen, model, callback) {
+                (true, Some(model), Some(callback)) => {
+                    crate::menu::run_offscreen(model, callback);
+                    1
+                }
+                _ => 0,
+            }
+        }
+
+        fn on_context_menu_command(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            command_id: ::std::os::raw::c_int,
+            _event_flags: EventFlags,
+        ) -> ::std::os::raw::c_int {
+            match (self.kind, browser) {
+                (ViewKind::Content, Some(browser)) => crate::menu::run(browser, command_id),
+                _ => 0,
             }
         }
     }
