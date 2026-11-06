@@ -4,7 +4,7 @@
 //!   doctor              check that every build tool is available
 //!   build [--release]   build the browser (finds CMake inside Visual Studio if needed)
 //!   run [--release] [-- <browser args>]
-//!   test                run all Rust tests
+//!   test [--all]        run Rust tests (--all includes the V8 script host)
 //!
 //! The first build downloads CEF (~500 MB) into target/ and copies its runtime files
 //! next to browsermcp.exe automatically (done by the `cef-dll-sys` build script).
@@ -23,7 +23,12 @@ fn main() -> ExitCode {
         "doctor" => doctor(),
         "build" => build(has_flag(rest, "--release")),
         "run" => run(has_flag(rest, "--release"), after_double_dash(rest)),
-        "test" => cargo(&["test", "--workspace"], &[]),
+        // bmcp-script embeds V8 (212 MB download, ~6 min clean build): opt in with --all.
+        "test" if has_flag(rest, "--all") => cargo(&["test", "--workspace"], &build_env()?),
+        "test" => cargo(
+            &["test", "--workspace", "--exclude", "bmcp-script"],
+            &build_env()?,
+        ),
         _ => {
             eprintln!(
                 "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test>"

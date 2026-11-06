@@ -1,0 +1,27 @@
+# Throwaway S5 probe: the same "browser.* -> one async op" idea built on
+# rustyscript, only to compare it with raw deno_core (see docs/spikes/S5-script-runtime.md).
+#
+# NOT a workspace member (the empty [workspace] below makes it standalone), so
+# `cargo build` at the repo root never touches it. Build it explicitly:
+#   cargo build --release --manifest-path crates/script/probe-rustyscript/Cargo.toml
+#
+# The committed Cargo.lock matters: it holds serde at 1.0.219 (+ serde_json
+# 1.0.140, uuid 1.18.1). rustyscript's pinned deno_ast 0.49 -> swc_common 9.2.0
+# does not compile against serde >= 1.0.220. `cargo update` will break it again.
+[package]
+name = "probe-rustyscript"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+# Default features pull deno_crypto -> aws-lc-sys, which needs NASM on Windows
+# (build failed without it). We only need console + the TS transpiler (always on).
+rustyscript = { version = "=0.12.3", default-features = false, features = ["console"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

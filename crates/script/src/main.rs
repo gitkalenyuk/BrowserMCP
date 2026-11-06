@@ -1,0 +1,156 @@
+//! `bmcp-script-host`: command-line entry point of the script sidecar.
+//!
+//! ```text
+//! bmcp-script-host run <file.ts> [--input key=value]... [--mock | --ws <url>]
+//!                      [--timeout-secs N] [--timings]
+//! ```
+//!
+//! Exit codes: 0 ok, 1 uncaught script error, 2 usage/setup error, 124 timeout
+//! (same number GNU `timeout` uses).
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, bail};
+use bmcp_script::{CommandSink, MockSink, RunOptions, RunOutcome, WsSink, run_script};
+
+const USAGE: &str = "\
+usage: bmcp-script-host run <file.ts> [options]
+
+options:
+  --input key=value   expose `inputs.key = \"value\"` to the script (repeatable)
+  --mock              answer browser.* calls with canned data (default)
+  --ws <url>          send browser.* calls as JSON-RPC to a WebSocket
+                      (e.g. ws://127.0.0.1:47800/v1/ws; UNTESTED, endpoint not built yet)
+  --timeout-secs N    terminate the script after N seconds (exit code 124)
+  --timings           print startup/run timings to stderr";
+
+/// Where browser calls go.
+enum SinkChoice {
+    Mock,
+    Ws(String),
+}
+
+/// Parsed command line.
+struct Cli {
+    script: PathBuf,
+    inputs: Vec<(String, String)>,
+    sink: SinkChoice,
+    timeout: Option<Duration>,
+    timings: bool,
+}
+
+/// Hand-written parser: few flags, so no extra dependency.
+fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
+    let mut args = args.into_iter();
+    match args.next().as_deref() {
+        Some("run") => {}
+        Some("-h" | "--help") | None => bail!("{USAGE}"),
+        Some(other) => bail!("unknown command `{other}`\n\n{USAGE}"),
+    }
+    let mut cli = Cli {
+        script: PathBuf::new(),
+        inputs: Vec::new(),
+        sink: SinkChoice::Mock,
+        timeout: None,
+        timings: false,
+    };
+    let mut script = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--input" => {
+                let pair = args.next().context("--input needs key=value")?;
+                let (key, value) = pair
+                    .split_once('=')
+                    .with_context(|| format!("--input `{pair}` is not key=value"))?;
+                cli.inputs.push((key.to_string(), value.to_string()));
+            }
+            "--mock" => cli.sink = SinkChoice::Mock,
+            "--ws" => cli.sink = SinkChoice::Ws(args.next().context("--ws needs a URL")?),
+            "--timeout-secs" => {
+                let secs: f64 = args
+                    .next()
+                    .context("--timeout-secs needs a number")?
+                    .parse()
+                    .context("--timeout-secs must be a number")?;
+                if !(secs.is_finite() && secs > 0.0) {
+                    bail!("--timeout-secs must be > 0");
+                }
+                cli.timeout = Some(Duration::from_secs_f64(secs));
+            }
+            "--timings" => cli.timings = true,
+            flag if flag.starts_with("--") => bail!("unknown option `{flag}`\n\n{USAGE}"),
+            path if script.is_none() => script = Some(PathBuf::from(path)),
+            extra => bail!("unexpected argument `{extra}`"),
+        }
+    }
+    cli.script = script.with_context(|| format!("missing <file.ts>\n\n{USAGE}"))?;
+    Ok(cli)
+}
+
+fn main() -> ExitCode {
+    let cli = match parse_args(std::env::args().skip(1).collect()) {
+        Ok(cli) => cli,
+        Err(err) => {
+            eprintln!("{err:#}");
+            return ExitCode::from(2);
+        }
+    };
+
+    // One thread, one isolate: V8 isolates are not thread-safe, and a
+    // current-thread tokio runtime keeps everything on this thread.
+    let tokio = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("error: cannot start tokio: {err}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let started = Instant::now();
+    let result = tokio.block_on(async {
+        let sink: Rc<dyn CommandSink> = match &cli.sink {
+            SinkChoice::Mock => Rc::new(MockSink),
+            SinkChoice::Ws(url) => Rc::new(WsSink::connect(url).await?),
+        };
+        let opts = RunOptions {
+            script: cli.script.clone(),
+            inputs: cli.inputs.clone(),
+            timeout: cli.timeout,
+        };
+        run_script(opts, sink).await
+    });
+
+    match result {
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            ExitCode::from(2)
+        }
+        Ok((outcome, timings)) => {
+            if cli.timings {
+                eprintln!(
+                    "[timings] runtime_init={:.1}ms run={:.1}ms total={:.1}ms",
+                    timings.runtime_init.as_secs_f64() * 1000.0,
+                    timings.run.as_secs_f64() * 1000.0,
+                    started.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+            match outcome {
+                RunOutcome::Completed => ExitCode::SUCCESS,
+                RunOutcome::Failed(message) => {
+                    eprintln!("error: {message}");
+                    ExitCode::from(1)
+                }
+                RunOutcome::TimedOut(limit) => {
+                    eprintln!("error: script timed out after {limit:?} and was terminated");
+                    ExitCode::from(124)
+                }
+            }
+        }
+    }
+}
