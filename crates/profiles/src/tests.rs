@@ -196,9 +196,11 @@ impl Setup {
         std::fs::read_to_string(self.dir.path().join("config").join(name)).unwrap_or_default()
     }
 
-    /// Wait (real time, bounded) until the profile got `n` configurations.
+    /// Wait (real time, up to 30 s: only a real hang gets there) until the profile got
+    /// `n` configurations.
     async fn configured(&self, id: &str, n: usize) -> ProfileSettings {
-        for _ in 0..200 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
             if self.backend.count(id) >= n {
                 return self.backend.last(id).unwrap();
             }
@@ -611,7 +613,9 @@ async fn watched_tab_pauses_workers_through_the_shared_auto_attach() {
         "Target.attachedToTarget",
         json!({"sessionId": "W9", "targetInfo": {"type": "service_worker"}, "waitingForDebugger": true}),
     );
-    for _ in 0..200 {
+    // Condition wait; the 30 s bound only catches a real hang (busy machines are slow).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if session_calls(&fake, "W9").last().map(String::as_str)
             == Some("Runtime.runIfWaitingForDebugger")
         {

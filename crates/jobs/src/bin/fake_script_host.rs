@@ -16,6 +16,8 @@
 //! | `time <name>` | `result {"<name>": <ms since epoch>}` |
 //! | `args` | `result {"ws": …, "inputs": {…}, "timeout_secs": …, "tab_defaults": BMCP_TAB_DEFAULTS}` |
 //! | `sleep <ms>` | sleep; past `--timeout-secs` it exits 124 like the real host |
+//! | `touch <path>` | create the file `<path>` (tests wait for it: "the script is running") |
+//! | `waitfile <path>` | wait until `<path>` exists (a gate the test opens); past `--timeout-secs` it exits 124 |
 //! | `fail <CODE> <command> <message>` | uncaught failed browser call, exit 1 |
 //! | `throw <message>` | uncaught plain error, exit 1 |
 //! | `exit <n>` | exit with code n |
@@ -177,6 +179,24 @@ impl Host {
                         None
                     }
                 }
+            }
+            "touch" => {
+                if let Err(err) = std::fs::write(arg.trim(), b"") {
+                    eprintln!("error: Uncaught Error: touch {arg}: {err}");
+                    return Some(1);
+                }
+                None
+            }
+            "waitfile" => {
+                let path = Path::new(arg.trim());
+                while !path.exists() {
+                    if self.deadline.is_some_and(|d| Instant::now() >= d) {
+                        eprintln!("error: script timed out and was terminated");
+                        return Some(124);
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                None
             }
             "fail" => {
                 let mut parts = arg.splitn(3, ' ');

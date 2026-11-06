@@ -20,6 +20,25 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 const TOKEN: &str = "123456:TEST-TOKEN";
 const CHAT: i64 = 777;
 
+/// Upper bound for every wait: only reached when something is really broken, never because
+/// the machine is busy (a full workspace test run loads it heavily).
+const PATIENCE: Duration = Duration::from_secs(30);
+
+/// Poll `check` until it returns `Some`; panic with `what` after [`PATIENCE`].
+async fn until<T>(what: &str, mut check: impl AsyncFnMut() -> Option<T>) -> T {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        if let Some(value) = check().await {
+            return value;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 // ------------------------------------------------------------------ mock Bot API
 
 /// Records every Bot API call and answers `getUpdates` from a queue.
@@ -69,14 +88,12 @@ impl FakeTelegram {
     }
 
     async fn wait_call(&self, method: &str, n: usize) -> Vec<Value> {
-        for _ in 0..200 {
+        let what = format!("{n}x {method}");
+        until(&what, async || {
             let calls = self.calls(method);
-            if calls.len() >= n {
-                return calls;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        panic!("no {n}x {method}; calls: {:?}", self.calls.lock().unwrap());
+            (calls.len() >= n).then_some(calls)
+        })
+        .await
     }
 
     /// Queue a button press on `message_id` with `data`, from `chat`.
@@ -268,7 +285,7 @@ impl Env {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), wait)
+        tokio::time::timeout(PATIENCE, wait)
             .await
             .unwrap_or_else(|_| panic!("no {topic} event"))
     }
@@ -336,7 +353,7 @@ async fn ask_user_is_answered_from_telegram() {
     // A press from another chat does not count; ours does.
     env.telegram.press(1, 999, 101, &button_data(&send, "Yes"));
     env.telegram.press(2, CHAT, 101, &button_data(&send, "No"));
-    let answer = tokio::time::timeout(Duration::from_secs(10), ask)
+    let answer = tokio::time::timeout(PATIENCE, ask)
         .await
         .unwrap()
         .unwrap()
@@ -455,9 +472,12 @@ async fn heal_needed_buttons_run_the_run_commands() {
         ["Skip row", "Stop run", "Open in browser"]
     );
     // OS toast too (default rule), without the remote-only button.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let toast = until("an OS toast", async || {
+        env.toasts.lock().unwrap().first().cloned()
+    })
+    .await;
     assert!(
-        env.toasts.lock().unwrap()[0]
+        toast
             .body
             .ends_with("Answer in BrowserMCP: Skip row / Stop run")
     );
@@ -484,12 +504,10 @@ async fn heal_needed_buttons_run_the_run_commands() {
         .press(2, CHAT, 101, &button_data(&send, "Skip row"));
     let closed = env.event("ui.notification_closed").await;
     assert_eq!(closed["choice"], "skip");
-    for _ in 0..100 {
-        if !env.run_calls().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    until("a run command", async || {
+        (!env.run_calls().is_empty()).then_some(())
+    })
+    .await;
     assert_eq!(env.run_calls(), ["run.resume r1"]);
 }
 
@@ -516,24 +534,20 @@ async fn heal_question_closes_when_resolved_elsewhere_and_ui_stop_cancels() {
         .await
         .unwrap()
         .unwrap();
-    for _ in 0..100 {
-        if !env.run_calls().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    until("a run command", async || {
+        (!env.run_calls().is_empty()).then_some(())
+    })
+    .await;
     assert_eq!(env.run_calls(), ["run.cancel r2"]);
 }
 
 impl Env {
     async fn wait_run_calls(&self, n: usize) -> Vec<String> {
-        for _ in 0..200 {
-            if self.run_calls().len() >= n {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        self.run_calls()
+        until(&format!("{n} run command(s)"), async || {
+            let calls = self.run_calls();
+            (calls.len() >= n).then_some(calls)
+        })
+        .await
     }
 }
 
@@ -710,16 +724,14 @@ async fn webhook_and_focus_rules() {
         json!({"id": "t1", "script": "daily", "ok": false, "error": "boom"}),
     );
     env.event("ui.notification").await;
-    let mut hook = None;
-    for _ in 0..100 {
+    let hook = until("the webhook call", async || {
         let requests = env.server.received_requests().await.unwrap();
-        if let Some(r) = requests.iter().find(|r| r.url.path() == "/hook") {
-            hook = Some(serde_json::from_slice::<Value>(&r.body).unwrap());
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let hook = hook.expect("webhook called");
+        requests
+            .iter()
+            .find(|r| r.url.path() == "/hook")
+            .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap())
+    })
+    .await;
     assert_eq!(hook["title"], "Trigger t1 failed (daily)");
     assert_eq!(hook["topic"], "trigger.fired");
     assert_eq!(hook["data"]["script"], "daily");
