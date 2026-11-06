@@ -46,7 +46,7 @@ use bmcp_core::{CmdError, DataDir, EventBus, Registry};
 use tokio_util::sync::CancellationToken;
 
 use crate::runner::RunCtl;
-pub use crate::runner::{HealHook, HealTrigger};
+pub use crate::runner::{HealHook, HealTrigger, RowProfile, RowProfileHook};
 use crate::scripts::ScriptLib;
 pub use crate::store::HealMode;
 use crate::store::Store;
@@ -136,6 +136,8 @@ pub(crate) struct Inner {
     pub debug: debug::DebugSessions,
     /// Takes a page snapshot when a heal request opens (installed by `crates/heal`).
     pub heal_hook: RwLock<Option<HealHook>>,
+    /// Sets up isolated row profiles with a proxy / identity (installed by the app).
+    pub row_profiles: RwLock<Option<Arc<dyn RowProfileHook>>>,
 }
 
 impl JobsService {
@@ -162,6 +164,7 @@ impl JobsService {
                 shutdown: CancellationToken::new(),
                 debug: Default::default(),
                 heal_hook: RwLock::new(None),
+                row_profiles: RwLock::new(None),
                 config,
             }),
         })
@@ -187,6 +190,16 @@ impl JobsService {
         *self
             .inner
             .heal_hook
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+    }
+
+    /// Install the hook that gives isolated rows a leased proxy and a fitted identity
+    /// (`run.start {profile: "isolated", proxy_pool, fit_identity}`; see [`RowProfileHook`]).
+    pub fn set_row_profiles(&self, hook: Arc<dyn RowProfileHook>) {
+        *self
+            .inner
+            .row_profiles
             .write()
             .unwrap_or_else(|e| e.into_inner()) = Some(hook);
     }

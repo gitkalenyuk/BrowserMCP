@@ -1,17 +1,15 @@
 //! `profile.*`, `cookies.*` and `permissions.*` commands (toolset `profile`).
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
-
 use bmcp_core::{CmdError, Command, Ctx, ErrorCode, Meta, ProfileId, TabId, Toolset};
 use bmcp_data::DataStore;
-use bmcp_identity::{ProxyConfig, Services};
+use bmcp_identity::{ProxyRef, Services};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::CookieTarget;
 use crate::cookies::CookieInfo;
 use crate::permissions::{PermissionKind, PermissionRule, PermissionStore};
+use crate::prefs::Prefs;
 use crate::service::{ProfileConfig, ProfilesService};
 
 fn check_id(id: &str) -> Result<(), CmdError> {
@@ -22,22 +20,37 @@ fn check_id(id: &str) -> Result<(), CmdError> {
     })
 }
 
-/// The identity service of bmcp-identity, if installed.
-fn identities(ctx: &Ctx) -> Option<Arc<Services>> {
-    ctx.extensions.get::<Services>()
-}
-
-/// Accept-Language of the identity assigned to `profile`.
-fn identity_language(ctx: &Ctx, profile: &str) -> Option<String> {
-    let file = identities(ctx)?.identities.read().ok()?;
-    let id = file.profiles.get(profile)?;
-    file.identities.get(id).map(|i| i.accept_language.clone())
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// The proxy part of a profile as shown by `profile.list` / `profile.create`.
+#[derive(Debug, Default, Serialize, JsonSchema)]
+pub struct ProxyView {
+    /// Default route of the profile's proxy routing (password masked); null = direct.
+    pub proxy: Option<String>,
+    /// Split routing rules (proxy_rules_set) besides the default.
+    pub proxy_rules: usize,
+    /// What Chromium was told: "direct", "fixed_servers" or "pac_script" (null = not applied
+    /// yet).
+    pub proxy_mode: Option<String>,
+    /// The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p).
+    pub proxy_server: Option<String>,
+}
+
+impl ProxyView {
+    fn of(services: Option<&Services>, applied: Option<&Prefs>, id: &str) -> ProxyView {
+        let routes = services.and_then(|s| s.routes(id).ok()).unwrap_or_default();
+        let masked = routes.masked();
+        ProxyView {
+            proxy: (masked.default != "direct").then_some(masked.default),
+            proxy_rules: routes.rules.len(),
+            proxy_mode: applied.map(|p| p.proxy_mode().to_string()),
+            proxy_server: applied.and_then(|p| p.proxy_server().map(str::to_string)),
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------- profile.*
@@ -46,10 +59,8 @@ fn now_ms() -> i64 {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ProfileEntry {
     pub id: String,
-    /// Upstream proxy with the password masked.
-    pub proxy: Option<String>,
-    /// What Chromium is told to use (e.g. the local forwarder `socks5://127.0.0.1:51234`).
-    pub proxy_server: Option<String>,
+    #[serde(flatten)]
+    pub proxy: ProxyView,
     pub accept_language: Option<String>,
     /// Identity applied to its new tabs (identity_assign).
     pub identity: Option<String>,
@@ -86,8 +97,10 @@ impl Command for List {
 
     async fn run(ctx: Ctx, _args: bmcp_core::command::Empty) -> Result<ListOutput, CmdError> {
         let service = ProfilesService::from_ctx(&ctx)?;
+        let services = service.identities().ok();
         let stored = service.store.read()?.profiles;
-        let assigned = identities(&ctx)
+        let assigned = services
+            .as_ref()
             .and_then(|s| s.identities.read().ok())
             .map(|f| f.profiles)
             .unwrap_or_default();
@@ -95,8 +108,11 @@ impl Command for List {
             Ok(backend) => backend.open_profiles().await?,
             Err(_) => Vec::new(),
         };
-        let mut ids: BTreeSet<(String, bool)> = stored.keys().map(|k| (k.clone(), false)).collect();
-        ids.extend(assigned.keys().map(|k| (k.clone(), false)));
+        let mut ids: std::collections::BTreeSet<(String, bool)> = service
+            .known_profiles()?
+            .into_iter()
+            .map(|k| (k, false))
+            .collect();
         ids.extend(open.iter().map(|p| (p.id.clone(), p.incognito)));
         ids.insert((service.launch_profile.clone(), false));
         let profiles = ids
@@ -105,11 +121,7 @@ impl Command for List {
                 let config = stored.get(&id);
                 let live = open.iter().find(|p| p.id == id && p.incognito == incognito);
                 ProfileEntry {
-                    proxy: config.and_then(|c| c.proxy.as_deref()).map(|p| {
-                        p.parse::<ProxyConfig>()
-                            .map_or("(invalid)".into(), |p| p.masked())
-                    }),
-                    proxy_server: service.forwarder_url(&id),
+                    proxy: ProxyView::of(services.as_deref(), service.applied(&id).as_ref(), &id),
                     accept_language: config.and_then(|c| c.accept_language.clone()),
                     identity: assigned.get(&id).cloned(),
                     stored: config.is_some(),
@@ -132,13 +144,14 @@ pub struct Create;
 pub struct CreateArgs {
     /// Profile id: 1-64 chars of a-z, 0-9, '-', '_'. Creating an existing id updates it.
     pub id: String,
-    /// Upstream proxy: socks5://user:pass@host:port, http://user:pass@host:port or
-    /// host:port:user:pass. "" removes it.
+    /// Proxy for all of its traffic (the default of its proxy routing; split rules from
+    /// proxy_rules_set stay): socks5://user:pass@host:port, http://user:pass@host:port,
+    /// host:port:user:pass, pool:NAME (a pool proxy that stays the same for this profile),
+    /// fwd-N or direct. Always through a local forwarder (passwords never reach the engine).
+    /// "" or "direct" removes it.
     pub proxy: Option<String>,
-    /// Use the local forwarder for the proxy (default true; required when the proxy has a
-    /// password). false: Chromium connects to a password-less proxy itself.
-    pub forward: Option<bool>,
-    /// Hosts that skip the proxy, e.g. "<local>;*.lan".
+    /// Hosts that skip a fixed proxy, e.g. "<local>;*.lan" (with split rules use a
+    /// {match, via: "direct"} rule instead).
     pub proxy_bypass: Option<String>,
     /// Saved identity id (identity_list) applied to every new tab of this profile. "" removes it.
     pub identity: Option<String>,
@@ -151,12 +164,13 @@ pub struct CreateOutput {
     pub id: String,
     /// True when it did not exist before.
     pub created: bool,
-    pub proxy: Option<String>,
-    /// What Chromium uses for this profile (the local forwarder when there is a proxy).
-    pub proxy_server: Option<String>,
+    #[serde(flatten)]
+    pub proxy: ProxyView,
     pub identity: Option<String>,
     /// Folder of its cookies/cache.
     pub data_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 impl Command for Create {
@@ -167,8 +181,9 @@ impl Command for Create {
     fn meta() -> Meta {
         Meta::new(
             "Create (or update) a browser profile: own cookies/cache folder, optional proxy \
-             (through a local forwarder; WebRTC is then limited to the proxy), identity applied \
-             to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.",
+             (through a local forwarder; WebRTC is then limited to the proxy; same setting as \
+             the default of proxy_rules_set), identity applied to each new tab, \
+             Accept-Language. Open tabs in it with tabs_open {profile}.",
             Toolset::Profile,
         )
         .act()
@@ -177,21 +192,34 @@ impl Command for Create {
     async fn run(ctx: Ctx, args: CreateArgs) -> Result<CreateOutput, CmdError> {
         check_id(&args.id)?;
         let service = ProfilesService::from_ctx(&ctx)?;
-        // Identity first: an unknown identity must not leave a half-created profile.
+        let services = service.identities()?;
+        let empty_to_none = |v: &Option<String>| v.clone().filter(|s| !s.trim().is_empty());
+        // Check everything before anything is written: no half-created profile.
+        if let Some(proxy) = empty_to_none(&args.proxy) {
+            ProxyRef::parse(&proxy).map_err(|e| {
+                CmdError::invalid_params(format!("proxy: {e}")).with_hint(
+                    "Use http://user:pass@host:port, socks5://user:pass@host:port, \
+                     host:port:user:pass, pool:NAME, fwd-N or direct.",
+                )
+            })?;
+        }
+        if let Some(identity) = empty_to_none(&args.identity) {
+            services.identities.read()?.get(&identity)?;
+        }
+        // The proxy resolves first (e.g. an empty pool fails here, nothing is stored).
+        if let Some(proxy) = &args.proxy {
+            service.set_proxy(&args.id, Some(proxy)).await?;
+        }
         if let Some(identity) = &args.identity {
-            let services = identities(&ctx)
-                .ok_or_else(|| CmdError::internal("identity services are not installed"))?;
             services.identities.update(|f| {
-                if identity.is_empty() {
+                if identity.trim().is_empty() {
                     f.profiles.remove(&args.id);
                 } else {
-                    f.get(identity)?;
                     f.profiles.insert(args.id.clone(), identity.clone());
                 }
                 Ok(())
             })?;
         }
-        let empty_to_none = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
         let created = service.store.update(|file| {
             let created = !file.profiles.contains_key(&args.id);
             let entry = file
@@ -201,25 +229,15 @@ impl Command for Create {
                     created_ms: now_ms(),
                     ..Default::default()
                 });
-            if let Some(proxy) = args.proxy.clone() {
-                entry.proxy = empty_to_none(Some(proxy));
+            if args.proxy_bypass.is_some() {
+                entry.proxy_bypass = empty_to_none(&args.proxy_bypass);
             }
-            if args.forward.is_some() {
-                entry.forward = args.forward;
+            if args.accept_language.is_some() {
+                entry.accept_language = empty_to_none(&args.accept_language);
             }
-            if let Some(bypass) = args.proxy_bypass.clone() {
-                entry.proxy_bypass = empty_to_none(Some(bypass));
-            }
-            if let Some(lang) = args.accept_language.clone() {
-                entry.accept_language = empty_to_none(Some(lang));
-            }
-            // Validate before anything is written.
-            crate::service::plan_proxy(entry)?;
             Ok(created)
         })?;
-        service
-            .apply(&args.id, identity_language(&ctx, &args.id))
-            .await?;
+        let prefs = service.apply(&args.id).await?;
         let config = service
             .store
             .read()?
@@ -227,18 +245,22 @@ impl Command for Create {
             .get(&args.id)
             .cloned()
             .unwrap_or_default();
-        let identity = identities(&ctx)
-            .and_then(|s| s.identities.read().ok())
+        let warning =
+            (config.proxy_bypass.is_some() && prefs.proxy_mode() == "pac_script").then(|| {
+                "proxy_bypass only applies to a fixed proxy; this profile has split rules \
+                 (proxy_rules_set): add {match, via: \"direct\"} rules instead"
+                    .to_string()
+            });
+        let identity = services
+            .identities
+            .read()
+            .ok()
             .and_then(|f| f.profiles.get(&args.id).cloned());
         Ok(CreateOutput {
-            proxy: config
-                .proxy
-                .as_deref()
-                .and_then(|p| p.parse::<ProxyConfig>().ok())
-                .map(|p| p.masked()),
-            proxy_server: service.forwarder_url(&args.id),
+            proxy: ProxyView::of(Some(&services), Some(&prefs), &args.id),
             identity,
             data_dir: service.profile_dir(&args.id).display().to_string(),
+            warning,
             created,
             id: args.id,
         })
@@ -273,8 +295,8 @@ impl Command for Delete {
 
     fn meta() -> Meta {
         Meta::new(
-            "Delete a profile: its settings, identity assignment, proxy forwarder and (unless \
-             keep_data) its cookies/cache folder. Close its tabs first.",
+            "Delete a profile: its settings, proxy routing (and pool leases), identity \
+             assignment and (unless keep_data) its cookies/cache folder. Close its tabs first.",
             Toolset::Profile,
         )
         .act()
@@ -294,15 +316,13 @@ impl Command for Delete {
                 CmdError::from(e).with_hint("Close the profile's tabs (profile_list shows them).")
             })?;
         }
-        service.stop_forwarder(&args.id);
+        service.forget_applied(&args.id);
         let removed = service
             .store
             .update(|f| Ok(f.profiles.remove(&args.id).is_some()))?;
-        if let Some(services) = identities(&ctx) {
-            services.identities.update(|f| {
-                f.profiles.remove(&args.id);
-                Ok(())
-            })?;
+        if let Ok(services) = service.identities() {
+            // Routing, leases of its pool routes, identity assignment (the identity stays).
+            services.forget_profile(&args.id, false)?;
         }
         let mut warning = None;
         let mut data_deleted = false;

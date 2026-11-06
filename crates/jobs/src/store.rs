@@ -41,6 +41,12 @@ pub struct RunOptions {
     /// profile + off-screen tabs per row attempt), or a profile id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// Isolated rows: one proxy of this pool leased per row (rotated on retry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_pool: Option<String>,
+    /// Isolated rows: a fresh identity fitted to the row's proxy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fit_identity: bool,
 }
 
 /// `run.start {heal}`: what happens when a row breaks on a page.* selector error.

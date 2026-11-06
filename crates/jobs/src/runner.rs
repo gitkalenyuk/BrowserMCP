@@ -20,6 +20,8 @@
 //! attempt a fresh in-memory profile and off-screen (windowless) tabs, so parallel rows never
 //! share cookies, keyboard focus or visibility (a background tab of a window is hidden and
 //! ignores input). The run id is always passed, so downloads land in `data/runs/<run>/`.
+//! With `proxy_pool` / `fit_identity` the [`RowProfileHook`] sets up each attempt's profile
+//! (leased proxy, rotated on retries; fitted identity) and cleans it up afterwards.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -73,6 +75,10 @@ pub struct StartRequest {
     pub stop_on_error: bool,
     pub heal: HealMode,
     pub profile: Option<String>,
+    /// Lease a proxy of this pool per row (needs `profile: "isolated"`).
+    pub proxy_pool: Option<String>,
+    /// Fit a fresh identity to each row's proxy (needs `proxy_pool`).
+    pub fit_identity: bool,
 }
 
 /// `run.start {profile}` value for per-row isolation.
@@ -85,8 +91,7 @@ pub const TAB_DEFAULTS_ENV: &str = "BMCP_TAB_DEFAULTS";
 pub fn tab_defaults(run: &str, row: u64, attempt: u32, profile: Option<&str>) -> Value {
     match profile {
         Some(ISOLATED) => json!({
-            // In-memory profile names: a-z 0-9 - _, at most 64 chars.
-            "profile": format!("{}-r{row}-a{attempt}", run.to_ascii_lowercase()),
+            "profile": isolated_profile(run, row, attempt),
             "incognito": true,
             "window": "offscreen",
             "run": run,
@@ -94,6 +99,54 @@ pub fn tab_defaults(run: &str, row: u64, attempt: u32, profile: Option<&str>) ->
         Some(p) if p != bmcp_core::ProfileId::DEFAULT => json!({ "profile": p, "run": run }),
         _ => json!({ "run": run }),
     }
+}
+
+/// The in-memory profile of one row attempt of an isolated run.
+pub fn isolated_profile(run: &str, row: u64, attempt: u32) -> String {
+    // Profile names: a-z 0-9 - _, at most 64 chars.
+    format!("{}{row}-a{attempt}", isolated_prefix(run))
+}
+
+/// What every row profile of an isolated run starts with.
+pub fn isolated_prefix(run: &str) -> String {
+    format!("{}-r", run.to_ascii_lowercase())
+}
+
+/// One row attempt's isolated profile, for the [`RowProfileHook`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowProfile {
+    pub run: String,
+    pub row: u64,
+    pub attempt: u32,
+    /// [`isolated_profile`] of this attempt (what the script host's tabs use).
+    pub profile: String,
+    /// `run.start {proxy_pool}`: lease one proxy of this pool per row.
+    pub proxy_pool: Option<String>,
+    /// `run.start {fit_identity}`: an identity fitted to the row's proxy.
+    pub fit_identity: bool,
+    /// A retry of the row: rotate to another proxy.
+    pub rotate: bool,
+}
+
+/// Sets up the isolated profile of each row attempt (proxy lease, fitted identity) and
+/// cleans it up again. Installed by the app (implemented with `bmcp_profiles::RowProfiles`),
+/// so this crate needs no browser or proxy code; without it `run.start {proxy_pool}` fails.
+pub trait RowProfileHook: Send + Sync + 'static {
+    /// Validate `run.start {proxy_pool, fit_identity}` (e.g. the pool exists).
+    fn check(&self, proxy_pool: Option<&str>, fit_identity: bool) -> Result<(), CmdError>;
+    /// Before an attempt's script starts. An error fails the attempt (and is retried like a
+    /// script failure, with `rotate`).
+    fn prepare(&self, row: RowProfile) -> bmcp_core::BoxFuture<'static, Result<(), CmdError>>;
+    /// After an attempt; `row_done` = the row is finished (give its proxy back).
+    fn release(&self, row: RowProfile, row_done: bool) -> bmcp_core::BoxFuture<'static, ()>;
+    /// The run reached a final status: release its leases, remove leftovers of row
+    /// profiles starting with `profile_prefix`.
+    fn run_finished(
+        &self,
+        run: String,
+        proxy_pool: Option<String>,
+        profile_prefix: String,
+    ) -> bmcp_core::BoxFuture<'static, ()>;
 }
 
 /// How long the heal hook may take before `run.heal_needed` goes out without a snapshot.
@@ -188,6 +241,21 @@ impl Inner {
             )
             .with_hint("Use \"default\", \"isolated\" (fresh profile per row) or a profile id."));
         }
+        if req.proxy_pool.is_some() || req.fit_identity {
+            if req.profile.as_deref() != Some(ISOLATED) {
+                return Err(CmdError::invalid_params(
+                    "proxy_pool and fit_identity need profile: \"isolated\" (a fresh profile \
+                     per row)",
+                ));
+            }
+            let hook = self.row_profiles().ok_or_else(|| {
+                CmdError::new(
+                    ErrorCode::NotImplemented,
+                    "proxy_pool / fit_identity need the browser's profile service",
+                )
+            })?;
+            hook.check(req.proxy_pool.as_deref(), req.fit_identity)?;
+        }
         let requested = req.parallel.unwrap_or(4).max(1);
         let options = RunOptions {
             parallel: self.effective_parallel(requested),
@@ -198,6 +266,8 @@ impl Inner {
             heal: req.heal != HealMode::Off,
             heal_mode: Some(req.heal),
             profile: req.profile,
+            proxy_pool: req.proxy_pool,
+            fit_identity: req.fit_identity,
         };
         let run = RunRecord {
             id: self.new_run_id()?,
@@ -418,7 +488,30 @@ impl Inner {
         });
     }
 
+    /// The installed row-profile hook.
+    pub(crate) fn row_profiles(&self) -> Option<Arc<dyn RowProfileHook>> {
+        self.row_profiles
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The hook, when this run's rows use it.
+    fn row_hook_for(&self, run: &RunRecord) -> Option<Arc<dyn RowProfileHook>> {
+        let o = &run.options;
+        let uses =
+            o.profile.as_deref() == Some(ISOLATED) && (o.proxy_pool.is_some() || o.fit_identity);
+        uses.then(|| self.row_profiles()).flatten()
+    }
+
     fn emit_finished(&self, run: &RunRecord) {
+        if let Some(hook) = self.row_hook_for(run) {
+            tokio::spawn(hook.run_finished(
+                run.id.clone(),
+                run.options.proxy_pool.clone(),
+                isolated_prefix(&run.id),
+            ));
+        }
         let counts = self.store.counts(&run.id).unwrap_or_default();
         self.events.emit(
             topics::RUN_FINISHED,
@@ -530,23 +623,60 @@ async fn work_row(
         error: None,
         abandoned: true,
     };
+    let hook = inner.row_hook_for(&run);
+    // The previous attempt's isolated profile (released before the next one starts).
+    let mut row_profile: Option<RowProfile> = None;
     loop {
         if inner.shutdown.is_cancelled() {
             return abandoned;
         }
         attempts += 1;
         let _ = inner.store.set_attempts(id, row.idx, attempts);
+        if let (Some(hook), Some(previous)) = (&hook, row_profile.take()) {
+            hook.release(previous, false).await;
+        }
+        // Isolated rows with a proxy pool / identity: the attempt's profile first. A retry
+        // rotates the row's proxy (also the first attempt after a restart mid-retries).
+        let prepared = match &hook {
+            Some(hook) => {
+                let rp = RowProfile {
+                    run: id.clone(),
+                    row: row.idx,
+                    attempt: attempts,
+                    profile: isolated_profile(id, row.idx, attempts),
+                    proxy_pool: run.options.proxy_pool.clone(),
+                    fit_identity: run.options.fit_identity,
+                    rotate: attempts > 1,
+                };
+                row_profile = Some(rp.clone());
+                hook.prepare(rp).await
+            }
+            None => Ok(()),
+        };
         let defaults = tab_defaults(id, row.idx, attempts, run.options.profile.as_deref());
         let env = [(TAB_DEFAULTS_ENV.to_string(), defaults.to_string())];
-        let outcome = inner
-            .run_script(
-                ScriptSource::Name(&run.script),
-                &row.inputs,
-                &env,
-                timeout,
-                &cancel,
-            )
-            .await;
+        let outcome = match prepared {
+            Ok(()) => {
+                inner
+                    .run_script(
+                        ScriptSource::Name(&run.script),
+                        &row.inputs,
+                        &env,
+                        timeout,
+                        &cancel,
+                    )
+                    .await
+            }
+            // No proxy / identity for this attempt: it fails, and a retry tries another one.
+            Err(err) => {
+                let mut failed = setup_failure(err);
+                if let Some(error) = failed.error.as_mut() {
+                    error.code = "ROW_PROFILE".into();
+                    error.message = format!("row profile not ready: {}", error.message);
+                }
+                Ok(failed)
+            }
+        };
         if inner.shutdown.is_cancelled() {
             return abandoned;
         }
@@ -592,6 +722,9 @@ async fn work_row(
         };
         if let Err(err) = inner.store.finish_row(id, row.idx, &update) {
             tracing::error!(run = %id, row = row.idx, %err, "cannot save row result");
+        }
+        if let (Some(hook), Some(last)) = (&hook, row_profile.take()) {
+            hook.release(last, true).await;
         }
         if status == RowStatus::Failed {
             inner.events.emit(

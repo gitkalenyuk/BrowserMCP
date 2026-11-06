@@ -258,6 +258,10 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
             .ok();
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
+        // Isolated rows with `proxy_pool` / `fit_identity`: lease + identity per row.
+        jobs.set_row_profiles(Arc::new(RowProfilesHook(bmcp_profiles::RowProfiles::new(
+            profiles.clone(),
+        ))));
     }
     // Self-healing of runs and page.extract (data/extract-cache).
     registry
@@ -357,6 +361,63 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     }
 }
 
+/// `bmcp_jobs::RowProfileHook` on top of `bmcp_profiles::RowProfiles` (the two crates do
+/// not depend on each other).
+struct RowProfilesHook(bmcp_profiles::RowProfiles);
+
+impl RowProfilesHook {
+    fn request(row: &bmcp_jobs::RowProfile) -> bmcp_profiles::RowRequest {
+        bmcp_profiles::RowRequest {
+            run: row.run.clone(),
+            row: row.row,
+            profile: row.profile.clone(),
+            pool: row.proxy_pool.clone(),
+            fit_identity: row.fit_identity,
+            rotate: row.rotate,
+        }
+    }
+}
+
+impl bmcp_jobs::RowProfileHook for RowProfilesHook {
+    fn check(
+        &self,
+        proxy_pool: Option<&str>,
+        fit_identity: bool,
+    ) -> Result<(), bmcp_core::CmdError> {
+        self.0.check(proxy_pool, fit_identity)
+    }
+
+    fn prepare(
+        &self,
+        row: bmcp_jobs::RowProfile,
+    ) -> bmcp_core::BoxFuture<'static, Result<(), bmcp_core::CmdError>> {
+        let rows = self.0.clone();
+        Box::pin(async move { rows.prepare(&Self::request(&row)).await.map(|_| ()) })
+    }
+
+    fn release(
+        &self,
+        row: bmcp_jobs::RowProfile,
+        row_done: bool,
+    ) -> bmcp_core::BoxFuture<'static, ()> {
+        let rows = self.0.clone();
+        Box::pin(async move { rows.release(&Self::request(&row), row_done).await })
+    }
+
+    fn run_finished(
+        &self,
+        run: String,
+        proxy_pool: Option<String>,
+        profile_prefix: String,
+    ) -> bmcp_core::BoxFuture<'static, ()> {
+        let rows = self.0.clone();
+        Box::pin(async move {
+            rows.finish_run(&run, proxy_pool.as_deref(), &profile_prefix)
+                .await
+        })
+    }
+}
+
 /// At startup: apply every stored profile (forwarders, preferences) and move cookies waiting
 /// from `import.chrome` into the cookie jar; then again after every successful import.
 async fn apply_profiles_and_cookies(
@@ -367,6 +428,11 @@ async fn apply_profiles_and_cookies(
     let ctx = || bmcp_core::Ctx::new(bmcp_core::Caller::Ui, backend.clone(), events.clone());
     let mut ctx_with_ext = ctx();
     ctx_with_ext.extensions = registry.extensions().clone();
+    // Re-apply a profile's prefs when its proxy routing / identity changes (subscribed
+    // before the startup pass, so nothing is missed).
+    if let Ok(service) = bmcp_profiles::ProfilesService::from_ctx(&ctx_with_ext) {
+        bmcp_profiles::watch(service, &events);
+    }
     bmcp_profiles::apply_stored(&ctx_with_ext).await;
     let mut finished = events.subscribe();
     let apply_pending = || async {

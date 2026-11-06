@@ -4,8 +4,29 @@ Several subsystems drive the same CDP session of a tab (`net`, `record`, `adbloc
 CDP state belongs to the session, not to the caller, so this crate owns it. One `CdpShare`
 lives in the registry's `Extensions` (`CdpShare::from_ctx`).
 
-**Rule:** never send `<Domain>.enable/disable` or `Fetch.enable/disable` directly, and never
-answer a `Fetch.requestPaused` read from `cdp_events` yourself. Use this crate.
+**Rule:** never send `<Domain>.enable/disable`, `Fetch.enable/disable` or
+`Target.setAutoAttach` directly, and never answer a `Fetch.requestPaused` read from
+`cdp_events` yourself. Use this crate.
+
+## Auto-attach owner
+
+`Target.setAutoAttach` is one setting per session; every call replaces the last one. Holders:
+`frames` (bmcp-browser OOPIF support: no pausing) and `identity` (bmcp-profiles: new workers
+start paused until they got the identity).
+
+```rust
+let switched_on = share.hold_auto_attach(&backend, tab, None, "identity", true).await?;
+if !switched_on { share.reannounce_auto_attach(&backend, tab, None).await?; }
+```
+
+* Sent as `{autoAttach: true, flatten: true, waitForDebuggerOnStart: <any holder wants it>}`,
+  per session (`None` = the page, `Some(id)` = a flattened child session), again only when the
+  merged setting changes; off when the last holder leaves.
+* A holder that asks for pausing must resume every target it sees attach paused
+  (`Runtime.runIfWaitingForDebugger`, iframes too).
+* Chromium announces existing targets only when auto-attach is switched on. `hold_auto_attach`
+  returns false when it was on already; a holder that needs the existing targets then calls
+  `reannounce_auto_attach` (off + on; also after lost events).
 
 ## Domain refcount
 

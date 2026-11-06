@@ -26,6 +26,7 @@
 //! `Fetch.enable/disable` directly, and never answer a `Fetch.requestPaused` you read from
 //! `cdp_events` yourself** — go through this crate.
 
+pub mod attach;
 pub mod domains;
 pub mod fetch;
 mod glob;
@@ -54,6 +55,7 @@ pub(crate) struct TabShare {
     pub tab: TabId,
     pub backend: Arc<dyn BrowserBackend>,
     pub domains: domains::TabDomains,
+    pub attach: attach::TabAttach,
     pub fetch: fetch::TabFetch,
 }
 
@@ -79,6 +81,7 @@ impl CdpShare {
                     tab,
                     backend: backend.clone(),
                     domains: domains::TabDomains::default(),
+                    attach: attach::TabAttach::default(),
                     fetch: fetch::TabFetch::default(),
                 })
             })
@@ -126,6 +129,74 @@ impl CdpShare {
         self.existing(tab)
             .map(|ts| ts.domains.holders(domain))
             .unwrap_or_default()
+    }
+
+    // ---------------------------------------------------------------- auto-attach
+
+    /// Hold `Target.setAutoAttach` on a session of `tab` (`None` = the page; `Some` = a
+    /// flattened child session) for `holder` (see [`attach`]). `wait_for_debugger`: new
+    /// targets should start paused — then this holder must resume every paused target it
+    /// sees attach (`Runtime.runIfWaitingForDebugger`). The session gets pausing when any
+    /// holder wants it. Holding again under the same name replaces the setting.
+    ///
+    /// Returns true when this call switched auto-attach on, so Chromium announced the existing
+    /// targets (`Target.attachedToTarget`) to whoever subscribed before. False = it was on
+    /// already: a holder that needs the existing targets calls
+    /// [`Self::reannounce_auto_attach`].
+    pub async fn hold_auto_attach(
+        &self,
+        backend: &Arc<dyn BrowserBackend>,
+        tab: TabId,
+        session: Option<String>,
+        holder: &str,
+        wait_for_debugger: bool,
+    ) -> BackendResult<bool> {
+        let ts = self.tab(backend, tab);
+        attach::hold(&ts, session, holder, wait_for_debugger).await
+    }
+
+    /// Let go of auto-attach on a session; switched off when nobody holds it any more.
+    pub async fn release_auto_attach(
+        &self,
+        backend: &Arc<dyn BrowserBackend>,
+        tab: TabId,
+        session: Option<String>,
+        holder: &str,
+    ) -> BackendResult<()> {
+        let ts = self.tab(backend, tab);
+        attach::unhold(&ts, session, holder).await
+    }
+
+    /// Turn auto-attach of a held session off and on again with the merged setting:
+    /// Chromium detaches and re-announces every target (after lost attach events).
+    pub async fn reannounce_auto_attach(
+        &self,
+        backend: &Arc<dyn BrowserBackend>,
+        tab: TabId,
+        session: Option<String>,
+    ) -> BackendResult<()> {
+        let ts = self.tab(backend, tab);
+        attach::reannounce(&ts, session).await
+    }
+
+    /// A child session detached: forget its auto-attach state.
+    pub fn forget_session(&self, tab: TabId, session: &str) {
+        if let Some(ts) = self.existing(tab) {
+            attach::forget_session(&ts, session);
+        }
+    }
+
+    /// Who holds auto-attach on a session of `tab` (sorted).
+    pub fn auto_attach_holders(&self, tab: TabId, session: Option<String>) -> Vec<String> {
+        self.existing(tab)
+            .map(|ts| ts.attach.holders(&session))
+            .unwrap_or_default()
+    }
+
+    /// `waitForDebuggerOnStart` in effect on a session (`None` = auto-attach off).
+    pub fn auto_attach_waits(&self, tab: TabId, session: Option<String>) -> Option<bool> {
+        self.existing(tab)
+            .and_then(|ts| ts.attach.waiting(&session))
     }
 
     // ---------------------------------------------------------------- Fetch

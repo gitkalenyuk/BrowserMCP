@@ -33,7 +33,7 @@ default; ask for more with `/mcp?toolsets=core,net,record`.
 | Hidden mode | `stealth` | `identity.*` (fingerprint identities), `stealth.fingerprint_set/clear/check`, `device.emulate`, `proxy.*` (pools, leases, PAC rules, local forwarder), `geo.lookup`, `input.humanlike` | identity, browser |
 | Built-in AI and terminal | `ai` | `ai.providers/provider_set/provider_test`, `ai.session_start/send/stop/transcript`, `ai.sessions_list`, `term.open/write/resize/close/list` | ai |
 | Notifications and UI | `ui` | `ui.notify`, `ui.ask_user`, `notify.send/test/config_get/config_set` (UI, Windows toasts, Telegram, webhook), `hints.show/hide/config` (Vim-style link hints), `page.find_text/find_clear` (Ctrl+F), `plugins.palette`, `clipboard.write` | notify, hints, pagetools, plugins |
-| System | `system` (`core` for `system.ping`) | `system.ping`, `agents.list/forget`, `governor.status/config/recommend_parallel` (tab freezing, RAM/CPU limits) | core, governor |
+| System | `system` (`core` for `system.ping`) | `system.ping`, `system.reveal_path/open_path`, `agents.list/forget`, `governor.status/config/recommend_parallel` (tab freezing, RAM/CPU limits) | core, governor, system |
 
 The full list with argument and result types is the generated
 [sdk/protocol/src/generated/commands.ts](sdk/protocol/src/generated/commands.ts); a running
@@ -329,6 +329,7 @@ pnpm -C ui check                 # svelte-check, fails on warnings
 | [crates/registry](crates/registry) | `bmcp-registry` | Builds THE command registry (every command crate registers here) |
 | [crates/schema-dump](crates/schema-dump) | `bmcp-schema-dump` | `bmcp-schema`: prints every command with its JSON Schemas for `gen-sdk` |
 | [crates/script](crates/script) | `bmcp-script` | `bmcp-script-host`: runs TypeScript scripts in an embedded V8 (deno_core) sidecar |
+| [crates/system](crates/system) | `bmcp-system` | `system.reveal_path` / `system.open_path`: show a file or folder in Explorer (data folder and Downloads only) |
 
 Other parts:
 

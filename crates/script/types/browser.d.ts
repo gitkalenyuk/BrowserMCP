@@ -4595,16 +4595,17 @@ declare namespace BrowserMCP {
     /** Profile id: 1-64 chars of a-z, 0-9, '-', '_'. Creating an existing id updates it. */
     id: string;
     /**
-     * Upstream proxy: socks5://user:pass@host:port, http://user:pass@host:port or
-     * host:port:user:pass. "" removes it.
+     * Proxy for all of its traffic (the default of its proxy routing; split rules from
+     * proxy_rules_set stay): socks5://user:pass@host:port, http://user:pass@host:port,
+     * host:port:user:pass, pool:NAME (a pool proxy that stays the same for this profile),
+     * fwd-N or direct. Always through a local forwarder (passwords never reach the engine).
+     * "" or "direct" removes it.
      */
     proxy?: string | null;
     /**
-     * Use the local forwarder for the proxy (default true; required when the proxy has a
-     * password). false: Chromium connects to a password-less proxy itself.
+     * Hosts that skip a fixed proxy, e.g. "<local>;*.lan" (with split rules use a
+     * {match, via: "direct"} rule instead).
      */
-    forward?: boolean | null;
-    /** Hosts that skip the proxy, e.g. "<local>;*.lan". */
     proxy_bypass?: string | null;
     /** Saved identity id (identity_list) applied to every new tab of this profile. "" removes it. */
     identity?: string | null;
@@ -4612,17 +4613,29 @@ declare namespace BrowserMCP {
     accept_language?: string | null;
   }
 
-  /** Result of `profile.create`. */
+  /**
+   * Result of `profile.create`.
+   * The proxy part of a profile as shown by `profile.list` / `profile.create`.
+   */
   export interface ProfileCreateOutput {
     id: string;
     /** True when it did not exist before. */
     created: boolean;
+    /** Default route of the profile's proxy routing (password masked); null = direct. */
     proxy: string | null;
-    /** What Chromium uses for this profile (the local forwarder when there is a proxy). */
+    /** Split routing rules (proxy_rules_set) besides the default. */
+    proxy_rules: number;
+    /**
+     * What Chromium was told: "direct", "fixed_servers" or "pac_script" (null = not applied
+     * yet).
+     */
+    proxy_mode: string | null;
+    /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
     proxy_server: string | null;
     identity: string | null;
     /** Folder of its cookies/cache. */
     data_dir: string;
+    warning?: string | null;
   }
 
   // ---- profile.delete ----
@@ -4656,9 +4669,16 @@ declare namespace BrowserMCP {
   export interface ProfileListOutput {
     profiles: {
       id: string;
-      /** Upstream proxy with the password masked. */
+      /** Default route of the profile's proxy routing (password masked); null = direct. */
       proxy: string | null;
-      /** What Chromium is told to use (e.g. the local forwarder `socks5://127.0.0.1:51234`). */
+      /** Split routing rules (proxy_rules_set) besides the default. */
+      proxy_rules: number;
+      /**
+       * What Chromium was told: "direct", "fixed_servers" or "pac_script" (null = not applied
+       * yet).
+       */
+      proxy_mode: string | null;
+      /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
       proxy_server: string | null;
       accept_language: string | null;
       /** Identity applied to its new tabs (identity_assign). */
@@ -5238,6 +5258,10 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
     };
     total: number;
     created_ms: number;
@@ -5528,6 +5552,10 @@ declare namespace BrowserMCP {
          * profile + off-screen tabs per row attempt), or a profile id.
          */
         profile?: string | null;
+        /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+        proxy_pool?: string | null;
+        /** Isolated rows: a fresh identity fitted to the row's proxy. */
+        fit_identity?: boolean;
       };
       total: number;
       created_ms: number;
@@ -5600,6 +5628,10 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
     };
     total: number;
     created_ms: number;
@@ -5721,6 +5753,10 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
     };
     total: number;
     created_ms: number;
@@ -5784,6 +5820,17 @@ declare namespace BrowserMCP {
      * share cookies, focus or keyboard), or a profile id (profile_create; shared by all rows).
      */
     profile?: string | null;
+    /**
+     * With profile "isolated": lease one proxy of this pool (proxy_pool_add) per row — the
+     * row's profile goes through it; a retry rotates to another proxy; released when the
+     * row ends.
+     */
+    proxy_pool?: string | null;
+    /**
+     * With proxy_pool: give each row a fresh identity fitted to its proxy's exit IP
+     * (timezone, languages, geolocation), applied to its tabs and workers. Default false.
+     */
+    fit_identity?: boolean | null;
   }
 
   /**
@@ -5828,6 +5875,10 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
     };
     total: number;
     created_ms: number;
@@ -5899,6 +5950,10 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
     };
     total: number;
     created_ms: number;
@@ -7683,9 +7738,9 @@ declare namespace BrowserMCP {
     "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
     /** Stop a plugin and delete its folder from data/plugins. */
     "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
-    /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
+    /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
     "profile.create": { args: ProfileCreateArgs; output: ProfileCreateOutput };
-    /** Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first. */
+    /** Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first. */
     "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
     /** List browser profiles: stored settings (proxy, language), assigned identity, and which are open with which tabs (incl. in-memory/incognito ones). */
     "profile.list": { args: ProfileListArgs; output: ProfileListOutput };
@@ -8584,13 +8639,13 @@ declare namespace BrowserMCP {
     /** Commands `profile.*`. */
     profile: {
       /**
-       * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
+       * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
        *
        * `profile.create` (MCP: `profile_create`): toolset `profile`, act.
        */
       create(args: ProfileCreateArgs): Promise<ProfileCreateOutput>;
       /**
-       * Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first.
+       * Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first.
        *
        * `profile.delete` (MCP: `profile_delete`): toolset `profile`, act.
        */
