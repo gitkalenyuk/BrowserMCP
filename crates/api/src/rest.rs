@@ -46,6 +46,7 @@ pub fn status_for(code: ErrorCode) -> StatusCode {
         ErrorCode::NotInteractable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::TabLocked => StatusCode::LOCKED,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        ErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         // The renderer (our "upstream") failed.
         ErrorCode::PageCrashed => StatusCode::BAD_GATEWAY,
         ErrorCode::ShuttingDown => StatusCode::SERVICE_UNAVAILABLE,

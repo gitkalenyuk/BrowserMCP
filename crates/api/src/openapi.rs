@@ -12,7 +12,7 @@ use crate::rest::status_for;
 
 /// Every error code, for the `CmdError.code` enum. Keep in sync with `bmcp_core::ErrorCode`
 /// (`rest::status_for` is an exhaustive match, so a new code is noticed there first).
-const ERROR_CODES: [ErrorCode; 16] = [
+const ERROR_CODES: [ErrorCode; 17] = [
     ErrorCode::StaleRef,
     ErrorCode::AmbiguousTarget,
     ErrorCode::Timeout,
@@ -28,6 +28,7 @@ const ERROR_CODES: [ErrorCode; 16] = [
     ErrorCode::BlockedInStealth,
     ErrorCode::InvalidParams,
     ErrorCode::ShuttingDown,
+    ErrorCode::NotImplemented,
     ErrorCode::Internal,
 ];
 

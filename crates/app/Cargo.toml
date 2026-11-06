@@ -20,6 +20,7 @@ bmcp-ai = { path = "../ai" }
 bmcp-data = { path = "../data" }
 bmcp-identity = { path = "../identity" }
 bmcp-record = { path = "../record" }
+bmcp-jobs = { path = "../jobs" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

@@ -174,6 +174,14 @@ async fn start_api(
     registry
         .extensions()
         .insert(bmcp_record::DataDirExt(data.clone()));
+    // Scripts, mass runs, triggers (data/scripts, data/db/runs.sqlite).
+    let jobs =
+        bmcp_jobs::JobsService::start(bmcp_jobs::JobsConfig::new(&data, port), events.clone())
+            .inspect_err(|err| tracing::error!(%err, "jobs service not started"))
+            .ok();
+    if let Some(jobs) = &jobs {
+        registry.extensions().insert(jobs.clone());
+    }
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
@@ -184,10 +192,16 @@ async fn start_api(
     match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
-            // Kill agent and terminal child processes when the browser quits.
+            if let Some(jobs) = &jobs {
+                jobs.set_ws_url(server.ws_url());
+            }
+            // Kill agent, terminal and script child processes when the browser quits.
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
+                if let Some(jobs) = jobs {
+                    jobs.shutdown();
+                }
             });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

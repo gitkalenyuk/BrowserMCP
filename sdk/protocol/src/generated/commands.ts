@@ -3,6 +3,338 @@
 
 import type { CallOptions, Transport } from "../transport.js";
 
+// ---- adblock.apply ----
+
+/** Arguments of `adblock.apply`. */
+export interface AdblockApplyArgs {
+  /** true = start blocking in this tab, false = stop. */
+  on: boolean;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `adblock.apply`. */
+export interface AdblockApplyOutput {
+  /** It was already running (nothing changed). */
+  already: boolean;
+  /** Is a compiled engine loaded, and from which lists? */
+  engine: {
+    /** Size of the serialized engine. */
+    engine_bytes: number;
+    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
+    lists: string[];
+    loaded: boolean;
+  };
+  /** Counters of the session that was stopped / is running. */
+  interception?: {
+    /** The interception task is running. */
+    active: boolean;
+    /** Average time of the gate decision itself (filter lists + policy), microseconds. */
+    avg_decision_us: number;
+    /**
+     * Average time from `requestPaused` to our answer being acknowledged: the latency the
+     * interception adds to every request, milliseconds.
+     */
+    avg_roundtrip_ms: number;
+    /** Answered with `Fetch.failRequest`. */
+    blocked: number;
+    /** Answered with `Fetch.continueRequest`. */
+    continued: number;
+    errors: number;
+    /** Answered with `Fetch.fulfillRequest` (redirect resources). */
+    fulfilled: number;
+    lagged: number;
+    max_decision_us: number;
+    max_roundtrip_ms: number;
+    /** Paused requests seen. */
+    paused: number;
+    uptime_s: number;
+  } | null;
+  /** Interception is running for the tab. */
+  on: boolean;
+  /** What was set up (only when just switched on). */
+  report?: {
+    /** Animations were disabled by the site policy. */
+    animations_disabled: boolean;
+    /** Generic class/id selectors among them. */
+    generic_selectors: number;
+    /** Hide selectors injected into that page (host-specific + generic). */
+    hidden_selectors: number;
+    /** JavaScript was disabled by the site policy. */
+    js_disabled: boolean;
+    /** URL of the page shown when interception started. */
+    page_url: string;
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- adblock.check ----
+
+/** Arguments of `adblock.check`. */
+export interface AdblockCheckArgs {
+  /** Page that makes the request (default: the URL itself, i.e. first party). */
+  source_url?: string | null;
+  /**
+   * Resource type: script, image, stylesheet, font, media, xhr, sub_frame, main_frame,
+   * websocket, ping, other (default other).
+   */
+  type?: string | null;
+  /** Request URL to test. */
+  url: string;
+}
+
+/**
+ * Result of `adblock.check`.
+ * Everything the gate considered for one request (for `adblock.check`).
+ */
+export interface AdblockCheckOutput {
+  /** Filter lists are active for this page. */
+  adblock_active: boolean;
+  /** The gate's answer for one request. */
+  decision: {
+    /**
+     * What to do with a request.
+     *
+     * - `"block"`: Cancel it (CEF: `RV_CANCEL`; CDP: `Fetch.failRequest` with `BlockedByClient`).
+     * - `"redirect"`: Answer with [`GateDecision::redirect`] (a `data:` URL) instead of loading it.
+     */
+    action: "allow" | "block" | "redirect";
+    /** An `$important` filter matched. */
+    important: boolean;
+    /**
+     * - `"filter"`: A filter-list rule.
+     * - `"js"`: Site policy `js: false`.
+     * - `"images"`: Site policy `images: false`.
+     * - `"fonts"`: Site policy `fonts: false`.
+     * - `"media"`: Site policy `media: false`.
+     * - `"third_party"`: Site policy `third_party: false`.
+     */
+    reason?: "filter" | "js" | "images" | "fonts" | "media" | "third_party" | null;
+    /** Replacement body as a `data:` URL when `action` is `redirect`. */
+    redirect?: string | null;
+    /** The matching filter rule, when known. */
+    rule?: string | null;
+  };
+  engine_loaded: boolean;
+  /**
+   * The filter lists' own verdict (`None`: lists not consulted — adblock off, allowlisted
+   * site, no engine loaded, or the request was a main-frame navigation).
+   */
+  filter: {
+    /** True when the request should be cancelled. */
+    block: boolean;
+    /** An exception (`@@…`) rule matched. */
+    exception: boolean;
+    /** An `$important` rule matched: exceptions do not apply. */
+    important: boolean;
+    /**
+     * Replacement body as a `data:` URL (`$redirect=` rules). Only produced when redirect
+     * resources are loaded, which BrowserMCP does not do yet.
+     */
+    redirect?: string | null;
+    /** `$removeparam` result: load this URL instead (only when not blocked). */
+    rewritten_url?: string | null;
+    /** Text of the matched rule, when the engine kept it. */
+    rule?: string | null;
+  } | null;
+  /** Host of the page that made the request. */
+  page_host: string | null;
+  /** The page's effective site policy. */
+  policy: {
+    animations: boolean;
+    fonts: boolean;
+    images: boolean;
+    js: boolean;
+    media: boolean;
+    third_party: boolean;
+  };
+  /**
+   * What kind of resource a request loads. A CEF-agnostic superset of what CEF
+   * (`cef_resource_type_t`), CDP (`Network.ResourceType`) and the filter lists distinguish.
+   *
+   * - `"main_frame"`: Top-level page (a navigation).
+   * - `"sub_frame"`: Frame or iframe document.
+   * - `"object"`: `<object>`/`<embed>` and plugin requests.
+   * - `"media"`: Audio/video.
+   * - `"xhr"`: `XMLHttpRequest`.
+   * - `"fetch"`: `fetch()`.
+   * - `"ping"`: `<a ping>`, `navigator.sendBeacon`.
+   * - `"worker"`: Main script of a dedicated/shared/service worker.
+   */
+  resource_type: "stylesheet" | "script" | "image" | "font" | "csp_report" | "web_socket" | "favicon" | "prefetch" | "other" | "main_frame" | "sub_frame" | "object" | "media" | "xhr" | "fetch" | "ping" | "worker";
+  /** The request goes to another registrable domain than the page. */
+  third_party: boolean;
+}
+
+// ---- adblock.stats ----
+
+/** Arguments of `adblock.stats`. */
+export interface AdblockStatsArgs {
+  /** Reset the counters after reading them. */
+  reset?: boolean | null;
+  /** Only this tab. Default: every tab. */
+  tab?: number | null;
+}
+
+/** Result of `adblock.stats`. */
+export interface AdblockStatsOutput {
+  /** Is a compiled engine loaded, and from which lists? */
+  engine: {
+    /** Size of the serialized engine. */
+    engine_bytes: number;
+    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
+    lists: string[];
+    loaded: boolean;
+  };
+  /** Adblock settings as returned by the commands. */
+  settings: {
+    /** Sites where filter lists are not applied. */
+    allowlist: string[];
+    /** Filter lists are applied (site policies apply regardless). */
+    enabled: boolean;
+    /** Enabled filter lists. */
+    lists: string[];
+  };
+  tabs: {
+    /** Requests cancelled (by filter lists or site policy). */
+    blocked: number;
+    /** Blocked requests by resource type (`script`, `image`, …). */
+    blocked_by_type: Record<string, number>;
+    /** Blocked requests by host (at most 200 hosts). */
+    blocked_hosts: Record<string, number>;
+    /** Blocked by filter lists. */
+    by_filter: number;
+    /** Blocked by a site policy (js/images/fonts/media/third_party). */
+    by_policy: number;
+    /** Overhead of the interim CDP interception, when `adblock.apply` is on for this tab. */
+    interception?: {
+      /** The interception task is running. */
+      active: boolean;
+      /** Average time of the gate decision itself (filter lists + policy), microseconds. */
+      avg_decision_us: number;
+      /**
+       * Average time from `requestPaused` to our answer being acknowledged: the latency the
+       * interception adds to every request, milliseconds.
+       */
+      avg_roundtrip_ms: number;
+      /** Answered with `Fetch.failRequest`. */
+      blocked: number;
+      /** Answered with `Fetch.continueRequest`. */
+      continued: number;
+      errors: number;
+      /** Answered with `Fetch.fulfillRequest` (redirect resources). */
+      fulfilled: number;
+      lagged: number;
+      max_decision_us: number;
+      max_roundtrip_ms: number;
+      /** Paused requests seen. */
+      paused: number;
+      uptime_s: number;
+    } | null;
+    /** Bytes received by allowed requests, when the caller reports them (CEF hook). */
+    received_bytes: number;
+    /** Requests answered with a replacement body (`$redirect`). */
+    redirected: number;
+    /** Requests the gate was asked about. */
+    requests: number;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }[];
+  /** Sum over all tabs (only when no `tab` was given). */
+  total?: {
+    /** Requests cancelled (by filter lists or site policy). */
+    blocked: number;
+    /** Blocked requests by resource type (`script`, `image`, …). */
+    blocked_by_type: Record<string, number>;
+    /** Blocked requests by host (at most 200 hosts). */
+    blocked_hosts: Record<string, number>;
+    /** Blocked by filter lists. */
+    by_filter: number;
+    /** Blocked by a site policy (js/images/fonts/media/third_party). */
+    by_policy: number;
+    /** Bytes received by allowed requests, when the caller reports them (CEF hook). */
+    received_bytes: number;
+    /** Requests answered with a replacement body (`$redirect`). */
+    redirected: number;
+    /** Requests the gate was asked about. */
+    requests: number;
+  } | null;
+}
+
+// ---- adblock.toggle ----
+
+/** Arguments of `adblock.toggle`. */
+export interface AdblockToggleArgs {
+  /** Site to switch (e.g. "example.com", also covers subdomains). Omit to switch globally. */
+  host?: string | null;
+  /** true = block ads (removes the site from the allowlist); false = allow ads. */
+  on: boolean;
+}
+
+/**
+ * Result of `adblock.toggle`.
+ * Adblock settings as returned by the commands.
+ */
+export interface AdblockToggleOutput {
+  /** Sites where filter lists are not applied. */
+  allowlist: string[];
+  /** Filter lists are applied (site policies apply regardless). */
+  enabled: boolean;
+  /** Enabled filter lists. */
+  lists: string[];
+}
+
+// ---- adblock.update_lists ----
+
+/** Arguments of `adblock.update_lists`. */
+export interface AdblockUpdateListsArgs {
+  /** Download even if the server says nothing changed. */
+  force?: boolean | null;
+  /** Replace the enabled lists, e.g. ["easylist", "easyprivacy", "ublock"]. */
+  lists?: string[] | null;
+}
+
+/**
+ * Result of `adblock.update_lists`.
+ * Result of `adblock.update_lists`.
+ */
+export interface AdblockUpdateListsOutput {
+  /** Time spent compiling (0 when not recompiled). */
+  compile_ms: number;
+  /** True when the engine was recompiled. */
+  compiled: boolean;
+  /** Is a compiled engine loaded, and from which lists? */
+  engine: {
+    /** Size of the serialized engine. */
+    engine_bytes: number;
+    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
+    lists: string[];
+    loaded: boolean;
+  };
+  lists: {
+    /** Size of the list file. */
+    bytes: number;
+    error?: string | null;
+    id: string;
+    /**
+     * Result of checking one list.
+     *
+     * - `"updated"`: Downloaded a new version.
+     * - `"not_modified"`: The server said it has not changed (HTTP 304).
+     * - `"failed"`: Download failed; the old file (if any) is kept.
+     */
+    status: "updated" | "not_modified" | "failed";
+    url: string;
+  }[];
+}
+
 // ---- ai.provider_set ----
 
 /** Arguments of `ai.provider_set`. */
@@ -2377,6 +2709,1068 @@ export interface ProxyPoolRemoveOutput {
   removed: boolean;
 }
 
+// ---- record.codegen ----
+
+/** Arguments of `record.codegen`. */
+export interface RecordCodegenArgs {
+  /** Recording id. */
+  id: string;
+  /** Script file name without .ts (default: the recording name). */
+  name?: string | null;
+  /**
+   * Turn typed/selected values into `inputs.<name>` with the recorded value as default.
+   * Default false (secrets always become required inputs).
+   */
+  parametrize?: boolean | null;
+}
+
+/** Result of `record.codegen`. */
+export interface RecordCodegenOutput {
+  /** The TypeScript. */
+  code: string;
+  /** Inputs the script reads (`--input name=value`). */
+  inputs: {
+    /** The recorded value (`None` for secrets). */
+    default: string | null;
+    /** The label of the field it goes into. */
+    label: string;
+    name: string;
+    /** Required, never stored (passwords). */
+    secret: boolean;
+  }[];
+  /** Where the script was saved (data/scripts/<name>.ts). */
+  path: string;
+}
+
+// ---- record.get ----
+
+/** Arguments of `record.get`. */
+export interface RecordGetArgs {
+  /**
+   * summary (default) or jsonl.
+   *
+   * - `"jsonl"`: The raw actions.jsonl lines.
+   * - `"summary"`: One readable line per step (default).
+   */
+  format?: "jsonl" | "summary" | null;
+  /** Recording id. */
+  id: string;
+}
+
+/** Result of `record.get`. */
+export interface RecordGetOutput {
+  active: boolean;
+  id: string;
+  /** `meta.json` of a recording. */
+  meta: {
+    /**
+     * How human actions were captured: `binding` (CDP `Runtime.bindingCalled`), `poll`
+     * (queue in the isolated world read every 250 ms), `pending` (not known yet) or
+     * `failed: …`.
+     */
+    human_capture: string;
+    /** Folder name under `data/recordings/`, e.g. `login-20261106-125600`. */
+    id: string;
+    /** Name given to `record.start` (also the default script name). */
+    name: string;
+    /** URL of the tab when recording started. */
+    start_url: string;
+    started_ms: number;
+    /** Number of steps written. */
+    steps: number;
+    stopped_ms?: number | null;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    /** `traffic.jsonl` inside the recording folder, when `traffic: true`. */
+    traffic?: string | null;
+    /** `video.webm`/`video.mp4` inside the recording folder, when `video: true`. */
+    video?: string | null;
+  };
+  steps: number;
+  text: string;
+}
+
+// ---- record.list ----
+
+/**
+ * Arguments of `record.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type RecordListArgs = Record<string, never>;
+
+/** Result of `record.list`. */
+export interface RecordListOutput {
+  /** Newest first. */
+  recordings: {
+    active: boolean;
+    id: string;
+    name: string;
+    start_url: string;
+    started_ms: number;
+    steps: number;
+  }[];
+}
+
+// ---- record.start ----
+
+/** Arguments of `record.start`. */
+export interface RecordStartArgs {
+  /** Name of the recording (also the default script name). Default "recording". */
+  name?: string | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Also log network requests to traffic.jsonl. Default false. */
+  traffic?: boolean | null;
+  /** Also record a video (needs ffmpeg). Default false. */
+  video?: boolean | null;
+}
+
+/** Result of `record.start`. */
+export interface RecordStartOutput {
+  /** Folder with actions.jsonl and meta.json. */
+  dir: string;
+  /** Recording id, for record_stop / record_get / record_codegen. */
+  id: string;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  /** Video file being written, when video was asked for. */
+  video?: string | null;
+}
+
+// ---- record.stop ----
+
+/** Arguments of `record.stop`. */
+export interface RecordStopArgs {
+  /** Recording id from record_start. Default: the only running recording. */
+  id?: string | null;
+}
+
+/** Result of `record.stop`. */
+export interface RecordStopOutput {
+  actions: string;
+  /** How human actions were captured (binding, poll, failed: …). */
+  human_capture: string;
+  id: string;
+  meta: string;
+  /** Steps in actions.jsonl. */
+  steps: number;
+  traffic?: string | null;
+  video?: string | null;
+}
+
+// ---- record.video_start ----
+
+/** Arguments of `record.video_start`. */
+export interface RecordVideoStartArgs {
+  /**
+   * webm (VP9, default) or mp4 (H.264).
+   *
+   * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+   * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+   */
+  format?: "webm" | "mp4" | null;
+  /** Frames per second, 1–60 (default 10). */
+  fps?: number | null;
+  /** 1–100 (default 80): JPEG quality of the frames and encoder quality. */
+  quality?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `record.video_start`. */
+export interface RecordVideoStartOutput {
+  /** Video id for record_video_stop. */
+  id: string;
+  /** The file being written. */
+  path: string;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- record.video_stop ----
+
+/** Arguments of `record.video_stop`. */
+export interface RecordVideoStopArgs {
+  /** Video id from record_video_start. Default: the most recently started video. */
+  id?: string | null;
+}
+
+/**
+ * Result of `record.video_stop`.
+ * What a finished video looks like.
+ */
+export interface RecordVideoStopOutput {
+  /** File size in bytes (0 when it was not written). */
+  bytes: number;
+  codec: string;
+  /** Why the video failed or is incomplete (encoder error text, …). */
+  error?: string | null;
+  fps: number;
+  /** Screencast frames from Chromium (each one acknowledged). */
+  frames_received: number;
+  /** Frames written to the encoder (constant rate: repeats included). */
+  frames_written: number;
+  height: number;
+  path: string;
+  /** Length of the video (`frames_written / fps`). */
+  seconds: number;
+  /** Real time between the first frame and stop. */
+  wall_seconds: number;
+  /** Output size (even numbers, as encoders need). */
+  width: number;
+}
+
+// ---- run.cancel ----
+
+/** Arguments of `run.cancel`. */
+export interface RunCancelArgs {
+  /** Run id from run_start / run_list. */
+  id: string;
+}
+
+/**
+ * Result of `run.cancel`.
+ * A run with its row counts.
+ */
+export interface RunCancelOutput {
+  /** Rows per status. */
+  counts: {
+    cancelled: number;
+    failed: number;
+    needs_heal: number;
+    ok: number;
+    pending: number;
+    running: number;
+  };
+  created_ms: number;
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  id: string;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+  };
+  /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+  script: string;
+  /**
+   * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+   * between (by `run.pause`, a heal request, or a restart of the browser).
+   */
+  status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  total: number;
+}
+
+// ---- run.export ----
+
+/** Arguments of `run.export`. */
+export interface RunExportArgs {
+  /** Rows per webhook request (default 100). */
+  batch_size?: number | null;
+  /** Run id from run_start / run_list. */
+  id: string;
+  /**
+   * Output file for csv/xlsx/json/sqlite. Default: data/runs/<id>/results.<ext>; a
+   * relative path is inside data/runs/<id>/.
+   */
+  path?: string | null;
+  /** Only rows with this status (e.g. ok or failed). */
+  status?: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled" | null;
+  /**
+   * csv, xlsx, json, sqlite, webhook (or google_sheets: not implemented yet).
+   *
+   * - `"google_sheets"`: Not available yet (needs Google OAuth).
+   */
+  to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
+  /** Webhook URL (http or https) for `to: webhook`. */
+  url?: string | null;
+}
+
+/** Result of `run.export`. */
+export interface RunExportOutput {
+  /** Webhook requests sent. */
+  batches?: number | null;
+  /** The file written. */
+  path?: string | null;
+  /** Rows exported. */
+  rows: number;
+  /**
+   * Export formats.
+   *
+   * - `"google_sheets"`: Not available yet (needs Google OAuth).
+   */
+  to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
+}
+
+// ---- run.heal_apply ----
+
+/** Arguments of `run.heal_apply`. */
+export interface RunHealApplyArgs {
+  id: string;
+  /** The fixed script source; saved as the next version (<name>.v2, .v3, …). */
+  patched_code: string;
+}
+
+/** Result of `run.heal_apply`. */
+export interface RunHealApplyOutput {
+  id: string;
+  /** Rows put back into the queue. */
+  requeued: number;
+  /** The new script version the run continues with. */
+  script: string;
+}
+
+// ---- run.list ----
+
+/** Arguments of `run.list`. */
+export interface RunListArgs {
+  /** Max runs, newest first (default 50). */
+  limit?: number | null;
+}
+
+/** Result of `run.list`. */
+export interface RunListOutput {
+  runs: {
+    /** Rows per status. */
+    counts: {
+      cancelled: number;
+      failed: number;
+      needs_heal: number;
+      ok: number;
+      pending: number;
+      running: number;
+    };
+    created_ms: number;
+    /** Rows that reached a final state (ok + failed + cancelled). */
+    done: number;
+    finished_ms?: number | null;
+    /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+    heal?: unknown;
+    id: string;
+    /** Why the run stopped or paused (stop_on_error, restart, …). */
+    note?: string | null;
+    /** Run-wide settings, fixed at `run.start`. */
+    options: {
+      /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+      heal: boolean;
+      /** Worker slots actually used (after the CPU/RAM auto-limit). */
+      parallel: number;
+      /** What the caller asked for. */
+      parallel_requested: number;
+      /**
+       * Browser profile the rows run in. Today always the default profile (shared by all
+       * rows); isolated per-row profiles come later.
+       */
+      profile?: string | null;
+      /** Extra attempts per row after a failure. */
+      retries: number;
+      /** Stop the whole run at the first failed row. */
+      stop_on_error: boolean;
+      /** Per-row script timeout. */
+      timeout_secs: number;
+    };
+    /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+    script: string;
+    /**
+     * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+     * between (by `run.pause`, a heal request, or a restart of the browser).
+     */
+    status: "running" | "paused" | "finished" | "failed" | "cancelled";
+    total: number;
+  }[];
+}
+
+// ---- run.pause ----
+
+/** Arguments of `run.pause`. */
+export interface RunPauseArgs {
+  /** Run id from run_start / run_list. */
+  id: string;
+}
+
+/**
+ * Result of `run.pause`.
+ * A run with its row counts.
+ */
+export interface RunPauseOutput {
+  /** Rows per status. */
+  counts: {
+    cancelled: number;
+    failed: number;
+    needs_heal: number;
+    ok: number;
+    pending: number;
+    running: number;
+  };
+  created_ms: number;
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  id: string;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+  };
+  /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+  script: string;
+  /**
+   * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+   * between (by `run.pause`, a heal request, or a restart of the browser).
+   */
+  status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  total: number;
+}
+
+// ---- run.results ----
+
+/** Arguments of `run.results`. */
+export interface RunResultsArgs {
+  /** `next_cursor` from the previous page; omit for the first page. */
+  cursor?: number | null;
+  id: string;
+  /** Rows per page (default 100, max 1000). */
+  limit?: number | null;
+  /** Only rows with this status. */
+  status?: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled" | null;
+}
+
+/** Result of `run.results`. */
+export interface RunResultsOutput {
+  id: string;
+  /** Pass as `cursor` for the next page; absent on the last page. */
+  next_cursor?: number | null;
+  rows: {
+    attempts: number;
+    duration_ms?: number | null;
+    /** What the host printed when a script failed, split into parts an agent can act on. */
+    error?: {
+      /**
+       * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+       * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+       */
+      code: string;
+      /** The browser command that failed, e.g. `page.find`. */
+      command?: string | null;
+      /** Line in the script of the top stack frame. */
+      line?: number | null;
+      /** First line of the error message. */
+      message: string;
+    } | null;
+    /** The row's input columns. */
+    inputs: Record<string, unknown>;
+    /** Merged `browser.output(...)` values; `null` if none. */
+    result: unknown;
+    /** 0-based row number in the input data. */
+    row: number;
+    /** The script (version) the last attempt ran. */
+    script?: string | null;
+    /** Row status: `pending` → `running` → `ok` / `failed` / `needs_heal` / `cancelled`. */
+    status: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled";
+    /** End of the script's stdout (last attempt). */
+    stdout_tail?: string;
+  }[];
+}
+
+// ---- run.resume ----
+
+/** Arguments of `run.resume`. */
+export interface RunResumeArgs {
+  /** Run id from run_start / run_list. */
+  id: string;
+}
+
+/**
+ * Result of `run.resume`.
+ * A run with its row counts.
+ */
+export interface RunResumeOutput {
+  /** Rows per status. */
+  counts: {
+    cancelled: number;
+    failed: number;
+    needs_heal: number;
+    ok: number;
+    pending: number;
+    running: number;
+  };
+  created_ms: number;
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  id: string;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+  };
+  /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+  script: string;
+  /**
+   * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+   * between (by `run.pause`, a heal request, or a restart of the browser).
+   */
+  status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  total: number;
+}
+
+// ---- run.start ----
+
+/** Arguments of `run.start`. */
+export interface RunStartArgs {
+  /** The rows: exactly one of csv_path, json_path, xlsx_path or rows. */
+  data: {
+    /** CSV file with a header row. */
+    csv_path?: string | null;
+    /** JSON file: an array of objects (keys = columns). */
+    json_path?: string | null;
+    /** Inline rows: an array of objects. */
+    rows?: Record<string, unknown>[] | null;
+    /** Excel file (.xlsx/.xls/.ods): first sheet, header row first. */
+    xlsx_path?: string | null;
+  };
+  /**
+   * Pause and emit run.heal_needed when a row breaks on a page.* selector error
+   * (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
+   */
+  heal?: boolean | null;
+  /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
+  parallel?: number | null;
+  /**
+   * Browser profile for the rows. Only "default" for now (all rows share it); isolated
+   * per-row profiles come later.
+   */
+  profile?: string | null;
+  /** Extra attempts for a failed row, with exponential backoff (default 1). */
+  retries?: number | null;
+  /** Saved script to run once per row. */
+  script: string;
+  /** Stop the run at the first failed row (default false). */
+  stop_on_error?: boolean | null;
+  /** Per-row timeout in seconds (default 300). */
+  timeout_secs?: number | null;
+}
+
+/**
+ * Result of `run.start`.
+ * A run with its row counts.
+ */
+export interface RunStartOutput {
+  /** Rows per status. */
+  counts: {
+    cancelled: number;
+    failed: number;
+    needs_heal: number;
+    ok: number;
+    pending: number;
+    running: number;
+  };
+  created_ms: number;
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  id: string;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+  };
+  /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+  script: string;
+  /**
+   * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+   * between (by `run.pause`, a heal request, or a restart of the browser).
+   */
+  status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  total: number;
+}
+
+// ---- run.status ----
+
+/** Arguments of `run.status`. */
+export interface RunStatusArgs {
+  /** Run id from run_start / run_list. */
+  id: string;
+}
+
+/**
+ * Result of `run.status`.
+ * A run with its row counts.
+ */
+export interface RunStatusOutput {
+  /** Rows per status. */
+  counts: {
+    cancelled: number;
+    failed: number;
+    needs_heal: number;
+    ok: number;
+    pending: number;
+    running: number;
+  };
+  created_ms: number;
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  id: string;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+  };
+  /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
+  script: string;
+  /**
+   * Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
+   * between (by `run.pause`, a heal request, or a restart of the browser).
+   */
+  status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  total: number;
+}
+
+// ---- script.delete ----
+
+/** Arguments of `script.delete`. */
+export interface ScriptDeleteArgs {
+  /** Script name without .ts, e.g. "login" or "login.v2". */
+  name: string;
+}
+
+/** Result of `script.delete`. */
+export interface ScriptDeleteOutput {
+  /** False when the script did not exist. */
+  deleted: boolean;
+}
+
+// ---- script.get ----
+
+/** Arguments of `script.get`. */
+export interface ScriptGetArgs {
+  /** Script name without .ts, e.g. "login" or "login.v2". */
+  name: string;
+}
+
+/** Result of `script.get`. */
+export interface ScriptGetOutput {
+  /** TypeScript source. */
+  code: string;
+  name: string;
+}
+
+// ---- script.list ----
+
+/**
+ * Arguments of `script.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type ScriptListArgs = Record<string, never>;
+
+/** Result of `script.list`. */
+export interface ScriptListOutput {
+  scripts: {
+    /** Last change, milliseconds since the Unix epoch. */
+    modified_ms: number;
+    /** Name without `.ts`, e.g. `login` or `login.v2`. */
+    name: string;
+    /** Size of the file in bytes. */
+    size: number;
+  }[];
+}
+
+// ---- script.run ----
+
+/** Arguments of `script.run`. */
+export interface ScriptRunArgs {
+  /** Inline TypeScript to run instead of a saved script. */
+  code?: string | null;
+  /** Values the script reads as inputs.<key> (passed as strings). */
+  inputs?: Record<string, unknown> | null;
+  /** Saved script to run. Give `name` or `code`. */
+  name?: string | null;
+  /** Kill the script after this many seconds (default 300). */
+  timeout_secs?: number | null;
+}
+
+/**
+ * Result of `script.run`.
+ * How one script run ended.
+ */
+export interface ScriptRunOutput {
+  duration_ms: number;
+  /** Set when `ok` is false. */
+  error?: {
+    /**
+     * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+     * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+     */
+    code: string;
+    /** The browser command that failed, e.g. `page.find`. */
+    command?: string | null;
+    /** Line in the script of the top stack frame. */
+    line?: number | null;
+    /** First line of the error message. */
+    message: string;
+  } | null;
+  /**
+   * Process exit code (0 ok, 1 script error, 2 setup error, 124 timeout); `None` when the
+   * process was killed.
+   */
+  exit_code: number | null;
+  /** True when the script finished without an uncaught error (exit code 0). */
+  ok: boolean;
+  /** Merged `browser.output(...)` values; `null` when the script reported nothing. */
+  result: unknown;
+  /** Last few KB of stderr. */
+  stderr: string;
+  /** Last few KB of ordinary stdout lines. */
+  stdout: string;
+}
+
+// ---- script.save ----
+
+/** Arguments of `script.save`. */
+export interface ScriptSaveArgs {
+  /**
+   * TypeScript source. Globals: browser.<ns>.<method>(args) calls a browser command,
+   * inputs.<key> (strings), browser.output({...}) reports a structured result, sleep(ms).
+   */
+  code: string;
+  /** 1-64 chars of A-Z a-z 0-9 _ - (no .ts); overwrites an existing script. */
+  name: string;
+}
+
+/**
+ * Result of `script.save`.
+ * One script in the library.
+ */
+export interface ScriptSaveOutput {
+  /** Last change, milliseconds since the Unix epoch. */
+  modified_ms: number;
+  /** Name without `.ts`, e.g. `login` or `login.v2`. */
+  name: string;
+  /** Size of the file in bytes. */
+  size: number;
+}
+
+// ---- simplify.get ----
+
+/** Arguments of `simplify.get`. */
+export interface SimplifyGetArgs {
+  /** Host (or URL) of a page, e.g. "news.example.com". */
+  host: string;
+}
+
+/** Result of `simplify.get`. */
+export interface SimplifyGetOutput {
+  /** Filter lists apply on this host (adblock on and not allowlisted). */
+  adblock: boolean;
+  /** CEF content settings this maps to (applied by the CEF hook later). */
+  content_settings: {
+    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
+    images: string;
+    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
+    javascript: string;
+  };
+  host: string;
+  /** Patterns that apply, least specific first. */
+  matched: string[];
+  /** Merged policy (true = allowed). */
+  policy: {
+    animations: boolean;
+    fonts: boolean;
+    images: boolean;
+    js: boolean;
+    media: boolean;
+    third_party: boolean;
+  };
+}
+
+// ---- simplify.list ----
+
+/**
+ * Arguments of `simplify.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type SimplifyListArgs = Record<string, never>;
+
+/** Result of `simplify.list`. */
+export interface SimplifyListOutput {
+  /** Adblock settings as returned by the commands. */
+  adblock: {
+    /** Sites where filter lists are not applied. */
+    allowlist: string[];
+    /** Filter lists are applied (site policies apply regardless). */
+    enabled: boolean;
+    /** Enabled filter lists. */
+    lists: string[];
+  };
+  /** Stored policies by host pattern. */
+  sites: Record<string, {
+      /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
+      animations?: boolean | null;
+      /** Load web fonts. */
+      fonts?: boolean | null;
+      /** Load images. */
+      images?: boolean | null;
+      /** Run JavaScript (false: block script loads and disable script execution). */
+      js?: boolean | null;
+      /** Load audio/video. */
+      media?: boolean | null;
+      /** Load anything from other sites (different registrable domain). */
+      third_party?: boolean | null;
+    }>;
+}
+
+// ---- simplify.measure ----
+
+/** Arguments of `simplify.measure`. */
+export interface SimplifyMeasureArgs {
+  /** Keep counting this long after the load event, for late requests (default 3000). */
+  settle_ms?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Give up waiting for the load event after this long (default 45000). */
+  timeout_ms?: number | null;
+  /** Page to load. */
+  url: string;
+}
+
+/**
+ * Result of `simplify.measure`.
+ * What loading the page cost.
+ */
+export interface SimplifyMeasureOutput {
+  /** Failed with `net::ERR_BLOCKED_BY_CLIENT` (adblock / site policy). */
+  blocked: number;
+  by_type: Record<string, {
+      bytes: number;
+      requests: number;
+    }>;
+  /** Bytes received over the network (`encodedDataLength`, headers included). */
+  bytes: number;
+  /** Time until `DOMContentLoaded`, milliseconds (0 if not seen). */
+  dom_content_loaded_ms: number;
+  dom_nodes: number;
+  /** Requests that failed (including blocked ones). */
+  failed: number;
+  /** Requests that finished loading. */
+  finished: number;
+  /** `Performance.getMetrics` after settling. */
+  js_heap_used_bytes: number;
+  /** Time until the `load` event, milliseconds. */
+  load_ms: number;
+  /** Requests the page started. */
+  requests: number;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  /** The load event did not come within `timeout_ms`. */
+  timed_out: boolean;
+  url: string;
+}
+
+// ---- simplify.reader ----
+
+/** Arguments of `simplify.reader`. */
+export interface SimplifyReaderArgs {
+  /** Also replace the page with a clean readable version (dark/light aware). */
+  apply?: boolean | null;
+  /** Max characters of text returned (default 4000). */
+  max_chars?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `simplify.reader`.
+ * The readable article of a page.
+ */
+export interface SimplifyReaderOutput {
+  /** True when the page was replaced by the clean version. */
+  applied: boolean;
+  byline?: string | null;
+  excerpt?: string | null;
+  lang?: string | null;
+  /** Length of the full article text in characters. */
+  length: number;
+  site_name?: string | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  /** Article text, cut to `max_chars`. */
+  text: string;
+  title: string;
+  /** True when `text` was cut. */
+  truncated: boolean;
+}
+
+// ---- simplify.site ----
+
+/** Arguments of `simplify.site`. */
+export interface SimplifySiteArgs {
+  /** Allow CSS animations and transitions. */
+  animations?: boolean | null;
+  /** Forget the stored policy of this host first (then apply the given fields). */
+  clear?: boolean | null;
+  /** Allow web fonts. */
+  fonts?: boolean | null;
+  /** Host pattern: "example.com" (with subdomains) or "*" for every site. */
+  host: string;
+  /** Allow images. */
+  images?: boolean | null;
+  /** Allow JavaScript. */
+  js?: boolean | null;
+  /** Allow audio/video. */
+  media?: boolean | null;
+  /** Allow requests to other sites. */
+  third_party?: boolean | null;
+}
+
+/** Result of `simplify.site`. */
+export interface SimplifySiteOutput {
+  /** Content-setting values per CEF content type (`allow` or `block`). */
+  content_settings: {
+    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
+    images: string;
+    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
+    javascript: string;
+  };
+  /** Effective policy for the host itself, after merging less specific patterns. */
+  effective: {
+    animations: boolean;
+    fonts: boolean;
+    images: boolean;
+    js: boolean;
+    media: boolean;
+    third_party: boolean;
+  };
+  /** Normalized pattern the policy is stored under. */
+  pattern: string;
+  /** Stored fields for this pattern (unset = inherited). */
+  stored: {
+    /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
+    animations?: boolean | null;
+    /** Load web fonts. */
+    fonts?: boolean | null;
+    /** Load images. */
+    images?: boolean | null;
+    /** Run JavaScript (false: block script loads and disable script execution). */
+    js?: boolean | null;
+    /** Load audio/video. */
+    media?: boolean | null;
+    /** Load anything from other sites (different registrable domain). */
+    third_party?: boolean | null;
+  };
+}
+
 // ---- stealth.check ----
 
 /** Arguments of `stealth.check`. */
@@ -2841,6 +4235,89 @@ export interface TermWriteArgs {
  */
 export type TermWriteOutput = Record<string, never>;
 
+// ---- trigger.list ----
+
+/**
+ * Arguments of `trigger.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TriggerListArgs = Record<string, never>;
+
+/** Result of `trigger.list`. */
+export interface TriggerListOutput {
+  triggers: {
+    created_ms: number;
+    id: string;
+    inputs: Record<string, unknown>;
+    /** Always `cron` for now. */
+    kind: string;
+    last_fired_ms?: number | null;
+    /** `ok`, or the error code of the last firing. */
+    last_status?: string | null;
+    /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
+    next_fire?: string | null;
+    /** Next firing, milliseconds since the Unix epoch. */
+    next_fire_ms?: number | null;
+    script: string;
+    /** The cron expression as given. */
+    spec: string;
+  }[];
+}
+
+// ---- trigger.remove ----
+
+/** Arguments of `trigger.remove`. */
+export interface TriggerRemoveArgs {
+  id: string;
+}
+
+/** Result of `trigger.remove`. */
+export interface TriggerRemoveOutput {
+  /** False when no trigger had that id. */
+  removed: boolean;
+}
+
+// ---- trigger.set ----
+
+/** Arguments of `trigger.set`. */
+export interface TriggerSetArgs {
+  /** Replace the trigger with this id (default: a new id). */
+  id?: string | null;
+  /** inputs.<key> for the script. */
+  inputs?: Record<string, unknown> | null;
+  /** Only "cron" for now. */
+  kind: "cron";
+  /** Saved script to run. */
+  script: string;
+  /**
+   * Cron expression in local time: 5 fields "min hour day month weekday"
+   * (e.g. "0 9 * * Mon-Fri") or 6 with seconds first.
+   */
+  spec: string;
+}
+
+/**
+ * Result of `trigger.set`.
+ * A trigger plus when it fires next.
+ */
+export interface TriggerSetOutput {
+  created_ms: number;
+  id: string;
+  inputs: Record<string, unknown>;
+  /** Always `cron` for now. */
+  kind: string;
+  last_fired_ms?: number | null;
+  /** `ok`, or the error code of the last firing. */
+  last_status?: string | null;
+  /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
+  next_fire?: string | null;
+  /** Next firing, milliseconds since the Unix epoch. */
+  next_fire_ms?: number | null;
+  script: string;
+  /** The cron expression as given. */
+  spec: string;
+}
+
 // ---- ui.layout ----
 
 /** Arguments of `ui.layout`. */
@@ -2862,6 +4339,16 @@ export type UiLayoutOutput = Record<string, never>;
 
 /** Every command by dotted name, with its argument and result types. */
 export interface Commands {
+  /** Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect. */
+  "adblock.apply": { args: AdblockApplyArgs; output: AdblockApplyOutput };
+  /** Debug: would this request be blocked? Returns the decision (allow/block/redirect, reason, rule), the filter-list verdict and the page's site policy. Not counted in the stats. */
+  "adblock.check": { args: AdblockCheckArgs; output: AdblockCheckOutput };
+  /** Counters of blocked/allowed requests per tab (by reason, type and host), engine status, and the overhead of adblock_apply interception. */
+  "adblock.stats": { args: AdblockStatsArgs; output: AdblockStatsOutput };
+  /** Switch ad blocking on/off globally, or for one site (allowlist). Returns the adblock settings. */
+  "adblock.toggle": { args: AdblockToggleArgs; output: AdblockToggleOutput };
+  /** Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list. */
+  "adblock.update_lists": { args: AdblockUpdateListsArgs; output: AdblockUpdateListsOutput };
   /** Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider. */
   "ai.provider_set": { args: AiProviderSetArgs; output: AiProviderSetOutput };
   /** Check a provider without spending tokens: API providers list their models (GET /models), CLI providers run --version. Returns ok, models/version or error. */
@@ -3006,6 +4493,58 @@ export interface Commands {
   "proxy.pool_list": { args: ProxyPoolListArgs; output: ProxyPoolListOutput };
   /** Remove one proxy from a pool, or the whole pool. */
   "proxy.pool_remove": { args: ProxyPoolRemoveArgs; output: ProxyPoolRemoveOutput };
+  /** Turn a recording into a TypeScript script for the script host (elements found by role and name, not refs). With parametrize, typed values become inputs. Saves it to data/scripts/<name>.ts and returns the code. */
+  "record.codegen": { args: RecordCodegenArgs; output: RecordCodegenOutput };
+  /** A recording's steps: a readable summary (default) or the raw JSONL action log. */
+  "record.get": { args: RecordGetArgs; output: RecordGetOutput };
+  /** List recordings (running and saved), newest first. */
+  "record.list": { args: RecordListArgs; output: RecordListOutput };
+  /** Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id. */
+  "record.start": { args: RecordStartArgs; output: RecordStartOutput };
+  /** Stop a recording and write its files. Returns the paths of actions.jsonl, meta.json and the optional video / traffic log. */
+  "record.stop": { args: RecordStopArgs; output: RecordStopOutput };
+  /** Start recording a tab's video (CDP screencast → ffmpeg, constant frame rate). Needs ffmpeg (winget install Gyan.FFmpeg). Stop with record_video_stop. */
+  "record.video_start": { args: RecordVideoStartArgs; output: RecordVideoStartOutput };
+  /** Stop a video and finish the file. Returns its path, size, frame counts and length. */
+  "record.video_stop": { args: RecordVideoStopArgs; output: RecordVideoStopOutput };
+  /** Cancel a run: kills running scripts, marks the remaining rows cancelled. */
+  "run.cancel": { args: RunCancelArgs; output: RunCancelOutput };
+  /** Export a run's rows to csv, xlsx, json or sqlite (default data/runs/<id>/results.<ext>) or POST them to a webhook in JSON batches. Columns: row, status, inputs, result keys, error, attempts, duration. */
+  "run.export": { args: RunExportArgs; output: RunExportOutput };
+  /** Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version. */
+  "run.heal_apply": { args: RunHealApplyArgs; output: RunHealApplyOutput };
+  /** List runs (also from before a browser restart), newest first, with row counts. */
+  "run.list": { args: RunListArgs; output: RunListOutput };
+  /** Pause a run: rows already running finish, no new rows start. */
+  "run.pause": { args: RunPauseArgs; output: RunPauseOutput };
+  /** Row results of a run, paged by cursor: status, inputs, result, error, attempts, duration and stdout tail per row. */
+  "run.results": { args: RunResultsArgs; output: RunResultsOutput };
+  /** Resume a paused run (also one interrupted by a browser restart). Rows waiting for a heal patch are marked failed; use run_heal_apply to fix them instead. */
+  "run.resume": { args: RunResumeArgs; output: RunResumeOutput };
+  /** Start a mass run: the script runs once per data row (columns → inputs.<col>), `parallel` at a time, with retries. Returns at once with the run id; follow it with run_status / run_results or the run.progress events. */
+  "run.start": { args: RunStartArgs; output: RunStartOutput };
+  /** Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request. */
+  "run.status": { args: RunStatusArgs; output: RunStatusOutput };
+  /** Delete a saved script file. */
+  "script.delete": { args: ScriptDeleteArgs; output: ScriptDeleteOutput };
+  /** Return the source code of a saved script. */
+  "script.get": { args: ScriptGetArgs; output: ScriptGetOutput };
+  /** List saved scripts (data/scripts/*.ts) with size and modification time. Healed versions appear as <name>.v2, <name>.v3, … */
+  "script.list": { args: ScriptListArgs; output: ScriptListOutput };
+  /** Run a saved script (name) or inline TypeScript (code) once in the script host and wait. Returns ok, exit_code, duration_ms, result (from browser.output), stdout/stderr tails and a parsed error {code, command, message, line}. */
+  "script.run": { args: ScriptRunArgs; output: ScriptRunOutput };
+  /** Create or overwrite a saved TypeScript script in data/scripts/<name>.ts. */
+  "script.save": { args: ScriptSaveArgs; output: ScriptSaveOutput };
+  /** Effective simplification policy of a host (merged from matching patterns), its CEF content settings and whether ad blocking applies there. */
+  "simplify.get": { args: SimplifyGetArgs; output: SimplifyGetOutput };
+  /** All stored site simplification policies, plus the adblock settings (on/off, allowlist, lists). */
+  "simplify.list": { args: SimplifyListArgs; output: SimplifyListOutput };
+  /** Load a URL in a tab with the HTTP cache off and report its cost: requests, blocked requests, bytes over the network, load time, JS heap, DOM nodes, by resource type. Use to compare with/without adblock_apply or site policies. */
+  "simplify.measure": { args: SimplifyMeasureArgs; output: SimplifyMeasureOutput };
+  /** Reader mode (Mozilla Readability): the page's main article as {title, byline, text, length}. With apply=true the page is replaced by a clean readable version. */
+  "simplify.reader": { args: SimplifyReaderArgs; output: SimplifyReaderOutput };
+  /** Set what a site may load: js, images, fonts, media, third_party, animations (true = allow, false = block; omitted = unchanged). Saved in simplify.json; takes effect on the next request/navigation. */
+  "simplify.site": { args: SimplifySiteArgs; output: SimplifySiteOutput };
   /** Probe the page like a fingerprinting script: webdriver flag, UA vs client hints vs platform, timezone vs Intl, languages, screen, WebGL strings, window.chrome, permissions, CDP-detection tricks, worker consistency and the applied identity. Returns a pass/warn/fail table. */
   "stealth.check": { args: StealthCheckArgs; output: StealthCheckOutput };
   /** Remove the fingerprint overrides from a tab (back to the real browser values; patch scripts disappear on the next page load). */
@@ -3032,6 +4571,12 @@ export interface Commands {
   "term.resize": { args: TermResizeArgs; output: TermResizeOutput };
   /** Send input (text, control characters) to a terminal. */
   "term.write": { args: TermWriteArgs; output: TermWriteOutput };
+  /** List triggers with their next and last firing. */
+  "trigger.list": { args: TriggerListArgs; output: TriggerListOutput };
+  /** Delete a trigger. */
+  "trigger.remove": { args: TriggerRemoveArgs; output: TriggerRemoveOutput };
+  /** Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time. */
+  "trigger.set": { args: TriggerSetArgs; output: TriggerSetOutput };
   /** Internal: the browser UI reports its page area. No effect over the API. */
   "ui.layout": { args: UiLayoutArgs; output: UiLayoutOutput };
 }
@@ -3057,6 +4602,51 @@ export interface CommandMeta {
 
 /** Metadata of every command, by dotted name. */
 export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
+  "adblock.apply": {
+    wireName: "adblock_apply",
+    description: "Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
+  "adblock.check": {
+    wireName: "adblock_check",
+    description: "Debug: would this request be blocked? Returns the decision (allow/block/redirect, reason, rule), the filter-list verdict and the page's site policy. Not counted in the stats.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "adblock.stats": {
+    wireName: "adblock_stats",
+    description: "Counters of blocked/allowed requests per tab (by reason, type and host), engine status, and the overhead of adblock_apply interception.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "adblock.toggle": {
+    wireName: "adblock_toggle",
+    description: "Switch ad blocking on/off globally, or for one site (allowlist). Returns the adblock settings.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "adblock.update_lists": {
+    wireName: "adblock_update_lists",
+    description: "Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "ai.provider_set": {
     wireName: "ai_provider_set",
     description: "Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; \"\" clears one. Returns the provider.",
@@ -3705,6 +5295,240 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "record.codegen": {
+    wireName: "record_codegen",
+    description: "Turn a recording into a TypeScript script for the script host (elements found by role and name, not refs). With parametrize, typed values become inputs. Saves it to data/scripts/<name>.ts and returns the code.",
+    toolset: "record",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.get": {
+    wireName: "record_get",
+    description: "A recording's steps: a readable summary (default) or the raw JSONL action log.",
+    toolset: "record",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.list": {
+    wireName: "record_list",
+    description: "List recordings (running and saved), newest first.",
+    toolset: "record",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.start": {
+    wireName: "record_start",
+    description: "Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id.",
+    toolset: "record",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.stop": {
+    wireName: "record_stop",
+    description: "Stop a recording and write its files. Returns the paths of actions.jsonl, meta.json and the optional video / traffic log.",
+    toolset: "record",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.video_start": {
+    wireName: "record_video_start",
+    description: "Start recording a tab's video (CDP screencast → ffmpeg, constant frame rate). Needs ffmpeg (winget install Gyan.FFmpeg). Stop with record_video_stop.",
+    toolset: "record",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.video_stop": {
+    wireName: "record_video_stop",
+    description: "Stop a video and finish the file. Returns its path, size, frame counts and length.",
+    toolset: "record",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.cancel": {
+    wireName: "run_cancel",
+    description: "Cancel a run: kills running scripts, marks the remaining rows cancelled.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.export": {
+    wireName: "run_export",
+    description: "Export a run's rows to csv, xlsx, json or sqlite (default data/runs/<id>/results.<ext>) or POST them to a webhook in JSON batches. Columns: row, status, inputs, result keys, error, attempts, duration.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_apply": {
+    wireName: "run_heal_apply",
+    description: "Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.list": {
+    wireName: "run_list",
+    description: "List runs (also from before a browser restart), newest first, with row counts.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.pause": {
+    wireName: "run_pause",
+    description: "Pause a run: rows already running finish, no new rows start.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.results": {
+    wireName: "run_results",
+    description: "Row results of a run, paged by cursor: status, inputs, result, error, attempts, duration and stdout tail per row.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.resume": {
+    wireName: "run_resume",
+    description: "Resume a paused run (also one interrupted by a browser restart). Rows waiting for a heal patch are marked failed; use run_heal_apply to fix them instead.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.start": {
+    wireName: "run_start",
+    description: "Start a mass run: the script runs once per data row (columns → inputs.<col>), `parallel` at a time, with retries. Returns at once with the run id; follow it with run_status / run_results or the run.progress events.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.status": {
+    wireName: "run_status",
+    description: "Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.delete": {
+    wireName: "script_delete",
+    description: "Delete a saved script file.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.get": {
+    wireName: "script_get",
+    description: "Return the source code of a saved script.",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.list": {
+    wireName: "script_list",
+    description: "List saved scripts (data/scripts/*.ts) with size and modification time. Healed versions appear as <name>.v2, <name>.v3, …",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.run": {
+    wireName: "script_run",
+    description: "Run a saved script (name) or inline TypeScript (code) once in the script host and wait. Returns ok, exit_code, duration_ms, result (from browser.output), stdout/stderr tails and a parsed error {code, command, message, line}.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.save": {
+    wireName: "script_save",
+    description: "Create or overwrite a saved TypeScript script in data/scripts/<name>.ts.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "simplify.get": {
+    wireName: "simplify_get",
+    description: "Effective simplification policy of a host (merged from matching patterns), its CEF content settings and whether ad blocking applies there.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "simplify.list": {
+    wireName: "simplify_list",
+    description: "All stored site simplification policies, plus the adblock settings (on/off, allowlist, lists).",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "simplify.measure": {
+    wireName: "simplify_measure",
+    description: "Load a URL in a tab with the HTTP cache off and report its cost: requests, blocked requests, bytes over the network, load time, JS heap, DOM nodes, by resource type. Use to compare with/without adblock_apply or site policies.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
+  "simplify.reader": {
+    wireName: "simplify_reader",
+    description: "Reader mode (Mozilla Readability): the page's main article as {title, byline, text, length}. With apply=true the page is replaced by a clean readable version.",
+    toolset: "core",
+    sensitivity: "read",
+    mutatesTab: true,
+    palette: "Reader mode",
+    defaultKeys: [],
+  },
+  "simplify.site": {
+    wireName: "simplify_site",
+    description: "Set what a site may load: js, images, fonts, media, third_party, animations (true = allow, false = block; omitted = unchanged). Saved in simplify.json; takes effect on the next request/navigation.",
+    toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "stealth.check": {
     wireName: "stealth_check",
     description: "Probe the page like a fingerprinting script: webdriver flag, UA vs client hints vs platform, timezone vs Intl, languages, screen, WebGL strings, window.chrome, permissions, CDP-detection tricks, worker consistency and the applied identity. Returns a pass/warn/fail table.",
@@ -3822,6 +5646,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "trigger.list": {
+    wireName: "trigger_list",
+    description: "List triggers with their next and last firing.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "trigger.remove": {
+    wireName: "trigger_remove",
+    description: "Delete a trigger.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "trigger.set": {
+    wireName: "trigger_set",
+    description: "Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "ui.layout": {
     wireName: "ui_layout",
     description: "Internal: the browser UI reports its page area. No effect over the API.",
@@ -3842,6 +5693,39 @@ export type CallArgs<N extends CommandName> = {} extends CommandArgs<N>
 export interface Browser {
   /** Call a command by its dotted name: `browser.call("tabs.list")`. */
   call<N extends CommandName>(name: N, ...args: CallArgs<N>): Promise<CommandOutput<N>>;
+  /** Commands `adblock.*`. */
+  adblock: {
+    /**
+     * Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect.
+     *
+     * `adblock.apply` (MCP: `adblock_apply`): toolset `data`, act, mutates the tab.
+     */
+    apply(args: AdblockApplyArgs, options?: CallOptions): Promise<AdblockApplyOutput>;
+    /**
+     * Debug: would this request be blocked? Returns the decision (allow/block/redirect, reason, rule), the filter-list verdict and the page's site policy. Not counted in the stats.
+     *
+     * `adblock.check` (MCP: `adblock_check`): toolset `data`, read.
+     */
+    check(args: AdblockCheckArgs, options?: CallOptions): Promise<AdblockCheckOutput>;
+    /**
+     * Counters of blocked/allowed requests per tab (by reason, type and host), engine status, and the overhead of adblock_apply interception.
+     *
+     * `adblock.stats` (MCP: `adblock_stats`): toolset `data`, read.
+     */
+    stats(args?: AdblockStatsArgs, options?: CallOptions): Promise<AdblockStatsOutput>;
+    /**
+     * Switch ad blocking on/off globally, or for one site (allowlist). Returns the adblock settings.
+     *
+     * `adblock.toggle` (MCP: `adblock_toggle`): toolset `data`, act.
+     */
+    toggle(args: AdblockToggleArgs, options?: CallOptions): Promise<AdblockToggleOutput>;
+    /**
+     * Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list.
+     *
+     * `adblock.update_lists` (MCP: `adblock_update_lists`): toolset `data`, act.
+     */
+    update_lists(args?: AdblockUpdateListsArgs, options?: CallOptions): Promise<AdblockUpdateListsOutput>;
+  };
   /** Commands `ai.*`. */
   ai: {
     /**
@@ -4320,6 +6204,174 @@ export interface Browser {
      */
     pool_remove(args: ProxyPoolRemoveArgs, options?: CallOptions): Promise<ProxyPoolRemoveOutput>;
   };
+  /** Commands `record.*`. */
+  record: {
+    /**
+     * Turn a recording into a TypeScript script for the script host (elements found by role and name, not refs). With parametrize, typed values become inputs. Saves it to data/scripts/<name>.ts and returns the code.
+     *
+     * `record.codegen` (MCP: `record_codegen`): toolset `record`, read.
+     */
+    codegen(args: RecordCodegenArgs, options?: CallOptions): Promise<RecordCodegenOutput>;
+    /**
+     * A recording's steps: a readable summary (default) or the raw JSONL action log.
+     *
+     * `record.get` (MCP: `record_get`): toolset `record`, read.
+     */
+    get(args: RecordGetArgs, options?: CallOptions): Promise<RecordGetOutput>;
+    /**
+     * List recordings (running and saved), newest first.
+     *
+     * `record.list` (MCP: `record_list`): toolset `record`, read.
+     */
+    list(args?: RecordListArgs, options?: CallOptions): Promise<RecordListOutput>;
+    /**
+     * Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id.
+     *
+     * `record.start` (MCP: `record_start`): toolset `record`, act.
+     */
+    start(args?: RecordStartArgs, options?: CallOptions): Promise<RecordStartOutput>;
+    /**
+     * Stop a recording and write its files. Returns the paths of actions.jsonl, meta.json and the optional video / traffic log.
+     *
+     * `record.stop` (MCP: `record_stop`): toolset `record`, act.
+     */
+    stop(args?: RecordStopArgs, options?: CallOptions): Promise<RecordStopOutput>;
+    /**
+     * Start recording a tab's video (CDP screencast → ffmpeg, constant frame rate). Needs ffmpeg (winget install Gyan.FFmpeg). Stop with record_video_stop.
+     *
+     * `record.video_start` (MCP: `record_video_start`): toolset `record`, act.
+     */
+    video_start(args?: RecordVideoStartArgs, options?: CallOptions): Promise<RecordVideoStartOutput>;
+    /**
+     * Stop a video and finish the file. Returns its path, size, frame counts and length.
+     *
+     * `record.video_stop` (MCP: `record_video_stop`): toolset `record`, act.
+     */
+    video_stop(args?: RecordVideoStopArgs, options?: CallOptions): Promise<RecordVideoStopOutput>;
+  };
+  /** Commands `run.*`. */
+  run: {
+    /**
+     * Cancel a run: kills running scripts, marks the remaining rows cancelled.
+     *
+     * `run.cancel` (MCP: `run_cancel`): toolset `run`, act.
+     */
+    cancel(args: RunCancelArgs, options?: CallOptions): Promise<RunCancelOutput>;
+    /**
+     * Export a run's rows to csv, xlsx, json or sqlite (default data/runs/<id>/results.<ext>) or POST them to a webhook in JSON batches. Columns: row, status, inputs, result keys, error, attempts, duration.
+     *
+     * `run.export` (MCP: `run_export`): toolset `run`, act.
+     */
+    export(args: RunExportArgs, options?: CallOptions): Promise<RunExportOutput>;
+    /**
+     * Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.
+     *
+     * `run.heal_apply` (MCP: `run_heal_apply`): toolset `run`, act.
+     */
+    heal_apply(args: RunHealApplyArgs, options?: CallOptions): Promise<RunHealApplyOutput>;
+    /**
+     * List runs (also from before a browser restart), newest first, with row counts.
+     *
+     * `run.list` (MCP: `run_list`): toolset `run`, read.
+     */
+    list(args?: RunListArgs, options?: CallOptions): Promise<RunListOutput>;
+    /**
+     * Pause a run: rows already running finish, no new rows start.
+     *
+     * `run.pause` (MCP: `run_pause`): toolset `run`, act.
+     */
+    pause(args: RunPauseArgs, options?: CallOptions): Promise<RunPauseOutput>;
+    /**
+     * Row results of a run, paged by cursor: status, inputs, result, error, attempts, duration and stdout tail per row.
+     *
+     * `run.results` (MCP: `run_results`): toolset `run`, read.
+     */
+    results(args: RunResultsArgs, options?: CallOptions): Promise<RunResultsOutput>;
+    /**
+     * Resume a paused run (also one interrupted by a browser restart). Rows waiting for a heal patch are marked failed; use run_heal_apply to fix them instead.
+     *
+     * `run.resume` (MCP: `run_resume`): toolset `run`, act.
+     */
+    resume(args: RunResumeArgs, options?: CallOptions): Promise<RunResumeOutput>;
+    /**
+     * Start a mass run: the script runs once per data row (columns → inputs.<col>), `parallel` at a time, with retries. Returns at once with the run id; follow it with run_status / run_results or the run.progress events.
+     *
+     * `run.start` (MCP: `run_start`): toolset `run`, act.
+     */
+    start(args: RunStartArgs, options?: CallOptions): Promise<RunStartOutput>;
+    /**
+     * Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request.
+     *
+     * `run.status` (MCP: `run_status`): toolset `run`, read.
+     */
+    status(args: RunStatusArgs, options?: CallOptions): Promise<RunStatusOutput>;
+  };
+  /** Commands `script.*`. */
+  script: {
+    /**
+     * Delete a saved script file.
+     *
+     * `script.delete` (MCP: `script_delete`): toolset `script`, act.
+     */
+    delete(args: ScriptDeleteArgs, options?: CallOptions): Promise<ScriptDeleteOutput>;
+    /**
+     * Return the source code of a saved script.
+     *
+     * `script.get` (MCP: `script_get`): toolset `script`, read.
+     */
+    get(args: ScriptGetArgs, options?: CallOptions): Promise<ScriptGetOutput>;
+    /**
+     * List saved scripts (data/scripts/*.ts) with size and modification time. Healed versions appear as <name>.v2, <name>.v3, …
+     *
+     * `script.list` (MCP: `script_list`): toolset `script`, read.
+     */
+    list(args?: ScriptListArgs, options?: CallOptions): Promise<ScriptListOutput>;
+    /**
+     * Run a saved script (name) or inline TypeScript (code) once in the script host and wait. Returns ok, exit_code, duration_ms, result (from browser.output), stdout/stderr tails and a parsed error {code, command, message, line}.
+     *
+     * `script.run` (MCP: `script_run`): toolset `script`, act.
+     */
+    run(args?: ScriptRunArgs, options?: CallOptions): Promise<ScriptRunOutput>;
+    /**
+     * Create or overwrite a saved TypeScript script in data/scripts/<name>.ts.
+     *
+     * `script.save` (MCP: `script_save`): toolset `script`, act.
+     */
+    save(args: ScriptSaveArgs, options?: CallOptions): Promise<ScriptSaveOutput>;
+  };
+  /** Commands `simplify.*`. */
+  simplify: {
+    /**
+     * Effective simplification policy of a host (merged from matching patterns), its CEF content settings and whether ad blocking applies there.
+     *
+     * `simplify.get` (MCP: `simplify_get`): toolset `data`, read.
+     */
+    get(args: SimplifyGetArgs, options?: CallOptions): Promise<SimplifyGetOutput>;
+    /**
+     * All stored site simplification policies, plus the adblock settings (on/off, allowlist, lists).
+     *
+     * `simplify.list` (MCP: `simplify_list`): toolset `data`, read.
+     */
+    list(args?: SimplifyListArgs, options?: CallOptions): Promise<SimplifyListOutput>;
+    /**
+     * Load a URL in a tab with the HTTP cache off and report its cost: requests, blocked requests, bytes over the network, load time, JS heap, DOM nodes, by resource type. Use to compare with/without adblock_apply or site policies.
+     *
+     * `simplify.measure` (MCP: `simplify_measure`): toolset `data`, act, mutates the tab.
+     */
+    measure(args: SimplifyMeasureArgs, options?: CallOptions): Promise<SimplifyMeasureOutput>;
+    /**
+     * Reader mode (Mozilla Readability): the page's main article as {title, byline, text, length}. With apply=true the page is replaced by a clean readable version.
+     *
+     * `simplify.reader` (MCP: `simplify_reader`): toolset `core`, read, mutates the tab.
+     */
+    reader(args?: SimplifyReaderArgs, options?: CallOptions): Promise<SimplifyReaderOutput>;
+    /**
+     * Set what a site may load: js, images, fonts, media, third_party, animations (true = allow, false = block; omitted = unchanged). Saved in simplify.json; takes effect on the next request/navigation.
+     *
+     * `simplify.site` (MCP: `simplify_site`): toolset `data`, act.
+     */
+    site(args: SimplifySiteArgs, options?: CallOptions): Promise<SimplifySiteOutput>;
+  };
   /** Commands `stealth.*`. */
   stealth: {
     /**
@@ -4410,6 +6462,27 @@ export interface Browser {
      */
     write(args: TermWriteArgs, options?: CallOptions): Promise<TermWriteOutput>;
   };
+  /** Commands `trigger.*`. */
+  trigger: {
+    /**
+     * List triggers with their next and last firing.
+     *
+     * `trigger.list` (MCP: `trigger_list`): toolset `run`, read.
+     */
+    list(args?: TriggerListArgs, options?: CallOptions): Promise<TriggerListOutput>;
+    /**
+     * Delete a trigger.
+     *
+     * `trigger.remove` (MCP: `trigger_remove`): toolset `run`, act.
+     */
+    remove(args: TriggerRemoveArgs, options?: CallOptions): Promise<TriggerRemoveOutput>;
+    /**
+     * Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time.
+     *
+     * `trigger.set` (MCP: `trigger_set`): toolset `run`, act.
+     */
+    set(args: TriggerSetArgs, options?: CallOptions): Promise<TriggerSetOutput>;
+  };
   /** Commands `ui.*`. */
   ui: {
     /**
@@ -4429,6 +6502,13 @@ export function createBrowser(transport: Transport): Browser {
   return {
     call: ((name: string, args?: object, options?: CallOptions) =>
       call(name, args, options)) as Browser["call"],
+    adblock: {
+      apply: (args, options) => call<AdblockApplyOutput>("adblock.apply", args, options),
+      check: (args, options) => call<AdblockCheckOutput>("adblock.check", args, options),
+      stats: (args, options) => call<AdblockStatsOutput>("adblock.stats", args, options),
+      toggle: (args, options) => call<AdblockToggleOutput>("adblock.toggle", args, options),
+      update_lists: (args, options) => call<AdblockUpdateListsOutput>("adblock.update_lists", args, options),
+    },
     ai: {
       provider_set: (args, options) => call<AiProviderSetOutput>("ai.provider_set", args, options),
       provider_test: (args, options) => call<AiProviderTestOutput>("ai.provider_test", args, options),
@@ -4531,6 +6611,40 @@ export function createBrowser(transport: Transport): Browser {
       pool_list: (args, options) => call<ProxyPoolListOutput>("proxy.pool_list", args, options),
       pool_remove: (args, options) => call<ProxyPoolRemoveOutput>("proxy.pool_remove", args, options),
     },
+    record: {
+      codegen: (args, options) => call<RecordCodegenOutput>("record.codegen", args, options),
+      get: (args, options) => call<RecordGetOutput>("record.get", args, options),
+      list: (args, options) => call<RecordListOutput>("record.list", args, options),
+      start: (args, options) => call<RecordStartOutput>("record.start", args, options),
+      stop: (args, options) => call<RecordStopOutput>("record.stop", args, options),
+      video_start: (args, options) => call<RecordVideoStartOutput>("record.video_start", args, options),
+      video_stop: (args, options) => call<RecordVideoStopOutput>("record.video_stop", args, options),
+    },
+    run: {
+      cancel: (args, options) => call<RunCancelOutput>("run.cancel", args, options),
+      export: (args, options) => call<RunExportOutput>("run.export", args, options),
+      heal_apply: (args, options) => call<RunHealApplyOutput>("run.heal_apply", args, options),
+      list: (args, options) => call<RunListOutput>("run.list", args, options),
+      pause: (args, options) => call<RunPauseOutput>("run.pause", args, options),
+      results: (args, options) => call<RunResultsOutput>("run.results", args, options),
+      resume: (args, options) => call<RunResumeOutput>("run.resume", args, options),
+      start: (args, options) => call<RunStartOutput>("run.start", args, options),
+      status: (args, options) => call<RunStatusOutput>("run.status", args, options),
+    },
+    script: {
+      delete: (args, options) => call<ScriptDeleteOutput>("script.delete", args, options),
+      get: (args, options) => call<ScriptGetOutput>("script.get", args, options),
+      list: (args, options) => call<ScriptListOutput>("script.list", args, options),
+      run: (args, options) => call<ScriptRunOutput>("script.run", args, options),
+      save: (args, options) => call<ScriptSaveOutput>("script.save", args, options),
+    },
+    simplify: {
+      get: (args, options) => call<SimplifyGetOutput>("simplify.get", args, options),
+      list: (args, options) => call<SimplifyListOutput>("simplify.list", args, options),
+      measure: (args, options) => call<SimplifyMeasureOutput>("simplify.measure", args, options),
+      reader: (args, options) => call<SimplifyReaderOutput>("simplify.reader", args, options),
+      site: (args, options) => call<SimplifySiteOutput>("simplify.site", args, options),
+    },
     stealth: {
       check: (args, options) => call<StealthCheckOutput>("stealth.check", args, options),
       fingerprint_clear: (args, options) => call<StealthFingerprintClearOutput>("stealth.fingerprint_clear", args, options),
@@ -4551,6 +6665,11 @@ export function createBrowser(transport: Transport): Browser {
       open: (args, options) => call<TermOpenOutput>("term.open", args, options),
       resize: (args, options) => call<TermResizeOutput>("term.resize", args, options),
       write: (args, options) => call<TermWriteOutput>("term.write", args, options),
+    },
+    trigger: {
+      list: (args, options) => call<TriggerListOutput>("trigger.list", args, options),
+      remove: (args, options) => call<TriggerRemoveOutput>("trigger.remove", args, options),
+      set: (args, options) => call<TriggerSetOutput>("trigger.set", args, options),
     },
     ui: {
       layout: (args, options) => call<UiLayoutOutput>("ui.layout", args, options),
