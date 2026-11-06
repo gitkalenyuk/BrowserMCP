@@ -1,0 +1,24 @@
+---
+source: crates/perception/tests/fixtures.rs
+expression: drill.text
+---
+snap 2 tab=1 "Understanding Accessibility Trees – Acme Blog" https://blog.acme.com/ax-trees root=@1:g2
+- main
+  - article
+    - heading "Understanding Accessibility Trees" h1
+    - tablist
+      - tab "Overview" @2:e1 selected
+      - tab "Details" @2:e2
+      - tab "FAQ" @2:e3
+    - tabpanel "Overview"
+      - summary "Show more" @2:e4 collapsed
+  - region "Comments"
+    - heading "Comments" h2
+    - form "Add comment"
+      - textbox "Comment" @2:e5
+      - combobox "Sort by" @2:e6 ="Newest" collapsed
+        - listbox
+          - option "Newest" @2:e7 selected
+          - option "Oldest" @2:e8
+          - option "Top rated" @2:e9
+      - button "Post comment" @2:e10

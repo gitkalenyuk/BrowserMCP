@@ -1,0 +1,19 @@
+---
+source: crates/perception/tests/fixtures.rs
+expression: depth2.text
+---
+snap 3 tab=1 "Understanding Accessibility Trees – Acme Blog" https://blog.acme.com/ax-trees mode=skeleton:2
+- banner
+  - link "Acme Blog" @3:e11
+  - nav "Primary" (collapsed, 5 refs) → @3:g1
+  - search
+    - searchbox "Search articles" @3:e12
+    - button "Search" @3:e13
+- main
+  - article (collapsed, 4 refs) → @3:g2
+  - region "Comments" (collapsed, 6 refs) → @3:g3
+- aside
+  - heading "Related" h2
+  - list (collapsed, 3 refs) → @3:g4
+- footer
+  - nav "Footer" (collapsed, 3 refs) → @3:g5

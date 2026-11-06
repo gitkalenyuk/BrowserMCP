@@ -1,0 +1,368 @@
+{
+ "nodes": [
+  {
+   "nodeId": "1",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "RootWebArea"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 144
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Example Domain",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Example Domain"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://example.com/"
+     }
+    }
+   ],
+   "childIds": [
+    "2"
+   ],
+   "backendDOMNodeId": 1,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "2",
+   "ignored": true,
+   "ignoredReasons": [
+    {
+     "name": "uninteresting",
+     "value": {
+      "type": "boolean",
+      "value": true
+     }
+    }
+   ],
+   "role": {
+    "type": "role",
+    "value": "none"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 0
+   },
+   "childIds": [
+    "3"
+   ],
+   "parentId": "1",
+   "backendDOMNodeId": 2,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "3",
+   "ignored": true,
+   "ignoredReasons": [
+    {
+     "name": "uninteresting",
+     "value": {
+      "type": "boolean",
+      "value": true
+     }
+    }
+   ],
+   "role": {
+    "type": "role",
+    "value": "none"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 0
+   },
+   "childIds": [
+    "4",
+    "7",
+    "10"
+   ],
+   "parentId": "2",
+   "backendDOMNodeId": 3,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "4",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "heading"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 96
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Example Domain",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "Example Domain"
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "level",
+     "value": {
+      "type": "integer",
+      "value": 1
+     }
+    }
+   ],
+   "childIds": [
+    "5"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 4,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "5",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Example Domain"
+   },
+   "properties": [],
+   "childIds": [
+    "6"
+   ],
+   "parentId": "4",
+   "backendDOMNodeId": 5,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "6",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "Example Domain"
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "5",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "7",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "paragraph"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 133
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "8"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 6,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "8",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "This domain is for use in illustrative examples in documents. You may use this domain in literature without prior coordination or asking for permission."
+   },
+   "properties": [],
+   "childIds": [
+    "9"
+   ],
+   "parentId": "7",
+   "backendDOMNodeId": 7,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "9",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "This domain is for use in illustrative examples in documents. You may use this domain in literature without prior coordination or asking for permission."
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "8",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "10",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "paragraph"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 133
+   },
+   "name": {
+    "type": "computedString",
+    "value": ""
+   },
+   "properties": [],
+   "childIds": [
+    "11"
+   ],
+   "parentId": "3",
+   "backendDOMNodeId": 8,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "11",
+   "ignored": false,
+   "role": {
+    "type": "role",
+    "value": "link"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 110
+   },
+   "name": {
+    "type": "computedString",
+    "value": "More information...",
+    "sources": [
+     {
+      "type": "contents",
+      "value": {
+       "type": "computedString",
+       "value": "More information..."
+      }
+     }
+    ]
+   },
+   "properties": [
+    {
+     "name": "focusable",
+     "value": {
+      "type": "booleanOrUndefined",
+      "value": true
+     }
+    },
+    {
+     "name": "url",
+     "value": {
+      "type": "string",
+      "value": "https://www.iana.org/domains/example"
+     }
+    }
+   ],
+   "childIds": [
+    "12"
+   ],
+   "parentId": "10",
+   "backendDOMNodeId": 9,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "12",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "StaticText"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 158
+   },
+   "name": {
+    "type": "computedString",
+    "value": "More information..."
+   },
+   "properties": [],
+   "childIds": [
+    "13"
+   ],
+   "parentId": "11",
+   "backendDOMNodeId": 10,
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  },
+  {
+   "nodeId": "13",
+   "ignored": false,
+   "role": {
+    "type": "internalRole",
+    "value": "InlineTextBox"
+   },
+   "chromeRole": {
+    "type": "internalRole",
+    "value": 101
+   },
+   "name": {
+    "type": "computedString",
+    "value": "More information..."
+   },
+   "properties": [],
+   "childIds": [],
+   "parentId": "12",
+   "frameId": "8A3C9E1F4B2D6E7A9C0B1D2E3F4A5B6C"
+  }
+ ]
+}
