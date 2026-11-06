@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use bmcp_core::testing::{FakeBackend, ctx};
-use bmcp_core::{BackendError, Caller, CmdError, ErrorCode, Registry, TabId};
+use bmcp_core::{BackendError, BrowserBackend, Caller, CmdError, ErrorCode, Registry, TabId};
 use serde_json::{Value, json};
 
 /// Backend ids in `tests/fixtures/cdp/login_form.json`.
@@ -38,6 +38,11 @@ struct Page {
     gone: HashSet<i64>,
     /// Node the hit test reports, whatever the point (e.g. a dialog on top).
     hit_override: Option<i64>,
+    /// A `pointer-events: none` overlay over everything: the hit test only reports it when
+    /// asked to hit-test such elements (`ignorePointerEventsNone: true`).
+    click_through_overlay: Option<i64>,
+    /// Text nodes → their parent element. Like Chromium, the hit test reports the parent.
+    text_parents: HashMap<i64, i64>,
     history: Value,
 }
 
@@ -61,6 +66,8 @@ impl Page {
             probes,
             gone: HashSet::new(),
             hit_override: None,
+            click_through_overlay: None,
+            text_parents: HashMap::new(),
             history: json!({ "currentIndex": 0, "entries": [{ "id": 1, "url": "https://acme.com/login" }] }),
         }
     }
@@ -104,7 +111,11 @@ fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value,
         }
         "DOM.getNodeForLocation" => {
             let y = params["y"].as_i64().unwrap_or(0);
-            Ok(json!({ "backendNodeId": page.hit_override.unwrap_or(y / 10) }))
+            let under = page.text_parents.get(&(y / 10)).copied().unwrap_or(y / 10);
+            let overlay = page
+                .click_through_overlay
+                .filter(|_| params["ignorePointerEventsNone"] == true);
+            Ok(json!({ "backendNodeId": page.hit_override.or(overlay).unwrap_or(under) }))
         }
         "Input.dispatchMouseEvent" => {
             if params["type"] == "mousePressed"
@@ -122,9 +133,16 @@ fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value,
                     || json!({ "connected": true, "tag": "button", "type": "submit" }),
                 )
             } else if function.contains("n.host") {
-                // Hit check: does the hit node belong to the target?
+                // Hit check: does the hit node belong to the target? Like the real script,
+                // a text node stands for its parent element when the script normalizes it.
                 let hit = id_of(&params["arguments"][0]["objectId"]);
-                json!(hit == this)
+                let normalizes =
+                    function.contains("this.nodeType === 1 ? this : this.parentElement");
+                let target = match page.text_parents.get(&this) {
+                    Some(&parent) if normalizes => parent,
+                    _ => this,
+                };
+                json!(hit == target)
             } else if function.contains("[role=\"dialog\"]") {
                 // Cover lookup: the Accept button lives in the cookie dialog.
                 let cover = if this == ACCEPT_ALL {
@@ -195,16 +213,16 @@ impl Harness {
 
     /// Take a snapshot and return the ref printed for a backend node.
     async fn snapshot_ref(&self, backend: i64) -> String {
-        let out = self.ok("page.snapshot", json!({})).await;
+        self.snapshot_ref_in(TabId(1), backend).await
+    }
+
+    /// [`Harness::snapshot_ref`] in a given tab.
+    async fn snapshot_ref_in(&self, tab: TabId, backend: i64) -> String {
+        let out = self.ok("page.snapshot", json!({ "tab": tab })).await;
         let text = out["text"].as_str().unwrap().to_string();
         // Look the node up in the snapshot the command just stored (the registry's shared
         // state), instead of guessing ref numbers.
-        let ext = self
-            .registry
-            .extensions()
-            .get::<crate::PerceptionState>()
-            .unwrap();
-        let tab = ext.tab(TabId(1));
+        let tab = self.perception().tab(tab);
         let st = tab.lock().await;
         let (snap, _) = st.history.back().unwrap();
         snap.refs
@@ -212,6 +230,22 @@ impl Harness {
             .find(|r| r.backend_node_id == backend)
             .map(|r| r.ref_str.clone())
             .unwrap_or_else(|| panic!("no ref for {backend} in:\n{text}"))
+    }
+
+    /// The shared per-tab state the commands use.
+    fn perception(&self) -> Arc<crate::PerceptionState> {
+        self.registry
+            .extensions()
+            .get::<crate::PerceptionState>()
+            .unwrap()
+    }
+
+    /// Open another tab showing the same scripted page.
+    async fn open_tab(&self) -> TabId {
+        self.fake
+            .open_tab("https://acme.com/login".into(), true)
+            .await
+            .unwrap()
     }
 
     /// CDP calls of one method, as params.
@@ -744,6 +778,176 @@ async fn per_tab_state_survives_between_calls() {
     // Same refs, next snapshot id.
     assert_eq!(out["snap"], 2);
     assert!(out["text"].as_str().unwrap().contains("@2:e2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn click_through_overlay_does_not_cover_the_target() {
+    // Regression: the hit test asked Chromium to hit-test `pointer-events: none` elements,
+    // so a decorative overlay that real clicks pass through made every click fail with
+    // NOT_INTERACTABLE "covered by ...".
+    let mut page = Page::login();
+    page.click_through_overlay = Some(COOKIES_DIALOG);
+    let h = Harness::new(page);
+    let sign_in = h.snapshot_ref(SIGN_IN).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": sign_in, "action": "click", "returns": "none" }),
+    )
+    .await;
+    let hit_test = &h.sent("DOM.getNodeForLocation")[0];
+    assert_eq!(hit_test["ignorePointerEventsNone"], false);
+    assert_eq!(h.sent("Input.dispatchMouseEvent").len(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn text_refs_from_find_can_be_clicked_and_hovered() {
+    // Regression: a page.find text match is a DOM text node. The hit test reports the
+    // element around it, which never "was" the text node, so every click ended in
+    // NOT_INTERACTABLE "covered by <its own parent>".
+    const COOKIE_TEXT: i64 = 70; // StaticText "We use cookies..." inside paragraph 69
+    let mut page = Page::login();
+    page.text_parents.insert(COOKIE_TEXT, 69);
+    let h = Harness::new(page);
+    let out = h.ok("page.find", json!({ "text": "we use cookies" })).await;
+    let text = out["text"].as_str().unwrap();
+    assert!(text.contains("- text \"We use cookies"), "{text}");
+    let r = text
+        .split_whitespace()
+        .find(|w| w.starts_with('@'))
+        .unwrap();
+    h.ok(
+        "page.act",
+        json!({ "ref": r, "action": "hover", "returns": "none" }),
+    )
+    .await;
+    h.ok(
+        "page.act",
+        json!({ "ref": r, "action": "click", "returns": "none" }),
+    )
+    .await;
+    // The click lands on the text itself (its own box), not the middle of the paragraph.
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 4);
+    assert_eq!(mouse[1]["type"], "mouseMoved");
+    assert_eq!(mouse[2]["y"].as_f64(), Some(704.0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn ref_from_another_tab_never_resolves_and_names_its_tab() {
+    // Regression: snapshot ids and e-numbers started at 1 in every tab, so `@1:e5` from
+    // tab 1, sent without `tab` (default: the newest tab), clicked e5 of tab 2.
+    let mut page = Page::login();
+    page.tree_after_click = None;
+    let h = Harness::new(page);
+    let tab1_ref = h.snapshot_ref(SIGN_IN).await;
+    let tab2 = h.open_tab().await;
+    let tab2_ref = h.snapshot_ref_in(tab2, SIGN_IN).await;
+    // Same page, same DOM ids, but a different snapshot id and e-number.
+    assert_ne!(tab1_ref, tab2_ref);
+    assert!(tab2_ref.starts_with("@2:"), "{tab2_ref}");
+
+    let bare = tab1_ref.split(':').nth(1).unwrap().to_string();
+    for r in [tab1_ref.clone(), bare] {
+        let err = h
+            .call("page.act", json!({ "ref": r, "action": "click" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound, "{r}: {}", err.message);
+        assert!(
+            err.message.contains("belongs to tab 1, not to tab 2"),
+            "{}",
+            err.message
+        );
+        assert!(err.hint.unwrap().contains("tab=1"));
+        assert_eq!(err.retry, bmcp_core::Retry::No);
+    }
+    assert!(h.sent("Input.dispatchMouseEvent").is_empty());
+
+    // page.read and page.snapshot root= say the same.
+    let err = h
+        .call("page.read", json!({ "ref": tab1_ref }))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("belongs to tab 1"), "{}", err.message);
+    let err = h
+        .call("page.snapshot", json!({ "root": tab1_ref }))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("belongs to tab 1"), "{}", err.message);
+
+    // With the right tab both refs work.
+    h.ok(
+        "page.act",
+        json!({ "ref": tab1_ref, "tab": 1, "action": "click", "returns": "none" }),
+    )
+    .await;
+    h.ok(
+        "page.act",
+        json!({ "ref": tab2_ref, "action": "click", "returns": "none" }),
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn closed_tabs_are_forgotten() {
+    // Regression: nothing removed a closed tab's state (refs + up to 16 full snapshots).
+    let h = Harness::new(Page::login());
+    let tab2 = h.open_tab().await;
+    h.ok("page.snapshot", json!({ "tab": 1 })).await;
+    h.ok("page.snapshot", json!({ "tab": tab2 })).await;
+    let mut tracked = h.perception().tracked_tabs();
+    tracked.sort();
+    assert_eq!(tracked, [TabId(1), tab2]);
+
+    h.fake.close_tab(tab2).await.unwrap();
+    h.ok("page.snapshot", json!({ "tab": 1 })).await;
+    assert_eq!(h.perception().tracked_tabs(), [TabId(1)]);
+}
+
+#[test]
+fn snapshot_history_is_capped_in_bytes() {
+    use bmcp_perception::{PageHeader, Snapshot, SnapshotOptions};
+    let mut state = crate::TabState::default();
+    let big = |id: u64| Snapshot {
+        id,
+        document: 0,
+        header: PageHeader::default(),
+        text: "x".repeat(3 << 20),
+        refs: Vec::new(),
+        nodes: Vec::new(),
+        skeleton_fallback: false,
+        cut: false,
+    };
+    for id in 1..=10 {
+        state.remember(big(id), SnapshotOptions::default());
+        assert!(state.history_bytes() <= crate::state::KEEP_HISTORY_BYTES);
+    }
+    // The newest snapshots stay; a single one over the limit is still kept.
+    assert_eq!(state.history.back().unwrap().0.id, 10);
+    assert_eq!(state.history.len(), 2);
+    let mut huge = big(11);
+    huge.text = "x".repeat(crate::state::KEEP_HISTORY_BYTES + 1);
+    state.remember(huge, SnapshotOptions::default());
+    assert_eq!(state.history.len(), 1);
+    assert_eq!(state.latest().unwrap().0.id, 11);
+}
+
+#[tokio::test(start_paused = true)]
+async fn explicit_refs_stay_valid_over_many_acts_on_an_unchanged_page() {
+    // Regression: each page.act took two diff snapshots, and after 64 snapshots the record
+    // of the agent's snapshot was gone, so `@1:e5` failed with STALE_REF after ~32 acts.
+    let mut page = Page::login();
+    page.tree_after_click = None;
+    let h = Harness::new(page);
+    let email = h.snapshot_ref(EMAIL).await;
+    assert!(email.starts_with("@1:"), "{email}");
+    for i in 0..40 {
+        let out = h
+            .call("page.act", json!({ "ref": email, "action": "hover" }))
+            .await
+            .unwrap_or_else(|e| panic!("act {i} failed: {e:?}"));
+        assert!(out["text"].as_str().unwrap().contains("no changes"));
+    }
 }
 
 #[test]

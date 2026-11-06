@@ -2,14 +2,15 @@
 
 use std::time::Duration;
 
-use bmcp_core::{CmdError, Ctx, ErrorCode, TabId, TabInfo};
+use bmcp_core::{CmdError, Ctx, ErrorCode, Retry, TabId, TabInfo};
 use bmcp_perception::{
-    AxTree, Mode, PageHeader, Scroll, Snapshot, SnapshotOptions, Viewport, snapshot,
+    AxTree, Mode, PageHeader, PerceptionError, Scroll, Snapshot, SnapshotOptions, Viewport,
+    snapshot,
 };
 use serde_json::json;
 
 use crate::cdp::{self, perception_error};
-use crate::state::TabState;
+use crate::state::{PerceptionState, TabState};
 
 /// Longest we wait for a page to finish loading after an action.
 pub const SETTLE_MAX: Duration = Duration::from_secs(10);
@@ -91,9 +92,54 @@ pub async fn take_snapshot_with_tree(
     sync_document(ctx, tab, state).await?;
     let tree = ax_tree(ctx, tab).await?;
     let header = header(ctx, tab).await?;
-    let snap = snapshot(&tree, &mut state.registry, &options, header).map_err(perception_error)?;
+    let snap = snapshot(&tree, &mut state.registry, &options, header).map_err(|err| {
+        // Only a bad drill-down root (`root=`) makes a snapshot fail with a ref error.
+        match &options.root {
+            Some(root) => ref_error(ctx, tab, root, err),
+            None => perception_error(err),
+        }
+    })?;
     state.remember(snap.clone(), options);
     Ok((snap, tree))
+}
+
+/// Resolve an element ref (`@4:e3`, `e3`) of `tab` to its DOM node. If the ref came from
+/// another tab the error says which one.
+pub fn resolve_ref(ctx: &Ctx, tab: TabId, state: &TabState, input: &str) -> Result<i64, CmdError> {
+    state
+        .registry
+        .resolve(input)
+        .map_err(|err| ref_error(ctx, tab, input, err))
+}
+
+/// The command error for a ref that failed in `tab`. Snapshot ids and e-numbers are unique
+/// across tabs, so a ref from another tab never resolves here; when another tab handed it
+/// out, tell the agent to pass that tab instead of a plain "no such ref".
+pub fn ref_error(ctx: &Ctx, tab: TabId, input: &str, err: PerceptionError) -> CmdError {
+    let is_ref_error = matches!(
+        err,
+        PerceptionError::BadRef { .. } | PerceptionError::StaleRef { .. }
+    );
+    let owner = if is_ref_error {
+        PerceptionState::from_ctx(ctx).owner_of(tab, input)
+    } else {
+        None
+    };
+    match owner {
+        Some(owner) => CmdError::new(
+            ErrorCode::NotFound,
+            format!(
+                "ref {} belongs to tab {owner}, not to tab {tab}",
+                input.trim()
+            ),
+        )
+        .with_retry(Retry::No)
+        .with_hint(format!(
+            "Pass tab={owner}: a ref only works in the tab whose page_snapshot or page_find \
+             printed it."
+        )),
+        None => perception_error(err),
+    }
 }
 
 /// Options for the snapshots `page.act` compares to build its diff: everything (text too),

@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::cdp::{self, BoxRect, perception_error};
+use crate::cdp::{self, BoxRect};
 use crate::human;
 use crate::keys;
 use crate::page;
@@ -134,12 +134,17 @@ const PROBE_JS: &str = r#"function() {
   return { connected: true, tag, type, disabled, readonly, hidden, editable, checked };
 }"#;
 
-/// `this` = target element, argument = the node the hit test found. True when a click there
+/// `this` = target node, argument = the node the hit test found. True when a click there
 /// reaches the target: the hit node is the target, inside it (also across shadow roots), or
 /// inside one of its `<label>`s.
+///
+/// A text node (a `page.find` text match) stands for its parent element: the hit test never
+/// returns text nodes, it reports the element around them, which is where the click goes.
 const HIT_OK_JS: &str = r#"function(hit) {
-  for (let n = hit; n; n = n.parentNode || n.host) { if (n === this) return true; }
-  if (this.labels) { for (const l of this.labels) { if (l === hit || l.contains(hit)) return true; } }
+  const self = this.nodeType === 1 ? this : this.parentElement;
+  if (!self) return false;
+  for (let n = hit; n; n = n.parentNode || n.host) { if (n === self) return true; }
+  if (self.labels) { for (const l of self.labels) { if (l === hit || l.contains(hit)) return true; } }
   return false;
 }"#;
 
@@ -531,10 +536,7 @@ async fn resolve_target(
     state: &TabState,
     target_ref: &str,
 ) -> Result<Target, CmdError> {
-    let backend_node_id = state
-        .registry
-        .resolve(target_ref)
-        .map_err(perception_error)?;
+    let backend_node_id = page::resolve_ref(ctx, tab, state, target_ref)?;
     let label = match state.describe(backend_node_id) {
         Some(desc) => format!("{} {desc}", target_ref.trim()),
         None => target_ref.trim().to_string(),
@@ -664,6 +666,10 @@ async fn check_once(
     // Hit test: which node would receive a click at (x, y)? Unlike the quads and mouse events
     // (viewport coordinates), `DOM.getNodeForLocation` takes document coordinates, so add the
     // scroll offset (verified live on a scrolled page).
+    //
+    // `ignorePointerEventsNone: false` makes the hit test skip `pointer-events: none`
+    // elements, exactly like a real mouse event does: a decorative overlay or fade that
+    // clicks pass through does not count as covering the target.
     let hit = ctx
         .backend
         .cdp(
@@ -673,7 +679,7 @@ async fn check_once(
                 "x": (x + layout.page_x).floor() as i64,
                 "y": (y + layout.page_y).floor() as i64,
                 "includeUserAgentShadowDOM": false,
-                "ignorePointerEventsNone": true,
+                "ignorePointerEventsNone": false,
             }),
         )
         .await;

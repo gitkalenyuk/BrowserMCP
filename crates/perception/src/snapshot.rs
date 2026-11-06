@@ -108,7 +108,8 @@ pub struct NodeEntry {
 /// The result of [`snapshot`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
-    /// Snapshot id (the `7` in `@7:e3`), increasing per tab.
+    /// Snapshot id (the `7` in `@7:e3`), increasing and unique across all tabs whose
+    /// registries share a [`crate::RefSpace`].
     pub id: u64,
     /// Document generation of the registry when this was taken.
     pub document: u64,
@@ -121,9 +122,16 @@ pub struct Snapshot {
     pub nodes: Vec<NodeEntry>,
     /// True when the text was over budget and a skeleton is shown instead.
     pub skeleton_fallback: bool,
-    /// True when even the smallest skeleton was over budget and lines were cut.
+    /// True when lines were left out: even the smallest skeleton was over budget, or the
+    /// page tree is deeper than [`MAX_TREE_DEPTH`].
     pub cut: bool,
 }
+
+/// How deep into the accessibility tree snapshots and `find` look. The walk is
+/// recursive, so a page that nests elements thousands of levels deep (a script can do
+/// that) would otherwise overflow the stack and abort the whole app. Real pages stay far
+/// below this; deeper parts are left out with a `! ...` notice.
+pub const MAX_TREE_DEPTH: usize = 512;
 
 /// A node of the pruned "view tree".
 #[derive(Debug, Clone)]
@@ -147,6 +155,8 @@ struct Builder<'a> {
     full: bool,
     /// Protects against malformed trees with cycles.
     visited: Vec<bool>,
+    /// Set when part of the tree was deeper than [`MAX_TREE_DEPTH`] and was left out.
+    too_deep: bool,
 }
 
 impl<'a> Builder<'a> {
@@ -155,16 +165,17 @@ impl<'a> Builder<'a> {
             tree,
             full,
             visited: vec![false; tree.nodes.len()],
+            too_deep: false,
         }
     }
 
-    /// Build all children of `index`, flattening their results into one list.
-    /// `context_name` is the name of the nearest named ancestor (used to drop text that
-    /// only repeats it).
-    fn build_children(&mut self, index: usize, context_name: &str) -> Vec<VNode> {
+    /// Build all children of `index` (which is `depth` levels below the start), flattening
+    /// their results into one list. `context_name` is the name of the nearest named
+    /// ancestor (used to drop text that only repeats it).
+    fn build_children(&mut self, index: usize, context_name: &str, depth: usize) -> Vec<VNode> {
         let mut out = Vec::new();
         for child in self.tree.children(index) {
-            out.extend(self.build(child, context_name));
+            out.extend(self.build(child, context_name, depth + 1));
         }
         if self.full {
             drop_label_texts(&mut out);
@@ -172,10 +183,16 @@ impl<'a> Builder<'a> {
         out
     }
 
-    /// Build one AX node. Returns zero nodes (dropped), one node (kept) or the node's
-    /// children (flattened).
-    fn build(&mut self, index: usize, context_name: &str) -> Vec<VNode> {
+    /// Build one AX node, `depth` levels below the start. Returns zero nodes (dropped),
+    /// one node (kept) or the node's children (flattened).
+    fn build(&mut self, index: usize, context_name: &str, depth: usize) -> Vec<VNode> {
         if self.visited[index] {
+            return Vec::new();
+        }
+        // The recursion stops here, so the view tree (and everything that walks it
+        // recursively later, including dropping it) is at most this deep too.
+        if depth > MAX_TREE_DEPTH {
+            self.too_deep = true;
             return Vec::new();
         }
         self.visited[index] = true;
@@ -187,7 +204,7 @@ impl<'a> Builder<'a> {
             return Vec::new();
         }
         if node.ignored {
-            return self.build_children(index, context_name);
+            return self.build_children(index, context_name, depth);
         }
         if role == "StaticText" {
             return self.build_text(index, context_name);
@@ -195,7 +212,7 @@ impl<'a> Builder<'a> {
 
         let mut name = clean(node.name());
         let child_context: &str = if name.is_empty() { context_name } else { &name };
-        let mut children = self.build_children(index, child_context);
+        let mut children = self.build_children(index, child_context, depth);
 
         // A focusable div that *contains* buttons is a scroll container, not a button.
         let interactive = roles::has_interactive_role(node)
@@ -479,6 +496,8 @@ struct Plan<'a> {
     roots: &'a [VNode],
     snap_id: u64,
     header: String,
+    /// Printed under the header in every attempt (the tree-depth notice).
+    fixed_notice: Option<String>,
     options: &'a SnapshotOptions,
     expand_ax: Option<usize>,
 }
@@ -506,8 +525,12 @@ fn render_attempt<'a>(
         budget: None,
         cut: false,
     };
-    // The header line is always printed; the budget applies to everything after it.
+    // The header line (and the depth notice) is always printed; the budget applies to
+    // everything after it.
     renderer.push_line(plan.header.clone());
+    if let Some(notice) = &plan.fixed_notice {
+        renderer.push_line(notice.clone());
+    }
     renderer.budget = budget;
     if let Some(notice) = notice {
         renderer.push_line(notice);
@@ -550,17 +573,27 @@ pub fn snapshot(
     let mut builder = Builder::new(tree, options.mode == Mode::Full);
     let roots = if tree.nodes[root].role() == "RootWebArea" {
         // The document itself is the header line; print its children at depth 0.
-        builder.build_children(root, "")
+        builder.build_children(root, "", 0)
     } else {
-        builder.build(root, "")
+        builder.build(root, "", 0)
     };
+    let fixed_notice = builder.too_deep.then(|| {
+        format!(
+            "! the page tree is deeper than {MAX_TREE_DEPTH} levels; deeper parts are not shown"
+        )
+    });
 
-    let id = registry.begin_snapshot();
+    // From here on this snapshot hands out snapshot ids and e-numbers: hold the shared
+    // counters so a snapshot of another tab cannot hand out the same ones meanwhile.
+    let space = registry.space();
+    let mut counters = space.lock();
+    let id = registry.begin_snapshot(&mut counters);
     let plan = Plan {
         tree,
         roots: &roots,
         snap_id: id,
         header: header_line(id, &header, options),
+        fixed_notice,
         options,
         expand_ax: options.root.as_ref().map(|_| root),
     };
@@ -605,10 +638,11 @@ pub fn snapshot(
 
     // Commit the chosen attempt.
     let skeleton_fallback = depth != requested_depth;
-    let cut = result.cut;
+    let cut = result.cut || builder.too_deep;
     let text = result.lines.join("\n");
     registry.ids = result.ids;
-    registry.finish_snapshot(id, result.groups);
+    registry.finish_snapshot(&mut counters, id, result.groups);
+    drop(counters);
     Ok(Snapshot {
         id,
         document: registry.document(),
@@ -797,5 +831,110 @@ mod tests {
             "{first}"
         );
         assert!(text.contains(r#"button "Say \"hi\"" @1:e2"#), "{text}");
+    }
+
+    /// The root, then a chain of `depth` nested `generic` nodes, with a button inside the
+    /// third one and a link at the very bottom.
+    fn deep_chain(depth: usize) -> AxTree {
+        let role = |r: &str| serde_json::json!({"type": "role", "value": r});
+        let name = |n: &str| serde_json::json!({"type": "computedString", "value": n});
+        let mut nodes = vec![serde_json::json!({
+            "nodeId": "0", "role": role("RootWebArea"), "childIds": ["1"], "backendDOMNodeId": 1,
+        })];
+        for i in 1..=depth {
+            let mut children = Vec::new();
+            if i < depth {
+                children.push((i + 1).to_string());
+            } else {
+                children.push("bottom".to_string());
+            }
+            if i == 3 {
+                children.push("button".to_string());
+            }
+            nodes.push(serde_json::json!({
+                "nodeId": i.to_string(), "parentId": (i - 1).to_string(), "role": role("generic"),
+                "childIds": children, "backendDOMNodeId": i as i64 + 1,
+            }));
+        }
+        nodes.push(serde_json::json!({
+            "nodeId": "button", "parentId": "3", "role": role("button"), "name": name("Near the top"),
+            "backendDOMNodeId": -1,
+        }));
+        nodes.push(serde_json::json!({
+            "nodeId": "bottom", "parentId": depth.to_string(), "role": role("link"),
+            "name": name("Deep down"), "backendDOMNodeId": -2,
+        }));
+        AxTree::from_cdp(&serde_json::json!({ "nodes": nodes })).unwrap()
+    }
+
+    #[test]
+    fn very_deep_trees_are_cut_instead_of_overflowing_the_stack() {
+        // Regression: the walk recursed once per level, so a page nesting 100k elements
+        // overflowed the stack and aborted the whole app.
+        let t = deep_chain(100_000);
+        for mode in [Mode::Interactive, Mode::Full] {
+            let mut registry = RefRegistry::new();
+            let options = SnapshotOptions {
+                mode,
+                ..SnapshotOptions::default()
+            };
+            let snap = snapshot(&t, &mut registry, &options, PageHeader::default()).unwrap();
+            let lines: Vec<&str> = snap.text.lines().collect();
+            assert!(
+                lines[1].starts_with("! the page tree is deeper than 512 levels"),
+                "{}",
+                snap.text
+            );
+            assert!(
+                snap.text.contains("button \"Near the top\" @1:e1"),
+                "{}",
+                snap.text
+            );
+            assert!(!snap.text.contains("Deep down"), "{}", snap.text);
+            assert!(snap.cut);
+        }
+
+        // find has the same limit.
+        let mut registry = RefRegistry::new();
+        let filter = crate::find::Filter {
+            role: Some("link".into()),
+            ..Default::default()
+        };
+        let found = crate::find::find(&t, &mut registry, &filter, 10).unwrap();
+        assert_eq!(found.total, 0);
+        assert!(found.too_deep);
+        assert!(found.to_text().contains("deeper than 512 levels"));
+
+        // A shallow tree has no notice.
+        let shallow = deep_chain(20);
+        let snap = snapshot(
+            &shallow,
+            &mut RefRegistry::new(),
+            &SnapshotOptions::default(),
+            PageHeader::default(),
+        )
+        .unwrap();
+        assert!(!snap.cut && !snap.text.contains("! "), "{}", snap.text);
+        assert!(snap.text.contains("link \"Deep down\""), "{}", snap.text);
+    }
+
+    #[test]
+    fn registries_sharing_a_space_number_across_tabs() {
+        let t = tree(&[
+            ("1", "", "RootWebArea", "", "", 1),
+            ("2", "1", "button", "OK", "", 2),
+        ]);
+        let space = crate::refs::RefSpace::new();
+        let mut tab_a = RefRegistry::with_space(space.clone());
+        let mut tab_b = RefRegistry::with_space(space);
+        let options = SnapshotOptions::default();
+        let a = snapshot(&t, &mut tab_a, &options, PageHeader::default()).unwrap();
+        let b = snapshot(&t, &mut tab_b, &options, PageHeader::default()).unwrap();
+        assert_eq!(a.refs[0].ref_str, "@1:e1");
+        // Same page in another tab: the next snapshot id and a new e-number.
+        assert_eq!(b.refs[0].ref_str, "@2:e2");
+        assert!(tab_b.resolve("@1:e1").is_err());
+        assert!(tab_b.resolve("e1").is_err());
+        assert_eq!(tab_a.resolve("e1"), Ok(2));
     }
 }

@@ -56,11 +56,25 @@ snap 7 tab=3 "Sign in – Acme" https://acme.com/login vp=1280x720 y=0/1840
 ### Refs
 
 * `@S:eN` – element. N is stable per `backendDOMNodeId` for the whole document, so
-  `@7:e3` and `@8:e3` are the same node. Bare `e3` means "latest snapshot".
-* `@S:gN` – group (collapsed part of snapshot S), only for `root=`.
+  `@7:e3` and `@8:e3` are the same node. Bare `e3` means "latest snapshot". An element
+  ref stays valid as long as the document does, however many snapshots ago `S` was
+  taken (only the e-number is looked up; `S` is checked when it is still remembered).
+* `@S:gN` – group (collapsed part of snapshot S), only for `root=`. Needs the record of
+  snapshot S: the last 64 per tab are kept, snapshots with groups are kept longest.
 * After `RefRegistry::new_document()` (call it when the page navigates) old refs give
   `STALE_REF`. Numbers keep increasing across documents, so an old `e3` never silently
   points at a new node.
+* **Tabs**: snapshot ids and e-numbers come from a `RefSpace`. Give every tab's registry
+  the same space (`RefRegistry::with_space`) and they are unique across tabs: the first
+  snapshot of a second tab is `snap 2` (or later) and its numbers continue after the
+  first tab's, e.g. tab 3 shows `@1:e1..e20`, then tab 4 shows `@2:e21..`. A ref from
+  another tab therefore never resolves; `RefRegistry::issued(ref)` tells which registry
+  handed it out, so the caller can answer "belongs to tab 3, pass tab=3".
+  `RefRegistry::new()` has its own space (numbers start at 1, as in the examples above).
+* Depth: snapshots and `find` look at most `MAX_TREE_DEPTH` (512) levels deep; deeper
+  parts are left out with a `! the page tree is deeper than 512 levels ...` line (and
+  `Snapshot::cut` / `FindResult::too_deep` set), so a hostile page cannot overflow the
+  stack.
 
 ### Diff
 
@@ -76,7 +90,8 @@ Nodes are matched by `backendDOMNodeId`; compare snapshots taken with the same o
 
 ```rust
 let tree = AxTree::from_cdp(&cdp_result)?;          // + .with_layout(map) optionally
-let mut registry = RefRegistry::new();               // one per tab
+let space = RefSpace::new();                         // one per browser
+let mut registry = RefRegistry::with_space(space.clone()); // one per tab
 let snap = snapshot(&tree, &mut registry, &SnapshotOptions::default(), header)?;
 snap.text;                                           // for the model
 snap.refs;                                           // Vec<RefEntry { ref_str, backend_node_id, role, name }>

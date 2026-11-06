@@ -27,7 +27,14 @@ const SNAPSHOT_LOAD_WAIT: Duration = Duration::from_secs(5);
 
 /// Lock the tab's perception state (see the module docs).
 async fn lock_tab(ctx: &Ctx, tab: TabId) -> tokio::sync::OwnedMutexGuard<TabState> {
-    PerceptionState::from_ctx(ctx).tab(tab).lock_owned().await
+    let perception = PerceptionState::from_ctx(ctx);
+    // Forget the state of tabs that were closed (or crashed) since the last call, so their
+    // refs and snapshot history do not pile up. Not fatal when the list is unavailable.
+    if let Ok(open) = ctx.backend.list_tabs().await {
+        let open: Vec<TabId> = open.iter().map(|t| t.id).collect();
+        perception.retain(&open);
+    }
+    perception.tab(tab).lock_owned().await
 }
 
 // ------------------------------------------------------------------ page.snapshot
@@ -303,7 +310,7 @@ async fn run_steps(
     let document = state.registry.document();
     // Resolve the first ref now, so a bad ref fails before we spend time on a snapshot.
     if let Some(first) = steps.first().and_then(|s| s.target.as_deref()) {
-        state.registry.resolve(first).map_err(perception_error)?;
+        page::resolve_ref(ctx, tab, state, first)?;
     }
     // "Before" picture for the diff, with everything in it (text too) so no change is missed.
     let before = if returns == Returns::Diff {
@@ -571,7 +578,7 @@ impl Command for Read {
             Some(target) => {
                 let mut state = lock_tab(&ctx, tab).await;
                 page::sync_document(&ctx, tab, &mut state).await?;
-                let backend = state.registry.resolve(target).map_err(perception_error)?;
+                let backend = page::resolve_ref(&ctx, tab, &state, target)?;
                 let object = cdp::resolve_object(&ctx, tab, backend, target).await?;
                 cdp::call_function(&ctx, tab, &object, act::READ_JS, &[]).await?
             }
@@ -650,7 +657,7 @@ impl Command for Screenshot {
             let backend = {
                 let mut state = lock_tab(&ctx, tab).await;
                 page::sync_document(&ctx, tab, &mut state).await?;
-                state.registry.resolve(target).map_err(perception_error)?
+                page::resolve_ref(&ctx, tab, &state, target)?
             };
             let _ = ctx
                 .backend
@@ -972,7 +979,7 @@ async fn wait_condition_met(
         WaitFor::Ref => {
             let mut state = lock_tab(ctx, tab).await;
             page::sync_document(ctx, tab, &mut state).await?;
-            let backend = state.registry.resolve(value).map_err(perception_error)?;
+            let backend = page::resolve_ref(ctx, tab, &state, value)?;
             cdp::content_box(ctx, tab, backend).await?.is_some()
         }
     })
