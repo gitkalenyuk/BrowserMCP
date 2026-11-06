@@ -52,11 +52,11 @@ Subscribe with `events.subscribe {"topics": ["run.*"]}`.
 | `run.heal_applied` | `{id, proposal_id, script, requeued, auto}` | "Patched (script → login.v2), run continues" |
 | `run.heal_failed` | `{id, row, attempts, error}` | "No usable patch: fix by hand (`run.heal_apply`) or skip (`run.resume`)" |
 
-`crates/notify` today turns `run.heal_needed` into Skip row / Stop run buttons and shows
-Apply / Show patch when the event data has `patched_code`; `run.heal_proposed` carries
-`patched_code` too, but Accept should call `run.heal_accept {proposal_id}` (it keeps proposal
-state and emits `run.heal_applied`) rather than `run.heal_apply`. Mapping `run.heal_proposed`
-to Accept/Reject buttons is left to the notifications and UI side.
+`crates/notify` turns `run.heal_needed` into Skip row / Stop run buttons and
+`run.heal_proposed` into **Accept** (`run.heal_accept {proposal_id}`) / **Reject**
+(`run.heal_reject {proposal_id}`), plus Show diff on Telegram; a newer proposal replaces the
+older question and `run.heal_applied` closes them. The Runs panel of the UI shows the proposal
+(diff, explanation, confidence, checks) with Accept / Reject with feedback / Propose.
 
 A newer `run.heal_proposed` for the same run supersedes the older one (accepting the old one
 then fails with "not pending"). `note` is set when "auto" mode did not apply the patch (low

@@ -56,6 +56,13 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Density (settings: General): compact chrome. */
+:root[data-density='compact'] {
+  --strip-h: 30px;
+  --toolbar-h: 34px;
+  --tab-h: 24px;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;

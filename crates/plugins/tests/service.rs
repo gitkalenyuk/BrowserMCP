@@ -278,6 +278,17 @@ async fn userscripts_save_list_enable_delete() {
             .is_err()
     );
 
+    let got = env
+        .call("userscripts.get", json!({ "name": "example-banner" }))
+        .await
+        .unwrap();
+    assert_eq!(got["code"], json!(code));
+    assert!(
+        env.call("userscripts.get", json!({ "name": "nope" }))
+            .await
+            .is_err()
+    );
+
     env.call(
         "userscripts.enable",
         json!({ "name": "example-banner", "enabled": false }),

@@ -50,6 +50,7 @@ function provider(
     models: [],
     path: null,
     configured: kind === 'cli' ? Boolean(opts.path) : Boolean(base_url) && (!needs_key || has_key),
+    is_default: false,
     ...opts,
   };
 }
@@ -584,7 +585,7 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
   return {
     // ---- ai ----
     'ai.providers': () => ({ providers }),
-    'ai.provider_set': ({ id, api_key, base_url, model, path }) => {
+    'ai.provider_set': ({ id, api_key, base_url, model, path, default: isDefault }) => {
       const p = getProvider(id);
       const clear = (v: string | undefined, fallback: string | null) => (v === undefined ? fallback : v.trim() || null);
       const next: AiProvider = { ...p };
@@ -593,7 +594,8 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       if (model !== undefined) next.model = clear(model, p.model);
       if (path !== undefined) next.path = clear(path, p.path);
       next.configured = next.kind === 'cli' ? Boolean(next.path) : Boolean(next.base_url) && (!next.needs_key || next.has_key);
-      providers = providers.map((x) => (x.id === id ? next : x));
+      if (isDefault !== undefined) next.is_default = isDefault;
+      providers = providers.map((x) => (x.id === id ? next : isDefault ? { ...x, is_default: false } : x));
       return next;
     },
     'ai.provider_test': async ({ id }) => {

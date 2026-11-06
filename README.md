@@ -117,7 +117,9 @@ fixture sites, no screenshots; see [tests/bench/README.md](tests/bench/README.md
 
 The browser also has its own AI side panel (Claude Code, Codex, or API providers: Anthropic,
 Gemini, OpenAI-compatible) whose agents get the MCP tools automatically; see
-[docs/phase5/panels.md](docs/phase5/panels.md).
+[docs/phase5/panels.md](docs/phase5/panels.md). Providers, notifications (Telegram, webhook),
+hints, keyboard, privacy, performance and plugins are configured on the settings page
+(`bmcp://ui/settings.html`, see [docs/settings/settings.md](docs/settings/settings.md)).
 
 ## REST, WebSocket and SDK
 

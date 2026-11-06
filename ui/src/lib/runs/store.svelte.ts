@@ -1,5 +1,7 @@
 import type { BrowserApi } from '../api/client';
 import type { RunInfo, ScriptEntry, TriggerInfo } from '../api/types-record-runs';
+import type { HealProposal } from '../api/types-settings';
+import { applyApplied, applyFailed, applyProposed, emptyHeal, upsertProposal, withProposals, type HealState } from './heal';
 import { applyFinished, applyHeal, applyProgress, upsertRun } from './logic';
 
 /**
@@ -16,6 +18,8 @@ export class RunsStore {
   notice = $state<string | null>(null);
   /** Bumped on every progress/finish event: detail views reload their results page. */
   tick = $state(0);
+  /** AI heal proposals and outcomes per run id (run.heal_* events, run.heal_proposals). */
+  heal = $state<Record<string, HealState>>({});
   #unsubs: Array<() => void> = [];
 
   constructor(api: BrowserApi) {
@@ -32,6 +36,17 @@ export class RunsStore {
         const run = this.runs.find((r) => r.id === h.id);
         if (run) this.runs = upsertRun(this.runs, applyHeal(run, h));
         void this.refreshRun(h.id);
+      }),
+      api.on('run.heal_proposed', (e) => {
+        this.#heal(e.id, (s) => applyProposed(s, e));
+      }),
+      api.on('run.heal_applied', (e) => {
+        this.#heal(e.id, (s) => applyApplied(s, e));
+        void this.refreshRun(e.id);
+        void this.refreshScripts();
+      }),
+      api.on('run.heal_failed', (e) => {
+        this.#heal(e.id, (s) => applyFailed(s, e));
       }),
       api.on('run.finished', (f) => {
         const run = this.runs.find((r) => r.id === f.id);
@@ -94,6 +109,45 @@ export class RunsStore {
     } catch {
       return undefined;
     }
+  }
+
+  #heal(id: string, f: (s: HealState) => HealState): void {
+    this.heal = { ...this.heal, [id]: f(this.heal[id] ?? emptyHeal()) };
+  }
+
+  /** Proposals the core still has for a run (they live in memory there). */
+  async loadProposals(id: string): Promise<void> {
+    try {
+      const { proposals } = await this.api.call('run.heal_proposals', { id });
+      this.#heal(id, (s) => withProposals(s, proposals));
+    } catch {
+      // No heal service in this core: the manual patch editor still works.
+    }
+  }
+
+  /** Ask the AI for a patch now (also after a failed attempt). */
+  async propose(id: string, feedback?: string): Promise<HealProposal> {
+    const p: HealProposal = { patched_code: '', ...(await this.api.call('run.heal_propose', { id, feedback: feedback?.trim() || undefined })) };
+    this.#heal(id, (s) => upsertProposal(s, p));
+    return p;
+  }
+
+  async accept(p: HealProposal): Promise<void> {
+    const r = await this.api.call('run.heal_accept', { proposal_id: p.proposal_id });
+    this.#heal(p.id, (s) => applyApplied(s, { ...r, auto: false }));
+    await this.refreshRun(p.id);
+    void this.refreshScripts();
+  }
+
+  /** Reject with feedback; the answer is the next proposal (or an error after the last attempt). */
+  async reject(p: HealProposal, feedback: string): Promise<HealProposal> {
+    this.#heal(p.id, (s) => ({ ...s, proposals: s.proposals.map((x) => (x.proposal_id === p.proposal_id ? { ...x, status: 'rejected' } : x)) }));
+    const next: HealProposal = {
+      patched_code: '',
+      ...(await this.api.call('run.heal_reject', { proposal_id: p.proposal_id, feedback: feedback.trim() || undefined })),
+    };
+    this.#heal(p.id, (s) => upsertProposal(s, next));
+    return next;
   }
 
   /** pause / resume / cancel; the answer is the run's new state. */

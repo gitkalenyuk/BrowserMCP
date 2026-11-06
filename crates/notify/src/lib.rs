@@ -5,7 +5,8 @@
 //!   anti-spam limits;
 //! * [`rules`] — which rule an event hits, and the human text for it;
 //! * [`limiter`] — dedup, aggregation of bursts (row failures of a 1000-row run), rate limit;
-//! * [`heal`] — the `run.heal_needed` question and its buttons → `run.resume` / `run.cancel`;
+//! * [`heal`] — the `run.heal_needed` question and its buttons → `run.resume` / `run.cancel`,
+//!   and the `run.heal_proposed` one → `run.heal_accept` / `run.heal_reject`;
 //! * [`telegram`] — Bot API calls (`sendMessage`, `getUpdates` long polling, …);
 //! * [`os`] — Windows toasts and the "is our window in front?" check;
 //! * [`commands`] — `notify.config_get/config_set/test/send`, `ui.notify`, `ui.ask_user`,
@@ -183,8 +184,14 @@ struct Prompt {
 enum PromptKind {
     /// `ui.ask_user`: the waiting command gets the answer.
     Ask(oneshot::Sender<Answer>),
-    /// `run.heal_needed`: the answer runs a run command.
-    Heal { run: String, patch: Option<String> },
+    /// `run.heal_needed` / `run.heal_proposed`: the answer runs a run command. `patch` is
+    /// what "Show patch" sends (the patched code, or a proposal's diff); `proposal` is the
+    /// proposal id of a `run.heal_proposed` question.
+    Heal {
+        run: String,
+        patch: Option<String>,
+        proposal: Option<String>,
+    },
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -458,7 +465,7 @@ impl NotifyService {
             .ok_or_else(|| format!("'{choice}' is not one of the choices"))?;
 
         // Heal buttons that do not answer: "Open in browser", "Show patch".
-        if let PromptKind::Heal { run, patch } = &prompt.kind
+        if let PromptKind::Heal { run, patch, .. } = &prompt.kind
             && !heal::is_final(choice)
         {
             let message = prompt.telegram_message;
@@ -538,9 +545,13 @@ impl NotifyService {
                     });
                 }
             }
-            PromptKind::Heal { run, patch } => {
-                if let Some((name, args)) =
-                    choice.and_then(|c| heal::command_for(c, &run, patch.as_deref()))
+            PromptKind::Heal {
+                run,
+                patch,
+                proposal,
+            } => {
+                if let Some((name, args)) = choice
+                    .and_then(|c| heal::command_for(c, &run, patch.as_deref(), proposal.as_deref()))
                 {
                     let service = self.clone();
                     let label = label.to_string();
@@ -621,12 +632,23 @@ impl NotifyService {
                 return;
             }
         }
-        if topic == "run.heal_needed" {
-            let run = event.data.get("id").and_then(Value::as_str).unwrap_or("");
-            let kind = PromptKind::Heal {
+        let run = event.data.get("id").and_then(Value::as_str).unwrap_or("");
+        let kind = match topic {
+            "run.heal_needed" => Some(PromptKind::Heal {
                 run: run.to_string(),
                 patch: heal::patch(&event.data).map(String::from),
-            };
+                proposal: None,
+            }),
+            "run.heal_proposed" => {
+                heal::proposal(&event.data).map(|(proposal, diff)| PromptKind::Heal {
+                    run: run.to_string(),
+                    patch: Some(diff.to_string()).filter(|d| !d.trim().is_empty()),
+                    proposal: Some(proposal.to_string()),
+                })
+            }
+            _ => None,
+        };
+        if let Some(kind) = kind {
             self.open_prompt(&n, &channels, kind);
         }
         let service = self.clone();
@@ -636,30 +658,51 @@ impl NotifyService {
     }
 
     /// A heal question is moot once the run went on by other means: someone called
-    /// `run.resume` / `run.cancel` / `run.heal_apply` for it, or it finished.
+    /// `run.resume` / `run.cancel` / `run.heal_apply` for it, a patch was applied, or it
+    /// finished. A proposal question is also moot when a newer proposal replaces it, the AI
+    /// gave up (`run.heal_failed`) or someone accepted / rejected it elsewhere.
     fn close_resolved_heals(&self, topic: &str, data: &Value) {
-        let run = match topic {
-            "run.finished" => data.get("id"),
-            "command.started"
-                if matches!(
-                    data.get("name").and_then(Value::as_str),
-                    Some("run.resume" | "run.cancel" | "run.heal_apply")
-                ) =>
-            {
-                data.get("args").and_then(|a| a.get("id"))
-            }
-            _ => None,
+        let str_at = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).map(String::from);
+        let args = data.get("args").unwrap_or(&Value::Null);
+        // (run, only proposal questions, only this proposal, via)
+        let (run, proposals_only, proposal, via) = match topic {
+            "run.finished" | "run.heal_applied" => (str_at(data, "id"), false, None, "elsewhere"),
+            "run.heal_proposed" => (str_at(data, "id"), true, None, "superseded"),
+            "run.heal_failed" => (str_at(data, "id"), true, None, "elsewhere"),
+            "command.started" => match data.get("name").and_then(Value::as_str) {
+                Some("run.resume" | "run.cancel" | "run.heal_apply") => {
+                    (str_at(args, "id"), false, None, "elsewhere")
+                }
+                Some("run.heal_accept" | "run.heal_reject") => {
+                    (None, true, str_at(args, "proposal_id"), "elsewhere")
+                }
+                _ => return,
+            },
+            _ => return,
         };
-        let Some(run) = run.and_then(Value::as_str) else {
+        if run.is_none() && proposal.is_none() {
             return;
-        };
+        }
         let ids: Vec<String> = lock(&self.inner.prompts)
             .iter()
-            .filter(|(_, p)| matches!(&p.kind, PromptKind::Heal { run: r, .. } if r == run))
+            .filter(|(_, p)| match &p.kind {
+                PromptKind::Heal {
+                    run: r,
+                    proposal: pid,
+                    ..
+                } => {
+                    run.as_ref().is_none_or(|run| run == r)
+                        && (!proposals_only || pid.is_some())
+                        && proposal
+                            .as_ref()
+                            .is_none_or(|want| pid.as_ref() == Some(want))
+                }
+                PromptKind::Ask(_) => false,
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in ids {
-            self.close(&id, None, "", "elsewhere");
+            self.close(&id, None, "", via);
         }
     }
 

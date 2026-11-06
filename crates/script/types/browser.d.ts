@@ -3034,7 +3034,7 @@ declare namespace BrowserMCP {
     };
     /**
      * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-     * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
+     * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_proposed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_applied","channels":["ui","telegram"],"when":"always","aggregate":false},{"topic":"run.heal_failed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
      */
     rules: {
       /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
@@ -3196,7 +3196,7 @@ declare namespace BrowserMCP {
     };
     /**
      * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-     * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
+     * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_proposed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_applied","channels":["ui","telegram"],"when":"always","aggregate":false},{"topic":"run.heal_failed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
      */
     rules: {
       /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
@@ -7309,6 +7309,19 @@ declare namespace BrowserMCP {
     enabled: boolean;
   }
 
+  // ---- userscripts.get ----
+
+  /** Arguments of `userscripts.get`. */
+  export interface UserscriptsGetArgs {
+    name: string;
+  }
+
+  /** Result of `userscripts.get`. */
+  export interface UserscriptsGetOutput {
+    name: string;
+    code: string;
+  }
+
   // ---- userscripts.inject ----
 
   /** Arguments of `userscripts.inject`. */
@@ -7828,6 +7841,8 @@ declare namespace BrowserMCP {
     "userscripts.delete": { args: UserscriptsDeleteArgs; output: UserscriptsDeleteOutput };
     /** Switch a userscript on or off (enabled: false) without deleting it. */
     "userscripts.enable": { args: UserscriptsEnableArgs; output: UserscriptsEnableOutput };
+    /** Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here). */
+    "userscripts.get": { args: UserscriptsGetArgs; output: UserscriptsGetOutput };
     /** Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner. */
     "userscripts.inject": { args: UserscriptsInjectArgs; output: UserscriptsInjectOutput };
     /** List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run. */
@@ -9081,6 +9096,12 @@ declare namespace BrowserMCP {
        * `userscripts.enable` (MCP: `userscripts_enable`): toolset `script`, act.
        */
       enable(args: UserscriptsEnableArgs): Promise<UserscriptsEnableOutput>;
+      /**
+       * Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here).
+       *
+       * `userscripts.get` (MCP: `userscripts_get`): toolset `script`, read.
+       */
+      get(args: UserscriptsGetArgs): Promise<UserscriptsGetOutput>;
       /**
        * Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.
        *

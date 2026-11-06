@@ -151,6 +151,40 @@ macro_rules! fake_run_command {
 fake_run_command!(FakeResume, "run.resume");
 fake_run_command!(FakeCancel, "run.cancel");
 
+#[derive(Deserialize, JsonSchema)]
+struct ProposalArgs {
+    proposal_id: String,
+    #[allow(dead_code)]
+    feedback: Option<String>,
+}
+
+macro_rules! fake_heal_command {
+    ($ty:ident, $name:literal) => {
+        struct $ty;
+        impl Command for $ty {
+            const NAME: &'static str = $name;
+            type Args = ProposalArgs;
+            type Output = RunOut;
+            fn meta() -> Meta {
+                Meta::new("test double", Toolset::Run)
+            }
+            async fn run(ctx: Ctx, args: ProposalArgs) -> Result<RunOut, CmdError> {
+                let calls = ctx.extensions.get::<RunCalls>().unwrap();
+                calls
+                    .0
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} {}", $name, args.proposal_id));
+                Ok(RunOut {
+                    id: args.proposal_id,
+                })
+            }
+        }
+    };
+}
+fake_heal_command!(FakeAccept, "run.heal_accept");
+fake_heal_command!(FakeReject, "run.heal_reject");
+
 // ------------------------------------------------------------------ environment
 
 struct Env {
@@ -201,7 +235,11 @@ async fn env(edit: impl FnOnce(&mut NotifyConfig, &str)) -> Env {
 
     let mut registry = Registry::new();
     bmcp_notify::register(&mut registry);
-    registry.add::<FakeResume>().add::<FakeCancel>();
+    registry
+        .add::<FakeResume>()
+        .add::<FakeCancel>()
+        .add::<FakeAccept>()
+        .add::<FakeReject>();
     registry.extensions().insert(service.clone());
     registry.extensions().insert(RunCalls::default());
     let registry = Arc::new(registry);
@@ -501,6 +539,133 @@ async fn heal_question_closes_when_resolved_elsewhere_and_ui_stop_cancels() {
     })
     .await;
     assert_eq!(env.run_calls(), ["run.cancel r2"]);
+}
+
+impl Env {
+    async fn wait_run_calls(&self, n: usize) -> Vec<String> {
+        until(&format!("{n} run command(s)"), async || {
+            let calls = self.run_calls();
+            (calls.len() >= n).then_some(calls)
+        })
+        .await
+    }
+}
+
+fn proposal_event(proposal: &str, attempt: u64) -> Value {
+    json!({
+        "id": "r1", "proposal_id": proposal, "row": 7, "script": "login",
+        "diff": "@@ -14 +14 @@\n-act(\"button\", \"Sign in\")\n+act(\"button\", \"Log in\")",
+        "patched_code": "// patched", "explanation": "The button is now called Log in.",
+        "confidence": 0.82, "attempt": attempt, "max_attempts": 3,
+        "checks": ["applies", "transpiles"], "mode": "ask",
+    })
+}
+
+#[tokio::test]
+async fn heal_proposed_buttons_accept_on_telegram() {
+    let mut env = env(|_, _| {}).await;
+    env.events
+        .emit("run.heal_proposed", proposal_event("hp1", 1));
+
+    // UI: Accept / Reject. Telegram: Show diff, Accept, Reject, Open in browser.
+    let toast = env.event("ui.notification").await;
+    assert_eq!(toast["title"], "Run r1: patch proposed");
+    assert_eq!(
+        toast["actions"],
+        json!([{"id": "accept", "label": "Accept"}, {"id": "reject", "label": "Reject"}])
+    );
+    let send = env.telegram.wait_call("sendMessage", 1).await.remove(0);
+    assert_eq!(
+        send["text"],
+        "[warning] Run r1: patch proposed\nRow 8 of login: The button is now called Log in.\n\
+         confidence 82% · attempt 1/3 · checks: applies, transpiles"
+    );
+    assert_eq!(
+        button_labels(&send),
+        ["Show diff", "Accept", "Reject", "Open in browser"]
+    );
+
+    // "Show diff" sends the diff and leaves the question open.
+    env.telegram
+        .press(1, CHAT, 101, &button_data(&send, "Show diff"));
+    let sends = env.telegram.wait_call("sendMessage", 2).await;
+    assert!(
+        sends[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("+act(\"button\", \"Log in\")"),
+        "{}",
+        sends[1]
+    );
+    assert!(env.run_calls().is_empty());
+    assert_eq!(env.service.open_questions().len(), 1);
+
+    // "Accept" → run.heal_accept {proposal_id}, not run.heal_apply with the code.
+    env.telegram
+        .press(2, CHAT, 101, &button_data(&send, "Accept"));
+    let closed = env.event("ui.notification_closed").await;
+    assert_eq!(closed["choice"], "accept");
+    assert_eq!(closed["via"], "telegram");
+    assert_eq!(env.wait_run_calls(1).await, ["run.heal_accept hp1"]);
+}
+
+#[tokio::test]
+async fn heal_proposals_supersede_and_close_with_the_run() {
+    let mut env = env(|c, _| c.channels.telegram.enabled = false).await;
+    env.events.emit(
+        "run.heal_needed",
+        json!({"id": "r1", "row": 7, "script": "login"}),
+    );
+    let needed = env.event("ui.notification").await;
+    env.events
+        .emit("run.heal_proposed", proposal_event("hp1", 1));
+    let first = env.event("ui.notification").await;
+
+    // Reject from the UI → run.heal_reject; the heal_needed question stays.
+    env.call("ui.answer", json!({"id": first["id"], "choice": "reject"}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(env.wait_run_calls(1).await, ["run.heal_reject hp1"]);
+    assert_eq!(
+        env.service.open_questions(),
+        [needed["id"].as_str().unwrap()]
+    );
+
+    // The next attempt; a newer one replaces it.
+    env.events
+        .emit("run.heal_proposed", proposal_event("hp2", 2));
+    let second = env.event("ui.notification").await;
+    env.events
+        .emit("run.heal_proposed", proposal_event("hp3", 3));
+    let closed = env.event("ui.notification_closed").await;
+    assert_eq!(closed["id"], second["id"]);
+    assert_eq!(closed["via"], "superseded");
+    let third = env.event("ui.notification").await;
+    assert_eq!(env.service.open_questions().len(), 2);
+
+    // Accepted elsewhere (the Runs panel): the patch is applied, both questions go away.
+    env.events.emit(
+        "run.heal_applied",
+        json!({"id": "r1", "proposal_id": "hp3", "script": "login.v2", "requeued": 1, "auto": false}),
+    );
+    let mut gone = vec![];
+    for _ in 0..2 {
+        let closed = env.event("ui.notification_closed").await;
+        assert_eq!(closed["via"], "elsewhere");
+        gone.push(closed["id"].as_str().unwrap().to_string());
+    }
+    gone.sort();
+    let mut want = vec![
+        needed["id"].as_str().unwrap().to_string(),
+        third["id"].as_str().unwrap().to_string(),
+    ];
+    want.sort();
+    assert_eq!(gone, want);
+    assert!(env.service.open_questions().is_empty());
+    // "Run r1 patched" is shown in the UI.
+    let toast = env.event("ui.notification").await;
+    assert_eq!(toast["title"], "Run r1 patched");
 }
 
 #[tokio::test]

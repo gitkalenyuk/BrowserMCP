@@ -32,6 +32,9 @@ agents, the crate map).
   side panels (codegen, self-healing).
 * [phase8/scripts-debugger.md](phase8/scripts-debugger.md) — Phase 8: Scripts side panel
   (Monaco) and the step debugger.
+* [settings/settings.md](settings/settings.md) — the settings page (`bmcp://ui/settings.html`),
+  the AI heal flow in the Runs panel, heal proposals as notification questions, plugin palette
+  entries.
 
 ## Checks
 

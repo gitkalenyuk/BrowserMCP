@@ -1,6 +1,7 @@
 import { load, save, watch } from './storage';
 
 export type ThemePref = 'system' | 'light' | 'dark';
+export type Density = 'comfortable' | 'compact';
 export type PanelId = 'traffic' | 'recording' | 'ai' | 'terminal' | 'scripts' | 'runs';
 export type WidgetId = 'prompt' | 'agents' | 'scripts' | 'sites';
 
@@ -9,6 +10,8 @@ export const ACCENTS = ['#3b82f6', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '
 export interface Settings {
   theme: ThemePref;
   accent: string;
+  /** Compact: shorter tab strip, toolbar and tabs. */
+  density: Density;
   verticalTabs: boolean;
   bookmarksBar: boolean;
   sidebarWidth: number;
@@ -20,6 +23,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   accent: '#3b82f6',
+  density: 'comfortable',
   verticalTabs: false,
   bookmarksBar: true,
   sidebarWidth: 240,
@@ -90,6 +94,8 @@ function luminance(hex: string): number {
 export function applyTheme(root: HTMLElement, s: Settings): void {
   if (s.theme === 'system') delete root.dataset.theme;
   else root.dataset.theme = s.theme;
+  if (s.density === 'compact') root.dataset.density = 'compact';
+  else delete root.dataset.density;
   root.style.setProperty('--accent', s.accent);
   // Text on accent fills: dark ink on light accents, white otherwise.
   root.style.setProperty('--on-accent', luminance(s.accent) > 0.4 ? '#111318' : '#ffffff');

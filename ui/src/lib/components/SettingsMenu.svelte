@@ -111,6 +111,14 @@
           </button>
         </div>
       </section>
+      <section>
+        <div class="menu">
+          <button onclick={() => ((open = false), chrome.run('settings.open'))}>
+            <span>All settings…</span>
+            {#if chrome.keymap['settings.open'][0]}<kbd>{chrome.keymap['settings.open'][0]}</kbd>{/if}
+          </button>
+        </div>
+      </section>
       <footer>
         <span class="status" class:ok={chrome.status === 'open'}></span>
         {statusLabel}

@@ -3028,7 +3028,7 @@ export interface NotifyConfigGetOutput {
   };
   /**
    * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
+   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_proposed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_applied","channels":["ui","telegram"],"when":"always","aggregate":false},{"topic":"run.heal_failed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
    */
   rules: {
     /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
@@ -3190,7 +3190,7 @@ export interface NotifyConfigSetOutput {
   };
   /**
    * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
+   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_proposed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_applied","channels":["ui","telegram"],"when":"always","aggregate":false},{"topic":"run.heal_failed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
    */
   rules: {
     /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
@@ -7303,6 +7303,19 @@ export interface UserscriptsEnableOutput {
   enabled: boolean;
 }
 
+// ---- userscripts.get ----
+
+/** Arguments of `userscripts.get`. */
+export interface UserscriptsGetArgs {
+  name: string;
+}
+
+/** Result of `userscripts.get`. */
+export interface UserscriptsGetOutput {
+  name: string;
+  code: string;
+}
+
 // ---- userscripts.inject ----
 
 /** Arguments of `userscripts.inject`. */
@@ -7822,6 +7835,8 @@ export interface Commands {
   "userscripts.delete": { args: UserscriptsDeleteArgs; output: UserscriptsDeleteOutput };
   /** Switch a userscript on or off (enabled: false) without deleting it. */
   "userscripts.enable": { args: UserscriptsEnableArgs; output: UserscriptsEnableOutput };
+  /** Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here). */
+  "userscripts.get": { args: UserscriptsGetArgs; output: UserscriptsGetOutput };
   /** Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner. */
   "userscripts.inject": { args: UserscriptsInjectArgs; output: UserscriptsInjectOutput };
   /** List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run. */
@@ -9534,6 +9549,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "userscripts.get": {
+    wireName: "userscripts_get",
+    description: "Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here).",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "userscripts.inject": {
     wireName: "userscripts_inject",
     description: "Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.",
@@ -10806,6 +10830,12 @@ export interface Browser {
      */
     enable(args: UserscriptsEnableArgs, options?: CallOptions): Promise<UserscriptsEnableOutput>;
     /**
+     * Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here).
+     *
+     * `userscripts.get` (MCP: `userscripts_get`): toolset `script`, read.
+     */
+    get(args: UserscriptsGetArgs, options?: CallOptions): Promise<UserscriptsGetOutput>;
+    /**
      * Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.
      *
      * `userscripts.inject` (MCP: `userscripts_inject`): toolset `script`, act, mutates the tab.
@@ -11091,6 +11121,7 @@ export function createBrowser(transport: Transport): Browser {
     userscripts: {
       delete: (args, options) => call<UserscriptsDeleteOutput>("userscripts.delete", args, options),
       enable: (args, options) => call<UserscriptsEnableOutput>("userscripts.enable", args, options),
+      get: (args, options) => call<UserscriptsGetOutput>("userscripts.get", args, options),
       inject: (args, options) => call<UserscriptsInjectOutput>("userscripts.inject", args, options),
       list: (args, options) => call<UserscriptsListOutput>("userscripts.list", args, options),
       save: (args, options) => call<UserscriptsSaveOutput>("userscripts.save", args, options),
