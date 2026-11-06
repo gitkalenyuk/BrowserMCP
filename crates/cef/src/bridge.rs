@@ -50,12 +50,18 @@ impl TabEntry {
 #[derive(Clone)]
 pub(crate) struct ShellContext {
     pub style: RuntimeStyle,
+    pub layout: crate::WindowLayout,
     pub browsers: Arc<crate::shell::Browsers>,
 }
 
 #[derive(Default)]
 pub(crate) struct UiState {
+    /// Web pages only. This is what `list_tabs` / MCP see.
     pub tabs: BTreeMap<TabId, TabEntry>,
+    /// Our own UI and palette browsers, by browser id. Never tabs.
+    pub chrome_views: BTreeMap<i32, crate::chrome::ChromeView>,
+    /// Composed windows (spike S1 layout), by window key (= the Window's view id).
+    pub windows: BTreeMap<i32, crate::chrome::ChromeWindow>,
     pub shell: Option<ShellContext>,
 }
 
@@ -94,8 +100,9 @@ wrap_task! {
     }
 }
 
-/// Post `job` to the CEF UI thread. Returns false if CEF no longer accepts tasks.
-fn post_to_ui(job: Job) -> bool {
+/// Post `job` to the CEF UI thread (fire and forget). Callable from any thread.
+/// Returns false if CEF no longer accepts tasks.
+pub(crate) fn post_to_ui(job: Job) -> bool {
     let mut task = UiJob::new(Arc::new(Mutex::new(Some(job))));
     post_task(ThreadId::UI, Some(&mut task)) == 1
 }
@@ -203,6 +210,21 @@ pub(crate) fn unregister_tab(browser: &Browser) {
         tab.cdp.close();
     }
     tracing::debug!(%id, "tab unregistered");
+}
+
+/// Remember one of our own UI/palette browsers (not a tab). UI thread.
+pub(crate) fn register_chrome_view(browser: &Browser, kind: crate::chrome::ViewKind) {
+    let view = crate::chrome::ChromeView {
+        kind,
+        browser: browser.clone(),
+    };
+    with_ui(|ui| ui.chrome_views.insert(browser.identifier(), view));
+    tracing::debug!(id = browser.identifier(), ?kind, "chrome view registered");
+}
+
+pub(crate) fn unregister_chrome_view(browser: &Browser) {
+    let removed = with_ui(|ui| ui.chrome_views.remove(&browser.identifier()));
+    drop(removed); // released outside the UiState borrow
 }
 
 pub(crate) fn update_tab(browser: &Browser, update: impl FnOnce(&mut TabEntry)) {

@@ -15,6 +15,8 @@ pub struct Cli {
     pub data_dir: Option<PathBuf>,
     pub profile: String,
     pub chrome_style: bool,
+    /// `--layout single`: Phase 0 window (page only). Default: composed UI + page.
+    pub single_layout: bool,
     pub help: bool,
     /// Port of the local API (MCP at /mcp). 0 = pick a free port.
     pub api_port: u16,
@@ -29,6 +31,7 @@ impl Default for Cli {
             data_dir: None,
             profile: "default".to_owned(),
             chrome_style: false,
+            single_layout: false,
             help: false,
             api_port: DEFAULT_API_PORT,
             dump_ax: false,
@@ -44,6 +47,9 @@ Options:
   --data-dir <PATH>    Data folder (default: ./data next to the executable)
   --profile <ID>       Profile to use (default: default)
   --chrome-style       Use CEF Chrome runtime style (experimental; default is Alloy)
+  --layout <chrome|single>
+                       Window layout: UI strip + page + Ctrl+K palette (default),
+                       or the page alone (Phase 0)
   --api-port <PORT>    Local API port, MCP at http://127.0.0.1:<PORT>/mcp (default: 47800)
   --dump-ax            Print the page's accessibility tree and exit
   -h, --help           Show this help
@@ -85,6 +91,11 @@ impl Cli {
                     }
                 }
                 "--chrome-style" => cli.chrome_style = true,
+                "--layout" => {
+                    if let Some(v) = value(&mut args) {
+                        cli.single_layout = v == "single";
+                    }
+                }
                 "--dump-ax" => cli.dump_ax = true,
                 "--api-port" => {
                     if let Some(port) = value(&mut args).and_then(|v| v.parse().ok()) {
@@ -152,6 +163,14 @@ mod tests {
             Cli::parse(["--api-port", "nope"]).api_port,
             DEFAULT_API_PORT
         );
+    }
+
+    #[test]
+    fn layout_flag() {
+        assert!(!Cli::parse(Vec::<String>::new()).single_layout);
+        assert!(Cli::parse(["--layout", "single"]).single_layout);
+        assert!(Cli::parse(["--layout=single"]).single_layout);
+        assert!(!Cli::parse(["--layout=chrome"]).single_layout);
     }
 
     #[test]
