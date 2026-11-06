@@ -7,6 +7,7 @@ pub mod nav;
 pub mod page;
 pub mod system;
 pub mod tabs;
+pub mod ui;
 
 use crate::command::Registry;
 
@@ -16,9 +17,14 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<system::Ping>()
         .add::<tabs::List>()
         .add::<tabs::Open>()
+        .add::<tabs::Close>()
+        .add::<tabs::Activate>()
         .add::<nav::Goto>()
-        .add::<page::Text>();
-    // page.snapshot / page.find / page.act ... live in the `bmcp-browser` crate.
+        .add::<nav::Stop>()
+        .add::<page::Text>()
+        .add::<ui::Layout>();
+    // page.snapshot / page.find / page.act, nav.back/forward/reload/wait ... live in the
+    // `bmcp-browser` crate.
 }
 
 #[cfg(test)]
@@ -50,20 +56,96 @@ mod tests {
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
     }
 
+    /// What the fake reports for a fresh tab, as JSON (camelCase, like the UI expects).
+    fn tab_json(id: i32, url: &str, active: bool) -> Value {
+        json!({
+            "id": id, "title": url, "url": url, "loading": false, "favicon": null,
+            "canGoBack": false, "canGoForward": false, "active": active,
+            "groupId": null, "lockedBy": null,
+        })
+    }
+
     #[tokio::test]
     async fn tabs_list_and_open() {
         let fake = FakeBackend::with_tabs(&["https://a.test/"]);
         let out = call(&fake, "tabs.open", json!({ "url": "https://b.test/" })).await;
-        assert_eq!(out, json!({ "tab": 2 }));
+        // Old shape `{tab}` plus the whole TabInfo.
+        let mut expected = tab_json(2, "https://b.test/", true);
+        expected["tab"] = json!(2);
+        assert_eq!(out, expected);
 
         let out = call(&fake, "tabs.list", Value::Null).await;
         assert_eq!(
             out,
-            json!({ "tabs": [
-                { "id": 1, "title": "https://a.test/", "url": "https://a.test/", "loading": false },
-                { "id": 2, "title": "https://b.test/", "url": "https://b.test/", "loading": false },
-            ]})
+            json!({
+                "tabs": [
+                    tab_json(1, "https://a.test/", false),
+                    tab_json(2, "https://b.test/", true),
+                ],
+                "groups": [],
+                "activeId": 2,
+            })
         );
+    }
+
+    #[tokio::test]
+    async fn tabs_open_defaults_and_background() {
+        let fake = FakeBackend::with_tabs(&["https://a.test/"]);
+        let out = call(&fake, "tabs.open", json!({})).await;
+        assert_eq!(out["url"], crate::NEW_TAB_URL);
+        let out = call(
+            &fake,
+            "tabs.open",
+            json!({ "url": "https://c.test/", "background": true }),
+        )
+        .await;
+        assert_eq!(out["active"], false);
+        // The new tab page opened first is still the one shown.
+        let list = call(&fake, "tabs.list", json!({})).await;
+        assert_eq!(list["activeId"], 2);
+        assert!(
+            fake.calls()
+                .contains(&"open_tab https://c.test/ background".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn tabs_activate_close_and_stop() {
+        let fake =
+            FakeBackend::with_tabs(&["https://a.test/", "https://b.test/", "https://c.test/"]);
+        call(&fake, "tabs.activate", json!({ "tab": 2 })).await;
+        assert_eq!(call(&fake, "tabs.list", json!({})).await["activeId"], 2);
+
+        // Closing the active tab activates its right neighbour.
+        call(&fake, "tabs.close", json!({ "tab": 2 })).await;
+        let list = call(&fake, "tabs.list", json!({})).await;
+        assert_eq!(list["activeId"], 3);
+        assert_eq!(list["tabs"].as_array().unwrap().len(), 2);
+
+        let out = call(&fake, "nav.stop", json!({})).await;
+        assert_eq!(out, json!({}));
+        assert!(fake.calls().contains(&"stop_loading 3".to_string()));
+
+        let err = registry()
+            .call(
+                ctx(Caller::Rest, fake.clone()),
+                "tabs.close",
+                json!({ "tab": 9 }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::TabNotFound);
+    }
+
+    #[tokio::test]
+    async fn ui_layout_is_accepted() {
+        let out = call(
+            &FakeBackend::new(),
+            "ui.layout",
+            json!({ "x": 0, "y": 84, "w": 1280, "h": 716, "dpr": 1.5 }),
+        )
+        .await;
+        assert_eq!(out, json!({}));
     }
 
     #[tokio::test]
