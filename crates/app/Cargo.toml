@@ -22,6 +22,7 @@ bmcp-identity = { path = "../identity" }
 bmcp-record = { path = "../record" }
 bmcp-jobs = { path = "../jobs" }
 bmcp-plugins = { path = "../plugins" }
+bmcp-governor = { path = "../governor" }
 bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }
 serde_json.workspace = true

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::{CmdError, Command, Ctx, ErrorCode, Meta, TabId, Toolset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use serde_json::json;
 use crate::codegen::{self, InputSpec};
 use crate::human::{self, Mode};
 use crate::model::{RecordingMeta, Source, Step};
-use crate::session::Session;
+use crate::session::{Session, domain_holder, release_domains};
 use crate::store::{self, Active, Log, Recordings, check_id, data_dir, io_error, lock, now_ms};
 use crate::video::{self, Format, VideoOptions, VideoRecorder, VideoReport};
 
@@ -117,96 +118,109 @@ impl Command for Start {
         let bus = ctx.events.subscribe();
         let cdp = ctx.backend.cdp_events(tab).await?;
         // Page events (frameNavigated, screencast) need the Page domain; unlike
-        // Runtime.enable it is not visible to the page.
-        ctx.backend
-            .cdp(tab, "Page.enable".into(), json!({}))
+        // Runtime.enable it is not visible to the page. Domains are shared with other users of
+        // the tab (net capture, adblock), so they are held through the refcount and given back
+        // when the recording ends (`Session::finish`).
+        let share = CdpShare::from_ctx(&ctx);
+        let holder = domain_holder(&id);
+        share
+            .acquire(&ctx.backend, tab, "Page", &holder, json!({}))
             .await?;
-        let (url, frame) = tab_page(&ctx, tab).await?;
+        let started: Result<StartOutput, CmdError> = async {
+            let (url, frame) = tab_page(&ctx, tab).await?;
 
-        let mut meta = RecordingMeta {
-            id: id.clone(),
-            name,
-            tab,
-            started_ms: now_ms(),
-            start_url: url.clone(),
-            human_capture: "pending".into(),
-            ..RecordingMeta::default()
-        };
-        let script_id = match human::install(&ctx.backend, tab, Mode::Binding).await {
-            Ok(id) => id,
-            Err(err) => {
-                // API steps are still recorded; say why human ones are missing.
-                meta.human_capture = format!("failed: {err}");
-                String::new()
-            }
-        };
+            let mut meta = RecordingMeta {
+                id: id.clone(),
+                name,
+                tab,
+                started_ms: now_ms(),
+                start_url: url.clone(),
+                human_capture: "pending".into(),
+                ..RecordingMeta::default()
+            };
+            let script_id = match human::install(&ctx.backend, tab, Mode::Binding).await {
+                Ok(id) => id,
+                Err(err) => {
+                    // API steps are still recorded; say why human ones are missing.
+                    meta.human_capture = format!("failed: {err}");
+                    String::new()
+                }
+            };
 
-        let traffic = if args.traffic.unwrap_or(false) {
-            ctx.backend
-                .cdp(tab, "Network.enable".into(), json!({}))
-                .await?;
-            let path = dir.join("traffic.jsonl");
-            let file = std::fs::File::create(&path).map_err(|e| io_error(&path, e))?;
-            meta.traffic = Some(path.display().to_string());
-            Some(std::io::BufWriter::new(file))
-        } else {
-            None
-        };
-        let video = if args.video.unwrap_or(false) {
-            let path = dir.join("video.webm");
-            let recorder = start_video(&ctx, tab, VideoOptions::default(), path.clone()).await?;
-            meta.video = Some(path.display().to_string());
-            Some(recorder)
-        } else {
-            None
-        };
+            let traffic = if args.traffic.unwrap_or(false) {
+                share
+                    .acquire(&ctx.backend, tab, "Network", &holder, json!({}))
+                    .await?;
+                let path = dir.join("traffic.jsonl");
+                let file = std::fs::File::create(&path).map_err(|e| io_error(&path, e))?;
+                meta.traffic = Some(path.display().to_string());
+                Some(std::io::BufWriter::new(file))
+            } else {
+                None
+            };
+            let video = if args.video.unwrap_or(false) {
+                let path = dir.join("video.webm");
+                let recorder =
+                    start_video(&ctx, tab, VideoOptions::default(), path.clone()).await?;
+                meta.video = Some(path.display().to_string());
+                Some(recorder)
+            } else {
+                None
+            };
 
-        let mut log = Log::new(dir.join("actions.jsonl"));
-        log.push(Step {
-            ts_ms: meta.started_ms,
-            source: Source::System,
-            action: "start".into(),
-            url: Some(url.clone()),
-            ..Step::default()
-        });
-        log.save()?;
-        meta.steps = 1;
-        store::write_meta(&dir, &meta)?;
+            let mut log = Log::new(dir.join("actions.jsonl"));
+            log.push(Step {
+                ts_ms: meta.started_ms,
+                source: Source::System,
+                action: "start".into(),
+                url: Some(url.clone()),
+                ..Step::default()
+            });
+            log.save()?;
+            meta.steps = 1;
+            store::write_meta(&dir, &meta)?;
 
-        let log = Arc::new(Mutex::new(log));
-        let meta_shared = Arc::new(Mutex::new(meta.clone()));
-        let mut session = Session::new(
-            ctx.clone(),
-            tab,
-            dir.clone(),
-            log.clone(),
-            meta_shared.clone(),
-            frame,
-            url,
-            script_id,
-        );
-        session.video = video;
-        session.traffic = traffic;
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(session.run(bus, cdp, stopped));
-        Recordings::from_ctx(&ctx).insert(Arc::new(Active {
-            id: id.clone(),
-            dir: dir.clone(),
-            meta: meta_shared,
-            log,
-            stop: Mutex::new(Some(stop)),
-            task: Mutex::new(Some(task)),
-        }));
-        ctx.events.emit(
-            "record.started",
-            json!({ "id": id, "tab": tab, "name": meta.name, "start_url": meta.start_url }),
-        );
-        Ok(StartOutput {
-            id,
-            tab,
-            dir: dir.display().to_string(),
-            video: meta.video,
-        })
+            let log = Arc::new(Mutex::new(log));
+            let meta_shared = Arc::new(Mutex::new(meta.clone()));
+            let mut session = Session::new(
+                ctx.clone(),
+                tab,
+                dir.clone(),
+                log.clone(),
+                meta_shared.clone(),
+                frame,
+                url,
+                script_id,
+            );
+            session.video = video;
+            session.traffic = traffic;
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(session.run(bus, cdp, stopped));
+            Recordings::from_ctx(&ctx).insert(Arc::new(Active {
+                id: id.clone(),
+                dir: dir.clone(),
+                meta: meta_shared,
+                log,
+                stop: Mutex::new(Some(stop)),
+                task: Mutex::new(Some(task)),
+            }));
+            ctx.events.emit(
+                "record.started",
+                json!({ "id": id, "tab": tab, "name": meta.name, "start_url": meta.start_url }),
+            );
+            Ok(StartOutput {
+                id,
+                tab,
+                dir: dir.display().to_string(),
+                video: meta.video,
+            })
+        }
+        .await;
+        if started.is_err() {
+            // Nothing is recording: give the domains back.
+            release_domains(&ctx.backend, tab, &holder, &share).await;
+        }
+        started
     }
 }
 

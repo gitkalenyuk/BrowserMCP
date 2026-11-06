@@ -399,7 +399,9 @@ name = "bmcp-adblock"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "bmcp-cdpshare",
  "bmcp-core",
+ "bmcp-net",
  "schemars",
  "serde",
  "serde_json",
@@ -474,6 +476,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-cdpshare"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-cef"
 version = "0.1.0"
 dependencies = [
@@ -518,6 +530,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-governor"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-hints"
 version = "0.1.0"
 dependencies = [
@@ -550,6 +576,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bmcp-core",
+ "bmcp-governor",
  "calamine",
  "chrono",
  "cron",
@@ -561,7 +588,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sysinfo",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -573,6 +599,7 @@ name = "bmcp-net"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bmcp-cdpshare",
  "bmcp-core",
  "regex",
  "schemars",
@@ -635,6 +662,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bmcp-browser",
+ "bmcp-cdpshare",
  "bmcp-core",
  "bmcp-perception",
  "schemars",
@@ -655,6 +683,7 @@ dependencies = [
  "bmcp-browser",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-governor",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
@@ -705,6 +734,7 @@ dependencies = [
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-governor",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",

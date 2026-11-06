@@ -7,9 +7,11 @@
 //! resources without `Timing-Allow-Origin`.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::{CmdError, Command, Ctx, Meta, TabId, Toolset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,9 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
 pub struct Measure;
+
+/// Numbers the measurements, for their domain holder names.
+static NEXT_MEASURE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -106,9 +111,26 @@ impl Command for Measure {
             async move { backend.cdp(tab, method.to_string(), params).await }
         };
         let mut events = ctx.backend.cdp_events(tab).await?;
-        cdp("Network.enable", json!({})).await?;
-        cdp("Network.setCacheDisabled", json!({ "cacheDisabled": true })).await?;
-        cdp("Page.enable", json!({})).await?;
+        // Network and Page are shared with other users of the tab (net capture, recordings):
+        // hold them through the refcount, so our cleanup never switches them off for others.
+        let share = CdpShare::from_ctx(&ctx);
+        let holder = format!(
+            "adblock.measure:{}",
+            NEXT_MEASURE.fetch_add(1, Ordering::Relaxed)
+        );
+        let setup = async {
+            share
+                .acquire(&ctx.backend, tab, "Network", &holder, json!({}))
+                .await?;
+            cdp("Network.setCacheDisabled", json!({ "cacheDisabled": true })).await?;
+            share
+                .acquire(&ctx.backend, tab, "Page", &holder, json!({}))
+                .await
+        };
+        if let Err(err) = setup.await {
+            let _ = share.release(&ctx.backend, tab, "Network", &holder).await;
+            return Err(err.into());
+        }
         let _ = cdp("Performance.enable", json!({})).await;
 
         let tally = Arc::new(Mutex::new(Tally::default()));
@@ -144,7 +166,8 @@ impl Command for Measure {
             json!({ "cacheDisabled": false }),
         )
         .await;
-        let _ = cdp("Network.disable", json!({})).await;
+        let _ = share.release(&ctx.backend, tab, "Network", &holder).await;
+        let _ = share.release(&ctx.backend, tab, "Page", &holder).await;
 
         let mut tally = tally.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = std::mem::take(&mut tally.out);

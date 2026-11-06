@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::intercept::{self, Edits, Outcome};
+use crate::intercept::{self, Edits};
 use crate::rules::{Action, MatchSpec, Matcher, Rule, RuleKind, Stage, validate};
 use crate::state::{Env, NetState, Paused, TabNet};
 use crate::store::{cut, header};
@@ -43,16 +43,6 @@ async fn add_rule(
 /// The tab that has the rule / pause with this id.
 fn find_tab(net: &NetState, has: impl Fn(&TabNet) -> bool) -> Option<Arc<TabNet>> {
     net.all().into_iter().find(|tn| has(tn))
-}
-
-fn env_for(ctx: &Ctx, tn: &Arc<TabNet>) -> Env {
-    Env {
-        tab: tn.tab,
-        tn: tn.clone(),
-        net: NetState::from_ctx(ctx),
-        backend: ctx.backend.clone(),
-        events: ctx.events.clone(),
-    }
 }
 
 // ------------------------------------------------------------------ net.rule_add
@@ -246,7 +236,7 @@ impl Command for RuleRemove {
                     .with_hint("See net_rule_list for the active ids.")
             },
         )?;
-        let env = env_for(&ctx, &tn);
+        let env = Env::for_tab(&ctx, tn.clone());
         let _config = tn.config.lock().await;
         let (removed, released) = {
             let mut inner = tn.lock();
@@ -264,9 +254,11 @@ impl Command for RuleRemove {
                 .collect();
             (removed, released)
         };
-        // Answer what the breakpoint still holds before Fetch may be disabled.
+        // Answer what the breakpoint still holds (with what its other matching rules would
+        // do) before Fetch may be disabled.
         for p in &released {
-            let _ = intercept::finish(&env, &p.request_id, &Outcome::Continue).await;
+            let outcome = intercept::plan(&env, &p.params, p.stage, &p.actions).await;
+            let _ = intercept::finish(&env, &p.request_id, &outcome).await;
         }
         env.sync_fetch().await?;
         let line = removed.map(|r| r.line()).unwrap_or_default();
@@ -392,12 +384,8 @@ impl Command for Resume {
         )?;
         let edits = args.edits.unwrap_or_default();
         let drop = args.action == Some(ResumeAction::Drop);
-        let stage = tn
-            .lock()
-            .paused
-            .get(&args.pause_id)
-            .map(|p| p.stage)
-            .unwrap_or_default();
+        let current = tn.lock().paused.get(&args.pause_id).cloned();
+        let stage = current.as_ref().map(|p| p.stage).unwrap_or_default();
         if stage == Stage::Response
             && (edits.url.is_some() || edits.method.is_some() || edits.body.is_some())
         {
@@ -406,13 +394,19 @@ impl Command for Resume {
                  already sent; edit status, headers or response_body instead",
             ));
         }
+        // Checked before taking the pause, so it stays paused for a corrected resume.
+        if !drop && let Some(problem) = current.and_then(|p| intercept::body_problem(&p, &edits)) {
+            return Err(CmdError::invalid_params(format!(
+                "{problem}: give response_body together with status"
+            )));
+        }
         // Take it out of the map first: whoever removes it answers it (not the timer).
         let paused = tn
             .lock()
             .paused
             .remove(&args.pause_id)
             .ok_or_else(|| CmdError::new(ErrorCode::NotFound, "already resumed"))?;
-        let env = env_for(&ctx, &tn);
+        let env = Env::for_tab(&ctx, tn.clone());
         let done = intercept::resume(&env, &paused, &edits, drop).await;
         tn.lock().stop_listener_if_idle();
         let done = done?;

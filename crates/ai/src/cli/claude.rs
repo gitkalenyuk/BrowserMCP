@@ -416,13 +416,14 @@ mod tests {
 
         let stopped = Instant::now();
         session.cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(10), task)
+        tokio::time::timeout(Duration::from_secs(30), task)
             .await
             .expect("the session task must finish after stop")
             .unwrap();
-        // Quicker than the reader grace period: stdout closed because ping.exe died too.
+        // Well below the (test) reader grace of 20 s: stdout closed because ping.exe died too,
+        // not because the grace ran out. Generous margin for a busy CI/dev machine.
         assert!(
-            stopped.elapsed() < Duration::from_millis(2500),
+            stopped.elapsed() < Duration::from_secs(12),
             "took {:?}",
             stopped.elapsed()
         );

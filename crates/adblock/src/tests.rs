@@ -28,6 +28,15 @@ struct Env {
 /// A browser with one tab on https://news.test/ and an engine built from [`RULES`].
 /// `fail_block` makes `Fetch.failRequest` fail (to test the fallback).
 fn env_with(fail_block: Arc<AtomicBool>) -> Env {
+    build(fail_block, false)
+}
+
+/// Like [`env`], with the `net.*` commands registered too.
+fn env_with_net() -> Env {
+    build(Arc::new(AtomicBool::new(false)), true)
+}
+
+fn build(fail_block: Arc<AtomicBool>, with_net: bool) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let fake = FakeBackend::with_tabs(&["https://news.test/"]);
     fake.on_cdp(move |_tab, method, _params| {
@@ -50,6 +59,9 @@ fn env_with(fail_block: Arc<AtomicBool>) -> Env {
     });
     let mut registry = Registry::new();
     crate::register(&mut registry);
+    if with_net {
+        bmcp_net::register(&mut registry);
+    }
     let service = registry
         .extensions()
         .insert(AdblockService::new(tmp.path()));
@@ -92,6 +104,35 @@ impl Env {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         panic!("no {method} call; calls: {:?}", self.methods());
+    }
+
+    /// The answers (`Fetch.*Request`, `continueResponse`) sent for one request id.
+    fn answers_for(&self, id: &str) -> Vec<String> {
+        self.fake
+            .cdp_calls()
+            .into_iter()
+            .filter(|(m, p)| {
+                p["requestId"] == id
+                    && matches!(
+                        m.as_str(),
+                        "Fetch.continueRequest"
+                            | "Fetch.continueResponse"
+                            | "Fetch.fulfillRequest"
+                            | "Fetch.failRequest"
+                    )
+            })
+            .map(|(m, _)| m)
+            .collect()
+    }
+
+    /// `patterns` of every `Fetch.enable` so far.
+    fn fetch_enables(&self) -> Vec<Value> {
+        self.fake
+            .cdp_calls()
+            .into_iter()
+            .filter(|(m, _)| m == "Fetch.enable")
+            .map(|(_, p)| p["patterns"].clone())
+            .collect()
     }
 
     fn paused(&self, id: &str, url: &str, resource_type: &str, frame: &str) {
@@ -308,24 +349,116 @@ async fn failed_block_answer_falls_back_to_continue() {
 }
 
 #[tokio::test]
-async fn lost_events_reset_fetch() {
+async fn lost_events_never_switch_fetch_off() {
     let env = env();
     env.call("adblock.apply", json!({ "on": true }))
         .await
         .unwrap();
-    // The test runtime is single-threaded: the loop cannot run while we emit, so the
-    // 1024-event channel overflows.
+    // The test runtime is single-threaded: the loops cannot run while we emit, so the
+    // 1024-event channels overflow.
     for i in 0..1100 {
         env.paused(&format!("r{i}"), "https://news.test/a.js", "Script", "MAIN");
     }
-    env.wait_call("Fetch.disable", |_| true).await;
+    env.wait_call("Fetch.continueRequest", has_id("r1099"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // No Fetch.disable/enable reset any more: it would also release requests that other
+    // clients (net breakpoints) hold on purpose. The coordinator recovers lost pauses itself.
     let methods = env.methods();
-    assert!(methods.iter().filter(|m| *m == "Fetch.enable").count() >= 2);
+    assert!(!methods.iter().any(|m| m == "Fetch.disable"), "{methods:?}");
+    assert_eq!(methods.iter().filter(|m| *m == "Fetch.enable").count(), 1);
+    for i in [1000, 1050, 1099] {
+        assert_eq!(env.answers_for(&format!("r{i}")).len(), 1, "r{i}");
+    }
     let stats = env
         .call("adblock.stats", json!({ "tab": 1 }))
         .await
         .unwrap();
     assert!(stats["tabs"][0]["interception"]["lagged"].as_u64().unwrap() > 0);
+}
+
+/// Review items: net and adblock on one tab used to overwrite each other's `Fetch.enable`
+/// patterns, disable each other's interception, and both answer the same paused request
+/// (net's capture listener continued requests adblock had decided to block).
+#[tokio::test]
+async fn adblock_and_net_share_one_fetch_coordinator() {
+    let env = env_with_net();
+    env.call("net.capture", json!({ "on": true }))
+        .await
+        .unwrap();
+    env.call("adblock.apply", json!({ "on": true }))
+        .await
+        .unwrap();
+    env.call(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*/api/*" }, "action": { "mock": { "body": "{}" } } }),
+    )
+    .await
+    .unwrap();
+    env.call(
+        "net.breakpoint",
+        json!({ "match": { "url_glob": "*/slow/*", "stage": "response" } }),
+    )
+    .await
+    .unwrap();
+    // One Fetch.enable per change, each with everybody's patterns (adblock's first).
+    let any = json!({ "urlPattern": "*", "requestStage": "Request" });
+    let api = json!({ "urlPattern": "*/api/*", "requestStage": "Request" });
+    let slow = json!({ "urlPattern": "*/slow/*", "requestStage": "Response" });
+    assert_eq!(
+        env.fetch_enables(),
+        vec![json!([any]), json!([any, api]), json!([any, api, slow])]
+    );
+
+    env.paused("ad", "https://ads.example/banner.js", "Script", "MAIN");
+    env.paused("ad-api", "https://ads.example/api/track", "XHR", "MAIN");
+    env.paused("api", "https://news.test/api/user", "XHR", "MAIN");
+    env.paused("css", "https://news.test/site.css", "Stylesheet", "MAIN");
+    env.wait_call("Fetch.continueRequest", has_id("css")).await;
+    env.wait_call("Fetch.fulfillRequest", has_id("api")).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Exactly one answer each; adblock decides first, so net never mocks or continues a
+    // request adblock blocked.
+    assert_eq!(env.answers_for("ad"), ["Fetch.failRequest"]);
+    assert_eq!(env.answers_for("ad-api"), ["Fetch.failRequest"]);
+    assert_eq!(env.answers_for("api"), ["Fetch.fulfillRequest"]);
+    assert_eq!(env.answers_for("css"), ["Fetch.continueRequest"]);
+
+    // A response-stage pause for net's breakpoint: adblock no longer continues it.
+    env.fake.emit_cdp_event(
+        TabId(1),
+        "Fetch.requestPaused",
+        json!({ "requestId": "slow", "resourceType": "XHR", "responseStatusCode": 200,
+                "request": { "url": "https://news.test/slow/x", "method": "GET", "headers": {} } }),
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(env.answers_for("slow").is_empty(), "held by the breakpoint");
+    let paused = env.call("net.paused_list", json!({})).await.unwrap();
+    assert_eq!(paused["count"], 1);
+    let pause_id = paused["text"].as_str().unwrap().split(' ').next().unwrap();
+    env.call("net.resume", json!({ "pause_id": pause_id }))
+        .await
+        .unwrap();
+    assert_eq!(env.answers_for("slow"), ["Fetch.continueRequest"]);
+
+    // adblock off: net's interception stays (Fetch re-enabled with its patterns only).
+    env.call("adblock.apply", json!({ "on": false }))
+        .await
+        .unwrap();
+    assert_eq!(env.fetch_enables().last().unwrap(), &json!([api, slow]));
+    assert!(!env.methods().iter().any(|m| m == "Fetch.disable"));
+    // The last client leaves: now Fetch is disabled, once.
+    for id in ["r1", "b2"] {
+        env.call("net.rule_remove", json!({ "id": id }))
+            .await
+            .unwrap();
+    }
+    let disables = env
+        .methods()
+        .iter()
+        .filter(|m| *m == "Fetch.disable")
+        .count();
+    assert_eq!(disables, 1);
 }
 
 #[tokio::test]

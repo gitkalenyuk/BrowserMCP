@@ -12,6 +12,8 @@ publish.workspace = true
 # !Send/!Sync and every thread builds its own copy from the cached bytes (see gate.rs).
 adblock = "=0.13.5"
 bmcp-core.workspace = true
+# Shared CDP session: domain refcount + the per-tab Fetch coordinator.
+bmcp-cdpshare = { path = "../cdpshare" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,5 +23,7 @@ tracing.workspace = true
 ureq = { version = "3.5", features = ["rustls", "gzip"] }
 
 [dev-dependencies]
+# Interplay with net rules/breakpoints on the shared Fetch coordinator.
+bmcp-net = { path = "../net" }
 bmcp-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
