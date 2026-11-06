@@ -450,6 +450,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-identity"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-net"
 version = "0.1.0"
 dependencies = [
@@ -507,6 +520,7 @@ dependencies = [
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-identity",
  "bmcp-net",
  "serde_json",
  "tokio",
