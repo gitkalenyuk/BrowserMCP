@@ -87,6 +87,21 @@ pub async fn serve(
     port: u16,
     shutdown: CancellationToken,
 ) -> Result<Server, ServeError> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener =
+        std::net::TcpListener::bind(addr).map_err(|source| ServeError::Bind { addr, source })?;
+    serve_on(backend, registry, events, listener, shutdown).await
+}
+
+/// Like [`serve`], on a socket the caller already bound. The app binds before starting CEF so
+/// the port it tells the UI pages and AI agents is guaranteed to be ours.
+pub async fn serve_on(
+    backend: Arc<dyn BrowserBackend>,
+    registry: Arc<Registry>,
+    events: EventBus,
+    listener: std::net::TcpListener,
+    shutdown: CancellationToken,
+) -> Result<Server, ServeError> {
     let api = api_router(
         ApiState::new(
             registry.clone(),
@@ -113,11 +128,12 @@ pub async fn serve(
     );
     let router = axum::Router::new().nest_service("/mcp", mcp).merge(api);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
+    let fallback = SocketAddr::from(([127, 0, 0, 1], 0));
+    let addr = listener.local_addr().unwrap_or(fallback);
+    let listener = listener
+        .set_nonblocking(true)
+        .and_then(|()| tokio::net::TcpListener::from_std(listener))
         .map_err(|source| ServeError::Bind { addr, source })?;
-    let addr = listener.local_addr().unwrap_or(addr);
 
     let task = tokio::spawn(async move {
         let result = axum::serve(listener, router)
