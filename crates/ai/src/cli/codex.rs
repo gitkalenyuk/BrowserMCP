@@ -15,9 +15,11 @@
 //! (`approvalPolicy: never`) and the shell sandbox is read-only: Codex drives the browser through
 //! MCP, not through shell commands.
 //!
-//! Fallback when the app-server does not start (old Codex): `codex exec --json "<prompt>"` per
-//! message (`codex exec resume <thread> --json …` for the next ones). That path is untested
-//! against a real Codex.
+//! Fallback when the app-server does not start (old Codex): `codex exec --json -` per message
+//! (`codex exec resume <thread> --json … -` for the next ones), the prompt written to stdin
+//! (`-`), so user text is never parsed as flags. That path is untested against a real Codex.
+//!
+//! Every child runs in a [`ProcessTree`]: stopping kills `codex.cmd`'s grandchildren too.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,7 +32,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::{mpsc, oneshot};
 
-use super::{StderrTail, command};
+use super::{ProcessTree, StderrTail, command, join_reader, kill_tree, spawn};
 use crate::session::{AgentEvent, Session, Status, summarize};
 
 const SERVER: &str = "browsermcp";
@@ -259,19 +261,39 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// `codex exec` arguments for one message. The prompt itself is read from stdin (`-`).
+pub fn exec_args(thread: Option<&str>, mcp_url: &str, model: Option<&str>) -> Vec<String> {
+    let mut args = vec!["exec".to_string()];
+    if let Some(thread) = thread {
+        args.extend(["resume".into(), thread.into()]);
+    }
+    args.extend([
+        "--json".into(),
+        "--skip-git-repo-check".into(),
+        "-c".into(),
+        mcp_override(mcp_url),
+    ]);
+    if let Some(model) = model.filter(|m| !m.is_empty()) {
+        args.extend(["-m".into(), model.into()]);
+    }
+    // `-`: "read the prompt from stdin" (`codex exec --help`), for `exec` and `exec resume`.
+    args.push("-".into());
+    args
+}
+
 impl Codex {
-    fn spawn_app_server(&self) -> std::io::Result<Child> {
+    fn spawn_app_server(&self) -> std::io::Result<(Child, ProcessTree)> {
         let mut cmd = command(&self.binary, &self.cwd);
         cmd.arg("app-server")
             .args(["-c", &mcp_override(&self.mcp_url)]);
-        cmd.spawn()
+        spawn(&mut cmd)
     }
 
     /// The session task.
     pub async fn run(self, input: mpsc::UnboundedReceiver<String>) {
         let session = self.session.clone();
         match self.spawn_app_server() {
-            Ok(child) => match self.app_server(child, input).await {
+            Ok((child, tree)) => match self.app_server(child, tree, input).await {
                 Ok(()) => {}
                 Err((message, Some(input))) => {
                     // Could not even start a thread: try the older `codex exec` mode.
@@ -301,6 +323,7 @@ impl Codex {
     async fn app_server(
         &self,
         mut child: Child,
+        tree: ProcessTree,
         mut input: mpsc::UnboundedReceiver<String>,
     ) -> Result<(), (String, Option<mpsc::UnboundedReceiver<String>>)> {
         let session = self.session.clone();
@@ -390,7 +413,8 @@ impl Codex {
         };
         let thread = tokio::select! {
             _ = session.cancel.cancelled() => {
-                let _ = child.kill().await;
+                kill_tree(&mut child, &tree).await;
+                reader.abort();
                 session.apply(AgentEvent::Done("stopped".into()));
                 session.set_status(Status::Stopped);
                 return Ok(());
@@ -398,7 +422,8 @@ impl Codex {
             thread = started => match thread {
                 Ok(thread) => thread,
                 Err(err) => {
-                    let _ = child.kill().await;
+                    kill_tree(&mut child, &tree).await;
+                    reader.abort();
                     let tail = stderr.text();
                     return Err((format!("{err} {tail}").trim().to_string(), Some(input)));
                 }
@@ -435,13 +460,14 @@ impl Codex {
                 if session.status() == Status::Running {
                     session.apply(AgentEvent::Done("stopped".into()));
                 }
-                let _ = child.kill().await;
+                kill_tree(&mut child, &tree).await;
                 reader.abort();
                 session.set_status(Status::Stopped);
                 Ok(())
             }
             Some(status) => {
-                let _ = reader.await;
+                join_reader(reader).await;
+                tree.kill(); // helpers codex left behind
                 let message = format!(
                     "codex exited ({}): {}",
                     status
@@ -465,22 +491,13 @@ impl Codex {
             };
             session.set_status(Status::Running);
             let mut cmd = command(&self.binary, &self.cwd);
-            cmd.arg("exec");
-            if let Some(thread) = &thread {
-                cmd.args(["resume", thread]);
-            }
-            cmd.args([
-                "--json",
-                "--skip-git-repo-check",
-                "-c",
-                &mcp_override(&self.mcp_url),
-            ]);
-            if let Some(model) = self.model.as_deref().filter(|m| !m.is_empty()) {
-                cmd.args(["-m", model]);
-            }
-            cmd.arg(&text).stdin(std::process::Stdio::null());
-            let mut child = match cmd.spawn() {
-                Ok(child) => child,
+            cmd.args(exec_args(
+                thread.as_deref(),
+                &self.mcp_url,
+                self.model.as_deref(),
+            ));
+            let (mut child, tree) = match spawn(&mut cmd) {
+                Ok(spawned) => spawned,
                 Err(err) => {
                     session.apply(AgentEvent::Done(format!(
                         "error: cannot start codex exec: {err}"
@@ -489,15 +506,26 @@ impl Codex {
                     return;
                 }
             };
-            let Some(stdout) = child.stdout.take() else {
+            let (Some(mut stdin), Some(stdout), Some(stderr)) =
+                (child.stdin.take(), child.stdout.take(), child.stderr.take())
+            else {
                 break;
             };
+            // Drain stderr: an unread pipe fills up (a few KB) and then blocks codex.
+            let stderr = StderrTail::collect(stderr, "codex exec");
+            // The prompt goes to stdin (`-` argument), then EOF. From a task, so a long prompt
+            // cannot block us while codex is busy writing stdout.
+            let writer = tokio::spawn(async move {
+                let _ = stdin.write_all(text.as_bytes()).await;
+                let _ = stdin.shutdown().await;
+            });
             let mut lines = BufReader::new(stdout).lines();
             let mut done = false;
             loop {
                 tokio::select! {
                     _ = session.cancel.cancelled() => {
-                        let _ = child.kill().await;
+                        writer.abort();
+                        kill_tree(&mut child, &tree).await;
                         session.apply(AgentEvent::Done("stopped".into()));
                         session.set_status(Status::Stopped);
                         return;
@@ -512,9 +540,23 @@ impl Codex {
                     }
                 }
             }
-            let _ = child.wait().await;
+            writer.abort();
+            let status = child.wait().await;
+            tree.kill();
             if !done {
-                session.apply(AgentEvent::Done("end_turn".into()));
+                match status {
+                    Ok(s) if s.success() => session.apply(AgentEvent::Done("end_turn".into())),
+                    status => {
+                        let code = status
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|e| e.to_string());
+                        let message = format!("codex exec exited ({code}): {}", stderr.text());
+                        session.apply(AgentEvent::Notice(message.trim().to_string()));
+                        session.apply(AgentEvent::Done(format!(
+                            "error: codex exec exited ({code})"
+                        )));
+                    }
+                }
             }
             session.set_status(Status::Idle);
         }
@@ -604,6 +646,69 @@ mod tests {
         assert_eq!(thread.as_deref(), Some("th-1"));
         assert_eq!(events.len(), 4);
         assert_eq!(events[3], AgentEvent::Done("end_turn".into()));
+    }
+
+    #[test]
+    fn exec_args_read_the_prompt_from_stdin() {
+        let args = exec_args(None, "http://127.0.0.1:1/mcp", Some("gpt-x"));
+        assert_eq!(args.first().map(String::as_str), Some("exec"));
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+        assert!(args.windows(2).any(|w| w == ["-m", "gpt-x"]));
+        let args = exec_args(Some("th-1"), "http://127.0.0.1:1/mcp", None);
+        assert_eq!(&args[..3], ["exec", "resume", "th-1"]);
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+    }
+
+    /// Regression for the `codex exec` fallback: a fake `codex.cmd` floods stderr far past the
+    /// pipe buffer (blocks forever unless we drain it), then reads the prompt from stdin.
+    /// A prompt that looks like flags must arrive as text, not as arguments.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn exec_mode_drains_stderr_and_sends_prompt_on_stdin() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("codex.cmd");
+        let script = [
+            "@echo off",
+            ">\"%~dp0args.txt\" echo(%*",
+            "for /L %%i in (1,1,3000) do echo stderr noise to fill the pipe buffer quickly 1>&2",
+            "set /p PROMPT=",
+            ">\"%~dp0prompt.txt\" echo(%PROMPT%",
+            r#"echo {"type":"item.completed","item":{"id":"2","type":"agent_message","text":"ok"}}"#,
+            r#"echo {"type":"turn.completed","usage":{}}"#,
+        ]
+        .join("\r\n");
+        std::fs::write(&fake, script).unwrap();
+
+        let (session, _) = Session::new(
+            "codex-test".into(),
+            "codex".into(),
+            None,
+            "#888888".into(),
+            bmcp_core::EventBus::new(),
+            None,
+        );
+        let codex = Codex {
+            session: Arc::new(session),
+            binary: fake,
+            model: None,
+            mcp_url: "http://127.0.0.1:9/mcp?agent=codex-test".into(),
+            cwd: dir.path().to_path_buf(),
+        };
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send("--help -m gpt-x hi".to_string()).unwrap();
+        drop(tx); // one message, then the queue ends and the session stops
+        tokio::time::timeout(Duration::from_secs(60), codex.exec_mode(rx))
+            .await
+            .expect("codex exec must not hang on a full stderr pipe");
+
+        let prompt = std::fs::read_to_string(dir.path().join("prompt.txt")).unwrap();
+        assert_eq!(prompt.trim_end(), "--help -m gpt-x hi");
+        let args = std::fs::read_to_string(dir.path().join("args.txt")).unwrap();
+        assert!(args.trim_end().ends_with(" -"), "args: {args}");
+        assert!(!args.contains("--help"), "args: {args}");
+        let transcript = serde_json::to_string(&codex.session.transcript()).unwrap();
+        assert!(transcript.contains(r#""text":"ok""#), "{transcript}");
+        assert_eq!(codex.session.status(), Status::Stopped);
     }
 
     /// Manual check against the installed Codex: handshake + thread/start only (no model call).

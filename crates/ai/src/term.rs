@@ -26,6 +26,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::proc_tree::ProcessTree;
 use crate::session::topics;
 
 /// What `term.list` shows.
@@ -47,6 +48,8 @@ struct Terminal {
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// The shell and everything started in it (closing kills programs still running).
+    tree: ProcessTree,
     info: Mutex<TermInfo>,
 }
 
@@ -138,6 +141,7 @@ impl Terminals {
             master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(Some(writer)),
             killer: Mutex::new(child.clone_killer()),
+            tree: ProcessTree::new(child.process_id()),
             info: Mutex::new(info.clone()),
         });
         lock(&self.map).insert(id.clone(), term.clone());
@@ -215,6 +219,8 @@ impl Terminals {
         let term = lock(&self.map)
             .remove(id)
             .ok_or_else(|| format!("no terminal '{id}'"))?;
+        // Kill programs started in the shell too, even if the shell itself already exited.
+        term.tree.kill();
         if lock(&term.info).exit_code.is_none() {
             let _ = lock(&term.killer).kill();
         }
