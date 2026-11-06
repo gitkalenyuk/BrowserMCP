@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::backend::{BackendError, BackendResult, BoxFuture, BrowserBackend, TabId, TabInfo};
+use crate::backend::{
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, TabId, TabInfo,
+};
 use crate::command::{Caller, Ctx};
 use crate::events::EventBus;
 use crate::tabs::TabStrip;
@@ -43,6 +45,8 @@ struct FakeState {
     /// Every CDP call as `(method, params)`, in order.
     cdp_calls: Vec<(String, Value)>,
     cdp_handler: Option<CdpHandler>,
+    /// One CDP event channel per tab, created on first subscription or emit.
+    cdp_events: HashMap<TabId, tokio::sync::broadcast::Sender<CdpEvent>>,
 }
 
 impl FakeBackend {
@@ -87,6 +91,19 @@ impl FakeBackend {
     /// Every CDP call so far as `(method, params)`.
     pub fn cdp_calls(&self) -> Vec<(String, Value)> {
         self.lock().cdp_calls.clone()
+    }
+
+    /// Deliver a fake CDP event to the tab's [`BrowserBackend::cdp_events`] subscribers.
+    /// Returns how many subscribers received it.
+    pub fn emit_cdp_event(&self, tab: TabId, method: &str, params: Value) -> usize {
+        let sender = self.lock().event_sender(tab);
+        sender
+            .send(CdpEvent {
+                method: method.to_string(),
+                params,
+                session_id: None,
+            })
+            .unwrap_or(0)
     }
 
     /// Change a tab's title, URL and loading flag (as seen by `list_tabs`).
@@ -150,6 +167,13 @@ impl FakeState {
                 ..t.clone()
             })
             .collect()
+    }
+
+    fn event_sender(&mut self, tab: TabId) -> tokio::sync::broadcast::Sender<CdpEvent> {
+        self.cdp_events
+            .entry(tab)
+            .or_insert_with(|| tokio::sync::broadcast::channel(1024).0)
+            .clone()
     }
 
     fn tab_mut(&mut self, tab: TabId) -> BackendResult<&mut TabInfo> {
@@ -238,6 +262,13 @@ impl BrowserBackend for FakeBackend {
         })
     }
 
+    fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
+        self.with_state(format!("cdp_events {tab}"), |s| {
+            s.tab_mut(tab)?;
+            Ok(s.event_sender(tab).subscribe())
+        })
+    }
+
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>> {
         self.with_state("quit".into(), |_| Ok(()))
     }
@@ -246,4 +277,26 @@ impl BrowserBackend for FakeBackend {
 /// A `Ctx` for `caller` on top of `backend` with a fresh event bus.
 pub fn ctx(caller: Caller, backend: Arc<dyn BrowserBackend>) -> Ctx {
     Ctx::new(caller, backend, EventBus::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fake_cdp_events_reach_subscribers() {
+        let fake = FakeBackend::with_tabs(&["https://a.test"]);
+        let mut events = fake.cdp_events(TabId(1)).await.unwrap();
+        assert_eq!(
+            fake.emit_cdp_event(
+                TabId(1),
+                "Network.requestWillBeSent",
+                json!({"requestId": "1"})
+            ),
+            1
+        );
+        let ev = events.recv().await.unwrap();
+        assert_eq!(ev.method, "Network.requestWillBeSent");
+        assert!(fake.cdp_events(TabId(9)).await.is_err());
+    }
 }

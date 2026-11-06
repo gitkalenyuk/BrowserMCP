@@ -35,5 +35,58 @@ fn generate<T: JsonSchema>(settings: SchemaSettings) -> Value {
     if let Some(root) = value.as_object_mut() {
         root.remove("title");
     }
+    strip_numeric_formats(&mut value);
     value
+}
+
+/// Remove schemars' Rust-specific number formats (`uint64`, `int32`, `uint`, `double`, ...).
+/// They are not standard JSON Schema formats: MCP clients print a warning for every one of
+/// them (Claude Code: `unknown format "uint64" ignored`) and they cost tokens. The `type`
+/// (`integer`/`number`) and `minimum` that schemars emits alongside already say enough.
+fn strip_numeric_formats(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let is_number = matches!(
+                map.get("type"),
+                Some(Value::String(t)) if t == "integer" || t == "number"
+            ) || matches!(
+                map.get("type"),
+                Some(Value::Array(types)) if types.iter().any(|t| t == "integer" || t == "number")
+            );
+            if is_number {
+                map.remove("format");
+            }
+            for child in map.values_mut() {
+                strip_numeric_formats(child);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_numeric_formats),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn numeric_formats_are_removed_but_string_formats_kept() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "tab": {"type": ["integer", "null"], "format": "int32"},
+                "limit": {"type": "integer", "format": "uint", "minimum": 0},
+                "when": {"type": "string", "format": "date-time"},
+                "list": {"type": "array", "items": {"type": "number", "format": "double"}}
+            }
+        });
+        strip_numeric_formats(&mut schema);
+        let text = schema.to_string();
+        for gone in ["int32", "\"uint\"", "double"] {
+            assert!(!text.contains(gone), "{gone} still in {text}");
+        }
+        assert_eq!(schema["properties"]["when"]["format"], "date-time");
+        assert_eq!(schema["properties"]["limit"]["minimum"], 0);
+    }
 }

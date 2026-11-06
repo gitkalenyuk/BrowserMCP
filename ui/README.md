@@ -10,7 +10,7 @@ an in-memory mock of the Rust core.
 ```bash
 pnpm install            # once, from the repo root or ui/
 pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page
-pnpm build              # -> ui/dist (index.html + newtab.html, relative asset paths)
+pnpm build              # -> ui/dist (index.html + palette.html + newtab.html, relative paths)
 pnpm check              # svelte-check, fails on warnings
 pnpm test               # vitest: fuzzy matcher, keymap, tab reducer, omnibox input
 ```
@@ -27,7 +27,18 @@ at startup:
 | default | `MockApi` — in-memory tabs, history, loading, agents browsing their own locked tabs, run progress |
 | `?api=ws` | `WsApi` — JSON-RPC 2.0 over `ws://127.0.0.1:47800/v1/ws` |
 | `?api=ws&ws=ws://host:port/v1/ws` | `WsApi` at another URL |
-| `VITE_BMCP_API=ws` (build time) | `WsApi` (what the CEF build should use) |
+| `window.__BMCP__.ws` (injected) | `WsApi` — what the real browser uses: every `bmcp://ui/` page gets `<script>window.__BMCP__={"ws":"ws://127.0.0.1:<port>/v1/ws"}</script>` |
+| `VITE_BMCP_API=ws` (build time) | `WsApi` |
+
+### Inside the browser
+
+`ui/dist` is embedded into `browsermcp.exe` at compile time (`crates/cef/build.rs`,
+`src/ui_files.rs`); without a `ui/dist` a "UI not built" placeholder is embedded. So: `pnpm -C ui
+build`, then build Rust. Faster loops:
+
+* `browsermcp --ui-dir ui/dist` serves the files from disk (rebuild the UI, reload, no Rust build);
+* `BMCP_DEV_UI=1 browsermcp --ui-dev http://localhost:5173` loads chrome and palette from Vite
+  (hot reload; the new tab page still comes from `bmcp://ui/`).
 
 In dev, `window.__bmcp.api.call('tabs.list')` works in the devtools console.
 
@@ -36,9 +47,11 @@ In dev, `window.__bmcp.api.call('tabs.list')` works in the devtools console.
 ```
 ui/
 ├─ index.html            chrome entry
+├─ palette.html          Ctrl+K palette alone (the browser shows it in an overlay view)
 ├─ newtab.html           new tab page entry (Vite multi-page)
 └─ src/
    ├─ chrome/            App.svelte + main.ts for the chrome
+   ├─ palette/           PaletteApp.svelte + main.ts for the overlay palette
    ├─ newtab/            NewTab.svelte, widgets/ (prompt, agents & runs, quick launch, sites)
    └─ lib/
       ├─ api/            types.ts (wire types + RpcMethods/ApiEvents), client.ts (BrowserApi),
@@ -46,6 +59,7 @@ ui/
       ├─ state/          tabs.ts (pure reducer + helpers), chrome.svelte.ts (ChromeController)
       ├─ components/     TabStrip, TabSidebar, TabItem, GroupLabel, Toolbar, Omnibox, WorkspaceSwitcher,
       │                  CommandPalette, SidePanel, panels/, AgentBanner, PageSlot, SettingsMenu, Icon…
+      ├─ native.ts       window-local plumbing inside the browser (bmcp://cmd/: layout, palette, focus)
       ├─ keymap.ts       every shortcut: DEFAULT_KEYMAP + parser + keymap.json override merge
       ├─ commands.ts     palette entries (later: from the core's Command Registry)
       ├─ fuzzy.ts        palette matcher
@@ -57,18 +71,28 @@ ui/
 ## How it fits the browser
 
 - **Page area.** The chrome never draws web pages. `PageSlot` renders an empty
-  `<div class="page-slot">` and reports its bounds with `ui.layout {x, y, w, h, dpr}` whenever they
-  change; the core places the CEF content view there. With the WS backend the body is transparent so
-  this works both if the UI is one view around a see-through hole and if it is split into strips
-  (spike S1). In mock mode the slot shows a placeholder, and the new tab page in an iframe.
+  `<div class="page-slot">` and reports its bounds whenever they change. Inside the browser the UI
+  view fills the whole window and the tab's page view is placed exactly over the slot, so vertical
+  tabs, the side panel and the agent banner simply move the page. The report goes over
+  `bmcp://cmd/layout` (`native.ts`), because only that channel tells the browser which window it
+  came from; in mock mode it is `ui.layout` (a no-op in the core). In mock mode the slot shows a
+  placeholder, and the new tab page in an iframe.
+- **Overlap.** Anything the chrome draws over the page slot (menus, the toast) is hidden under the
+  page in the real browser. So the palette is its own page (`palette.html`) in a native overlay
+  view, and the toast moves to the top of the window there. Dropdown menus that reach into the
+  page area are still clipped (follow-up).
 - **State.** The core is the source of truth. `ChromeController` folds events
   (`tab.created/updated/closed/activated`, `tabs.reset`, `agents.updated`, `workspace.activated`)
   through the pure `reduceTabs`, and every user action is an RPC call. Tab activation is optimistic.
 - **Agents.** A tab with `lockedBy` belongs to an agent: its group label is filled with the agent's
   color and shows a lock, the tab shows a lock, and a banner offers **Take over** (`tabs.unlock`).
 - **Shortcuts.** `keymap.ts` is the only table. Matching uses `KeyboardEvent.code` for letters and
-  digits so Ctrl+T works on Cyrillic layouts. In CEF the core will forward shortcuts from page
-  views (OnPreKeyEvent); a desktop browser in dev swallows some (Ctrl+T/W/Tab), use the palette there.
+  digits so Ctrl+T works on Cyrillic layouts. Keys pressed in a web page (or in the palette) are
+  caught by the browser (`OnPreKeyEvent`, a mirror of `DEFAULT_KEYMAP` in
+  `crates/cef/src/chrome/protocol.rs`) and handed to the chrome as `window.bmcp.run('tab.new')`, so
+  they run through `ChromeController.run` exactly like keys pressed in the chrome. Only Ctrl+K, Esc
+  and Ctrl+L/Alt+D/F6 are handled natively (overlay, focus). A desktop browser in dev swallows some
+  (Ctrl+T/W/Tab), use the palette there.
 - **New tab page.** A separate page with its own API connection. Widgets toggle under *Customize*.
   In dev, inside the chrome's iframe, it gets its own mock instance (so its agent state is not
   shared with the chrome's mock) and forwards shortcuts and link clicks to the chrome via

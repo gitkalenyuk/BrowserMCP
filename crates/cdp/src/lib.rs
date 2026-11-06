@@ -38,13 +38,8 @@ pub trait Transport: Send + Sync + 'static {
     fn send(&self, message: String) -> BoxFuture<'static, Result<(), CdpError>>;
 }
 
-/// A CDP event (`{"method": ..., "params": ...}`), optionally from a flattened session.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CdpEvent {
-    pub method: String,
-    pub params: Value,
-    pub session_id: Option<String>,
-}
+/// CDP events are the core type so `BrowserBackend::cdp_events` can hand them out unchanged.
+pub use bmcp_core::CdpEvent;
 
 type Pending = HashMap<u64, oneshot::Sender<Result<Value, CdpError>>>;
 

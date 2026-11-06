@@ -99,6 +99,18 @@ pub enum BackendError {
 
 pub type BackendResult<T> = Result<T, BackendError>;
 
+/// One Chrome DevTools Protocol event (`{"method": ..., "params": ...}`) from a tab, optionally
+/// from a flattened child session (iframe, worker).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CdpEvent {
+    pub method: String,
+    pub params: Value,
+    pub session_id: Option<String>,
+}
+
+/// Receiver of a tab's CDP events. Lagging receivers get `RecvError::Lagged(n)`.
+pub type CdpEvents = tokio::sync::broadcast::Receiver<CdpEvent>;
+
 pub trait BrowserBackend: Send + Sync + 'static {
     /// All open tabs, window by window, each window in tab-strip order.
     fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>>;
@@ -128,6 +140,14 @@ pub trait BrowserBackend: Send + Sync + 'static {
     /// Raw Chrome DevTools Protocol call on the tab's page target.
     fn cdp(&self, tab: TabId, method: String, params: Value)
     -> BoxFuture<'_, BackendResult<Value>>;
+
+    /// Subscribe to the tab's CDP events from now on (e.g. after `Network.enable`,
+    /// `Network.requestWillBeSent` arrives here). Enable the CDP domain with [`Self::cdp`].
+    /// The receiver ends (`RecvError::Closed`) when the tab closes.
+    fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
+        let _ = tab;
+        Box::pin(async { Err(BackendError::Cdp("this backend has no CDP events".into())) })
+    }
 
     /// Close every window and leave the message loop.
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>>;

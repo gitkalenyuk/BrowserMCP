@@ -21,7 +21,8 @@ pub mod tabs;
 pub mod testing;
 
 pub use backend::{
-    BackendError, BackendResult, BoxFuture, BrowserBackend, NEW_TAB_URL, TabId, TabInfo,
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, NEW_TAB_URL,
+    TabId, TabInfo,
 };
 pub use command::{
     Caller, CmdError, Command, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta, Registry, Retry,
