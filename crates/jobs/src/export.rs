@@ -6,10 +6,20 @@
 //! row | status | <input columns…> | <result keys…> | error_code | error | attempts | duration_ms
 //! ```
 //!
-//! Result keys come from the merged `browser.output({...})` object (a result key that clashes
-//! with an input column becomes `result.<key>`; a non-object result goes into one `result`
-//! column). Nested values are written as JSON text. JSON and webhook exports keep the full
-//! row objects instead (as returned by `run.results`).
+//! Result keys come from the merged `browser.output({...})` object; a non-object result goes
+//! into one `result` column. Nested values are written as JSON text. JSON and webhook exports
+//! keep the full row objects instead (as returned by `run.results`).
+//!
+//! Column names are unique, ignoring case (SQLite would refuse duplicates): an input column
+//! that clashes with a fixed column becomes `input.<name>` (`input.status`), a result key that
+//! clashes with a fixed or input column becomes `result.<key>`, and a name still taken gets
+//! `_2`, `_3`, … appended.
+//!
+//! Formula injection: values scraped from pages may start with `=`, `+`, `-`, `@`, tab or CR,
+//! which Excel / LibreOffice run as a formula when they open a CSV. CSV cells (and headers)
+//! like that get a leading `'` (OWASP advice); numbers such as `-5` are left alone. XLSX cells
+//! are always text cells; those get Excel's hidden "quote prefix" flag instead, so the text
+//! stays exact. `raw: true` turns both off.
 //!
 //! Files go to `data/runs/<id>/results.<ext>` unless `path` is given (a relative `path` is
 //! inside `data/runs/<id>/`). A webhook gets `POST {run, script, batch, batches, rows:[…]}`
@@ -67,6 +77,10 @@ pub struct ExportArgs {
     pub status: Option<RowStatus>,
     /// Rows per webhook request (default 100).
     pub batch_size: Option<usize>,
+    /// csv/xlsx: write cells exactly as stored. By default a cell starting with = + - @ tab
+    /// or CR (a spreadsheet formula) gets a leading ' in CSV and the quote-prefix flag in
+    /// XLSX, so opening the file cannot run formulas planted by a web page.
+    pub raw: Option<bool>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -129,9 +143,10 @@ impl Inner {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| file_error(dir, e))?;
         }
+        let safe = !args.raw.unwrap_or(false);
         match args.to {
-            ExportFormat::Csv => write_csv(&path, &table(&rows))?,
-            ExportFormat::Xlsx => write_xlsx(&path, &table(&rows))?,
+            ExportFormat::Csv => write_csv(&path, &table(&rows), safe)?,
+            ExportFormat::Xlsx => write_xlsx(&path, &table(&rows), safe)?,
             ExportFormat::Sqlite => write_sqlite(&path, &table(&rows))?,
             ExportFormat::Json => {
                 let text = serde_json::to_string_pretty(&rows)
@@ -194,25 +209,26 @@ pub fn table(rows: &[RowRecord]) -> Table {
             _ => plain_result = true,
         }
     }
-    const FIXED: [&str; 6] = [
+    // Display names: fixed columns first, then inputs, then result keys (see module docs).
+    // `inputs` / `results` keep the source keys for looking up the cell values.
+    let mut names = ColumnNames::default();
+    for fixed in [
         "row",
         "status",
+        "result",
         "error_code",
         "error",
         "attempts",
         "duration_ms",
-    ];
-    let result_column = |key: &String| {
-        if inputs.contains(key) || FIXED.contains(&key.as_str()) || key == "result" {
-            format!("result.{key}")
-        } else {
-            key.clone()
-        }
-    };
+    ] {
+        names.reserve(fixed);
+    }
+    let input_columns: Vec<String> = inputs.iter().map(|k| names.take(k, "input")).collect();
+    let result_columns: Vec<String> = results.iter().map(|k| names.take(k, "result")).collect();
 
     let mut columns = vec!["row".to_string(), "status".to_string()];
-    columns.extend(inputs.iter().cloned());
-    columns.extend(results.iter().map(result_column));
+    columns.extend(input_columns);
+    columns.extend(result_columns);
     if plain_result {
         columns.push("result".into());
     }
@@ -249,6 +265,52 @@ pub fn table(rows: &[RowRecord]) -> Table {
     }
 }
 
+/// Allocates column names that are unique ignoring case.
+#[derive(Default)]
+struct ColumnNames(std::collections::HashSet<String>);
+
+impl ColumnNames {
+    fn reserve(&mut self, name: &str) {
+        self.0.insert(name.to_lowercase());
+    }
+
+    /// `wanted`, else `<prefix>.<wanted>`, else that with `_2`, `_3`, … appended.
+    fn take(&mut self, wanted: &str, prefix: &str) -> String {
+        let free = |names: &Self, name: &str| !names.0.contains(&name.to_lowercase());
+        let mut name = wanted.to_string();
+        if !free(self, &name) {
+            name = format!("{prefix}.{wanted}");
+        }
+        let base = name.clone();
+        let mut n = 2;
+        while !free(self, &name) {
+            name = format!("{base}_{n}");
+            n += 1;
+        }
+        self.reserve(&name);
+        name
+    }
+}
+
+/// Would a spreadsheet read this text as a formula? `=`, `@`, tab, CR always; `+` / `-` unless
+/// the whole cell is a plain number (`-5`, `+1.5`).
+fn looks_like_formula(text: &str) -> bool {
+    match text.chars().next() {
+        Some('=' | '@' | '\t' | '\r') => true,
+        Some('+' | '-') => text.trim().parse::<f64>().is_err(),
+        _ => false,
+    }
+}
+
+/// CSV cell text with a leading `'` when it looks like a formula.
+fn neutralize_formula(text: &str) -> std::borrow::Cow<'_, str> {
+    if looks_like_formula(text) {
+        format!("'{text}").into()
+    } else {
+        text.into()
+    }
+}
+
 /// JSON value → cell text: strings as-is, null empty, the rest as JSON.
 fn cell(value: &Value) -> String {
     match value {
@@ -258,26 +320,42 @@ fn cell(value: &Value) -> String {
     }
 }
 
-fn write_csv(path: &Path, table: &Table) -> Result<(), CmdError> {
+/// `safe`: neutralize formula-like cells (see the [module docs](self)).
+fn write_csv(path: &Path, table: &Table, safe: bool) -> Result<(), CmdError> {
     let mut writer = csv::Writer::from_path(path).map_err(|e| file_error(path, e))?;
-    writer
-        .write_record(&table.columns)
-        .map_err(|e| file_error(path, e))?;
+    let mut write = |record: &[String]| {
+        let result = if safe {
+            writer.write_record(record.iter().map(|c| neutralize_formula(c).into_owned()))
+        } else {
+            writer.write_record(record)
+        };
+        result.map_err(|e| file_error(path, e))
+    };
+    write(&table.columns)?;
     for row in &table.rows {
-        writer.write_record(row).map_err(|e| file_error(path, e))?;
+        write(row)?;
     }
     writer.flush().map_err(|e| file_error(path, e))
 }
 
-fn write_xlsx(path: &Path, table: &Table) -> Result<(), CmdError> {
+/// `safe`: formula-like text cells get the quote-prefix flag (see the [module docs](self)).
+fn write_xlsx(path: &Path, table: &Table, safe: bool) -> Result<(), CmdError> {
     let err = |e: rust_xlsxwriter::XlsxError| file_error(path, e);
     let mut book = rust_xlsxwriter::Workbook::new();
     let sheet = book.add_worksheet();
     sheet.set_name("results").map_err(err)?;
     let bold = rust_xlsxwriter::Format::new().set_bold();
+    let bold_quoted = bold.clone().set_quote_prefix();
+    let quoted = rust_xlsxwriter::Format::new().set_quote_prefix();
+    let needs_quote = |text: &str| safe && looks_like_formula(text);
     for (c, name) in table.columns.iter().enumerate() {
+        let format = if needs_quote(name) {
+            &bold_quoted
+        } else {
+            &bold
+        };
         sheet
-            .write_string_with_format(0, c as u16, name, &bold)
+            .write_string_with_format(0, c as u16, name, format)
             .map_err(err)?;
     }
     // These columns are numbers; write them as numbers so Excel can sort/sum them.
@@ -291,6 +369,9 @@ fn write_xlsx(path: &Path, table: &Table) -> Result<(), CmdError> {
                 .flatten();
             match number {
                 Some(n) => sheet.write_number(r, c as u16, n).map(drop),
+                None if needs_quote(text) => sheet
+                    .write_string_with_format(r, c as u16, text, &quoted)
+                    .map(drop),
                 None => sheet.write_string(r, c as u16, text).map(drop),
             }
             .map_err(err)?;
@@ -487,5 +568,114 @@ mod tests {
             ]
         );
         assert_eq!(t.rows[2][7], "[1,2]");
+    }
+
+    /// Regression: input columns named like fixed columns, and result keys that differ only
+    /// in case, used to give duplicate headers (and a failing SQLite export).
+    #[test]
+    fn colliding_column_names_are_made_unique() {
+        let rows = [row(
+            0,
+            &[("status", "vip"), ("Row", "7"), ("name", "n")],
+            json!({"Name": "A", "name": "b", "status": "s", "result": 1}),
+            None,
+        )];
+        let t = table(&rows);
+        assert_eq!(
+            t.columns,
+            [
+                "row",
+                "status",
+                "input.status",
+                "input.Row",
+                "name",
+                // Result keys are sorted (JSON objects have no order): Name, name, result, status.
+                "result.Name",
+                "result.name_2",
+                "result.result",
+                "result.status",
+                "error_code",
+                "error",
+                "attempts",
+                "duration_ms"
+            ]
+        );
+        assert_eq!(
+            &t.rows[0][..9],
+            ["0", "ok", "vip", "7", "n", "A", "b", "1", "s"]
+        );
+        let lower: std::collections::HashSet<String> =
+            t.columns.iter().map(|c| c.to_lowercase()).collect();
+        assert_eq!(lower.len(), t.columns.len());
+
+        // Every file format accepts the table.
+        let dir = tempfile::tempdir().unwrap();
+        write_sqlite(&dir.path().join("r.sqlite"), &t).unwrap();
+        write_csv(&dir.path().join("r.csv"), &t, true).unwrap();
+        write_xlsx(&dir.path().join("r.xlsx"), &t, true).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("r.sqlite")).unwrap();
+        let status: String = conn
+            .query_row("SELECT \"input.status\" FROM results", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "vip");
+        // Still unique when the prefixed name is taken too.
+        let mut names = ColumnNames::default();
+        names.reserve("status");
+        names.reserve("input.status");
+        assert_eq!(names.take("Status", "input"), "input.Status_2");
+    }
+
+    /// Regression: scraped values that a spreadsheet would run as formulas (CSV injection).
+    #[test]
+    fn csv_neutralizes_formulas_unless_raw() {
+        for evil in [
+            "=HYPERLINK(\"http://evil/\")",
+            "@SUM(A1)",
+            "+cmd",
+            "-1+2",
+            "\tx",
+            "\rx",
+        ] {
+            assert!(looks_like_formula(evil), "{evil:?}");
+            assert_eq!(neutralize_formula(evil), format!("'{evil}"));
+        }
+        for fine in ["-5", "+1.5", "plain", "", "a=b", "1e3"] {
+            assert!(!looks_like_formula(fine), "{fine:?}");
+            assert_eq!(neutralize_formula(fine), fine);
+        }
+
+        let rows = [row(
+            0,
+            &[("q", "=1+1")],
+            json!({"=title": "=cmd|' /C calc'!A0", "price": "-5"}),
+            None,
+        )];
+        let t = table(&rows);
+        let dir = tempfile::tempdir().unwrap();
+        let read = |path: &Path| -> Vec<Vec<String>> {
+            csv::Reader::from_path(path)
+                .unwrap()
+                .into_records()
+                .map(|r| r.unwrap().iter().map(String::from).collect())
+                .collect()
+        };
+        let safe = dir.path().join("safe.csv");
+        write_csv(&safe, &t, true).unwrap();
+        let header = csv::Reader::from_path(&safe)
+            .unwrap()
+            .headers()
+            .unwrap()
+            .clone();
+        assert!(header.iter().any(|h| h == "'=title"));
+        let cells = &read(&safe)[0];
+        assert!(cells.contains(&"'=1+1".to_string()));
+        assert!(cells.contains(&"'=cmd|' /C calc'!A0".to_string()));
+        assert!(cells.contains(&"-5".to_string()));
+
+        let raw = dir.path().join("raw.csv");
+        write_csv(&raw, &t, false).unwrap();
+        let cells = &read(&raw)[0];
+        assert!(cells.contains(&"=1+1".to_string()));
+        assert!(cells.contains(&"=cmd|' /C calc'!A0".to_string()));
     }
 }
