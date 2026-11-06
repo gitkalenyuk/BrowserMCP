@@ -1,62 +1,23 @@
-// Wire types of the Scripts panel: the script library, script.run and the step debugger
-// (crates/jobs/src/{commands,debug,host}.rs). They are merged into RpcMethods / ApiEvents of
-// ./types (declaration merging), so `api.call('script.list')` is typed like every other call.
+// Wire types of the Scripts panel's step debugger (crates/jobs/src/debug.rs). Params and
+// results come from the generated protocol types (`cargo xtask gen-sdk`); the event payloads are
+// built with `json!` in Rust and are written out here. The library and Run methods
+// (script.list/get/save/delete/run) are declared in types-record-runs.ts.
+//
+// types.ts re-exports this file; the `declare module` below adds the methods and events to
+// RpcMethods / ApiEvents (declaration merging).
+
+import type { Commands } from '../../../../sdk/protocol/src/generated/commands';
 
 /** One saved script (data/scripts/<name>.ts). */
-export interface ScriptInfo {
-  /** Name without .ts, e.g. "login" or "login.v2". */
-  name: string;
-  size: number;
-  modified_ms: number;
-}
-
-/** A parsed script failure (crates/jobs/src/host.rs `ScriptFailure`). */
-export interface ScriptFailure {
-  /** NOT_FOUND, TIMEOUT, … for a failed browser call; else SCRIPT_ERROR, SCRIPT_TIMEOUT, HOST_ERROR, CANCELLED. */
-  code: string;
-  /** The browser command that failed, e.g. "page.find". */
-  command?: string;
-  message: string;
-  /** TypeScript line of the top stack frame. */
-  line?: number;
-}
-
+export type ScriptInfo = Commands['script.list']['output']['scripts'][number];
 /** Result of script.run. */
-export interface ScriptRunOutcome {
-  ok: boolean;
-  exit_code: number | null;
-  duration_ms: number;
-  /** Merged browser.output(...) values; null when none. */
-  result: unknown;
-  /** Last few KB of ordinary stdout / stderr lines. */
-  stdout: string;
-  stderr: string;
-  error?: ScriptFailure;
-}
-
-export type ScriptSourceArgs = { name: string; code?: never } | { code: string; name?: never };
-
-export type ScriptRunArgs = ScriptSourceArgs & {
-  inputs?: Record<string, string>;
-  timeout_secs?: number;
-};
-
-export type DebugStartArgs = ScriptSourceArgs & {
-  inputs?: Record<string, string>;
-  /** TypeScript lines (1-based). */
-  breakpoints?: number[];
-  timeout_secs?: number;
-};
-
-export interface DebugStartResult {
-  id: string;
-  /** Where the breakpoints really landed. */
-  breakpoints: number[];
-  /** The script never started (e.g. a syntax error). */
-  error?: ScriptFailure;
-}
-
-export type DebugAction = 'continue' | 'step_over' | 'step_into' | 'step_out' | 'pause' | 'set_breakpoints' | 'stop';
+export type ScriptRunOutcome = Commands['script.run']['output'];
+/** A parsed script failure: `{code, command?, message, line?}`. */
+export type ScriptFailure = NonNullable<ScriptRunOutcome['error']>;
+export type DebugStartArgs = Commands['script.debug_start']['args'];
+export type DebugStartResult = Commands['script.debug_start']['output'];
+export type DebugCmdArgs = Commands['script.debug_cmd']['args'];
+export type DebugAction = DebugCmdArgs['action'];
 
 export interface DebugVariable {
   name: string;
@@ -78,6 +39,7 @@ export interface DebugFrame {
   url: string;
 }
 
+/** `script.debug_paused`: all lines are 1-based TypeScript lines. */
 export interface DebugPaused {
   id: string;
   /** breakpoint, step, … */
@@ -109,16 +71,8 @@ export interface DebugEnded {
 
 declare module './types' {
   interface RpcMethods {
-    'script.list': { params: void; result: { scripts: ScriptInfo[] } };
-    'script.get': { params: { name: string }; result: { name: string; code: string } };
-    'script.save': { params: { name: string; code: string }; result: ScriptInfo };
-    'script.delete': { params: { name: string }; result: { deleted: boolean } };
-    'script.run': { params: ScriptRunArgs; result: ScriptRunOutcome };
     'script.debug_start': { params: DebugStartArgs; result: DebugStartResult };
-    'script.debug_cmd': {
-      params: { id: string; action: DebugAction; lines?: number[] };
-      result: { breakpoints?: number[] };
-    };
+    'script.debug_cmd': { params: DebugCmdArgs; result: Commands['script.debug_cmd']['output'] };
   }
   interface ApiEvents {
     'script.debug_paused': DebugPaused;

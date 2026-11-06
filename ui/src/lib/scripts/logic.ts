@@ -65,7 +65,7 @@ export function endEntry(ok: boolean, ms: number, error: ScriptFailure | null, s
   if (stopped) return { kind: 'info', text: `stopped after ${formatMs(ms)}` };
   if (ok || !error) return { kind: 'info', text: `done in ${formatMs(ms)}` };
   const where = error.command ? ` (browser.${error.command})` : '';
-  return { kind: 'error', text: `${error.code}${where}: ${error.message}`, line: error.line };
+  return { kind: 'error', text: `${error.code}${where}: ${error.message}`, line: error.line ?? undefined };
 }
 
 export function debugEndEntry(ended: DebugEnded): ConsoleEntry {

@@ -1,7 +1,9 @@
 <script lang="ts">
   import AgentBanner from '../lib/components/AgentBanner.svelte';
+  import BookmarksBar from '../lib/components/BookmarksBar.svelte';
   import CommandPalette from '../lib/components/CommandPalette.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import NotificationHost from '../lib/components/NotificationHost.svelte';
   import PageSlot from '../lib/components/PageSlot.svelte';
   import SidePanel from '../lib/components/SidePanel.svelte';
   import TabSidebar from '../lib/components/TabSidebar.svelte';
@@ -41,10 +43,12 @@
     <TabStrip />
   {/if}
   <Toolbar />
+  {#if settings.value.bookmarksBar}<BookmarksBar />{/if}
   {#if chrome.active?.loading}
     <div class="progress" aria-hidden="true"></div>
   {/if}
   <AgentBanner />
+  <NotificationHost />
   <div class="body">
     {#if settings.value.verticalTabs}
       <TabSidebar />

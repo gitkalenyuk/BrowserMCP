@@ -1,41 +1,16 @@
-// Fakes for the Scripts panel's commands (script.*), used by MockApi so `pnpm dev` demos the
-// library, Run and the step debugger without a backend. Shapes follow crates/jobs; the
-// "execution" is a toy: console.log lines with a string literal print it, `throw new Error("…")`
-// fails, `browser.output(…)` reports a result, and the debugger walks the non-empty lines.
+// Fakes for the step debugger (script.debug_start / script.debug_cmd + script.debug_* events),
+// used by MockApi so `pnpm dev` demos it without a backend. The script library and Run are
+// faked in mock-record-runs.ts; saved scripts are read through `getCode`. The "execution" is a
+// toy: console.log lines with a string literal print it, `throw new Error("…")` fails,
+// `browser.output(…)` reports a result, and every non-empty line is a step.
 
 import { RpcError } from './client';
-import type { ApiEvents, EventName, Method, Params, Result } from './types';
-import type { DebugPaused, DebugVariable, ScriptFailure, ScriptInfo, ScriptRunOutcome } from './types-scripts';
+import type { ApiEvents, EventName, Params, Result } from './types';
+import type { DebugPaused, DebugVariable, ScriptFailure } from './types-scripts';
 
-type ScriptMethod = Extract<Method, `script.${string}`>;
+type ScriptMethod = 'script.debug_start' | 'script.debug_cmd';
 export type ScriptHandlers = { [M in ScriptMethod]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
 type Emit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
-
-const SEED: Record<string, string> = {
-  hello: `// hello.ts: list the tabs and greet someone.
-const name = inputs.name ?? "world";
-console.log("hello from the mock script host");
-
-const { tabs } = await browser.tabs.list();
-let count = 0;
-for (const tab of tabs) {
-  count += 1;
-  console.log(\`- \${tab.title}\`);
-}
-
-browser.output({ name, tabs: count });
-`,
-  'login-form': `// login-form.ts: fill a login form with the Run form values.
-const email = inputs.email;
-const password = inputs.password;
-if (!email || !password) throw new Error("set the email and password inputs");
-
-await browser.nav.goto({ url: "https://example.com/login" });
-const field = await browser.page.find({ name: "Email" });
-console.log("found the email field");
-browser.output({ email, ok: true });
-`,
-};
 
 /** Lines the toy debugger can stop on (1-based). */
 function executableLines(code: string): number[] {
@@ -88,31 +63,23 @@ interface Session {
   paused: boolean;
 }
 
-export function createScriptMocks(emit: Emit, opts: { delay?: number } = {}): ScriptHandlers {
+export function createScriptMocks(
+  emit: Emit,
+  opts: { delay?: number; getCode?: (name: string) => string | Promise<string> } = {},
+): ScriptHandlers {
   const delay = opts.delay ?? 140;
-  const files = new Map<string, { code: string; modified: number }>(
-    Object.entries(SEED).map(([name, code], i) => [name, { code, modified: Date.now() - (i + 1) * 3_600_000 }]),
-  );
   const sessions = new Map<string, Session>();
   let nextSession = 1;
 
-  const info = (name: string): ScriptInfo => {
-    const f = files.get(name)!;
-    return { name, size: new TextEncoder().encode(f.code).length, modified_ms: f.modified };
-  };
-  const require = (name: string) => {
-    const f = files.get(name);
-    if (!f) throw new RpcError('NOT_FOUND', `script '${name}' not found`);
-    return f;
-  };
-  const codeOf = (p: { name?: string; code?: string }): { name: string; code: string } => {
-    if (p.name !== undefined && p.code === undefined) return { name: p.name, code: require(p.name).code };
-    if (p.code !== undefined && p.name === undefined) return { name: '.adhoc', code: p.code };
+  const codeOf = async (p: { name?: string | null; code?: string | null }): Promise<{ name: string; code: string }> => {
+    if (p.name != null && p.code == null) {
+      if (!opts.getCode) throw new RpcError('NOT_FOUND', `script '${p.name}' not found`);
+      return { name: p.name, code: await opts.getCode(p.name) };
+    }
+    if (p.code != null && p.name == null) return { name: '.adhoc', code: p.code };
     throw new RpcError('INVALID_PARAMS', 'give exactly one of `name` or `code`');
   };
   const later = (fn: () => void) => setTimeout(fn, delay);
-
-  // ---- the toy debugger --------------------------------------------------------------------
 
   /** Resolve breakpoint lines to lines with code (like V8 moving them). */
   const resolve = (s: Session, lines: number[]) =>
@@ -159,14 +126,15 @@ export function createScriptMocks(emit: Emit, opts: { delay?: number } = {}): Sc
   const pause = (s: Session, line: number, reason: string) => {
     s.paused = true;
     const indented = /^\s+/.test(s.lines[line - 1]);
+    const url = `file:///data/scripts/${s.name}.ts`;
     const paused: DebugPaused = {
       id: s.id,
       reason,
       line,
       column: (s.lines[line - 1].match(/^\s*/)?.[0].length ?? 0) + 1,
-      url: `file:///data/scripts/${s.name}.ts`,
+      url,
       hit_breakpoints: reason === 'breakpoint' ? [line] : [],
-      call_frames: [{ function: '(top level)', line, url: `file:///data/scripts/${s.name}.ts` }],
+      call_frames: [{ function: '(top level)', line, url }],
       scopes: [
         ...(indented ? [{ type: 'block', variables: [{ name: 'tab', type: 'object', value: '{id: 1, title: "Example Domain"}' }] }] : []),
         { type: 'module', variables: variables(s.lines, line) },
@@ -190,47 +158,12 @@ export function createScriptMocks(emit: Emit, opts: { delay?: number } = {}): Sc
   };
 
   return {
-    'script.list': () => ({ scripts: [...files.keys()].sort().map(info) }),
-    'script.get': ({ name }) => ({ name, code: require(name).code }),
-    'script.save': ({ name, code }) => {
-      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(\.v\d+)?$/.test(name)) throw new RpcError('INVALID_PARAMS', `invalid script name "${name}"`);
-      files.set(name, { code, modified: Date.now() });
-      return info(name);
-    },
-    'script.delete': ({ name }) => ({ deleted: files.delete(name) }),
-    'script.run': async (params): Promise<ScriptRunOutcome> => {
-      const { code } = codeOf(params);
-      const started = Date.now();
-      await new Promise((r) => setTimeout(r, delay * 3));
-      const stdout: string[] = [];
-      let result: unknown = null;
-      const lines = code.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const err = throwText(lines[i]);
-        if (err && !/if\s*\(/.test(lines[i])) {
-          return {
-            ok: false,
-            exit_code: 1,
-            duration_ms: Date.now() - started,
-            result,
-            stdout: stdout.join('\n'),
-            stderr: `error: Uncaught Error: ${err}\n    at file:///data/scripts/x.ts:${i + 1}:7\n`,
-            error: { code: 'SCRIPT_ERROR', message: `Uncaught Error: ${err}`, line: i + 1 },
-          };
-        }
-        const log = logText(lines[i]);
-        if (log !== null) stdout.push(log);
-        if (lines[i].includes('browser.output(')) result = { mock: true, inputs: params.inputs ?? {} };
-      }
-      return { ok: true, exit_code: 0, duration_ms: Date.now() - started, result, stdout: stdout.join('\n'), stderr: '' };
-    },
-    'script.debug_start': (params) => {
-      const { name, code } = codeOf(params);
-      const lines = code.split('\n');
+    'script.debug_start': async (params) => {
+      const { name, code } = await codeOf(params);
       const s: Session = {
         id: `dbg${nextSession++}`,
         name,
-        lines,
+        lines: code.split('\n'),
         exec: executableLines(code),
         pos: -1,
         bps: [],

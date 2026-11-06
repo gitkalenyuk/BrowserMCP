@@ -88,7 +88,7 @@ pub(crate) fn is_chrome_url(url: &str) -> bool {
 /// the chrome and palette pages have no business inside a tab.
 pub(crate) fn is_allowed_in_content(url: &str) -> bool {
     match url.strip_prefix(UI_PREFIX) {
-        Some(rest) => rest.split(['?', '#']).next() == Some(NEWTAB_PAGE),
+        Some(rest) => rest.split(['?', '#']).next() == Some(NEWTAB_PAGE) || rest == "library.html",
         None => !url.starts_with(CMD_PREFIX),
     }
 }
