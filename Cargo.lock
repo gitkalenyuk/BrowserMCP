@@ -361,6 +361,7 @@ dependencies = [
 name = "bmcp-cdp"
 version = "0.1.0"
 dependencies = [
+ "bmcp-core",
  "serde",
  "serde_json",
  "thiserror",

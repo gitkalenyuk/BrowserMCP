@@ -18,7 +18,9 @@ pub mod paths;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use backend::{BackendError, BackendResult, BoxFuture, BrowserBackend, TabId, TabInfo};
+pub use backend::{
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, TabId, TabInfo,
+};
 pub use command::{
     Caller, CmdError, Command, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta, Registry, Retry,
     Sensitivity, Toolset, wire_name,

@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bmcp_cdp::CdpClient;
-use bmcp_core::{BackendError, BackendResult, BoxFuture, BrowserBackend, TabId, TabInfo};
+use bmcp_core::{
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvents, TabId, TabInfo,
+};
 use cef::*;
 use serde_json::Value;
 use tokio::sync::watch;
@@ -94,6 +96,10 @@ impl BrowserBackend for CefBackend {
                 .await
                 .map_err(|e| BackendError::Cdp(e.to_string()))
         })
+    }
+
+    fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
+        Box::pin(async move { Ok(self.tab_cdp(tab).await?.subscribe()) })
     }
 
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>> {
