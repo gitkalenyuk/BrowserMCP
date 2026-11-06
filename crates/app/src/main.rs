@@ -109,7 +109,13 @@ async fn start_api(
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
 ) {
-    match bmcp_api::serve(backend, port, shutdown).await {
+    // One registry for every API surface: built-in commands + API-crate commands.
+    let mut registry = bmcp_core::Registry::new();
+    bmcp_core::commands::register_builtin(&mut registry);
+    bmcp_api::commands::register(&mut registry);
+    tracing::info!(commands = registry.len(), "command registry ready");
+    let events = bmcp_core::EventBus::new();
+    match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
         Ok(server) => {
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

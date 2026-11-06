@@ -7,19 +7,20 @@
 //!   open in BrowserMCP itself, always send `Origin`; MCP clients like Claude Code don't.
 
 mod ax;
+pub mod commands;
 mod mcp;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use bmcp_core::BrowserBackend;
+use bmcp_core::{BrowserBackend, EventBus, Registry};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use tokio_util::sync::CancellationToken;
 
 pub use ax::format_ax_tree;
-pub use mcp::BrowserMcp;
+pub use mcp::{BrowserMcp, DEFAULT_TOOLSETS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -46,6 +47,8 @@ impl Server {
 /// Start the HTTP server (MCP at `/mcp`) on 127.0.0.1:`port` (0 = any free port).
 pub async fn serve(
     backend: Arc<dyn BrowserBackend>,
+    registry: Arc<Registry>,
+    events: EventBus,
     port: u16,
     shutdown: CancellationToken,
 ) -> Result<Server, ServeError> {
@@ -53,7 +56,13 @@ pub async fn serve(
         .enforce_origin_validation()
         .with_cancellation_token(shutdown.child_token());
     let mcp = StreamableHttpService::new(
-        move || Ok(BrowserMcp::new(backend.clone())),
+        move || {
+            Ok(BrowserMcp::new(
+                registry.clone(),
+                backend.clone(),
+                events.clone(),
+            ))
+        },
         LocalSessionManager::default().into(),
         config,
     );

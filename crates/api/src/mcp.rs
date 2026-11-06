@@ -1,201 +1,135 @@
-//! MCP tools (spike S3). Tool names use `_` because the Anthropic API rejects dots.
+//! MCP server generated from the command registry.
 //!
-//! Phase 3 replaces these hand-written tools with ones generated from the command
-//! registry; the names below already follow the planned catalog.
+//! Every registered command becomes one MCP tool (`tabs.list` → `tabs_list`, because the
+//! Anthropic API rejects dots in tool names). Only some toolsets are listed by default so
+//! tool schemas don't flood the model's context; clients pick more with
+//! `http://127.0.0.1:47800/mcp?toolsets=core,net,record`.
 
+use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 
-use bmcp_core::{BackendError, BrowserBackend, TabId};
-use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    schemars, tool, tool_handler, tool_router,
+use bmcp_core::{
+    BrowserBackend, Caller, CommandInfo, Ctx, EventBus, Registry, Sensitivity, Toolset,
 };
-use serde::Deserialize;
-use serde_json::json;
+use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, model::*, service::RequestContext};
+use serde_json::Value;
+
+/// Toolsets listed when the client does not ask for specific ones.
+pub const DEFAULT_TOOLSETS: &[Toolset] = &[Toolset::Core, Toolset::System];
 
 #[derive(Clone)]
 pub struct BrowserMcp {
+    registry: Arc<Registry>,
     backend: Arc<dyn BrowserBackend>,
-    // Kept per the rmcp pattern; with rmcp 3.9 `#[tool_handler]` builds the router itself.
-    #[allow(dead_code)]
-    tool_router: ToolRouter<BrowserMcp>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct OpenArgs {
-    /// URL to open in a new tab.
-    pub url: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GotoArgs {
-    /// URL to load.
-    pub url: String,
-    /// Tab id from tabs_list. Default: the most recently opened tab.
-    pub tab: Option<i32>,
-    /// Max seconds to wait for the page to finish loading (default 30).
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct TabArgs {
-    /// Tab id from tabs_list. Default: the most recently opened tab.
-    pub tab: Option<i32>,
-    /// Maximum lines/characters to return.
-    pub limit: Option<usize>,
-}
-
-fn ok_text(text: impl Into<String>) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        text.into(),
-    )]))
-}
-
-/// Backend failures are tool errors the model can read and react to, not protocol errors.
-fn tool_error(err: BackendError) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![ContentBlock::text(
-        err.to_string(),
-    )]))
+    events: EventBus,
 }
 
 impl BrowserMcp {
-    pub fn new(backend: Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(
+        registry: Arc<Registry>,
+        backend: Arc<dyn BrowserBackend>,
+        events: EventBus,
+    ) -> Self {
         Self {
+            registry,
             backend,
-            tool_router: Self::tool_router(),
-        }
-    }
-
-    async fn resolve_tab(&self, tab: Option<i32>) -> Result<TabId, BackendError> {
-        match tab {
-            Some(id) => Ok(TabId(id)),
-            None => self
-                .backend
-                .list_tabs()
-                .await?
-                .into_iter()
-                .map(|t| t.id)
-                .max()
-                .ok_or(BackendError::NoTabs),
+            events,
         }
     }
 }
 
-#[tool_router]
-impl BrowserMcp {
-    #[tool(description = "Check that BrowserMCP is running. Returns its version.")]
-    async fn system_ping(&self) -> Result<CallToolResult, McpError> {
-        ok_text(format!(
-            "pong from BrowserMCP {}",
-            env!("CARGO_PKG_VERSION")
-        ))
-    }
+fn to_tool(info: &CommandInfo) -> Tool {
+    let object = |v: &Value| Arc::new(v.as_object().cloned().unwrap_or_default());
+    Tool::new(
+        info.wire_name.clone(),
+        info.description,
+        object(&info.args_schema),
+    )
+    .with_raw_output_schema(object(&info.output_schema))
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(info.sensitivity == Sensitivity::Read)
+            .destructive(false),
+    )
+}
 
-    #[tool(description = "List open tabs: id, title, url, loading.")]
-    async fn tabs_list(&self) -> Result<CallToolResult, McpError> {
-        match self.backend.list_tabs().await {
-            Ok(tabs) => ok_text(
-                tabs.iter()
-                    .map(|t| {
-                        let loading = if t.loading { " (loading)" } else { "" };
-                        format!("tab {} \"{}\" {}{loading}", t.id, t.title, t.url)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            Err(e) => tool_error(e),
-        }
-    }
+fn http_parts(cx: &RequestContext<RoleServer>) -> Option<&axum::http::request::Parts> {
+    cx.extensions.get::<axum::http::request::Parts>()
+}
 
-    #[tool(description = "Open a URL in a new tab. Returns the new tab id.")]
-    async fn tabs_open(
-        &self,
-        Parameters(args): Parameters<OpenArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        match self.backend.open_tab(args.url).await {
-            Ok(id) => ok_text(format!("opened tab {id}")),
-            Err(e) => tool_error(e),
-        }
-    }
-
-    #[tool(description = "Navigate a tab to a URL and wait until the page has loaded.")]
-    async fn nav_goto(
-        &self,
-        Parameters(args): Parameters<GotoArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let result = async {
-            let tab = self.resolve_tab(args.tab).await?;
-            let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(30));
-            self.backend.navigate(tab, args.url, timeout).await
-        }
-        .await;
-        match result {
-            Ok(t) => ok_text(format!("tab {} loaded \"{}\" {}", t.id, t.title, t.url)),
-            Err(e) => tool_error(e),
-        }
-    }
-
-    #[tool(
-        description = "Accessibility tree of the page as an indented list of roles and names. \
-                       Use it to understand the page without a screenshot."
-    )]
-    async fn page_ax_tree(
-        &self,
-        Parameters(args): Parameters<TabArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let result = async {
-            let tab = self.resolve_tab(args.tab).await?;
-            self.backend
-                .cdp(tab, "Accessibility.getFullAXTree".into(), json!({}))
-                .await
-        }
-        .await;
-        match result {
-            Ok(tree) => ok_text(crate::ax::format_ax_tree(&tree, args.limit.unwrap_or(300))),
-            Err(e) => tool_error(e),
-        }
-    }
-
-    #[tool(description = "Visible text of the page (document.body.innerText).")]
-    async fn page_text(
-        &self,
-        Parameters(args): Parameters<TabArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let limit = args.limit.unwrap_or(8000);
-        let result = async {
-            let tab = self.resolve_tab(args.tab).await?;
-            self.backend
-                .cdp(
-                    tab,
-                    "Runtime.evaluate".into(),
-                    json!({ "expression": "document.body ? document.body.innerText : ''", "returnByValue": true }),
-                )
-                .await
-        }
-        .await;
-        match result {
-            Ok(v) => {
-                let text = v["result"]["value"].as_str().unwrap_or_default();
-                let clipped: String = text.chars().take(limit).collect();
-                ok_text(clipped)
-            }
-            Err(e) => tool_error(e),
-        }
+/// `?toolsets=core,net` from the request URL, else the defaults. Unknown names are ignored.
+fn requested_toolsets(cx: &RequestContext<RoleServer>) -> Vec<Toolset> {
+    let query = http_parts(cx).and_then(|p| p.uri.query()).unwrap_or("");
+    let requested: Vec<Toolset> = query
+        .split('&')
+        .filter_map(|pair| pair.strip_prefix("toolsets="))
+        .flat_map(|list| list.split(','))
+        .filter_map(|name| Toolset::from_str(name.trim()).ok())
+        .collect();
+    if requested.is_empty() {
+        DEFAULT_TOOLSETS.to_vec()
+    } else {
+        requested
     }
 }
 
-#[tool_handler]
+fn session_id(cx: &RequestContext<RoleServer>) -> String {
+    http_parts(cx)
+        .and_then(|p| p.headers.get("mcp-session-id"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
 impl ServerHandler for BrowserMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("browsermcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "BrowserMCP controls a real Chromium browser. Read pages with page_ax_tree or \
-                 page_text instead of screenshots. Tabs are addressed by the ids from tabs_list."
+                 page_text instead of screenshots. Tabs are addressed by the ids from tabs_list. \
+                 Errors come back as JSON {code, message, retry, hint}."
                     .to_string(),
             )
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        cx: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let toolsets = requested_toolsets(&cx);
+        let tools = self
+            .registry
+            .list(Some(&toolsets))
+            .into_iter()
+            .map(to_tool)
+            .collect();
+        Ok(ListToolsResult::with_all_items(tools))
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        cx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        let caller = Caller::Mcp {
+            session: session_id(&cx),
+            agent: None,
+        };
+        let ctx = Ctx::new(caller, self.backend.clone(), self.events.clone());
+        let args = request.arguments.map(Value::Object).unwrap_or(Value::Null);
+        let result = match self.registry.call(ctx, &request.name, args).await {
+            Ok(output) => CallToolResult::structured(output),
+            // {code, message, retry, hint, candidates}: readable by the model, not a protocol error.
+            Err(err) => {
+                CallToolResult::structured_error(serde_json::to_value(&err).unwrap_or_default())
+            }
+        };
+        Ok(result.into())
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        self.registry.get(name).map(to_tool)
     }
 }
