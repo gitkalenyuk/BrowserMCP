@@ -126,6 +126,8 @@ pub enum Shortcut {
     FocusOmnibox,
     /// Esc: closes the palette (only consumed while the palette is open).
     Escape,
+    /// Ctrl+F: focus the UI view, then open its find bar (`find.open`).
+    Find,
     /// Any other browser shortcut: run this UI command id (`ui/src/lib/keymap.ts`) in the
     /// window's UI page, exactly as if the key had been pressed there.
     Ui(&'static str),
@@ -141,6 +143,7 @@ const VK_RIGHT: i32 = 0x27;
 const VK_0: i32 = 0x30;
 const VK_D: i32 = 0x44;
 const VK_E: i32 = 0x45;
+const VK_F: i32 = 0x46;
 const VK_K: i32 = 0x4B;
 const VK_L: i32 = 0x4C;
 const VK_R: i32 = 0x52;
@@ -177,6 +180,7 @@ pub fn shortcut(key_code: i32, m: Modifiers) -> Option<Shortcut> {
         VK_D if alt => Shortcut::FocusOmnibox,
         VK_F6 if plain => Shortcut::FocusOmnibox,
         VK_ESCAPE if plain => Shortcut::Escape,
+        VK_F if ctrl => Shortcut::Find,
         VK_T if ctrl => Ui("tab.new"),
         VK_T if ctrl_shift => Ui("tab.reopen"),
         VK_W | VK_F4 if ctrl => Ui("tab.close"),
@@ -378,6 +382,7 @@ mod tests {
         assert_eq!(shortcut(0x4C, ctrl), Some(Shortcut::FocusOmnibox));
         assert_eq!(shortcut(0x44, alt), Some(Shortcut::FocusOmnibox));
         assert_eq!(shortcut(0x1B, none), Some(Shortcut::Escape));
+        assert_eq!(shortcut(0x46, ctrl), Some(Shortcut::Find));
         assert_eq!(shortcut(0x54, ctrl), Some(Shortcut::Ui("tab.new")));
         assert_eq!(shortcut(0x54, ctrl_shift), Some(Shortcut::Ui("tab.reopen")));
         assert_eq!(shortcut(0x57, ctrl), Some(Shortcut::Ui("tab.close")));

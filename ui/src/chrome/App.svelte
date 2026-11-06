@@ -1,6 +1,7 @@
 <script lang="ts">
   import AgentBanner from '../lib/components/AgentBanner.svelte';
   import CommandPalette from '../lib/components/CommandPalette.svelte';
+  import FindBar from '../lib/components/FindBar.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import PageSlot from '../lib/components/PageSlot.svelte';
   import SidePanel from '../lib/components/SidePanel.svelte';
@@ -43,6 +44,7 @@
     <div class="progress" aria-hidden="true"></div>
   {/if}
   <AgentBanner />
+  <FindBar />
   <div class="body">
     {#if settings.value.verticalTabs}
       <TabSidebar />

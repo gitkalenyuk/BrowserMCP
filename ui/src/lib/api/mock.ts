@@ -289,6 +289,9 @@ export class MockApi implements BrowserApi {
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },
+    // The mock has no page content: find in page never matches.
+    'page.find_text': ({ tab }) => ({ tab: tab ?? 0, count: 0, index: 0, context: '' }),
+    'page.find_clear': ({ tab }) => ({ tab: tab ?? 0 }),
   };
 
   // ---- helpers --------------------------------------------------------------

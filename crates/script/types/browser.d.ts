@@ -2292,6 +2292,162 @@ declare namespace BrowserMCP {
     tree: string;
   }
 
+  // ---- page.dialog ----
+
+  /** Arguments of `page.dialog`. */
+  export interface PageDialogArgs {
+    /**
+     * OK or Cancel.
+     *
+     * - `"accept"`: OK / Leave.
+     * - `"dismiss"`: Cancel / Stay.
+     */
+    action: "accept" | "dismiss";
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+    /** Text to type into a prompt before accepting it. */
+    text?: string | null;
+  }
+
+  /** Result of `page.dialog`. */
+  export interface PageDialogOutput {
+    /**
+     * OK or Cancel.
+     *
+     * - `"accept"`: OK / Leave.
+     * - `"dismiss"`: Cancel / Stay.
+     */
+    action: "accept" | "dismiss";
+    /** The dialog that was answered (null when it opened before the browser watched the tab). */
+    dialog: {
+      /** Prefilled text of a prompt ("" for the other kinds). */
+      default_prompt: string;
+      message: string;
+      /**
+       * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+       * On the wire it is a plain number: `3`.
+       */
+      tab: number;
+      /**
+       * The four kinds of JavaScript dialogs (CDP `DialogType`).
+       *
+       * - `"beforeunload"`: "Leave site? Changes you made may not be saved."
+       */
+      type: "alert" | "confirm" | "prompt" | "beforeunload";
+      /** URL of the frame that opened it. */
+      url: string;
+    } | null;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }
+
+  // ---- page.dialog_policy ----
+
+  /** Arguments of `page.dialog_policy`. */
+  export interface PageDialogPolicyArgs {
+    /**
+     * Rules for each kind: accept | dismiss | ask (leave it to the agent/human) |
+     * auto (accept while automation is active, else ask). Omitted = unchanged.
+     *
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    alert?: "accept" | "dismiss" | "ask" | "auto" | null;
+    /**
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    beforeunload?: "accept" | "dismiss" | "ask" | "auto" | null;
+    /**
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    confirm?: "accept" | "dismiss" | "ask" | "auto" | null;
+    /**
+     * Change the rules of every tab (tab rules still win over global ones).
+     * @default false
+     */
+    global?: boolean;
+    /**
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    prompt?: "accept" | "dismiss" | "ask" | "auto" | null;
+    /** Text for prompts that are accepted automatically (default: their prefilled text). */
+    prompt_text?: string | null;
+    /**
+     * Drop this level's rules first (back to the global rules / the defaults).
+     * @default false
+     */
+    reset?: boolean;
+    /** Tab id from tabs_list. Default: the most recently opened tab (unless `global`). */
+    tab?: number | null;
+  }
+
+  /** Result of `page.dialog_policy`. */
+  export interface PageDialogPolicyOutput {
+    /**
+     * True when automation counts as active (a non-UI caller ran a command in the last
+     * minute): `auto` rules accept right now.
+     */
+    automation_active: boolean;
+    /** The rules now in force for this scope. */
+    policy: {
+      /**
+       * What to do with one kind of dialog.
+       *
+       * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+       * - `"dismiss"`: Press Cancel at once.
+       * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+       * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+       */
+      alert: "accept" | "dismiss" | "ask" | "auto";
+      /**
+       * What to do with one kind of dialog.
+       *
+       * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+       * - `"dismiss"`: Press Cancel at once.
+       * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+       * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+       */
+      beforeunload: "accept" | "dismiss" | "ask" | "auto";
+      /**
+       * What to do with one kind of dialog.
+       *
+       * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+       * - `"dismiss"`: Press Cancel at once.
+       * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+       * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+       */
+      confirm: "accept" | "dismiss" | "ask" | "auto";
+      /**
+       * What to do with one kind of dialog.
+       *
+       * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+       * - `"dismiss"`: Press Cancel at once.
+       * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+       * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+       */
+      prompt: "accept" | "dismiss" | "ask" | "auto";
+      prompt_text: string | null;
+    };
+    /** "global" or "tab". */
+    scope: string;
+    /** The tab (null for the global scope). */
+    tab: number | null;
+  }
+
   // ---- page.diff ----
 
   /** Arguments of `page.diff`. */
@@ -2344,6 +2500,138 @@ declare namespace BrowserMCP {
     text: string;
     /** Total matches before `limit`. */
     total: number;
+  }
+
+  // ---- page.find_clear ----
+
+  /** Arguments of `page.find_clear`. */
+  export interface PageFindClearArgs {
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /** Result of `page.find_clear`. */
+  export interface PageFindClearOutput {
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }
+
+  // ---- page.find_text ----
+
+  /** Arguments of `page.find_text`. */
+  export interface PageFindTextArgs {
+    /**
+     * Match upper/lower case exactly (default false).
+     * @default false
+     */
+    case?: boolean;
+    /**
+     * Go to the next match of the same query (wraps around).
+     * @default false
+     */
+    next?: boolean;
+    /**
+     * Go to the previous match of the same query (wraps around).
+     * @default false
+     */
+    prev?: boolean;
+    /** Text to find (plain text, not a regex). "" clears the highlights. */
+    query: string;
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /** Result of `page.find_text`. */
+  export interface PageFindTextOutput {
+    /** Text around the current match. */
+    context: string;
+    /** Number of visible matches (at most 1000). */
+    count: number;
+    /** 1-based number of the current match (0 when nothing matched). */
+    index: number;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }
+
+  // ---- page.mhtml ----
+
+  /** Arguments of `page.mhtml`. */
+  export interface PageMhtmlArgs {
+    /** Output file: absolute, or relative to data/mhtml/. Default: data/mhtml/tab<N>-<time>.mhtml. */
+    path?: string | null;
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /**
+   * Result of `page.mhtml`.
+   * A file written by `page.pdf` / `page.mhtml`.
+   */
+  export interface PageMhtmlOutput {
+    /** File size in bytes. */
+    bytes: number;
+    /** Absolute path of the file. */
+    path: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+  }
+
+  // ---- page.pdf ----
+
+  /** Arguments of `page.pdf`. */
+  export interface PagePdfArgs {
+    /**
+     * Landscape pages (default false).
+     * @default false
+     */
+    landscape?: boolean;
+    /**
+     * Paper size (default letter).
+     *
+     * - `"letter"`: 8.5 × 11 in (Chromium's default).
+     * - `"legal"`: 8.5 × 14 in
+     * - `"tabloid"`: 11 × 17 in
+     * - `"a3"`: 297 × 420 mm
+     * - `"a4"`: 210 × 297 mm
+     * - `"a5"`: 148 × 210 mm
+     */
+    paper?: "letter" | "legal" | "tabloid" | "a3" | "a4" | "a5";
+    /** Output file: absolute, or relative to data/pdf/. Default: data/pdf/tab<N>-<time>.pdf. */
+    path?: string | null;
+    /**
+     * Print background colours and images (default false, like the print dialog).
+     * @default false
+     */
+    print_background?: boolean;
+    /** Zoom of the page content, 0.1–2 (default 1). */
+    scale?: number | null;
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /**
+   * Result of `page.pdf`.
+   * A file written by `page.pdf` / `page.mhtml`.
+   */
+  export interface PagePdfOutput {
+    /** File size in bytes. */
+    bytes: number;
+    /** Absolute path of the file. */
+    path: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
   }
 
   // ---- page.read ----
@@ -2458,6 +2746,35 @@ declare namespace BrowserMCP {
     total_chars: number;
     /** True when the text was longer than `limit`. */
     truncated: boolean;
+  }
+
+  // ---- page.upload ----
+
+  /** Arguments of `page.upload`. */
+  export interface PageUploadArgs {
+    /** Files to upload: absolute paths, or paths relative to data/runs/<run_id>/. */
+    files: string[];
+    /** The file input, or the button/label that opens the file chooser (from page_snapshot). */
+    ref: string;
+    /** Run whose folder relative paths are resolved in (see run_list). */
+    run_id?: string | null;
+    /** Tab id from tabs_list. Default: the most recently opened tab. */
+    tab?: number | null;
+    /** How long to wait for the file chooser after clicking a button (default 5000). */
+    timeout_ms?: number | null;
+  }
+
+  /** Result of `page.upload`. */
+  export interface PageUploadOutput {
+    /** The files as given to the page (absolute paths). */
+    files: string[];
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    /** "input" (the ref was the file input) or "chooser" (clicking it opened a chooser). */
+    via: string;
   }
 
   // ---- passwords.delete ----
@@ -4463,10 +4780,22 @@ declare namespace BrowserMCP {
     "page.act_batch": { args: PageActBatchArgs; output: PageActBatchOutput };
     /** Accessibility tree of the page as an indented list of roles and names (debug preview; agents should use page_snapshot). */
     "page.ax_tree": { args: PageAxTreeArgs; output: PageAxTreeOutput };
+    /** Answer the JavaScript dialog (alert/confirm/prompt/beforeunload) open on a tab: accept (OK; prompts take `text`) or dismiss (Cancel). While a dialog is open, other page_*\/input_*\/nav_* commands on the tab fail with DIALOG_OPEN, whose candidates[0] describes the dialog. NOT_FOUND when no dialog is open. */
+    "page.dialog": { args: PageDialogArgs; output: PageDialogOutput };
+    /** Set how JavaScript dialogs are handled automatically, per tab or `global`: alert/confirm/prompt/beforeunload = accept | dismiss | ask | auto. Default: ask (left open: page_dialog_opened event, DIALOG_OPEN errors), beforeunload = auto (accepted while automation runs). Call without rules to read the policy. */
+    "page.dialog_policy": { args: PageDialogPolicyArgs; output: PageDialogPolicyOutput };
     /** What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists). */
     "page.diff": { args: PageDiffArgs; output: PageDiffOutput };
     /** Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need. */
     "page.find": { args: PageFindArgs; output: PageFindOutput };
+    /** Remove the find-in-page highlights (page_find_text) from a tab. */
+    "page.find_clear": { args: PageFindClearArgs; output: PageFindClearOutput };
+    /** Find text in the page like Ctrl+F: highlight every visible match, scroll to the current one; `next`/`prev` step through them. Returns count, 1-based index and the text around the match. */
+    "page.find_text": { args: PageFindTextArgs; output: PageFindTextOutput };
+    /** Save the page as one MHTML file (HTML + images + styles; data/mhtml/ or `path`); returns the path and size. */
+    "page.mhtml": { args: PageMhtmlArgs; output: PageMhtmlOutput };
+    /** Print the page to a PDF file (data/pdf/ or `path`); returns the path and size. */
+    "page.pdf": { args: PagePdfArgs; output: PagePdfOutput };
     /** Visible text of the page or of one element (ref), cut to max_chars. Use it to read articles, messages or table contents a snapshot only names. */
     "page.read": { args: PageReadArgs; output: PageReadOutput };
     /** JPEG screenshot of the visible page, the full page or one element (ref). Costs many tokens: use only when page_snapshot/page_read are not enough (canvas, images, layout questions). */
@@ -4475,6 +4804,8 @@ declare namespace BrowserMCP {
     "page.snapshot": { args: PageSnapshotArgs; output: PageSnapshotOutput };
     /** Visible text of the page (document.body.innerText), cut to `limit` characters. */
     "page.text": { args: PageTextArgs; output: PageTextOutput };
+    /** Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist. */
+    "page.upload": { args: PageUploadArgs; output: PageUploadOutput };
     /** Delete a saved login by id. Returns {deleted: true}. */
     "passwords.delete": { args: PasswordsDeleteArgs; output: PasswordsDeleteOutput };
     /** Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved. */
@@ -4988,6 +5319,18 @@ declare namespace BrowserMCP {
        */
       ax_tree(args?: PageAxTreeArgs): Promise<PageAxTreeOutput>;
       /**
+       * Answer the JavaScript dialog (alert/confirm/prompt/beforeunload) open on a tab: accept (OK; prompts take `text`) or dismiss (Cancel). While a dialog is open, other page_*\/input_*\/nav_* commands on the tab fail with DIALOG_OPEN, whose candidates[0] describes the dialog. NOT_FOUND when no dialog is open.
+       *
+       * `page.dialog` (MCP: `page_dialog`): toolset `core`, act, mutates the tab.
+       */
+      dialog(args: PageDialogArgs): Promise<PageDialogOutput>;
+      /**
+       * Set how JavaScript dialogs are handled automatically, per tab or `global`: alert/confirm/prompt/beforeunload = accept | dismiss | ask | auto. Default: ask (left open: page_dialog_opened event, DIALOG_OPEN errors), beforeunload = auto (accepted while automation runs). Call without rules to read the policy.
+       *
+       * `page.dialog_policy` (MCP: `page_dialog_policy`): toolset `core`, act.
+       */
+      dialog_policy(args?: PageDialogPolicyArgs): Promise<PageDialogPolicyOutput>;
+      /**
        * What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists).
        *
        * `page.diff` (MCP: `page_diff`): toolset `core`, read.
@@ -4999,6 +5342,30 @@ declare namespace BrowserMCP {
        * `page.find` (MCP: `page_find`): toolset `core`, read.
        */
       find(args?: PageFindArgs): Promise<PageFindOutput>;
+      /**
+       * Remove the find-in-page highlights (page_find_text) from a tab.
+       *
+       * `page.find_clear` (MCP: `page_find_clear`): toolset `ui`, read.
+       */
+      find_clear(args?: PageFindClearArgs): Promise<PageFindClearOutput>;
+      /**
+       * Find text in the page like Ctrl+F: highlight every visible match, scroll to the current one; `next`/`prev` step through them. Returns count, 1-based index and the text around the match.
+       *
+       * `page.find_text` (MCP: `page_find_text`): toolset `ui`, read.
+       */
+      find_text(args: PageFindTextArgs): Promise<PageFindTextOutput>;
+      /**
+       * Save the page as one MHTML file (HTML + images + styles; data/mhtml/ or `path`); returns the path and size.
+       *
+       * `page.mhtml` (MCP: `page_mhtml`): toolset `data`, read.
+       */
+      mhtml(args?: PageMhtmlArgs): Promise<PageMhtmlOutput>;
+      /**
+       * Print the page to a PDF file (data/pdf/ or `path`); returns the path and size.
+       *
+       * `page.pdf` (MCP: `page_pdf`): toolset `data`, read.
+       */
+      pdf(args?: PagePdfArgs): Promise<PagePdfOutput>;
       /**
        * Visible text of the page or of one element (ref), cut to max_chars. Use it to read articles, messages or table contents a snapshot only names.
        *
@@ -5023,6 +5390,12 @@ declare namespace BrowserMCP {
        * `page.text` (MCP: `page_text`): toolset `core`, read.
        */
       text(args?: PageTextArgs): Promise<PageTextOutput>;
+      /**
+       * Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist.
+       *
+       * `page.upload` (MCP: `page_upload`): toolset `core`, act, mutates the tab.
+       */
+      upload(args: PageUploadArgs): Promise<PageUploadOutput>;
     };
     /** Commands `passwords.*`. */
     passwords: {

@@ -47,6 +47,7 @@
 //! when there are no arguments.
 
 mod error;
+mod guard;
 mod lock;
 mod registry;
 mod schema;
@@ -67,6 +68,7 @@ use crate::events::EventBus;
 use crate::extensions::Extensions;
 
 pub use error::{CmdError, ErrorCode, Retry};
+pub use guard::CommandGuard;
 pub use lock::{AllowAll, LockPolicy};
 pub use registry::{CommandInfo, Registry};
 pub use schema::{args_schema, output_schema};
@@ -282,6 +284,7 @@ pub struct Ctx {
     pub extensions: Arc<Extensions>,
     // Set by the registry for each call.
     lock: Arc<dyn LockPolicy>,
+    guards: Arc<Vec<Arc<dyn CommandGuard>>>,
     mutates_tab: bool,
     call_id: u64,
 }
@@ -296,6 +299,7 @@ impl Ctx {
             events,
             extensions: Arc::new(Extensions::new()),
             lock: Arc::new(AllowAll),
+            guards: Arc::new(Vec::new()),
             mutates_tab: false,
             call_id: 0,
         }

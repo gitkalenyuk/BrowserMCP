@@ -38,6 +38,8 @@ export class ChromeController {
   paletteOpen = $state(false);
   /** Incremented to ask the omnibox to focus itself. */
   omniboxFocusTick = $state(0);
+  /** Incremented to open the Ctrl+F find bar (FindBar.svelte). */
+  findTick = $state(0);
   lastError = $state<string | null>(null);
   keymap = $state<Keymap>(DEFAULT_KEYMAP);
   #keyIndex = $derived(buildKeyIndex(this.keymap));
@@ -221,6 +223,7 @@ export class ChromeController {
       case 'nav.reload': return this.active?.loading ? this.stopLoading() : this.reload();
       case 'nav.stop': return this.stopLoading();
       case 'omnibox.focus': return this.focusOmnibox();
+      case 'find.open': this.findTick++; return;
       case 'palette.open':
         // In the browser the palette is a separate overlay view (palette.html).
         if (this.host) this.host.palette(this.role === 'palette' ? 'hide' : 'toggle');

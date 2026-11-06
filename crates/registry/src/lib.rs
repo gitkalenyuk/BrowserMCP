@@ -22,6 +22,7 @@ pub fn build_registry() -> Registry {
     bmcp_record::register(&mut registry);
     bmcp_adblock::register(&mut registry);
     bmcp_jobs::register(&mut registry);
+    bmcp_pagetools::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }
@@ -39,6 +40,10 @@ mod tests {
             "page.snapshot",
             "page.ax_tree",
             "bookmarks.add",
+            "page.dialog",
+            "page.upload",
+            "page.pdf",
+            "page.find_text",
         ] {
             assert!(registry.get(name).is_some(), "{name} missing");
         }

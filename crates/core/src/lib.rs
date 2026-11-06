@@ -25,7 +25,7 @@ pub use backend::{
     TabId, TabInfo,
 };
 pub use command::{
-    Caller, CmdError, Command, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta, Registry, Retry,
+    Caller, CmdError, Command, CommandGuard, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta, Registry, Retry,
     Sensitivity, Toolset, wire_name,
 };
 pub use events::{Event, EventBus};

@@ -33,6 +33,10 @@ export type ErrorCode =
   | "INVALID_PARAMS"
   /** The browser is shutting down. */
   | "SHUTTING_DOWN"
+  /** The command exists but this option is not built yet (see `hint`). */
+  | "NOT_IMPLEMENTED"
+  /** A JavaScript dialog blocks the page; `candidates[0]` = `{tab, type, message, default_prompt, url}`. Answer it with `page.dialog`. */
+  | "DIALOG_OPEN"
   /** A bug or an unexpected failure. */
   | "INTERNAL";
 

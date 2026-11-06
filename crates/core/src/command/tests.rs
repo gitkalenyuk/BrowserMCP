@@ -473,7 +473,80 @@ fn cmd_error_wire_format() {
         ErrorCode::NavigationInterrupted,
         ErrorCode::BlockedInStealth,
         ErrorCode::NeedsApproval,
+        ErrorCode::DialogOpen,
     ] {
         assert_eq!(serde_json::to_value(code).unwrap(), json!(code.as_str()));
     }
+}
+
+/// A command that takes 300 ms.
+struct Slow;
+
+impl Command for Slow {
+    const NAME: &'static str = "test.slow";
+    type Args = Empty;
+    type Output = Empty;
+
+    fn meta() -> Meta {
+        Meta::new("Test only.", Toolset::Hidden)
+    }
+
+    async fn run(_ctx: Ctx, _args: Empty) -> Result<Empty, CmdError> {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        Ok(Empty {})
+    }
+}
+
+/// Fires for `test.slow` only, after `after` (zero = at once).
+struct TestGuard {
+    after: Duration,
+}
+
+impl CommandGuard for TestGuard {
+    fn watch(
+        &self,
+        _ctx: &Ctx,
+        name: &'static str,
+        _args: &Value,
+    ) -> Option<crate::BoxFuture<'static, CmdError>> {
+        if name != "test.slow" {
+            return None;
+        }
+        let after = self.after;
+        Some(Box::pin(async move {
+            tokio::time::sleep(after).await;
+            CmdError::new(ErrorCode::DialogOpen, "alert \"hi\" is open")
+        }))
+    }
+}
+
+#[tokio::test]
+async fn guards_stop_commands_before_and_while_they_run() {
+    let fake = FakeBackend::with_tabs(&["https://a.test"]);
+    for after in [Duration::ZERO, Duration::from_millis(30)] {
+        let mut registry = registry();
+        registry.add::<Slow>();
+        registry.add_guard(Arc::new(TestGuard { after }));
+        let started = std::time::Instant::now();
+        let err = registry
+            .call(ctx(mcp(), fake.clone()), "test.slow", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::DialogOpen);
+        assert_eq!(err.retry, Retry::No);
+        // Cancelled when the guard fired, not after the command's 300 ms.
+        assert!(started.elapsed() < Duration::from_millis(250));
+        // Commands the guard does not watch run normally.
+        registry
+            .call(ctx(mcp(), fake.clone()), "tabs.list", json!({}))
+            .await
+            .unwrap();
+    }
+    // Without guards the slow command finishes.
+    let mut registry = registry();
+    registry.add::<Slow>();
+    registry
+        .call(ctx(mcp(), fake), "test.slow", json!({}))
+        .await
+        .unwrap();
 }

@@ -568,6 +568,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-pagetools"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bmcp-browser",
+ "bmcp-core",
+ "bmcp-perception",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-perception"
 version = "0.1.0"
 dependencies = [
@@ -607,6 +623,7 @@ dependencies = [
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
+ "bmcp-pagetools",
  "bmcp-record",
 ]
 
@@ -653,6 +670,7 @@ dependencies = [
  "bmcp-data",
  "bmcp-identity",
  "bmcp-jobs",
+ "bmcp-pagetools",
  "bmcp-record",
  "bmcp-registry",
  "serde_json",
