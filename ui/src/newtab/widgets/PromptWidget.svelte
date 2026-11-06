@@ -1,0 +1,223 @@
+<script lang="ts">
+  import type { BrowserApi } from '../../lib/api';
+  import Icon from '../../lib/components/Icon.svelte';
+  import { PROVIDERS } from '../../lib/providers';
+  import { load, save } from '../../lib/storage';
+
+  let { api }: { api: BrowserApi } = $props();
+
+  // Agents that can take a task end-to-end (they open their own tab group).
+  const AGENTS = PROVIDERS.filter((p) => p.id === 'claude-code' || p.id === 'codex' || p.id === 'anthropic');
+  let provider = $state(load('newtab.provider', 'claude-code'));
+  let text = $state('');
+  let sending = $state(false);
+  let status = $state<{ ok: boolean; text: string } | null>(null);
+  let field: HTMLTextAreaElement;
+  const name = $derived(PROVIDERS.find((p) => p.id === provider)?.name ?? 'AI');
+
+  const EXAMPLES = [
+    'Compare prices for a ThinkPad X1 across 4 stores',
+    'Download all invoices from billing since January',
+    'Watch Hacker News for posts about CEF',
+  ];
+
+  async function submit() {
+    const t = text.trim();
+    if (!t || sending) return;
+    sending = true;
+    status = null;
+    try {
+      await api.call('ai.prompt', { text: t, provider });
+      status = { ok: true, text: `Sent to ${name}. Its tabs will appear in a ${name} group, locked until you take over.` };
+      text = '';
+    } catch (err) {
+      status = { ok: false, text: `${name} did not accept the task: ${(err as Error).message}` };
+    } finally {
+      sending = false;
+    }
+  }
+
+  function autosize() {
+    field.style.height = 'auto';
+    field.style.height = `${Math.min(field.scrollHeight, 220)}px`;
+  }
+</script>
+
+<section class="prompt" aria-labelledby="prompt-title">
+  <h1 id="prompt-title">What should I do?</h1>
+  <form
+    class="box"
+    onsubmit={(e) => {
+      e.preventDefault();
+      void submit();
+    }}
+  >
+    <textarea
+      bind:this={field}
+      bind:value={text}
+      oninput={autosize}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          void submit();
+        }
+      }}
+      rows="1"
+      placeholder="Describe a task. An agent opens its own tabs and works while you browse."
+      aria-labelledby="prompt-title"
+    ></textarea>
+    <div class="controls">
+      <label class="select">
+        <span class="sr-only">Agent</span>
+        <select bind:value={provider} onchange={() => save('newtab.provider', provider)}>
+          {#each AGENTS as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+        <Icon name="chevron-down" size={12} stroke={2.25} />
+      </label>
+      <button class="btn primary" type="submit" disabled={!text.trim() || sending}>
+        {sending ? 'Sending…' : 'Start'}
+        <kbd>Enter</kbd>
+      </button>
+    </div>
+  </form>
+  {#if status}
+    <p class="status" class:err={!status.ok} role="status">{status.text}</p>
+  {:else}
+    <div class="examples">
+      {#each EXAMPLES as ex (ex)}
+        <button
+          class="ex"
+          onclick={() => {
+            text = ex;
+            field.focus();
+            requestAnimationFrame(autosize);
+          }}>{ex}</button
+        >
+      {/each}
+    </div>
+  {/if}
+</section>
+
+<style>
+  .prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  h1 {
+    margin: 0 0 16px;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    text-align: center;
+    text-wrap: balance;
+  }
+  .box {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px 10px 10px 18px;
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 6px 20px -10px rgb(14 17 22 / 0.3);
+    transition: border-color 140ms, box-shadow 140ms;
+  }
+  .box:focus-within {
+    border-color: var(--accent-line);
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 6px 20px -10px rgb(14 17 22 / 0.3);
+  }
+  textarea {
+    flex: 1;
+    min-height: 34px;
+    max-height: 220px;
+    padding: 7px 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    resize: none;
+    font-size: var(--fs-lg);
+    line-height: 1.4;
+    user-select: text;
+  }
+  textarea::placeholder {
+    color: var(--fg-subtle);
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+  }
+  .select {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    color: var(--fg-muted);
+  }
+  .select :global(svg) {
+    position: absolute;
+    right: 8px;
+    pointer-events: none;
+  }
+  select {
+    appearance: none;
+    height: 32px;
+    padding: 0 26px 0 10px;
+    border: 0;
+    border-radius: var(--r);
+    background: var(--sunken);
+    color: var(--fg);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  .btn.primary {
+    height: 32px;
+    padding: 0 8px 0 13px;
+  }
+  .btn.primary kbd {
+    border-color: transparent;
+    background: color-mix(in oklab, var(--on-accent) 20%, transparent);
+    color: inherit;
+  }
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .ex {
+    padding: 5px 11px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+  }
+  .ex:hover {
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+  .status {
+    margin: 12px 0 0;
+    color: var(--ok);
+    font-size: var(--fs-sm);
+    text-align: center;
+  }
+  .status.err {
+    color: var(--danger);
+  }
+  @media (max-width: 560px) {
+    .box {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .controls {
+      justify-content: space-between;
+    }
+  }
+</style>
