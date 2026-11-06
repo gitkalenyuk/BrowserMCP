@@ -50,7 +50,20 @@ use tokio::sync::{broadcast, mpsc};
 use crate::state::ApiState;
 
 /// Topics every new connection is subscribed to (what the UI needs without asking).
-pub const DEFAULT_TOPICS: &[&str] = &["tab.*", "tabs.*", "agents.*", "workspace.*", "runs.*"];
+/// Browser state + the streams the UI panels render (AI chat, terminal, traffic, runs, recording).
+/// High-volume `command.*` stays opt-in.
+pub const DEFAULT_TOPICS: &[&str] = &[
+    "tab.*",
+    "tabs.*",
+    "agents.*",
+    "workspace.*",
+    "runs.*",
+    "run.*",
+    "ai.*",
+    "term.*",
+    "net.*",
+    "record.*",
+];
 
 /// Topic of the notification sent when this connection missed events.
 pub const LAGGED_TOPIC: &str = "bus.lagged";

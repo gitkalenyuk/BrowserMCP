@@ -5,7 +5,9 @@
 //! * `page.act` / `page.act_batch` — click, fill, select… by ref, with actionability checks
 //!   and a one-line diff of what changed;
 //! * `page.diff`, `page.read`, `page.screenshot` (only when text is not enough);
-//! * `nav.back`, `nav.forward`, `nav.reload`, `nav.wait`, `input.keys`.
+//! * `nav.back`, `nav.forward`, `nav.reload`, `nav.wait`, `input.keys`;
+//! * `input.humanlike` — per-tab switch from the fast path to human-like mouse paths, typing
+//!   and scrolling ([`human`]).
 //!
 //! Everything goes through `BrowserBackend::cdp`, so this crate has no CEF dependency and is
 //! tested with `bmcp_core::testing::FakeBackend`. Per-tab state (ref registry, recent
@@ -14,6 +16,7 @@
 mod act;
 mod cdp;
 pub mod commands;
+pub mod human;
 mod keys;
 mod page;
 mod state;
@@ -40,5 +43,6 @@ pub fn register(registry: &mut Registry) {
         .add::<commands::Forward>()
         .add::<commands::Reload>()
         .add::<commands::Wait>()
-        .add::<commands::Keys>();
+        .add::<commands::Keys>()
+        .add::<commands::Humanlike>();
 }

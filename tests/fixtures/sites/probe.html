@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fingerprint probe – Fixture</title>
+<style>
+  body { font-family: sans-serif; max-width: 760px; margin: 24px auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td { border-bottom: 1px solid #ddd; padding: 3px 6px; vertical-align: top; word-break: break-all; }
+  td:first-child { white-space: nowrap; font-weight: bold; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fingerprint probe</h1>
+  <!-- Local page for stealth.check and manual inspection: shows what a fingerprinting
+       script reads. Values are filled in by the script below (no network). -->
+  <table id="values" aria-label="Fingerprint values"><tbody></tbody></table>
+</main>
+<script>
+(async () => {
+  const rows = [];
+  const add = (k, v) => rows.push([k, typeof v === 'string' ? v : JSON.stringify(v)]);
+  const n = navigator;
+  add('userAgent', n.userAgent);
+  add('platform', n.platform);
+  add('language / languages', `${n.language} / ${(n.languages || []).join(',')}`);
+  add('hardwareConcurrency', n.hardwareConcurrency);
+  add('deviceMemory', n.deviceMemory);
+  add('webdriver', n.webdriver);
+  add('maxTouchPoints', n.maxTouchPoints);
+  add('timezone', Intl.DateTimeFormat().resolvedOptions().timeZone);
+  add('Intl locale', Intl.DateTimeFormat().resolvedOptions().locale);
+  add('Date offset (min)', new Date().getTimezoneOffset());
+  add('screen', `${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight} dpr ${devicePixelRatio}`);
+  add('window inner/outer', `${innerWidth}x${innerHeight} / ${outerWidth}x${outerHeight}`);
+  if (n.userAgentData) {
+    add('UA-CH brands', n.userAgentData.brands.map((b) => `${b.brand}/${b.version}`).join(', '));
+    add('UA-CH platform / mobile', `${n.userAgentData.platform} / ${n.userAgentData.mobile}`);
+    try {
+      const he = await n.userAgentData.getHighEntropyValues(['platformVersion', 'architecture', 'bitness', 'model', 'fullVersionList']);
+      add('UA-CH high entropy', he);
+    } catch (e) { add('UA-CH high entropy', String(e)); }
+  } else {
+    add('UA-CH', 'navigator.userAgentData missing');
+  }
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    add('WebGL vendor', gl.getParameter(ext.UNMASKED_VENDOR_WEBGL));
+    add('WebGL renderer', gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
+  } catch (e) { add('WebGL', String(e)); }
+  add('window.chrome', typeof window.chrome === 'object' ? Object.keys(window.chrome).join(', ') || '(empty object)' : 'missing');
+  add('plugins', n.plugins.length);
+  const body = document.querySelector('#values tbody');
+  for (const [k, v] of rows) {
+    const tr = document.createElement('tr');
+    const a = document.createElement('td');
+    const b = document.createElement('td');
+    a.textContent = k;
+    b.textContent = v;
+    tr.append(a, b);
+    body.append(tr);
+  }
+})();
+</script>
+</body>
+</html>

@@ -774,4 +774,153 @@ fn all_commands_are_registered_in_core() {
     // The act schema exposes `ref`, not the Rust field name.
     let schema = &registry.get("page_act").unwrap().args_schema;
     assert!(schema["properties"].get("ref").is_some(), "{schema}");
+    assert_eq!(
+        registry.get("input.humanlike").unwrap().toolset,
+        bmcp_core::Toolset::Stealth
+    );
+}
+
+// ------------------------------------------------------------------ human-like input
+
+/// Mouse events as (type, x, y).
+fn mouse_events(h: &Harness) -> Vec<(String, f64, f64)> {
+    h.sent("Input.dispatchMouseEvent")
+        .iter()
+        .map(|p| {
+            (
+                p["type"].as_str().unwrap().to_string(),
+                p["x"].as_f64().unwrap(),
+                p["y"].as_f64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+async fn human_click(seed: u64) -> (Vec<(String, f64, f64)>, tokio::time::Duration) {
+    let h = Harness::new(Page::login());
+    let out = h
+        .ok("input.humanlike", json!({ "on": true, "seed": seed }))
+        .await;
+    assert_eq!(out["profile"]["typing_wpm"], 55.0);
+    let sign_in = h.snapshot_ref(SIGN_IN).await;
+    let started = tokio::time::Instant::now();
+    h.ok(
+        "page.act",
+        json!({ "ref": sign_in, "action": "click", "returns": "none" }),
+    )
+    .await;
+    (mouse_events(&h), started.elapsed())
+}
+
+#[tokio::test(start_paused = true)]
+async fn humanlike_click_moves_along_a_path_then_presses() {
+    let (events, elapsed) = human_click(1).await;
+    let moves = events.iter().filter(|e| e.0 == "mouseMoved").count();
+    assert!(moves >= 5, "{events:?}");
+    let n = events.len();
+    assert_eq!(events[n - 2].0, "mousePressed");
+    assert_eq!(events[n - 1].0, "mouseReleased");
+    // The press happens where the path ended, near the centre (150, 234) of the button.
+    let (last_move, press) = (&events[n - 3], &events[n - 2]);
+    assert_eq!((last_move.1, last_move.2), (press.1, press.2));
+    assert!(
+        (press.1 - 150.0).abs() <= 1.5 && (press.2 - 234.0).abs() <= 1.5,
+        "{press:?}"
+    );
+    // It took human time (moving + dwell + hold), not zero.
+    assert!(
+        elapsed > tokio::time::Duration::from_millis(200),
+        "{elapsed:?}"
+    );
+    // Same seed → same events; different seed → different path.
+    assert_eq!(human_click(1).await.0, events);
+    assert_ne!(human_click(2).await.0, events);
+}
+
+#[tokio::test(start_paused = true)]
+async fn humanlike_typing_sends_keys_per_character() {
+    let h = Harness::new(Page::login());
+    h.ok(
+        "input.humanlike",
+        json!({ "on": true, "seed": 5, "profile": { "typing_wpm": 120 } }),
+    )
+    .await;
+    let email = h.snapshot_ref(EMAIL).await;
+    let started = tokio::time::Instant::now();
+    h.ok(
+        "page.act",
+        json!({ "ref": email, "action": "fill", "value": "Ab é", "returns": "none" }),
+    )
+    .await;
+    // 4 characters at 120 wpm ≈ 100 ms each, plus key hold times.
+    assert!(started.elapsed() >= tokio::time::Duration::from_millis(250));
+    let keys: Vec<(String, String)> = h
+        .sent("Input.dispatchKeyEvent")
+        .iter()
+        .map(|e| {
+            (
+                e["type"].as_str().unwrap().to_string(),
+                e["key"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let expected: Vec<(String, String)> = [
+        ("rawKeyDown", "Shift"),
+        ("keyDown", "A"),
+        ("keyUp", "A"),
+        ("keyUp", "Shift"),
+        ("keyDown", "b"),
+        ("keyUp", "b"),
+        ("keyDown", " "),
+        ("keyUp", " "),
+    ]
+    .iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    assert_eq!(keys, expected);
+    // "é" has no US key: inserted as text. No one-shot insert of the whole value.
+    assert_eq!(h.sent("Input.insertText"), [json!({ "text": "é" })]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn humanlike_scroll_uses_wheel_notches() {
+    let h = Harness::new(Page::login());
+    h.ok("input.humanlike", json!({ "on": true, "seed": 9 }))
+        .await;
+    let sign_in = h.snapshot_ref(SIGN_IN).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": sign_in, "action": "scroll", "value": "down", "returns": "none" }),
+    )
+    .await;
+    let wheels: Vec<Value> = h
+        .sent("Input.dispatchMouseEvent")
+        .into_iter()
+        .filter(|e| e["type"] == "mouseWheel")
+        .collect();
+    // The fake page reports no scroll size, so 0.8 × the default 600 px view = 480 px.
+    assert_eq!(wheels.len(), 5);
+    let total: f64 = wheels.iter().map(|w| w["deltaY"].as_f64().unwrap()).sum();
+    assert!((total - 480.0).abs() < 1e-6, "{total}");
+    // Over the element, after moving the mouse there.
+    assert_eq!(
+        (wheels[0]["x"].as_f64(), wheels[0]["y"].as_f64()),
+        (Some(150.0), Some(234.0))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn humanlike_off_restores_the_fast_path() {
+    let h = Harness::new(Page::login());
+    h.ok("input.humanlike", json!({ "on": true })).await;
+    let out = h.ok("input.humanlike", json!({ "on": false })).await;
+    assert_eq!(out["profile"], Value::Null);
+    let sign_in = h.snapshot_ref(SIGN_IN).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": sign_in, "action": "click", "returns": "none" }),
+    )
+    .await;
+    let kinds: Vec<String> = mouse_events(&h).into_iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["mouseMoved", "mousePressed", "mouseReleased"]);
 }
