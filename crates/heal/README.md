@@ -48,9 +48,15 @@ Subscribe with `events.subscribe {"topics": ["run.*"]}`.
 | Topic | Data | UI / Telegram |
 |---|---|---|
 | `run.heal_needed` | `{id, row, script, error: {code, command?, message, line?}, step, line, mode}` (jobs) | "Run paused: row N broke at line L" |
-| `run.heal_proposed` | `{id, proposal_id, row, script, diff, explanation, confidence, attempt, max_attempts, checks, mode, note?}` | show `diff` + `explanation`; buttons **Accept** → `run.heal_accept {proposal_id}`, **Reject** → `run.heal_reject {proposal_id, feedback}` |
+| `run.heal_proposed` | `{id, proposal_id, row, script, diff, patched_code, explanation, confidence, attempt, max_attempts, checks, mode, note?}` | show `diff` + `explanation`; buttons **Accept** → `run.heal_accept {proposal_id}`, **Reject** → `run.heal_reject {proposal_id, feedback}` |
 | `run.heal_applied` | `{id, proposal_id, script, requeued, auto}` | "Patched (script → login.v2), run continues" |
 | `run.heal_failed` | `{id, row, attempts, error}` | "No usable patch: fix by hand (`run.heal_apply`) or skip (`run.resume`)" |
+
+`crates/notify` today turns `run.heal_needed` into Skip row / Stop run buttons and shows
+Apply / Show patch when the event data has `patched_code`; `run.heal_proposed` carries
+`patched_code` too, but Accept should call `run.heal_accept {proposal_id}` (it keeps proposal
+state and emits `run.heal_applied`) rather than `run.heal_apply`. Mapping `run.heal_proposed`
+to Accept/Reject buttons is left to the notifications and UI side.
 
 A newer `run.heal_proposed` for the same run supersedes the older one (accepting the old one
 then fails with "not pending"). `note` is set when "auto" mode did not apply the patch (low

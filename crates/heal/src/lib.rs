@@ -52,8 +52,9 @@ pub use commands::register;
 
 /// Events this crate emits (in addition to jobs' `run.*`).
 pub mod topics {
-    /// `{id, proposal_id, row, script, diff, explanation, confidence, attempt, max_attempts,
-    /// checks, mode, note?}`: a validated patch waits for `run.heal_accept` / `run.heal_reject`.
+    /// `{id, proposal_id, row, script, diff, patched_code, explanation, confidence, attempt,
+    /// max_attempts, checks, mode, note?}`: a validated patch waits for `run.heal_accept` /
+    /// `run.heal_reject`.
     pub const HEAL_PROPOSED: &str = "run.heal_proposed";
     /// `{id, proposal_id, script, requeued, auto}`: a patch was applied; the run continues.
     pub const HEAL_APPLIED: &str = "run.heal_applied";

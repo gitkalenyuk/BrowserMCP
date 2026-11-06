@@ -430,6 +430,9 @@ impl HealService {
             "row": p.row,
             "script": p.script,
             "diff": p.diff,
+            // The whole fixed script (what run.heal_apply would get), for clients that show
+            // or apply it themselves.
+            "patched_code": p.patched_code,
             "explanation": p.explanation,
             "confidence": p.confidence,
             "attempt": p.attempt,

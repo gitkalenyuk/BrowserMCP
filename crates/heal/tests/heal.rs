@@ -28,6 +28,12 @@ async fn ask_mode_proposes_and_accept_heals_the_rest_of_the_run() {
             .contains("+await act(\"button\", \"Log in\"")
     );
     assert_eq!(d["explanation"], "the button is now called Log in");
+    assert!(
+        d["patched_code"]
+            .as_str()
+            .unwrap()
+            .contains("\"Log in\", \"click\"")
+    );
     assert_eq!(d["checks"], json!(["applies", "region 1-20", "transpiles"]));
 
     // The AI saw the error, the marked failing line, the locators and the page snapshot that
