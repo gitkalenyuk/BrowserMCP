@@ -149,6 +149,8 @@ async fn start_api(
 ) {
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
+    // Command crates that keep files (filter lists, site policies…) find the data folder here.
+    registry.extensions().insert(data.clone());
     // Identities and proxy pools in data/config.
     bmcp_identity::install(&registry, data.config());
     // Bookmarks, history, passwords… in data/db/browsermcp.sqlite (used by the data commands).

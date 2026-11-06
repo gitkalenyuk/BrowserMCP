@@ -39,6 +39,17 @@ tempfile = "3"
 # CEF itself is prebuilt; keep our own code fast to compile.
 debug = "line-tables-only"
 
+# Hot paths that are painfully slow unoptimized even in dev builds (adblock decision per
+# request: ~31 ms at opt-level 0 vs ~0.5 ms at 3).
+[profile.dev.package.adblock]
+opt-level = 3
+[profile.dev.package.regex]
+opt-level = 3
+[profile.dev.package.regex-automata]
+opt-level = 3
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
