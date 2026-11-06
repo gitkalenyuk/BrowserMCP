@@ -7,79 +7,81 @@ import type { CallOptions, Transport } from "../transport.js";
 
 /** Arguments of `adblock.apply`. */
 export interface AdblockApplyArgs {
-  /** true = start blocking in this tab, false = stop. */
-  on: boolean;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** true = start blocking in this tab, false = stop. */
+  on: boolean;
 }
 
 /** Result of `adblock.apply`. */
 export interface AdblockApplyOutput {
-  /** It was already running (nothing changed). */
-  already: boolean;
-  /** Is a compiled engine loaded, and from which lists? */
-  engine: {
-    /** Size of the serialized engine. */
-    engine_bytes: number;
-    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
-    lists: string[];
-    loaded: boolean;
-  };
-  /** Counters of the session that was stopped / is running. */
-  interception?: {
-    /** The interception task is running. */
-    active: boolean;
-    /** Average time of the gate decision itself (filter lists + policy), microseconds. */
-    avg_decision_us: number;
-    /**
-     * Average time from `requestPaused` to our answer being acknowledged: the latency the
-     * interception adds to every request, milliseconds.
-     */
-    avg_roundtrip_ms: number;
-    /** Answered with `Fetch.failRequest`. */
-    blocked: number;
-    /** Let through (continued, or answered by another interception client such as net rules). */
-    continued: number;
-    errors: number;
-    /** Answered with `Fetch.fulfillRequest` (redirect resources). */
-    fulfilled: number;
-    /**
-     * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
-     * recovered by the shared Fetch coordinator).
-     */
-    lagged: number;
-    max_decision_us: number;
-    max_roundtrip_ms: number;
-    /** Paused requests seen. */
-    paused: number;
-    uptime_s: number;
-  } | null;
-  /** Interception is running for the tab. */
-  on: boolean;
-  /** What was set up (only when just switched on). */
-  report?: {
-    /** Animations were disabled by the site policy. */
-    animations_disabled: boolean;
-    /** Generic class/id selectors among them. */
-    generic_selectors: number;
-    /** Hide selectors injected into that page (host-specific + generic). */
-    hidden_selectors: number;
-    /** JavaScript was disabled by the site policy. */
-    js_disabled: boolean;
-    /** URL of the page shown when interception started. */
-    page_url: string;
-  } | null;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Interception is running for the tab. */
+  on: boolean;
+  /** It was already running (nothing changed). */
+  already: boolean;
+  /** Is a compiled engine loaded, and from which lists? */
+  engine: {
+    loaded: boolean;
+    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
+    lists: string[];
+    /** Size of the serialized engine. */
+    engine_bytes: number;
+  };
+  /** What was set up (only when just switched on). */
+  report?: {
+    /** URL of the page shown when interception started. */
+    page_url: string;
+    /** Hide selectors injected into that page (host-specific + generic). */
+    hidden_selectors: number;
+    /** Generic class/id selectors among them. */
+    generic_selectors: number;
+    /** JavaScript was disabled by the site policy. */
+    js_disabled: boolean;
+    /** Animations were disabled by the site policy. */
+    animations_disabled: boolean;
+  } | null;
+  /** Counters of the session that was stopped / is running. */
+  interception?: {
+    /** The interception task is running. */
+    active: boolean;
+    /** Paused requests seen. */
+    paused: number;
+    /** Answered with `Fetch.failRequest`. */
+    blocked: number;
+    /** Answered with `Fetch.fulfillRequest` (redirect resources). */
+    fulfilled: number;
+    /** Let through (continued, or answered by another interception client such as net rules). */
+    continued: number;
+    errors: number;
+    /**
+     * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+     * recovered by the shared Fetch coordinator).
+     */
+    lagged: number;
+    /** Average time of the gate decision itself (filter lists + policy), microseconds. */
+    avg_decision_us: number;
+    max_decision_us: number;
+    /**
+     * Average time from `requestPaused` to our answer being acknowledged: the latency the
+     * interception adds to every request, milliseconds.
+     */
+    avg_roundtrip_ms: number;
+    max_roundtrip_ms: number;
+    uptime_s: number;
+  } | null;
 }
 
 // ---- adblock.check ----
 
 /** Arguments of `adblock.check`. */
 export interface AdblockCheckArgs {
+  /** Request URL to test. */
+  url: string;
   /** Page that makes the request (default: the URL itself, i.e. first party). */
   source_url?: string | null;
   /**
@@ -87,8 +89,6 @@ export interface AdblockCheckArgs {
    * websocket, ping, other (default other).
    */
   type?: string | null;
-  /** Request URL to test. */
-  url: string;
 }
 
 /**
@@ -96,66 +96,6 @@ export interface AdblockCheckArgs {
  * Everything the gate considered for one request (for `adblock.check`).
  */
 export interface AdblockCheckOutput {
-  /** Filter lists are active for this page. */
-  adblock_active: boolean;
-  /** The gate's answer for one request. */
-  decision: {
-    /**
-     * What to do with a request.
-     *
-     * - `"block"`: Cancel it (CEF: `RV_CANCEL`; CDP: `Fetch.failRequest` with `BlockedByClient`).
-     * - `"redirect"`: Answer with [`GateDecision::redirect`] (a `data:` URL) instead of loading it.
-     */
-    action: "allow" | "block" | "redirect";
-    /** An `$important` filter matched. */
-    important: boolean;
-    /**
-     * - `"filter"`: A filter-list rule.
-     * - `"js"`: Site policy `js: false`.
-     * - `"images"`: Site policy `images: false`.
-     * - `"fonts"`: Site policy `fonts: false`.
-     * - `"media"`: Site policy `media: false`.
-     * - `"third_party"`: Site policy `third_party: false`.
-     */
-    reason?: "filter" | "js" | "images" | "fonts" | "media" | "third_party" | null;
-    /** Replacement body as a `data:` URL when `action` is `redirect`. */
-    redirect?: string | null;
-    /** The matching filter rule, when known. */
-    rule?: string | null;
-  };
-  engine_loaded: boolean;
-  /**
-   * The filter lists' own verdict (`None`: lists not consulted — adblock off, allowlisted
-   * site, no engine loaded, or the request was a main-frame navigation).
-   */
-  filter: {
-    /** True when the request should be cancelled. */
-    block: boolean;
-    /** An exception (`@@…`) rule matched. */
-    exception: boolean;
-    /** An `$important` rule matched: exceptions do not apply. */
-    important: boolean;
-    /**
-     * Replacement body as a `data:` URL (`$redirect=` rules). Only produced when redirect
-     * resources are loaded, which BrowserMCP does not do yet.
-     */
-    redirect?: string | null;
-    /** `$removeparam` result: load this URL instead (only when not blocked). */
-    rewritten_url?: string | null;
-    /** Text of the matched rule, when the engine kept it. */
-    rule?: string | null;
-  } | null;
-  /** Host of the page that made the request. */
-  page_host: string | null;
-  /** The page's effective site policy. */
-  policy: {
-    animations: boolean;
-    fonts: boolean;
-    images: boolean;
-    js: boolean;
-    media: boolean;
-    third_party: boolean;
-  };
   /**
    * What kind of resource a request loads. A CEF-agnostic superset of what CEF
    * (`cef_resource_type_t`), CDP (`Network.ResourceType`) and the filter lists distinguish.
@@ -170,109 +110,169 @@ export interface AdblockCheckOutput {
    * - `"worker"`: Main script of a dedicated/shared/service worker.
    */
   resource_type: "stylesheet" | "script" | "image" | "font" | "csp_report" | "web_socket" | "favicon" | "prefetch" | "other" | "main_frame" | "sub_frame" | "object" | "media" | "xhr" | "fetch" | "ping" | "worker";
+  engine_loaded: boolean;
+  /** The gate's answer for one request. */
+  decision: {
+    /**
+     * What to do with a request.
+     *
+     * - `"block"`: Cancel it (CEF: `RV_CANCEL`; CDP: `Fetch.failRequest` with `BlockedByClient`).
+     * - `"redirect"`: Answer with [`GateDecision::redirect`] (a `data:` URL) instead of loading it.
+     */
+    action: "allow" | "block" | "redirect";
+    /**
+     * - `"filter"`: A filter-list rule.
+     * - `"js"`: Site policy `js: false`.
+     * - `"images"`: Site policy `images: false`.
+     * - `"fonts"`: Site policy `fonts: false`.
+     * - `"media"`: Site policy `media: false`.
+     * - `"third_party"`: Site policy `third_party: false`.
+     */
+    reason?: "filter" | "js" | "images" | "fonts" | "media" | "third_party" | null;
+    /** Replacement body as a `data:` URL when `action` is `redirect`. */
+    redirect?: string | null;
+    /** An `$important` filter matched. */
+    important: boolean;
+    /** The matching filter rule, when known. */
+    rule?: string | null;
+  };
+  /**
+   * The filter lists' own verdict (`None`: lists not consulted — adblock off, allowlisted
+   * site, no engine loaded, or the request was a main-frame navigation).
+   */
+  filter: {
+    /** True when the request should be cancelled. */
+    block: boolean;
+    /**
+     * Replacement body as a `data:` URL (`$redirect=` rules). Only produced when redirect
+     * resources are loaded, which BrowserMCP does not do yet.
+     */
+    redirect?: string | null;
+    /** An `$important` rule matched: exceptions do not apply. */
+    important: boolean;
+    /** An exception (`@@…`) rule matched. */
+    exception: boolean;
+    /** Text of the matched rule, when the engine kept it. */
+    rule?: string | null;
+    /** `$removeparam` result: load this URL instead (only when not blocked). */
+    rewritten_url?: string | null;
+  } | null;
+  /** The page's effective site policy. */
+  policy: {
+    js: boolean;
+    images: boolean;
+    fonts: boolean;
+    media: boolean;
+    third_party: boolean;
+    animations: boolean;
+  };
+  /** Host of the page that made the request. */
+  page_host: string | null;
   /** The request goes to another registrable domain than the page. */
   third_party: boolean;
+  /** Filter lists are active for this page. */
+  adblock_active: boolean;
 }
 
 // ---- adblock.stats ----
 
 /** Arguments of `adblock.stats`. */
 export interface AdblockStatsArgs {
-  /** Reset the counters after reading them. */
-  reset?: boolean | null;
   /** Only this tab. Default: every tab. */
   tab?: number | null;
+  /** Reset the counters after reading them. */
+  reset?: boolean | null;
 }
 
 /** Result of `adblock.stats`. */
 export interface AdblockStatsOutput {
   /** Is a compiled engine loaded, and from which lists? */
   engine: {
-    /** Size of the serialized engine. */
-    engine_bytes: number;
+    loaded: boolean;
     /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
     lists: string[];
-    loaded: boolean;
+    /** Size of the serialized engine. */
+    engine_bytes: number;
   };
   /** Adblock settings as returned by the commands. */
   settings: {
-    /** Sites where filter lists are not applied. */
-    allowlist: string[];
     /** Filter lists are applied (site policies apply regardless). */
     enabled: boolean;
+    /** Sites where filter lists are not applied. */
+    allowlist: string[];
     /** Enabled filter lists. */
     lists: string[];
   };
   tabs: {
-    /** Requests cancelled (by filter lists or site policy). */
-    blocked: number;
-    /** Blocked requests by resource type (`script`, `image`, …). */
-    blocked_by_type: Record<string, number>;
-    /** Blocked requests by host (at most 200 hosts). */
-    blocked_hosts: Record<string, number>;
-    /** Blocked by filter lists. */
-    by_filter: number;
-    /** Blocked by a site policy (js/images/fonts/media/third_party). */
-    by_policy: number;
-    /** Overhead of the interim CDP interception, when `adblock.apply` is on for this tab. */
-    interception?: {
-      /** The interception task is running. */
-      active: boolean;
-      /** Average time of the gate decision itself (filter lists + policy), microseconds. */
-      avg_decision_us: number;
-      /**
-       * Average time from `requestPaused` to our answer being acknowledged: the latency the
-       * interception adds to every request, milliseconds.
-       */
-      avg_roundtrip_ms: number;
-      /** Answered with `Fetch.failRequest`. */
-      blocked: number;
-      /** Let through (continued, or answered by another interception client such as net rules). */
-      continued: number;
-      errors: number;
-      /** Answered with `Fetch.fulfillRequest` (redirect resources). */
-      fulfilled: number;
-      /**
-       * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
-       * recovered by the shared Fetch coordinator).
-       */
-      lagged: number;
-      max_decision_us: number;
-      max_roundtrip_ms: number;
-      /** Paused requests seen. */
-      paused: number;
-      uptime_s: number;
-    } | null;
-    /** Bytes received by allowed requests, when the caller reports them (CEF hook). */
-    received_bytes: number;
-    /** Requests answered with a replacement body (`$redirect`). */
-    redirected: number;
-    /** Requests the gate was asked about. */
-    requests: number;
     /**
      * Stable id of a tab for the lifetime of the process (CEF browser identifier).
      * On the wire it is a plain number: `3`.
      */
     tab: number;
-  }[];
-  /** Sum over all tabs (only when no `tab` was given). */
-  total?: {
+    /** Requests the gate was asked about. */
+    requests: number;
     /** Requests cancelled (by filter lists or site policy). */
     blocked: number;
-    /** Blocked requests by resource type (`script`, `image`, …). */
-    blocked_by_type: Record<string, number>;
-    /** Blocked requests by host (at most 200 hosts). */
-    blocked_hosts: Record<string, number>;
+    /** Requests answered with a replacement body (`$redirect`). */
+    redirected: number;
     /** Blocked by filter lists. */
     by_filter: number;
     /** Blocked by a site policy (js/images/fonts/media/third_party). */
     by_policy: number;
+    /** Blocked requests by resource type (`script`, `image`, …). */
+    blocked_by_type: Record<string, number>;
+    /** Blocked requests by host (at most 200 hosts). */
+    blocked_hosts: Record<string, number>;
     /** Bytes received by allowed requests, when the caller reports them (CEF hook). */
     received_bytes: number;
-    /** Requests answered with a replacement body (`$redirect`). */
-    redirected: number;
+    /** Overhead of the interim CDP interception, when `adblock.apply` is on for this tab. */
+    interception?: {
+      /** The interception task is running. */
+      active: boolean;
+      /** Paused requests seen. */
+      paused: number;
+      /** Answered with `Fetch.failRequest`. */
+      blocked: number;
+      /** Answered with `Fetch.fulfillRequest` (redirect resources). */
+      fulfilled: number;
+      /** Let through (continued, or answered by another interception client such as net rules). */
+      continued: number;
+      errors: number;
+      /**
+       * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+       * recovered by the shared Fetch coordinator).
+       */
+      lagged: number;
+      /** Average time of the gate decision itself (filter lists + policy), microseconds. */
+      avg_decision_us: number;
+      max_decision_us: number;
+      /**
+       * Average time from `requestPaused` to our answer being acknowledged: the latency the
+       * interception adds to every request, milliseconds.
+       */
+      avg_roundtrip_ms: number;
+      max_roundtrip_ms: number;
+      uptime_s: number;
+    } | null;
+  }[];
+  /** Sum over all tabs (only when no `tab` was given). */
+  total?: {
     /** Requests the gate was asked about. */
     requests: number;
+    /** Requests cancelled (by filter lists or site policy). */
+    blocked: number;
+    /** Requests answered with a replacement body (`$redirect`). */
+    redirected: number;
+    /** Blocked by filter lists. */
+    by_filter: number;
+    /** Blocked by a site policy (js/images/fonts/media/third_party). */
+    by_policy: number;
+    /** Blocked requests by resource type (`script`, `image`, …). */
+    blocked_by_type: Record<string, number>;
+    /** Blocked requests by host (at most 200 hosts). */
+    blocked_hosts: Record<string, number>;
+    /** Bytes received by allowed requests, when the caller reports them (CEF hook). */
+    received_bytes: number;
   } | null;
 }
 
@@ -291,10 +291,10 @@ export interface AdblockToggleArgs {
  * Adblock settings as returned by the commands.
  */
 export interface AdblockToggleOutput {
-  /** Sites where filter lists are not applied. */
-  allowlist: string[];
   /** Filter lists are applied (site policies apply regardless). */
   enabled: boolean;
+  /** Sites where filter lists are not applied. */
+  allowlist: string[];
   /** Enabled filter lists. */
   lists: string[];
 }
@@ -314,23 +314,9 @@ export interface AdblockUpdateListsArgs {
  * Result of `adblock.update_lists`.
  */
 export interface AdblockUpdateListsOutput {
-  /** Time spent compiling (0 when not recompiled). */
-  compile_ms: number;
-  /** True when the engine was recompiled. */
-  compiled: boolean;
-  /** Is a compiled engine loaded, and from which lists? */
-  engine: {
-    /** Size of the serialized engine. */
-    engine_bytes: number;
-    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
-    lists: string[];
-    loaded: boolean;
-  };
   lists: {
-    /** Size of the list file. */
-    bytes: number;
-    error?: string | null;
     id: string;
+    url: string;
     /**
      * Result of checking one list.
      *
@@ -339,14 +325,30 @@ export interface AdblockUpdateListsOutput {
      * - `"failed"`: Download failed; the old file (if any) is kept.
      */
     status: "updated" | "not_modified" | "failed";
-    url: string;
+    /** Size of the list file. */
+    bytes: number;
+    error?: string | null;
   }[];
+  /** True when the engine was recompiled. */
+  compiled: boolean;
+  /** Time spent compiling (0 when not recompiled). */
+  compile_ms: number;
+  /** Is a compiled engine loaded, and from which lists? */
+  engine: {
+    loaded: boolean;
+    /** List ids the engine was compiled from (plus `user` for data/filters/user.txt). */
+    lists: string[];
+    /** Size of the serialized engine. */
+    engine_bytes: number;
+  };
 }
 
 // ---- ai.provider_set ----
 
 /** Arguments of `ai.provider_set`. */
 export interface AiProviderSetArgs {
+  /** Provider id from ai.providers. */
+  id: string;
   /**
    * API key; "" removes it. Stored in plain JSON in data/config/ai.json.
    * @default null
@@ -357,8 +359,6 @@ export interface AiProviderSetArgs {
    * @default null
    */
   base_url?: string | null;
-  /** Provider id from ai.providers. */
-  id: string;
   /**
    * Default model; "" = preset default.
    * @default null
@@ -376,25 +376,25 @@ export interface AiProviderSetArgs {
  * One provider as listed by `ai.providers`.
  */
 export interface AiProviderSetOutput {
-  base_url: string;
-  /** Ready to start a session (key set / CLI installed). */
-  configured: boolean;
-  /** Whether an API key is stored (the key itself is not returned). */
-  has_key: boolean;
   /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
   id: string;
+  name: string;
   /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
   kind: string;
+  /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
+  protocol: string;
+  /** Ready to start a session (key set / CLI installed). */
+  configured: boolean;
+  needs_key: boolean;
+  /** Whether an API key is stored (the key itself is not returned). */
+  has_key: boolean;
+  base_url: string;
   /** Model used when `ai.session_start` gives none. */
   model: string | null;
   /** Known models (live list after `ai.provider_test`). */
   models: string[];
-  name: string;
-  needs_key: boolean;
   /** CLI providers: the binary that will run. */
   path: string | null;
-  /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
-  protocol: string;
 }
 
 // ---- ai.provider_test ----
@@ -407,13 +407,13 @@ export interface AiProviderTestArgs {
 
 /** Result of `ai.provider_test`. */
 export interface AiProviderTestOutput {
-  error: string | null;
   id: string;
+  ok: boolean;
   /** API providers: models offered by the endpoint (also saved for ai.providers). */
   models: string[];
-  ok: boolean;
   /** CLI providers: output of `--version`. */
   version: string | null;
+  error: string | null;
 }
 
 // ---- ai.providers ----
@@ -427,25 +427,25 @@ export type AiProvidersArgs = Record<string, never>;
 /** Result of `ai.providers`. */
 export interface AiProvidersOutput {
   providers: {
-    base_url: string;
-    /** Ready to start a session (key set / CLI installed). */
-    configured: boolean;
-    /** Whether an API key is stored (the key itself is not returned). */
-    has_key: boolean;
     /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
     id: string;
+    name: string;
     /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
     kind: string;
+    /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
+    protocol: string;
+    /** Ready to start a session (key set / CLI installed). */
+    configured: boolean;
+    needs_key: boolean;
+    /** Whether an API key is stored (the key itself is not returned). */
+    has_key: boolean;
+    base_url: string;
     /** Model used when `ai.session_start` gives none. */
     model: string | null;
     /** Known models (live list after `ai.provider_test`). */
     models: string[];
-    name: string;
-    needs_key: boolean;
     /** CLI providers: the binary that will run. */
     path: string | null;
-    /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
-    protocol: string;
   }[];
 }
 
@@ -464,15 +464,13 @@ export interface AiSessionSendArgs {
  * Public summary for `ai.sessions_list`.
  */
 export interface AiSessionSendOutput {
-  /** Tab-group color of this agent, `#rrggbb`. */
-  color: string;
-  /** Creation time, ms since the Unix epoch. */
-  created_ms: number;
   /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
   id: string;
-  model: string | null;
   /** Provider id, e.g. `anthropic`, `claude-code`. */
   provider: string;
+  model: string | null;
+  /** Tab-group color of this agent, `#rrggbb`. */
+  color: string;
   /**
    * - `"running"`: Working on a user message.
    * - `"idle"`: Waiting for the next message (`ai.session_send`).
@@ -482,17 +480,16 @@ export interface AiSessionSendOutput {
   status: "running" | "idle" | "stopped" | "failed";
   /** Tabs this agent opened or acted on. */
   tabs: number[];
+  /** Creation time, ms since the Unix epoch. */
+  created_ms: number;
 }
 
 // ---- ai.session_start ----
 
 /** Arguments of `ai.session_start`. */
 export interface AiSessionStartArgs {
-  /**
-   * API providers: most model calls per user message (default 30).
-   * @default null
-   */
-  max_steps?: number | null;
+  /** Provider id from ai.providers, e.g. "anthropic", "ollama", "claude-code". */
+  provider: string;
   /**
    * Model; default = the provider's configured model.
    * @default null
@@ -500,13 +497,16 @@ export interface AiSessionStartArgs {
   model?: string | null;
   /** First user message. */
   prompt: string;
-  /** Provider id from ai.providers, e.g. "anthropic", "ollama", "claude-code". */
-  provider: string;
   /**
    * Toolsets the agent may use (default ["core"]).
    * @default []
    */
   toolsets?: string[];
+  /**
+   * API providers: most model calls per user message (default 30).
+   * @default null
+   */
+  max_steps?: number | null;
 }
 
 /**
@@ -514,15 +514,13 @@ export interface AiSessionStartArgs {
  * Public summary for `ai.sessions_list`.
  */
 export interface AiSessionStartOutput {
-  /** Tab-group color of this agent, `#rrggbb`. */
-  color: string;
-  /** Creation time, ms since the Unix epoch. */
-  created_ms: number;
   /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
   id: string;
-  model: string | null;
   /** Provider id, e.g. `anthropic`, `claude-code`. */
   provider: string;
+  model: string | null;
+  /** Tab-group color of this agent, `#rrggbb`. */
+  color: string;
   /**
    * - `"running"`: Working on a user message.
    * - `"idle"`: Waiting for the next message (`ai.session_send`).
@@ -532,6 +530,8 @@ export interface AiSessionStartOutput {
   status: "running" | "idle" | "stopped" | "failed";
   /** Tabs this agent opened or acted on. */
   tabs: number[];
+  /** Creation time, ms since the Unix epoch. */
+  created_ms: number;
 }
 
 // ---- ai.session_stop ----
@@ -547,15 +547,13 @@ export interface AiSessionStopArgs {
  * Public summary for `ai.sessions_list`.
  */
 export interface AiSessionStopOutput {
-  /** Tab-group color of this agent, `#rrggbb`. */
-  color: string;
-  /** Creation time, ms since the Unix epoch. */
-  created_ms: number;
   /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
   id: string;
-  model: string | null;
   /** Provider id, e.g. `anthropic`, `claude-code`. */
   provider: string;
+  model: string | null;
+  /** Tab-group color of this agent, `#rrggbb`. */
+  color: string;
   /**
    * - `"running"`: Working on a user message.
    * - `"idle"`: Waiting for the next message (`ai.session_send`).
@@ -565,6 +563,8 @@ export interface AiSessionStopOutput {
   status: "running" | "idle" | "stopped" | "failed";
   /** Tabs this agent opened or acted on. */
   tabs: number[];
+  /** Creation time, ms since the Unix epoch. */
+  created_ms: number;
 }
 
 // ---- ai.session_transcript ----
@@ -577,9 +577,9 @@ export interface AiSessionTranscriptArgs {
 
 /** Result of `ai.session_transcript`. */
 export interface AiSessionTranscriptOutput {
+  id: string;
   /** Entries `{type: user|assistant|tool_call|tool_result|notice|done, ts_ms, …}`. */
   entries: unknown[];
-  id: string;
 }
 
 // ---- ai.sessions_list ----
@@ -593,15 +593,13 @@ export type AiSessionsListArgs = Record<string, never>;
 /** Result of `ai.sessions_list`. */
 export interface AiSessionsListOutput {
   sessions: {
-    /** Tab-group color of this agent, `#rrggbb`. */
-    color: string;
-    /** Creation time, ms since the Unix epoch. */
-    created_ms: number;
     /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
     id: string;
-    model: string | null;
     /** Provider id, e.g. `anthropic`, `claude-code`. */
     provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
     /**
      * - `"running"`: Working on a user message.
      * - `"idle"`: Waiting for the next message (`ai.session_send`).
@@ -611,6 +609,8 @@ export interface AiSessionsListOutput {
     status: "running" | "idle" | "stopped" | "failed";
     /** Tabs this agent opened or acted on. */
     tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
   }[];
 }
 
@@ -618,12 +618,12 @@ export interface AiSessionsListOutput {
 
 /** Arguments of `bookmarks.add`. */
 export interface BookmarksAddArgs {
-  /** Folder id (default 1 = bookmarks bar). */
-  folder?: number | null;
-  /** Title (default: the page title from history, else the URL). */
-  title?: string | null;
   /** Absolute URL to bookmark. */
   url: string;
+  /** Title (default: the page title from history, else the URL). */
+  title?: string | null;
+  /** Folder id (default 1 = bookmarks bar). */
+  folder?: number | null;
 }
 
 /**
@@ -631,24 +631,24 @@ export interface BookmarksAddArgs {
  * A URL bookmark.
  */
 export interface BookmarksAddOutput {
-  /** Unix ms. */
-  created: number;
-  /** Id of the folder it is in. */
-  folder: number;
   id: number;
-  /** Index among its siblings (folders and bookmarks share one order). */
-  position: number;
   title: string;
   url: string;
+  /** Id of the folder it is in. */
+  folder: number;
+  /** Index among its siblings (folders and bookmarks share one order). */
+  position: number;
+  /** Unix ms. */
+  created: number;
 }
 
 // ---- bookmarks.add_folder ----
 
 /** Arguments of `bookmarks.add_folder`. */
 export interface BookmarksAddFolderArgs {
+  title: string;
   /** Parent folder id (default 1 = bookmarks bar). */
   parent?: number | null;
-  title: string;
 }
 
 /**
@@ -656,32 +656,32 @@ export interface BookmarksAddFolderArgs {
  * A bookmark folder.
  */
 export interface BookmarksAddFolderOutput {
-  /** Number of direct children (folders + bookmarks). */
-  children: number;
-  created: number;
   id: number;
+  title: string;
   /** Parent folder; `null` for the two root folders. */
   parent: number | null;
   position: number;
-  title: string;
+  created: number;
+  /** Number of direct children (folders + bookmarks). */
+  children: number;
 }
 
 // ---- bookmarks.move ----
 
 /** Arguments of `bookmarks.move`. */
 export interface BookmarksMoveArgs {
-  /** Target folder id (default: keep the current folder). */
-  folder?: number | null;
   /** Bookmark or folder id. */
   id: number;
+  /** Target folder id (default: keep the current folder). */
+  folder?: number | null;
   /** Index among the target folder's children (default: the end). */
   position?: number | null;
 }
 
 /** Result of `bookmarks.move`. */
 export interface BookmarksMoveOutput {
-  folder: number;
   id: number;
+  folder: number;
   position: number;
 }
 
@@ -703,25 +703,25 @@ export interface BookmarksRemoveOutput {
 
 /** Arguments of `bookmarks.search`. */
 export interface BookmarksSearchArgs {
-  /** Max results (default 100). */
-  limit?: number | null;
   /** Text to find in titles and URLs. */
   q: string;
+  /** Max results (default 100). */
+  limit?: number | null;
 }
 
 /** Result of `bookmarks.search`. */
 export interface BookmarksSearchOutput {
   /** Matches in every folder, newest first. */
   bookmarks: {
-    /** Unix ms. */
-    created: number;
-    /** Id of the folder it is in. */
-    folder: number;
     id: number;
-    /** Index among its siblings (folders and bookmarks share one order). */
-    position: number;
     title: string;
     url: string;
+    /** Id of the folder it is in. */
+    folder: number;
+    /** Index among its siblings (folders and bookmarks share one order). */
+    position: number;
+    /** Unix ms. */
+    created: number;
   }[];
 }
 
@@ -740,13 +740,13 @@ export interface ClipboardWriteArgs {
 
 /** Result of `clipboard.write`. */
 export interface ClipboardWriteOutput {
-  /** How it was written: clipboard_api or exec_command. */
-  method: string;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** How it was written: clipboard_api or exec_command. */
+  method: string;
 }
 
 // ---- data.bookmarks ----
@@ -761,33 +761,33 @@ export interface DataBookmarksArgs {
 
 /** Result of `data.bookmarks`. */
 export interface DataBookmarksOutput {
+  /** The listed folder's id. */
+  folder: number;
   /**
    * URL bookmarks directly in the folder, in order (`{title, url}` is what the new-tab page
    * renders).
    */
   bookmarks: {
-    /** Unix ms. */
-    created: number;
-    /** Id of the folder it is in. */
-    folder: number;
     id: number;
-    /** Index among its siblings (folders and bookmarks share one order). */
-    position: number;
     title: string;
     url: string;
+    /** Id of the folder it is in. */
+    folder: number;
+    /** Index among its siblings (folders and bookmarks share one order). */
+    position: number;
+    /** Unix ms. */
+    created: number;
   }[];
-  /** The listed folder's id. */
-  folder: number;
   /** Sub-folders directly in the folder, in order. */
   folders: {
-    /** Number of direct children (folders + bookmarks). */
-    children: number;
-    created: number;
     id: number;
+    title: string;
     /** Parent folder; `null` for the two root folders. */
     parent: number | null;
     position: number;
-    title: string;
+    created: number;
+    /** Number of direct children (folders + bookmarks). */
+    children: number;
   }[];
 }
 
@@ -803,13 +803,13 @@ export interface DataTopSitesArgs {
 export interface DataTopSitesOutput {
   /** Most frecent first; `{title, url}` is what the new-tab page renders. */
   sites: {
-    last_visit: number;
-    /** Frecency score (higher = shown first). */
-    score: number;
     /** Page title, or the host name when the page had none. */
     title: string;
     url: string;
     visit_count: number;
+    last_visit: number;
+    /** Frecency score (higher = shown first). */
+    score: number;
   }[];
 }
 
@@ -826,13 +826,13 @@ export interface DeviceClearArgs {
  * Result of [`apply`].
  */
 export interface DeviceClearOutput {
-  /** CDP methods that succeeded, in order. */
-  applied: string[];
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** CDP methods that succeeded, in order. */
+  applied: string[];
   /** Things that did not work or do not fit (the rest was still applied). */
   warnings: string[];
 }
@@ -841,10 +841,10 @@ export interface DeviceClearOutput {
 
 /** Arguments of `device.emulate`. */
 export interface DeviceEmulateArgs {
-  /** "iPhone 15", "Pixel 8", "Galaxy S23", "iPad" (or any preset name). */
-  device: string;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** "iPhone 15", "Pixel 8", "Galaxy S23", "iPad" (or any preset name). */
+  device: string;
 }
 
 /**
@@ -852,8 +852,12 @@ export interface DeviceEmulateArgs {
  * Result of [`apply`].
  */
 export interface DeviceEmulateOutput {
-  /** CDP methods that succeeded, in order. */
-  applied: string[];
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  preset: string;
   /**
    * What an identity is good for.
    *
@@ -861,12 +865,8 @@ export interface DeviceEmulateOutput {
    * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
    */
   kind: "stealth" | "device_emulation";
-  preset: string;
-  /**
-   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-   * On the wire it is a plain number: `3`.
-   */
-  tab: number;
+  /** CDP methods that succeeded, in order. */
+  applied: string[];
   /** Things that did not work or do not fit (the rest was still applied). */
   warnings: string[];
 }
@@ -883,21 +883,21 @@ export interface DownloadsListArgs {
 export interface DownloadsListOutput {
   /** Newest first. */
   downloads: {
-    /** Unix ms; `null` while in progress. */
-    ended: number | null;
     /** Row id. 0 in [`upsert_download`] means "new row". */
     id: number;
-    mime: string;
+    url: string;
     /** Target file on disk. */
     path: string;
-    received_bytes: number;
-    /** Unix ms. */
-    started: number;
-    /** `in_progress`, `complete`, `cancelled` or `interrupted`. */
-    state: string;
+    mime: string;
     /** Size in bytes when the server said it. */
     total_bytes: number | null;
-    url: string;
+    received_bytes: number;
+    /** `in_progress`, `complete`, `cancelled` or `interrupted`. */
+    state: string;
+    /** Unix ms. */
+    started: number;
+    /** Unix ms; `null` while in progress. */
+    ended: number | null;
   }[];
 }
 
@@ -905,40 +905,40 @@ export interface DownloadsListOutput {
 
 /** Arguments of `geo.lookup`. */
 export interface GeoLookupArgs {
-  /** …or of a proxy picked from this pool. Neither = this machine's IP. */
-  pool?: string | null;
   /** Look up the exit IP of this proxy URL… */
   proxy?: string | null;
+  /** …or of a proxy picked from this pool. Neither = this machine's IP. */
+  pool?: string | null;
   /** Run id for sticky pools. */
   run?: string | null;
-  /** Timeout in milliseconds (default 10000). */
-  timeout_ms?: number | null;
   /** Lookup endpoint (http:// only, ip-api.com JSON format). Default: ip-api.com. */
   url?: string | null;
+  /** Timeout in milliseconds (default 10000). */
+  timeout_ms?: number | null;
 }
 
 /** Result of `geo.lookup`. */
 export interface GeoLookupOutput {
+  /** The proxy used (masked), or null for a direct lookup. */
+  via: string | null;
   /** Where an IP is, plus the locale and Accept-Language an identity there should use. */
   geo: {
-    accept_language: string | null;
-    city: string;
+    /** The public IP the lookup service saw. */
+    ip: string;
     country: string;
     /** ISO code, e.g. "DE". */
     country_code: string;
-    /** The public IP the lookup service saw. */
-    ip: string;
-    isp: string;
-    latitude: number;
-    /** Suggested locale for the country ("de-DE"), if known. */
-    locale: string | null;
-    longitude: number;
     region: string;
+    city: string;
     /** IANA zone, e.g. "Europe/Berlin". */
     timezone: string;
+    latitude: number;
+    longitude: number;
+    isp: string;
+    /** Suggested locale for the country ("de-DE"), if known. */
+    locale: string | null;
+    accept_language: string | null;
   };
-  /** The proxy used (masked), or null for a direct lookup. */
-  via: string | null;
 }
 
 // ---- governor.config ----
@@ -948,18 +948,10 @@ export interface GeoLookupOutput {
  * Every field is optional; only the given ones change. 0 for a time or max_live_tabs = off.
  */
 export interface GovernorConfigArgs {
-  /** A tab that got a command this recently is never touched. */
-  busy_secs?: number | null;
-  /** Discard after this many seconds in the background. */
-  discard_after_secs?: number | null;
+  /** Clear all overrides first (back to the profile's defaults). */
+  reset?: boolean | null;
   /** Turn the automatic policy on/off (manual tabs.freeze always works). */
   enabled?: boolean | null;
-  /** Freeze after this many seconds in the background. */
-  freeze_after_secs?: number | null;
-  /** Discard the most idle tabs above this many live (not discarded) tabs. */
-  max_live_tabs?: number | null;
-  /** Memory pressure below this percentage of free RAM. */
-  pressure_free_pct?: number | null;
   /**
    * low | normal | high; default chosen from RAM.
    *
@@ -968,8 +960,16 @@ export interface GovernorConfigArgs {
    * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
    */
   profile?: "low" | "normal" | "high" | null;
-  /** Clear all overrides first (back to the profile's defaults). */
-  reset?: boolean | null;
+  /** Freeze after this many seconds in the background. */
+  freeze_after_secs?: number | null;
+  /** Discard after this many seconds in the background. */
+  discard_after_secs?: number | null;
+  /** Discard the most idle tabs above this many live (not discarded) tabs. */
+  max_live_tabs?: number | null;
+  /** Memory pressure below this percentage of free RAM. */
+  pressure_free_pct?: number | null;
+  /** A tab that got a command this recently is never touched. */
+  busy_secs?: number | null;
   /** Policy interval. */
   tick_secs?: number | null;
 }
@@ -978,18 +978,8 @@ export interface GovernorConfigArgs {
 export interface GovernorConfigOutput {
   /** The limits in force now. */
   limits: {
-    /** A tab that got a command less than this long ago is "in use" and never touched. */
-    busy_secs: number;
-    /** Discard a tab this long in the background (0 = never). */
-    discard_after_secs: number;
     /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
     enabled: boolean;
-    /** Freeze a tab this long in the background (0 = never). */
-    freeze_after_secs: number;
-    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
-    max_live_tabs: number;
-    /** Memory pressure = available RAM below this percentage of total RAM. */
-    pressure_free_pct: number;
     /**
      * Hardware class. Chosen automatically from total RAM, overridable in the config.
      *
@@ -998,23 +988,33 @@ export interface GovernorConfigOutput {
      * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
      */
     profile: "low" | "normal" | "high";
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
     /** How often the policy looks at the tabs. */
     tick_secs: number;
   };
   /** What is stored in data/config/governor.json. */
   overrides: {
-    busy_secs?: number | null;
-    discard_after_secs?: number | null;
     enabled?: boolean | null;
-    freeze_after_secs?: number | null;
-    max_live_tabs?: number | null;
-    pressure_free_pct?: number | null;
     /**
      * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
      * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
      * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
      */
     profile?: "low" | "normal" | "high" | null;
+    freeze_after_secs?: number | null;
+    discard_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    busy_secs?: number | null;
     tick_secs?: number | null;
   };
 }
@@ -1032,16 +1032,16 @@ export interface GovernorRecommendParallelArgs {
  * How many parallel slots (script hosts + their tabs) this machine can carry.
  */
 export interface GovernorRecommendParallelOutput {
-  /** Available RAM in MB (0 when unknown). */
-  available_mb: number;
+  /** `min(by_cpu, by_ram)`, at least 1. */
+  parallel: number;
+  /** Logical CPUs. */
+  cpus: number;
   /** Half the CPUs (the browser needs the rest), at least 1. */
   by_cpu: number;
   /** Available RAM / per-slot memory; null when RAM could not be read. */
   by_ram: number | null;
-  /** Logical CPUs. */
-  cpus: number;
-  /** `min(by_cpu, by_ram)`, at least 1. */
-  parallel: number;
+  /** Available RAM in MB (0 when unknown). */
+  available_mb: number;
 }
 
 // ---- governor.status ----
@@ -1057,41 +1057,10 @@ export type GovernorStatusArgs = Record<string, never>;
  * `governor.status` output.
  */
 export interface GovernorStatusOutput {
-  /** Recent freeze/discard/thaw decisions, oldest first (manual and automatic). */
-  decisions: {
-    /**
-     * freeze | discard | thaw
-     *
-     * - `"freeze"`: Pause the page (keeps memory, stops CPU).
-     * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
-     * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
-     */
-    action: "freeze" | "discard" | "thaw";
-    /** False when nothing had to be done (already in that state). */
-    changed: boolean;
-    error?: string | null;
-    reason: string;
-    /**
-     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-     * On the wire it is a plain number: `3`.
-     */
-    tab: number;
-    ts_ms: number;
-  }[];
   /** The limits in force (profile defaults with the overrides applied). */
   limits: {
-    /** A tab that got a command less than this long ago is "in use" and never touched. */
-    busy_secs: number;
-    /** Discard a tab this long in the background (0 = never). */
-    discard_after_secs: number;
     /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
     enabled: boolean;
-    /** Freeze a tab this long in the background (0 = never). */
-    freeze_after_secs: number;
-    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
-    max_live_tabs: number;
-    /** Memory pressure = available RAM below this percentage of total RAM. */
-    pressure_free_pct: number;
     /**
      * Hardware class. Chosen automatically from total RAM, overridable in the config.
      *
@@ -1100,42 +1069,52 @@ export interface GovernorStatusOutput {
      * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
      */
     profile: "low" | "normal" | "high";
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
     /** How often the policy looks at the tabs. */
     tick_secs: number;
   };
-  memory: {
-    available_mb: number;
-    /** Working set of the browser and all its helper processes. */
-    browser_mb: number;
-    free_pct: number;
-    /** Available RAM is below `limits.pressure_free_pct`. */
-    pressure: boolean;
-    processes: {
-      /** `browser` (us), or Chromium's `--type=` value: `renderer`, `gpu-process`, `utility`, … */
-      kind: string;
-      /** Working set (resident memory) in MB. */
-      mb: number;
-      pid: number;
-    }[];
-    /** Number of renderer processes. */
-    renderers: number;
-    total_mb: number;
-  };
   /** What `governor.config` changed (the rest are profile defaults). */
   overrides: {
-    busy_secs?: number | null;
-    discard_after_secs?: number | null;
     enabled?: boolean | null;
-    freeze_after_secs?: number | null;
-    max_live_tabs?: number | null;
-    pressure_free_pct?: number | null;
     /**
      * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
      * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
      * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
      */
     profile?: "low" | "normal" | "high" | null;
+    freeze_after_secs?: number | null;
+    discard_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    busy_secs?: number | null;
     tick_secs?: number | null;
+  };
+  memory: {
+    total_mb: number;
+    available_mb: number;
+    free_pct: number;
+    /** Available RAM is below `limits.pressure_free_pct`. */
+    pressure: boolean;
+    /** Working set of the browser and all its helper processes. */
+    browser_mb: number;
+    /** Number of renderer processes. */
+    renderers: number;
+    processes: {
+      pid: number;
+      /** `browser` (us), or Chromium's `--type=` value: `renderer`, `gpu-process`, `utility`, … */
+      kind: string;
+      /** Working set (resident memory) in MB. */
+      mb: number;
+    }[];
   };
   tabs: {
     /**
@@ -1143,26 +1122,47 @@ export interface GovernorStatusOutput {
      * On the wire it is a plain number: `3`.
      */
     id: number;
+    title: string;
+    url: string;
+    /** A tab's state as reported on the wire. */
+    state: "live" | "frozen" | "discarded";
     /** Seconds in the background without commands (0 for the active tab). */
     idle_secs: number;
+    /** Why the policy leaves it alone (null = it may be frozen/discarded). */
+    protected: string | null;
     /**
      * JS heap of the page (`Runtime.getHeapUsage`); null when frozen/discarded. Renderer
      * processes cannot be mapped to tabs from here, so this is the per-tab estimate.
      */
     js_heap_mb: number | null;
-    /** Why the policy leaves it alone (null = it may be frozen/discarded). */
-    protected: string | null;
     /** What a discarded tab will restore. */
     saved?: {
+      url: string;
+      title: string;
       scroll_x: number;
       scroll_y: number;
-      title: string;
-      url: string;
     } | null;
-    /** A tab's state as reported on the wire. */
-    state: "live" | "frozen" | "discarded";
-    title: string;
-    url: string;
+  }[];
+  /** Recent freeze/discard/thaw decisions, oldest first (manual and automatic). */
+  decisions: {
+    ts_ms: number;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    /**
+     * freeze | discard | thaw
+     *
+     * - `"freeze"`: Pause the page (keeps memory, stops CPU).
+     * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
+     * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
+     */
+    action: "freeze" | "discard" | "thaw";
+    reason: string;
+    /** False when nothing had to be done (already in that state). */
+    changed: boolean;
+    error?: string | null;
   }[];
 }
 
@@ -1170,14 +1170,6 @@ export interface GovernorStatusOutput {
 
 /** Arguments of `hints.config`. */
 export interface HintsConfigArgs {
-  /** Letters for labels (2+ different lower-case letters/digits). Default "asdfghjkl". */
-  alphabet?: string | null;
-  /** Turn the trigger keys off on one site (host name or URL; subdomains included). */
-  disable_site?: string | null;
-  /** Replace the list of sites where the trigger keys are off. */
-  disabled_sites?: string[] | null;
-  /** Turn them back on for one site. */
-  enable_site?: string | null;
   /** Turn the trigger keys in pages on or off (hints.show always works). */
   enabled?: boolean | null;
   /**
@@ -1187,30 +1179,27 @@ export interface HintsConfigArgs {
   keys?: {
     /** @default "f" */
     click?: string | null;
-    /** @default null */
-    copy?: string | null;
-    /** @default null */
-    focus?: string | null;
     /** @default "F" */
     newtab?: string | null;
+    /** @default null */
+    focus?: string | null;
+    /** @default null */
+    copy?: string | null;
   } | null;
+  /** Replace the list of sites where the trigger keys are off. */
+  disabled_sites?: string[] | null;
+  /** Turn the trigger keys off on one site (host name or URL; subdomains included). */
+  disable_site?: string | null;
+  /** Turn them back on for one site. */
+  enable_site?: string | null;
+  /** Letters for labels (2+ different lower-case letters/digits). Default "asdfghjkl". */
+  alphabet?: string | null;
 }
 
 /** Result of `hints.config`. */
 export interface HintsConfigOutput {
   /** The settings now in effect (saved to data/config/hints.json). */
   config: {
-    /**
-     * Letters labels are made of.
-     * @default "asdfghjkl"
-     */
-    alphabet: string;
-    /**
-     * Host names where the trigger keys are off (a site's own shortcuts win); a name also
-     * covers its subdomains (`github.com` → `gist.github.com`).
-     * @default []
-     */
-    disabled_sites: string[];
     /**
      * Trigger keys work in pages (hints.show works either way).
      * @default true
@@ -1219,18 +1208,29 @@ export interface HintsConfigOutput {
     /**
      * Trigger keys typed in the page (`KeyboardEvent.key`, one character; case matters, so `F`
      * is Shift+F). `null` = no key for that mode.
-     * @default {"click":"f","copy":null,"focus":null,"newtab":"F"}
+     * @default {"click":"f","newtab":"F","focus":null,"copy":null}
      */
     keys: {
       /** @default "f" */
       click: string | null;
-      /** @default null */
-      copy: string | null;
-      /** @default null */
-      focus: string | null;
       /** @default "F" */
       newtab: string | null;
+      /** @default null */
+      focus: string | null;
+      /** @default null */
+      copy: string | null;
     };
+    /**
+     * Host names where the trigger keys are off (a site's own shortcuts win); a name also
+     * covers its subdomains (`github.com` → `gist.github.com`).
+     * @default []
+     */
+    disabled_sites: string[];
+    /**
+     * Letters labels are made of.
+     * @default "asdfghjkl"
+     */
+    alphabet: string;
   };
 }
 
@@ -1244,19 +1244,21 @@ export interface HintsHideArgs {
 
 /** Result of `hints.hide`. */
 export interface HintsHideOutput {
-  /** True when hints were on screen. */
-  hidden: boolean;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** True when hints were on screen. */
+  hidden: boolean;
 }
 
 // ---- hints.show ----
 
 /** Arguments of `hints.show`. */
 export interface HintsShowArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /**
    * What a picked hint does: click (default), newtab, focus or copy.
    *
@@ -1266,8 +1268,6 @@ export interface HintsShowArgs {
    * - `"copy"`: Copy the link URL (or the element's text) to the clipboard.
    */
   mode?: "click" | "newtab" | "focus" | "copy" | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /**
@@ -1275,21 +1275,11 @@ export interface HintsShowArgs {
  * Result of [`HintsService::show`].
  */
 export interface HintsShowOutput {
-  /** Number of labels shown (0 = nothing interactive in view). */
-  count: number;
-  /** Label → element, in page order. */
-  hints: {
-    /** Absolute link URL, for links. */
-    href?: string | null;
-    label: string;
-    /** Element tag, e.g. `a`, `button`, `input`. */
-    tag: string;
-    /**
-     * Accessible-ish text (aria-label, text, placeholder…), at most 60 characters.
-     * @default ""
-     */
-    text: string;
-  }[];
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
   /**
    * What a picked hint does.
    *
@@ -1299,54 +1289,64 @@ export interface HintsShowOutput {
    * - `"copy"`: Copy the link URL (or the element's text) to the clipboard.
    */
   mode: "click" | "newtab" | "focus" | "copy";
+  /** Number of labels shown (0 = nothing interactive in view). */
+  count: number;
+  /** Label → element, in page order. */
+  hints: {
+    label: string;
+    /** Element tag, e.g. `a`, `button`, `input`. */
+    tag: string;
+    /**
+     * Accessible-ish text (aria-label, text, placeholder…), at most 60 characters.
+     * @default ""
+     */
+    text: string;
+    /** Absolute link URL, for links. */
+    href?: string | null;
+  }[];
   /** Milliseconds for the whole call (install on first use, find, draw). */
   ms: number;
   /** Milliseconds the page spent finding the elements. */
   page_ms: number;
-  /**
-   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-   * On the wire it is a plain number: `3`.
-   */
-  tab: number;
 }
 
 // ---- history.delete ----
 
 /** Arguments of `history.delete`. */
 export interface HistoryDeleteArgs {
-  /** Forget every visit before this time (Unix ms). Use the current time to clear everything. */
-  before?: number | null;
   /** Forget this exact URL (all its visits). */
   url?: string | null;
+  /** Forget every visit before this time (Unix ms). Use the current time to clear everything. */
+  before?: number | null;
 }
 
 /** Result of `history.delete`. */
 export interface HistoryDeleteOutput {
-  deleted_urls: number;
   deleted_visits: number;
+  deleted_urls: number;
 }
 
 // ---- history.search ----
 
 /** Arguments of `history.search`. */
 export interface HistorySearchArgs {
-  /** Max results (default 100, max 5000). */
-  limit?: number | null;
   /** Text to find in URLs and titles (default: everything). */
   q?: string | null;
   /** Only URLs visited at or after this time (Unix ms). */
   since?: number | null;
+  /** Max results (default 100, max 5000). */
+  limit?: number | null;
 }
 
 /** Result of `history.search`. */
 export interface HistorySearchOutput {
   /** Matching URLs, most recently visited first. */
   entries: {
+    url: string;
+    title: string;
+    visit_count: number;
     /** Unix ms of the newest visit. */
     last_visit: number;
-    title: string;
-    url: string;
-    visit_count: number;
   }[];
 }
 
@@ -1354,16 +1354,16 @@ export interface HistorySearchOutput {
 
 /** Arguments of `identity.assign`. */
 export interface IdentityAssignArgs {
-  /** Saved identity id; omit to remove the assignment. */
-  id?: string | null;
   /** Profile id, e.g. "work". */
   profile: string;
+  /** Saved identity id; omit to remove the assignment. */
+  id?: string | null;
 }
 
 /** Result of `identity.assign`. */
 export interface IdentityAssignOutput {
-  id: string | null;
   profile: string;
+  id: string | null;
 }
 
 // ---- identity.fit_to_proxy ----
@@ -1373,25 +1373,46 @@ export interface IdentityFitToProxyArgs {
   /** Saved identity (identity_list). */
   identity_id: string;
   /**
-   * For pool:NAME: use the proxy this profile is routed through (its lease) instead of
-   * a fresh pick.
-   */
-  profile?: string | null;
-  /**
    * The proxy whose exit IP to fit: fwd-N, pool:NAME, lease:POOL/RUN/ROW or a proxy URL
    * (direct = this machine's IP).
    */
   proxy_id: string;
+  /**
+   * For pool:NAME: use the proxy this profile is routed through (its lease) instead of
+   * a fresh pick.
+   */
+  profile?: string | null;
   /** Save the changed identity (default true). */
   save?: boolean | null;
-  /** Timeout in milliseconds (default 10000). */
-  timeout_ms?: number | null;
   /** Lookup endpoint (http:// only, ip-api.com JSON format). Default: ip-api.com. */
   url?: string | null;
+  /** Timeout in milliseconds (default 10000). */
+  timeout_ms?: number | null;
 }
 
 /** Result of `identity.fit_to_proxy`. */
 export interface IdentityFitToProxyOutput {
+  identity_id: string;
+  /** The proxy the lookup went through (masked), null = direct. */
+  via: string | null;
+  /** Where an IP is, plus the locale and Accept-Language an identity there should use. */
+  geo: {
+    /** The public IP the lookup service saw. */
+    ip: string;
+    country: string;
+    /** ISO code, e.g. "DE". */
+    country_code: string;
+    region: string;
+    city: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    latitude: number;
+    longitude: number;
+    isp: string;
+    /** Suggested locale for the country ("de-DE"), if known. */
+    locale: string | null;
+    accept_language: string | null;
+  };
   /** What changed (empty = it already fit). The device (UA, platform, screen) never does. */
   changes: {
     /** Identity field, e.g. "timezone". */
@@ -1399,46 +1420,13 @@ export interface IdentityFitToProxyOutput {
     from: unknown;
     to: unknown;
   }[];
-  /** Where an IP is, plus the locale and Accept-Language an identity there should use. */
-  geo: {
-    accept_language: string | null;
-    city: string;
-    country: string;
-    /** ISO code, e.g. "DE". */
-    country_code: string;
-    /** The public IP the lookup service saw. */
-    ip: string;
-    isp: string;
-    latitude: number;
-    /** Suggested locale for the country ("de-DE"), if known. */
-    locale: string | null;
-    longitude: number;
-    region: string;
-    /** IANA zone, e.g. "Europe/Berlin". */
-    timezone: string;
-  };
+  saved: boolean;
   /** A complete, consistent fingerprint. Stored in `data/config/identities.json`. */
   identity: {
-    /**
-     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
-     * "de-DE,de,en-US,en".
-     */
-    accept_language: string;
-    /**
-     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
-     * to 32; older versions capped at 8).
-     */
-    device_memory: number;
-    /** A fake position for the Geolocation API. */
-    geolocation: {
-      /** Metres. */
-      accuracy: number;
-      latitude: number;
-      longitude: number;
-    } | null;
-    hardware_concurrency: number;
     /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
     id: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
     /**
      * What an identity is good for.
      *
@@ -1446,33 +1434,12 @@ export interface IdentityFitToProxyOutput {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
-    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
-    locale: string;
-    max_touch_points: number;
-    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
-    mobile: boolean;
     /** Operating system family an identity claims. */
     os: "windows" | "macos" | "android" | "ios";
-    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
-    platform: string;
-    /** The preset it was built from, e.g. "windows-1080p". */
-    preset: string;
-    /** Screen size in CSS pixels and the device pixel ratio. */
-    screen: {
-      dpr: number;
-      height: number;
-      width: number;
-    };
-    /** IANA zone, e.g. "Europe/Berlin". */
-    timezone: string;
-    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
-    touch: boolean;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
     /** Client hints; `None` for Safari identities (Safari has none). */
     ua_metadata: {
-      /** "x86", "arm" or "" (mobile). */
-      architecture: string;
-      /** "64" on desktop, "" on mobile. */
-      bitness: string;
       /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
       brands: {
         brand: string;
@@ -1483,81 +1450,98 @@ export interface IdentityFitToProxyOutput {
         brand: string;
         version: string;
       }[];
-      mobile: boolean;
-      /** Device model on Android ("Pixel 8"), empty on desktop. */
-      model: string;
       /** "Windows", "macOS", "Android". */
       platform: string;
       /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
       platform_version: string;
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      mobile: boolean;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
       wow64: boolean;
     } | null;
-    /** `navigator.userAgent` and the `User-Agent` header. */
-    user_agent: string;
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    hardware_concurrency: number;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      width: number;
+      height: number;
+      dpr: number;
+    };
     /** Forced viewport (mobile). `None` = keep the real window size. */
     viewport: {
-      height: number;
       width: number;
+      height: number;
     } | null;
-    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
-    webgl_renderer: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /** A fake position for the Geolocation API. */
+    geolocation: {
+      latitude: number;
+      longitude: number;
+      /** Metres. */
+      accuracy: number;
+    } | null;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
     /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
     webgl_vendor: string;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
   };
-  identity_id: string;
-  saved: boolean;
-  /** The proxy the lookup went through (masked), null = direct. */
-  via: string | null;
 }
 
 // ---- identity.generate ----
 
 /** Arguments of `identity.generate`. */
 export interface IdentityGenerateArgs {
-  /** Country code to pick timezone, locale and location from, e.g. "DE". */
-  country?: string | null;
-  /** Id to save it under (default like "win-1a2b3c4d"). */
-  id?: string | null;
-  latitude?: number | null;
-  /** Locale override, e.g. "de-DE". */
-  locale?: string | null;
-  longitude?: number | null;
   /** windows, macos, android or ios. Default: windows or macos (desktop Chrome). */
   os?: "windows" | "macos" | "android" | "ios" | null;
   /** Use this preset (see identity_presets) instead of a random one of the OS. */
   preset?: string | null;
-  /** Save to identities.json (default false = just return it). */
-  save?: boolean | null;
   /** Same seed = same identity. Default: random. */
   seed?: number | null;
+  /** Id to save it under (default like "win-1a2b3c4d"). */
+  id?: string | null;
+  /** Save to identities.json (default false = just return it). */
+  save?: boolean | null;
   /** IANA timezone override, e.g. "Europe/Berlin" (e.g. from geo_lookup of the proxy). */
   timezone?: string | null;
+  /** Locale override, e.g. "de-DE". */
+  locale?: string | null;
+  /** Country code to pick timezone, locale and location from, e.g. "DE". */
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /** Result of `identity.generate`. */
 export interface IdentityGenerateOutput {
   /** A complete, consistent fingerprint. Stored in `data/config/identities.json`. */
   identity: {
-    /**
-     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
-     * "de-DE,de,en-US,en".
-     */
-    accept_language: string;
-    /**
-     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
-     * to 32; older versions capped at 8).
-     */
-    device_memory: number;
-    /** A fake position for the Geolocation API. */
-    geolocation: {
-      /** Metres. */
-      accuracy: number;
-      latitude: number;
-      longitude: number;
-    } | null;
-    hardware_concurrency: number;
     /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
     id: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
     /**
      * What an identity is good for.
      *
@@ -1565,33 +1549,12 @@ export interface IdentityGenerateOutput {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
-    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
-    locale: string;
-    max_touch_points: number;
-    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
-    mobile: boolean;
     /** Operating system family an identity claims. */
     os: "windows" | "macos" | "android" | "ios";
-    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
-    platform: string;
-    /** The preset it was built from, e.g. "windows-1080p". */
-    preset: string;
-    /** Screen size in CSS pixels and the device pixel ratio. */
-    screen: {
-      dpr: number;
-      height: number;
-      width: number;
-    };
-    /** IANA zone, e.g. "Europe/Berlin". */
-    timezone: string;
-    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
-    touch: boolean;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
     /** Client hints; `None` for Safari identities (Safari has none). */
     ua_metadata: {
-      /** "x86", "arm" or "" (mobile). */
-      architecture: string;
-      /** "64" on desktop, "" on mobile. */
-      bitness: string;
       /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
       brands: {
         brand: string;
@@ -1602,32 +1565,69 @@ export interface IdentityGenerateOutput {
         brand: string;
         version: string;
       }[];
-      mobile: boolean;
-      /** Device model on Android ("Pixel 8"), empty on desktop. */
-      model: string;
       /** "Windows", "macOS", "Android". */
       platform: string;
       /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
       platform_version: string;
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      mobile: boolean;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
       wow64: boolean;
     } | null;
-    /** `navigator.userAgent` and the `User-Agent` header. */
-    user_agent: string;
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    hardware_concurrency: number;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      width: number;
+      height: number;
+      dpr: number;
+    };
     /** Forced viewport (mobile). `None` = keep the real window size. */
     viewport: {
-      height: number;
       width: number;
+      height: number;
     } | null;
-    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
-    webgl_renderer: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /** A fake position for the Geolocation API. */
+    geolocation: {
+      latitude: number;
+      longitude: number;
+      /** Metres. */
+      accuracy: number;
+    } | null;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
     /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
     webgl_vendor: string;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
   };
-  /** Inconsistencies (empty for generated identities unless overrides clash). */
-  problems: string[];
-  saved: boolean;
   /** The seed used (pass it again to get the same identity). */
   seed: number;
+  saved: boolean;
+  /** Inconsistencies (empty for generated identities unless overrides clash). */
+  problems: string[];
 }
 
 // ---- identity.get ----
@@ -1642,26 +1642,10 @@ export interface IdentityGetArgs {
 export interface IdentityGetOutput {
   /** A complete, consistent fingerprint. Stored in `data/config/identities.json`. */
   identity: {
-    /**
-     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
-     * "de-DE,de,en-US,en".
-     */
-    accept_language: string;
-    /**
-     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
-     * to 32; older versions capped at 8).
-     */
-    device_memory: number;
-    /** A fake position for the Geolocation API. */
-    geolocation: {
-      /** Metres. */
-      accuracy: number;
-      latitude: number;
-      longitude: number;
-    } | null;
-    hardware_concurrency: number;
     /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
     id: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
     /**
      * What an identity is good for.
      *
@@ -1669,33 +1653,12 @@ export interface IdentityGetOutput {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
-    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
-    locale: string;
-    max_touch_points: number;
-    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
-    mobile: boolean;
     /** Operating system family an identity claims. */
     os: "windows" | "macos" | "android" | "ios";
-    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
-    platform: string;
-    /** The preset it was built from, e.g. "windows-1080p". */
-    preset: string;
-    /** Screen size in CSS pixels and the device pixel ratio. */
-    screen: {
-      dpr: number;
-      height: number;
-      width: number;
-    };
-    /** IANA zone, e.g. "Europe/Berlin". */
-    timezone: string;
-    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
-    touch: boolean;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
     /** Client hints; `None` for Safari identities (Safari has none). */
     ua_metadata: {
-      /** "x86", "arm" or "" (mobile). */
-      architecture: string;
-      /** "64" on desktop, "" on mobile. */
-      bitness: string;
       /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
       brands: {
         brand: string;
@@ -1706,26 +1669,63 @@ export interface IdentityGetOutput {
         brand: string;
         version: string;
       }[];
-      mobile: boolean;
-      /** Device model on Android ("Pixel 8"), empty on desktop. */
-      model: string;
       /** "Windows", "macOS", "Android". */
       platform: string;
       /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
       platform_version: string;
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      mobile: boolean;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
       wow64: boolean;
     } | null;
-    /** `navigator.userAgent` and the `User-Agent` header. */
-    user_agent: string;
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    hardware_concurrency: number;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      width: number;
+      height: number;
+      dpr: number;
+    };
     /** Forced viewport (mobile). `None` = keep the real window size. */
     viewport: {
-      height: number;
       width: number;
+      height: number;
     } | null;
-    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
-    webgl_renderer: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /** A fake position for the Geolocation API. */
+    geolocation: {
+      latitude: number;
+      longitude: number;
+      /** Metres. */
+      accuracy: number;
+    } | null;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
     /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
     webgl_vendor: string;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
   };
 }
 
@@ -1741,6 +1741,9 @@ export type IdentityListArgs = Record<string, never>;
 export interface IdentityListOutput {
   identities: {
     id: string;
+    preset: string;
+    /** Operating system family an identity claims. */
+    os: "windows" | "macos" | "android" | "ios";
     /**
      * What an identity is good for.
      *
@@ -1748,18 +1751,15 @@ export interface IdentityListOutput {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
+    user_agent: string;
+    timezone: string;
     locale: string;
-    /** Operating system family an identity claims. */
-    os: "windows" | "macos" | "android" | "ios";
-    preset: string;
     /** Screen size in CSS pixels and the device pixel ratio. */
     screen: {
-      dpr: number;
-      height: number;
       width: number;
+      height: number;
+      dpr: number;
     };
-    timezone: string;
-    user_agent: string;
   }[];
   /** Profile id → identity id. */
   profiles: Record<string, string>;
@@ -1776,8 +1776,10 @@ export type IdentityPresetsArgs = Record<string, never>;
 /** Result of `identity.presets`. */
 export interface IdentityPresetsOutput {
   presets: {
-    /** Name for device_emulate, e.g. "iPhone 15". */
-    device: string | null;
+    name: string;
+    title: string;
+    /** Operating system family an identity claims. */
+    os: "windows" | "macos" | "android" | "ios";
     /**
      * stealth, or device_emulation (claims Safari on a Chromium engine).
      *
@@ -1785,16 +1787,14 @@ export interface IdentityPresetsOutput {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
-    name: string;
-    /** Operating system family an identity claims. */
-    os: "windows" | "macos" | "android" | "ios";
+    /** Name for device_emulate, e.g. "iPhone 15". */
+    device: string | null;
     /** Screen size in CSS pixels and the device pixel ratio. */
     screen: {
-      dpr: number;
-      height: number;
       width: number;
+      height: number;
+      dpr: number;
     };
-    title: string;
   }[];
 }
 
@@ -1815,31 +1815,31 @@ export interface IdentityRemoveOutput {
 
 /** Arguments of `import.chrome`. */
 export interface ImportChromeArgs {
-  /** A cookie export JSON file (needed for `cookies_json`). */
-  cookies_json_path?: string | null;
   /** What to import; each part is independent. */
   parts: ("bookmarks" | "history" | "passwords_csv" | "cookies_json")[];
-  /** The CSV exported from Chrome's password manager (needed for `passwords_csv`). */
-  passwords_csv_path?: string | null;
   /**
    * Chrome profile folder for bookmarks/history (default: `<Chrome User Data>/Default`;
    * see import_chrome_detect).
    */
   profile_dir?: string | null;
+  /** The CSV exported from Chrome's password manager (needed for `passwords_csv`). */
+  passwords_csv_path?: string | null;
+  /** A cookie export JSON file (needed for `cookies_json`). */
+  cookies_json_path?: string | null;
 }
 
 /** Result of `import.chrome`. */
 export interface ImportChromeOutput {
   /** One entry per requested part, in order. A failed part does not stop the others. */
   results: {
-    error: string | null;
-    imported: number;
-    ok: boolean;
     /** What to import. */
     part: "bookmarks" | "history" | "passwords_csv" | "cookies_json";
-    skipped: number;
+    ok: boolean;
     /** File it read. */
     source: string;
+    imported: number;
+    skipped: number;
+    error: string | null;
   }[];
 }
 
@@ -1853,22 +1853,24 @@ export interface ImportChromeDetectArgs {
 
 /** Result of `import.chrome_detect`. */
 export interface ImportChromeDetectOutput {
+  /** The folders that were scanned. */
+  user_data_dirs: string[];
   profiles: {
-    has_bookmarks: boolean;
-    has_history: boolean;
     /** Folder name: `Default`, `Profile 1`, … */
     name: string;
     /** Full path; pass it as `profile_dir` to import_chrome. */
     path: string;
+    has_bookmarks: boolean;
+    has_history: boolean;
   }[];
-  /** The folders that were scanned. */
-  user_data_dirs: string[];
 }
 
 // ---- input.humanlike ----
 
 /** Arguments of `input.humanlike`. */
 export interface InputHumanlikeArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** true = human-like input for page_act in this tab; false = the fast path (default). */
   on: boolean;
   /**
@@ -1876,11 +1878,6 @@ export interface InputHumanlikeArgs {
    * 0.35)}. Missing fields keep their defaults.
    */
   profile?: {
-    /**
-     * How irregular things are, 0 (robotic) to 1 (sloppy). Default 0.35.
-     * @default 0.35
-     */
-    jitter?: number;
     /**
      * Average mouse speed in CSS pixels per second (default 1200; 600 = slow, 2500 = fast).
      * @default 1200.0
@@ -1891,23 +1888,26 @@ export interface InputHumanlikeArgs {
      * @default 55.0
      */
     typing_wpm?: number;
-  } | null;
-  /** Seed for the random paths and delays (for reproducible runs). Default: random. */
-  seed?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
-}
-
-/** Result of `input.humanlike`. */
-export interface InputHumanlikeOutput {
-  on: boolean;
-  /** The profile in use (after clamping to sane ranges). */
-  profile: {
     /**
      * How irregular things are, 0 (robotic) to 1 (sloppy). Default 0.35.
      * @default 0.35
      */
-    jitter: number;
+    jitter?: number;
+  } | null;
+  /** Seed for the random paths and delays (for reproducible runs). Default: random. */
+  seed?: number | null;
+}
+
+/** Result of `input.humanlike`. */
+export interface InputHumanlikeOutput {
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  on: boolean;
+  /** The profile in use (after clamping to sane ranges). */
+  profile: {
     /**
      * Average mouse speed in CSS pixels per second (default 1200; 600 = slow, 2500 = fast).
      * @default 1200.0
@@ -1918,36 +1918,36 @@ export interface InputHumanlikeOutput {
      * @default 55.0
      */
     typing_wpm: number;
+    /**
+     * How irregular things are, 0 (robotic) to 1 (sloppy). Default 0.35.
+     * @default 0.35
+     */
+    jitter: number;
   } | null;
-  /**
-   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-   * On the wire it is a plain number: `3`.
-   */
-  tab: number;
 }
 
 // ---- input.keys ----
 
 /** Arguments of `input.keys`. */
 export interface InputKeysArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /**
    * Chords separated by spaces: "Enter", "Control+A", "Shift+Tab", "ArrowDown ArrowDown
    * Enter".
    */
   keys: string;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `input.keys`. */
 export interface InputKeysOutput {
-  /** Number of chords pressed. */
-  pressed: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Number of chords pressed. */
+  pressed: number;
 }
 
 // ---- nav.back ----
@@ -1969,11 +1969,19 @@ export interface NavBackArgs {
  * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
  */
 export interface NavBackOutput {
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
+  url: string;
+  /** True while the page is still loading. */
+  loading: boolean;
   /**
-   * True for the tab shown in its window (one per window).
-   * @default false
+   * Favicon URL; null until the page reports one.
+   * @default null
    */
-  active: boolean;
+  favicon: string | null;
   /**
    * True when `nav.back` would do something.
    * @default false
@@ -1985,28 +1993,20 @@ export interface NavBackOutput {
    */
   canGoForward: boolean;
   /**
-   * Favicon URL; null until the page reports one.
-   * @default null
+   * True for the tab shown in its window (one per window).
+   * @default false
    */
-  favicon: string | null;
+  active: boolean;
   /**
    * Tab group id. Always null for now (tab groups are not implemented yet).
    * @default null
    */
   groupId: string | null;
-  /** Tab id, used as `tab` argument by other commands. */
-  id: number;
-  /** True while the page is still loading. */
-  loading: boolean;
   /**
    * Agent holding the tab lock. Always null for now (agent locks come later).
    * @default null
    */
   lockedBy: string | null;
-  /** Page title. */
-  title: string;
-  /** Current URL. */
-  url: string;
 }
 
 // ---- nav.forward ----
@@ -2028,11 +2028,19 @@ export interface NavForwardArgs {
  * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
  */
 export interface NavForwardOutput {
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
+  url: string;
+  /** True while the page is still loading. */
+  loading: boolean;
   /**
-   * True for the tab shown in its window (one per window).
-   * @default false
+   * Favicon URL; null until the page reports one.
+   * @default null
    */
-  active: boolean;
+  favicon: string | null;
   /**
    * True when `nav.back` would do something.
    * @default false
@@ -2044,40 +2052,32 @@ export interface NavForwardOutput {
    */
   canGoForward: boolean;
   /**
-   * Favicon URL; null until the page reports one.
-   * @default null
+   * True for the tab shown in its window (one per window).
+   * @default false
    */
-  favicon: string | null;
+  active: boolean;
   /**
    * Tab group id. Always null for now (tab groups are not implemented yet).
    * @default null
    */
   groupId: string | null;
-  /** Tab id, used as `tab` argument by other commands. */
-  id: number;
-  /** True while the page is still loading. */
-  loading: boolean;
   /**
    * Agent holding the tab lock. Always null for now (agent locks come later).
    * @default null
    */
   lockedBy: string | null;
-  /** Page title. */
-  title: string;
-  /** Current URL. */
-  url: string;
 }
 
 // ---- nav.goto ----
 
 /** Arguments of `nav.goto`. */
 export interface NavGotoArgs {
+  /** URL to load. */
+  url: string;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
   /** Max seconds to wait for the page to finish loading (default 30, max 600). */
   timeout_secs?: number | null;
-  /** URL to load. */
-  url: string;
 }
 
 /**
@@ -2086,11 +2086,19 @@ export interface NavGotoArgs {
  * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
  */
 export interface NavGotoOutput {
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
+  url: string;
+  /** True while the page is still loading. */
+  loading: boolean;
   /**
-   * True for the tab shown in its window (one per window).
-   * @default false
+   * Favicon URL; null until the page reports one.
+   * @default null
    */
-  active: boolean;
+  favicon: string | null;
   /**
    * True when `nav.back` would do something.
    * @default false
@@ -2102,28 +2110,20 @@ export interface NavGotoOutput {
    */
   canGoForward: boolean;
   /**
-   * Favicon URL; null until the page reports one.
-   * @default null
+   * True for the tab shown in its window (one per window).
+   * @default false
    */
-  favicon: string | null;
+  active: boolean;
   /**
    * Tab group id. Always null for now (tab groups are not implemented yet).
    * @default null
    */
   groupId: string | null;
-  /** Tab id, used as `tab` argument by other commands. */
-  id: number;
-  /** True while the page is still loading. */
-  loading: boolean;
   /**
    * Agent holding the tab lock. Always null for now (agent locks come later).
    * @default null
    */
   lockedBy: string | null;
-  /** Page title. */
-  title: string;
-  /** Current URL. */
-  url: string;
 }
 
 // ---- nav.reload ----
@@ -2145,11 +2145,19 @@ export interface NavReloadArgs {
  * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
  */
 export interface NavReloadOutput {
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
+  url: string;
+  /** True while the page is still loading. */
+  loading: boolean;
   /**
-   * True for the tab shown in its window (one per window).
-   * @default false
+   * Favicon URL; null until the page reports one.
+   * @default null
    */
-  active: boolean;
+  favicon: string | null;
   /**
    * True when `nav.back` would do something.
    * @default false
@@ -2161,28 +2169,20 @@ export interface NavReloadOutput {
    */
   canGoForward: boolean;
   /**
-   * Favicon URL; null until the page reports one.
-   * @default null
+   * True for the tab shown in its window (one per window).
+   * @default false
    */
-  favicon: string | null;
+  active: boolean;
   /**
    * Tab group id. Always null for now (tab groups are not implemented yet).
    * @default null
    */
   groupId: string | null;
-  /** Tab id, used as `tab` argument by other commands. */
-  id: number;
-  /** True while the page is still loading. */
-  loading: boolean;
   /**
    * Agent holding the tab lock. Always null for now (agent locks come later).
    * @default null
    */
   lockedBy: string | null;
-  /** Page title. */
-  title: string;
-  /** Current URL. */
-  url: string;
 }
 
 // ---- nav.stop ----
@@ -2203,6 +2203,8 @@ export type NavStopOutput = Record<string, never>;
 
 /** Arguments of `nav.wait`. */
 export interface NavWaitArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /**
    * load, text, ref or url.
    *
@@ -2212,12 +2214,10 @@ export interface NavWaitArgs {
    * - `"url"`: The URL contains `value`.
    */
   for: "load" | "text" | "ref" | "url";
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
-  /** Max seconds to wait (default 10, max 120). */
-  timeout_secs?: number | null;
   /** The text, ref or URL part to wait for (not needed for load). */
   value?: string | null;
+  /** Max seconds to wait (default 10, max 120). */
+  timeout_secs?: number | null;
 }
 
 /** Result of `nav.wait`. */
@@ -2235,39 +2235,37 @@ export interface NavWaitOutput {
 
 /** Arguments of `net.api_to_code`. */
 export interface NetApiToCodeArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Only requests to hosts containing this, e.g. "api.example.com". */
   host?: string | null;
   /** Output language; only "ts" (TypeScript) for now. */
   lang?: string | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.api_to_code`. */
 export interface NetApiToCodeOutput {
-  /** The generated client. */
-  code: string;
-  /** Endpoints found (method + path template). */
-  endpoints: number;
-  /** Captured XHR/fetch requests they came from. */
-  requests: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Endpoints found (method + path template). */
+  endpoints: number;
+  /** Captured XHR/fetch requests they came from. */
+  requests: number;
+  /** The generated client. */
+  code: string;
 }
 
 // ---- net.breakpoint ----
 
 /** Arguments of `net.breakpoint`. */
 export interface NetBreakpointArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Which requests: {url_glob | url_regex, method?}. Default: all. */
   match?: {
-    /** HTTP method such as "POST" (case-insensitive). Default: any. */
-    method?: string | null;
-    /** request (default) or response. */
-    stage?: "request" | "response" | null;
     /**
      * URL wildcard: `*` = any characters, `?` = one character, e.g. "*://api.example.com/*"
      * or "*\/items?*". Default: every URL.
@@ -2278,11 +2276,13 @@ export interface NetBreakpointArgs {
      * url_glob.
      */
     url_regex?: string | null;
+    /** HTTP method such as "POST" (case-insensitive). Default: any. */
+    method?: string | null;
+    /** request (default) or response. */
+    stage?: "request" | "response" | null;
   } | null;
   /** request (default: before sending, edit the request) or response (edit the answer). */
   stage?: "request" | "response" | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.breakpoint`. */
@@ -2296,52 +2296,52 @@ export interface NetBreakpointOutput {
 
 /** Arguments of `net.capture`. */
 export interface NetCaptureArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** true = start recording the tab's traffic, false = stop (what was captured stays). */
+  on: boolean;
   /**
    * Also keep every response body in memory as soon as it arrives (default false: bodies
    * are fetched when net_get asks, which works until the browser evicts them).
    */
   bodies?: boolean | null;
-  /** true = start recording the tab's traffic, false = stop (what was captured stays). */
-  on: boolean;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.capture`. */
 export interface NetCaptureOutput {
-  bodies: boolean;
-  capturing: boolean;
-  /** Requests in the buffer now. */
-  entries: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  capturing: boolean;
+  bodies: boolean;
+  /** Requests in the buffer now. */
+  entries: number;
 }
 
 // ---- net.get ----
 
 /** Arguments of `net.get`. */
 export interface NetGetArgs {
-  /** Request id from net_list (the number after #). */
-  id: number;
-  /** Cut each body (and very long header values) to this many bytes (default 4096). */
-  max_bytes?: number | null;
-  /** What to show besides the summary: headers, req_body, res_body (default [headers]). */
-  parts?: ("headers" | "req_body" | "res_body")[] | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Request id from net_list (the number after #). */
+  id: number;
+  /** What to show besides the summary: headers, req_body, res_body (default [headers]). */
+  parts?: ("headers" | "req_body" | "res_body")[] | null;
+  /** Cut each body (and very long header values) to this many bytes (default 4096). */
+  max_bytes?: number | null;
 }
 
 /** Result of `net.get`. */
 export interface NetGetOutput {
-  id: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  id: number;
   /** Summary, then the requested parts. */
   text: string;
   /** A body was cut to max_bytes. */
@@ -2352,8 +2352,17 @@ export interface NetGetOutput {
 
 /** Arguments of `net.har_export`. */
 export interface NetHarExportArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /**
+   * File to write; relative paths go to data/har/. Default: return the HAR inline when
+   * it is small (≤16 kB), else write data/har/tab<N>-<time>.har.
+   */
+  path?: string | null;
   /** Only export matching requests (same as net_list). */
   filter?: {
+    /** Case-insensitive substring of the URL. */
+    url_contains?: string | null;
     /** HTTP method, e.g. "POST". */
     method?: string | null;
     /** 404, "4xx", "failed" or "pending". */
@@ -2363,46 +2372,36 @@ export interface NetHarExportArgs {
      * font, media, websocket, other…
      */
     type?: string | null;
-    /** Case-insensitive substring of the URL. */
-    url_contains?: string | null;
   } | null;
-  /**
-   * File to write; relative paths go to data/har/. Default: return the HAR inline when
-   * it is small (≤16 kB), else write data/har/tab<N>-<time>.har.
-   */
-  path?: string | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.har_export`. */
 export interface NetHarExportOutput {
-  /** Size of the HAR JSON. */
-  bytes: number;
-  /** Requests exported. */
-  entries: number;
-  /** The HAR itself, when small and no path was given. */
-  har?: unknown;
-  /** Where it was written. */
-  path?: string | null;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Requests exported. */
+  entries: number;
+  /** Size of the HAR JSON. */
+  bytes: number;
+  /** Where it was written. */
+  path?: string | null;
+  /** The HAR itself, when small and no path was given. */
+  har?: unknown;
 }
 
 // ---- net.list ----
 
 /** Arguments of `net.list`. */
 export interface NetListArgs {
-  /**
-   * Show requests from this id on (the `next_cursor` of the previous call). Calling again
-   * with the last `next_cursor` shows only requests that came since.
-   */
-  cursor?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Which requests to show. All given parts must match. */
   filter?: {
+    /** Case-insensitive substring of the URL. */
+    url_contains?: string | null;
     /** HTTP method, e.g. "POST". */
     method?: string | null;
     /** 404, "4xx", "failed" or "pending". */
@@ -2412,30 +2411,31 @@ export interface NetListArgs {
      * font, media, websocket, other…
      */
     type?: string | null;
-    /** Case-insensitive substring of the URL. */
-    url_contains?: string | null;
   } | null;
+  /**
+   * Show requests from this id on (the `next_cursor` of the previous call). Calling again
+   * with the last `next_cursor` shows only requests that came since.
+   */
+  cursor?: number | null;
   /** Lines per page (default 50, max 500). */
   limit?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.list`. */
 export interface NetListOutput {
-  /** More matching requests after this page. */
-  more: boolean;
-  /** Pass as `cursor` to continue (or to get only newer requests later). */
-  next_cursor: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
-  /** One line per request: `#id METHOD status type size time url [rule notes]`. */
-  text: string;
   /** Matching requests from `cursor` on (all pages). */
   total: number;
+  /** One line per request: `#id METHOD status type size time url [rule notes]`. */
+  text: string;
+  /** Pass as `cursor` to continue (or to get only newer requests later). */
+  next_cursor: number;
+  /** More matching requests after this page. */
+  more: boolean;
 }
 
 // ---- net.paused_list ----
@@ -2457,37 +2457,37 @@ export interface NetPausedListOutput {
 
 /** Arguments of `net.replay`. */
 export interface NetReplayArgs {
-  /** Changes for `net.replay`. */
-  edits?: {
-    /** New request body. */
-    body?: string | null;
-    /** Headers to set; a null value removes one. */
-    headers?: Record<string, string | null> | null;
-    method?: string | null;
-    url?: string | null;
-  } | null;
-  /** Request id from net_list. */
-  id: number;
-  /** Cut the response body to this many bytes (default 4096). */
-  max_bytes?: number | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Request id from net_list. */
+  id: number;
+  /** Changes for `net.replay`. */
+  edits?: {
+    url?: string | null;
+    method?: string | null;
+    /** Headers to set; a null value removes one. */
+    headers?: Record<string, string | null> | null;
+    /** New request body. */
+    body?: string | null;
+  } | null;
+  /** Cut the response body to this many bytes (default 4096). */
+  max_bytes?: number | null;
 }
 
 /** Result of `net.replay`. */
 export interface NetReplayOutput {
-  /** Response text, cut to max_bytes. */
-  body: string;
-  content_type: string;
-  /** Length of the whole response text. */
-  length: number;
-  status: number;
-  status_text: string;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  status: number;
+  status_text: string;
+  content_type: string;
+  /** Length of the whole response text. */
+  length: number;
+  /** Response text, cut to max_bytes. */
+  body: string;
   truncated: boolean;
 }
 
@@ -2495,6 +2495,33 @@ export interface NetReplayOutput {
 
 /** Arguments of `net.resume`. */
 export interface NetResumeArgs {
+  /** Pause id from the net.paused event or net_paused_list. */
+  pause_id: string;
+  /**
+   * Changes before continuing: url, method, headers, body (request stage); status,
+   * headers, response_body (response stage; at the request stage they answer without
+   * sending).
+   */
+  edits?: {
+    /** Request stage: send to this URL instead. */
+    url?: string | null;
+    /** Request stage: use this HTTP method. */
+    method?: string | null;
+    /**
+     * Headers to set; a null value removes the header. Request headers at the request
+     * stage, response headers at the response stage.
+     */
+    headers?: Record<string, string | null> | null;
+    /** Request stage: new request body. */
+    body?: string | null;
+    /**
+     * Answer with this status (response stage: replaces the real one; request stage: the
+     * request is not sent and this is returned instead, default 200).
+     */
+    status?: number | null;
+    /** Answer with this body instead of the real one. */
+    response_body?: string | null;
+  } | null;
   /**
    * continue (default) or drop.
    *
@@ -2502,40 +2529,13 @@ export interface NetResumeArgs {
    * - `"drop"`: Fail it (the page sees net::ERR_ABORTED).
    */
   action?: "continue" | "drop" | null;
-  /**
-   * Changes before continuing: url, method, headers, body (request stage); status,
-   * headers, response_body (response stage; at the request stage they answer without
-   * sending).
-   */
-  edits?: {
-    /** Request stage: new request body. */
-    body?: string | null;
-    /**
-     * Headers to set; a null value removes the header. Request headers at the request
-     * stage, response headers at the response stage.
-     */
-    headers?: Record<string, string | null> | null;
-    /** Request stage: use this HTTP method. */
-    method?: string | null;
-    /** Answer with this body instead of the real one. */
-    response_body?: string | null;
-    /**
-     * Answer with this status (response stage: replaces the real one; request stage: the
-     * request is not sent and this is returned instead, default 200).
-     */
-    status?: number | null;
-    /** Request stage: send to this URL instead. */
-    url?: string | null;
-  } | null;
-  /** Pause id from the net.paused event or net_paused_list. */
-  pause_id: string;
 }
 
 /** Result of `net.resume`. */
 export interface NetResumeOutput {
+  pause_id: string;
   /** continued, fulfilled or dropped. */
   done: string;
-  pause_id: string;
   text: string;
 }
 
@@ -2543,6 +2543,25 @@ export interface NetResumeOutput {
 
 /** Arguments of `net.rule_add`. */
 export interface NetRuleAddArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Which requests: {url_glob | url_regex, method?, stage?: request|response}. */
+  match: {
+    /**
+     * URL wildcard: `*` = any characters, `?` = one character, e.g. "*://api.example.com/*"
+     * or "*\/items?*". Default: every URL.
+     */
+    url_glob?: string | null;
+    /**
+     * Regular expression searched in the full URL, e.g. "/items/\\d+". Use instead of
+     * url_glob.
+     */
+    url_regex?: string | null;
+    /** HTTP method such as "POST" (case-insensitive). Default: any. */
+    method?: string | null;
+    /** request (default) or response. */
+    stage?: "request" | "response" | null;
+  };
   /**
    * "block", {"redirect":{"url"}}, {"set_headers":{name:value}}, {"remove_headers":[names]},
    * {"rewrite_body":{"find","replace"}} or {"mock":{"status","headers","body"}}.
@@ -2564,33 +2583,14 @@ export interface NetRuleAddArgs {
     };
   } | {
     mock: {
-      /** Response body text (default empty). */
-      body?: string | null;
-      /** Response headers; content-type is guessed from the body when missing. */
-      headers?: Record<string, string> | null;
       /** HTTP status (default 200). */
       status?: number | null;
+      /** Response headers; content-type is guessed from the body when missing. */
+      headers?: Record<string, string> | null;
+      /** Response body text (default empty). */
+      body?: string | null;
     };
   };
-  /** Which requests: {url_glob | url_regex, method?, stage?: request|response}. */
-  match: {
-    /** HTTP method such as "POST" (case-insensitive). Default: any. */
-    method?: string | null;
-    /** request (default) or response. */
-    stage?: "request" | "response" | null;
-    /**
-     * URL wildcard: `*` = any characters, `?` = one character, e.g. "*://api.example.com/*"
-     * or "*\/items?*". Default: every URL.
-     */
-    url_glob?: string | null;
-    /**
-     * Regular expression searched in the full URL, e.g. "/items/\\d+". Use instead of
-     * url_glob.
-     */
-    url_regex?: string | null;
-  };
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.rule_add`. */
@@ -2634,6 +2634,10 @@ export interface NetRuleRemoveOutput {
 
 /** Arguments of `net.search`. */
 export interface NetSearchArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Text to find (case-insensitive). */
+  query: string;
   /**
    * url, headers or body. Default: url + headers + bodies already in memory.
    *
@@ -2642,10 +2646,6 @@ export interface NetSearchArgs {
   in?: "url" | "headers" | "body" | null;
   /** Max matches shown (default 20). */
   limit?: number | null;
-  /** Text to find (case-insensitive). */
-  query: string;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.search`. */
@@ -2655,42 +2655,42 @@ export interface NetSearchOutput {
    * On the wire it is a plain number: `3`.
    */
   tab: number;
-  /** Request line plus where it matched, with a little context. */
-  text: string;
   /** Matching requests. */
   total: number;
+  /** Request line plus where it matched, with a little context. */
+  text: string;
 }
 
 // ---- net.ws_frames ----
 
 /** Arguments of `net.ws_frames`. */
 export interface NetWsFramesArgs {
-  /** Start at this frame number (the `next_cursor` of the previous call). */
-  cursor?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Id of the websocket request from net_list. */
   id: number;
+  /** Start at this frame number (the `next_cursor` of the previous call). */
+  cursor?: number | null;
   /** Frames per page (default 50). */
   limit?: number | null;
   /** Cut each payload to this many bytes (default 300). */
   max_bytes?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `net.ws_frames`. */
 export interface NetWsFramesOutput {
-  id: number;
-  more: boolean;
-  next_cursor: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
-  /** One line per frame: `n → text 45B +1.234s payload` (→ sent, ← received). */
-  text: string;
+  id: number;
   /** Frames seen on this socket so far. */
   total: number;
+  /** One line per frame: `n → text 45B +1.234s payload` (→ sent, ← received). */
+  text: string;
+  next_cursor: number;
+  more: boolean;
 }
 
 // ---- notify.config_get ----
@@ -2706,20 +2706,22 @@ export type NotifyConfigGetArgs = Record<string, never>;
  * The whole configuration file.
  */
 export interface NotifyConfigGetOutput {
-  /** @default {"os":true,"telegram":{"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false},"ui":true,"webhook":{"enabled":false,"url":""}} */
+  /** @default {"ui":true,"os":true,"telegram":{"enabled":false,"bot_token":"","chat_id":"","api_base":"https://api.telegram.org"},"webhook":{"enabled":false,"url":""}} */
   channels: {
+    /**
+     * Toasts in the browser UI.
+     * @default true
+     */
+    ui: boolean;
     /**
      * Windows toast notifications.
      * @default true
      */
     os: boolean;
-    /** @default {"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false} */
+    /** @default {"enabled":false,"bot_token":"","chat_id":"","api_base":"https://api.telegram.org"} */
     telegram: {
-      /**
-       * Bot API base URL; only changed for tests or a self-hosted Bot API server.
-       * @default "https://api.telegram.org"
-       */
-      api_base: string;
+      /** @default false */
+      enabled: boolean;
       /**
        * Token from @BotFather (`123456:ABC…`). Stored as plain text.
        * @default ""
@@ -2731,14 +2733,12 @@ export interface NotifyConfigGetOutput {
        * @default ""
        */
       chat_id: string;
-      /** @default false */
-      enabled: boolean;
+      /**
+       * Bot API base URL; only changed for tests or a self-hosted Bot API server.
+       * @default "https://api.telegram.org"
+       */
+      api_base: string;
     };
-    /**
-     * Toasts in the browser UI.
-     * @default true
-     */
-    ui: boolean;
     /** @default {"enabled":false,"url":""} */
     webhook: {
       /** @default false */
@@ -2751,42 +2751,14 @@ export interface NotifyConfigGetOutput {
     };
   };
   /**
-   * Anti-spam knobs.
-   * @default {"aggregate_secs":60,"dedup_secs":10,"max_per_minute":20}
-   */
-  limits: {
-    /**
-     * Window of `aggregate` rules.
-     * @default 60
-     */
-    aggregate_secs: number;
-    /**
-     * The same title + text again within this many seconds is dropped.
-     * @default 10
-     */
-    dedup_secs: number;
-    /**
-     * Per channel; extra notifications are dropped and counted ("+N suppressed").
-     * Questions (with buttons) are never dropped.
-     * @default 20
-     */
-    max_per_minute: number;
-  };
-  /**
    * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-   * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
    */
   rules: {
-    /**
-     * Collect bursts of this event (per run / session) into one summary per
-     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
-     * @default false
-     */
-    aggregate: boolean;
-    /** Where matching events go (only the channels that are enabled are used). */
-    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
     topic: string;
+    /** Where matching events go (only the channels that are enabled are used). */
+    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /**
      * Extra condition; default `always`.
      *
@@ -2795,7 +2767,35 @@ export interface NotifyConfigGetOutput {
      * @default "always"
      */
     when: "always" | "unfocused" | "failed";
+    /**
+     * Collect bursts of this event (per run / session) into one summary per
+     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+     * @default false
+     */
+    aggregate: boolean;
   }[];
+  /**
+   * Anti-spam knobs.
+   * @default {"dedup_secs":10,"aggregate_secs":60,"max_per_minute":20}
+   */
+  limits: {
+    /**
+     * The same title + text again within this many seconds is dropped.
+     * @default 10
+     */
+    dedup_secs: number;
+    /**
+     * Window of `aggregate` rules.
+     * @default 60
+     */
+    aggregate_secs: number;
+    /**
+     * Per channel; extra notifications are dropped and counted ("+N suppressed").
+     * Questions (with buttons) are never dropped.
+     * @default 20
+     */
+    max_per_minute: number;
+  };
 }
 
 // ---- notify.config_set ----
@@ -2805,39 +2805,28 @@ export interface NotifyConfigGetOutput {
  * Only the given fields change.
  */
 export interface NotifyConfigSetArgs {
-  /** Anti-spam knobs. */
-  limits?: {
-    /**
-     * Window of `aggregate` rules.
-     * @default 60
-     */
-    aggregate_secs?: number;
-    /**
-     * The same title + text again within this many seconds is dropped.
-     * @default 10
-     */
-    dedup_secs?: number;
-    /**
-     * Per channel; extra notifications are dropped and counted ("+N suppressed").
-     * Questions (with buttons) are never dropped.
-     * @default 20
-     */
-    max_per_minute?: number;
-  } | null;
+  /** Toasts in the browser UI. */
+  ui?: boolean | null;
   /** Windows toast notifications. */
   os?: boolean | null;
+  telegram?: {
+    enabled?: boolean | null;
+    /** Bot token from @BotFather. The masked value from config_get ("…abcd") keeps the stored one. */
+    bot_token?: string | null;
+    /** Your chat id with the bot (number) or "@channel". */
+    chat_id?: string | null;
+    api_base?: string | null;
+  } | null;
+  webhook?: {
+    enabled?: boolean | null;
+    url?: string | null;
+  } | null;
   /** Replaces all rules. Topic: exact, "prefix.*" or "*"; first match wins. */
   rules?: {
-    /**
-     * Collect bursts of this event (per run / session) into one summary per
-     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
-     * @default false
-     */
-    aggregate?: boolean;
-    /** Where matching events go (only the channels that are enabled are used). */
-    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
     topic: string;
+    /** Where matching events go (only the channels that are enabled are used). */
+    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /**
      * Extra condition; default `always`.
      *
@@ -2846,20 +2835,31 @@ export interface NotifyConfigSetArgs {
      * @default "always"
      */
     when?: "always" | "unfocused" | "failed";
+    /**
+     * Collect bursts of this event (per run / session) into one summary per
+     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+     * @default false
+     */
+    aggregate?: boolean;
   }[] | null;
-  telegram?: {
-    api_base?: string | null;
-    /** Bot token from @BotFather. The masked value from config_get ("…abcd") keeps the stored one. */
-    bot_token?: string | null;
-    /** Your chat id with the bot (number) or "@channel". */
-    chat_id?: string | null;
-    enabled?: boolean | null;
-  } | null;
-  /** Toasts in the browser UI. */
-  ui?: boolean | null;
-  webhook?: {
-    enabled?: boolean | null;
-    url?: string | null;
+  /** Anti-spam knobs. */
+  limits?: {
+    /**
+     * The same title + text again within this many seconds is dropped.
+     * @default 10
+     */
+    dedup_secs?: number;
+    /**
+     * Window of `aggregate` rules.
+     * @default 60
+     */
+    aggregate_secs?: number;
+    /**
+     * Per channel; extra notifications are dropped and counted ("+N suppressed").
+     * Questions (with buttons) are never dropped.
+     * @default 20
+     */
+    max_per_minute?: number;
   } | null;
 }
 
@@ -2868,20 +2868,22 @@ export interface NotifyConfigSetArgs {
  * The whole configuration file.
  */
 export interface NotifyConfigSetOutput {
-  /** @default {"os":true,"telegram":{"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false},"ui":true,"webhook":{"enabled":false,"url":""}} */
+  /** @default {"ui":true,"os":true,"telegram":{"enabled":false,"bot_token":"","chat_id":"","api_base":"https://api.telegram.org"},"webhook":{"enabled":false,"url":""}} */
   channels: {
+    /**
+     * Toasts in the browser UI.
+     * @default true
+     */
+    ui: boolean;
     /**
      * Windows toast notifications.
      * @default true
      */
     os: boolean;
-    /** @default {"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false} */
+    /** @default {"enabled":false,"bot_token":"","chat_id":"","api_base":"https://api.telegram.org"} */
     telegram: {
-      /**
-       * Bot API base URL; only changed for tests or a self-hosted Bot API server.
-       * @default "https://api.telegram.org"
-       */
-      api_base: string;
+      /** @default false */
+      enabled: boolean;
       /**
        * Token from @BotFather (`123456:ABC…`). Stored as plain text.
        * @default ""
@@ -2893,14 +2895,12 @@ export interface NotifyConfigSetOutput {
        * @default ""
        */
       chat_id: string;
-      /** @default false */
-      enabled: boolean;
+      /**
+       * Bot API base URL; only changed for tests or a self-hosted Bot API server.
+       * @default "https://api.telegram.org"
+       */
+      api_base: string;
     };
-    /**
-     * Toasts in the browser UI.
-     * @default true
-     */
-    ui: boolean;
     /** @default {"enabled":false,"url":""} */
     webhook: {
       /** @default false */
@@ -2913,42 +2913,14 @@ export interface NotifyConfigSetOutput {
     };
   };
   /**
-   * Anti-spam knobs.
-   * @default {"aggregate_secs":60,"dedup_secs":10,"max_per_minute":20}
-   */
-  limits: {
-    /**
-     * Window of `aggregate` rules.
-     * @default 60
-     */
-    aggregate_secs: number;
-    /**
-     * The same title + text again within this many seconds is dropped.
-     * @default 10
-     */
-    dedup_secs: number;
-    /**
-     * Per channel; extra notifications are dropped and counted ("+N suppressed").
-     * Questions (with buttons) are never dropped.
-     * @default 20
-     */
-    max_per_minute: number;
-  };
-  /**
    * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-   * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+   * @default [{"topic":"run.finished","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.heal_needed","channels":["ui","os","telegram","webhook"],"when":"always","aggregate":false},{"topic":"run.row_failed","channels":["ui"],"when":"always","aggregate":true},{"topic":"ai.done","channels":["os","telegram"],"when":"unfocused","aggregate":false},{"topic":"download.done","channels":["ui","os"],"when":"always","aggregate":false},{"topic":"trigger.fired","channels":["ui","os","telegram","webhook"],"when":"failed","aggregate":false}]
    */
   rules: {
-    /**
-     * Collect bursts of this event (per run / session) into one summary per
-     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
-     * @default false
-     */
-    aggregate: boolean;
-    /** Where matching events go (only the channels that are enabled are used). */
-    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
     topic: string;
+    /** Where matching events go (only the channels that are enabled are used). */
+    channels: ("ui" | "os" | "telegram" | "webhook")[];
     /**
      * Extra condition; default `always`.
      *
@@ -2957,23 +2929,51 @@ export interface NotifyConfigSetOutput {
      * @default "always"
      */
     when: "always" | "unfocused" | "failed";
+    /**
+     * Collect bursts of this event (per run / session) into one summary per
+     * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+     * @default false
+     */
+    aggregate: boolean;
   }[];
+  /**
+   * Anti-spam knobs.
+   * @default {"dedup_secs":10,"aggregate_secs":60,"max_per_minute":20}
+   */
+  limits: {
+    /**
+     * The same title + text again within this many seconds is dropped.
+     * @default 10
+     */
+    dedup_secs: number;
+    /**
+     * Window of `aggregate` rules.
+     * @default 60
+     */
+    aggregate_secs: number;
+    /**
+     * Per channel; extra notifications are dropped and counted ("+N suppressed").
+     * Questions (with buttons) are never dropped.
+     * @default 20
+     */
+    max_per_minute: number;
+  };
 }
 
 // ---- notify.send ----
 
 /** Arguments of `notify.send`. */
 export interface NotifySendArgs {
+  title: string;
   /** @default "" */
   body?: string;
-  /** Default: every enabled channel. */
-  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
   /**
    * How important a notification is (UI color, Telegram prefix, toast sound).
    * @default "info"
    */
   level?: "info" | "success" | "warning" | "error";
-  title: string;
+  /** Default: every enabled channel. */
+  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
 }
 
 /**
@@ -2981,6 +2981,8 @@ export interface NotifySendArgs {
  * What happened to one notification, per channel.
  */
 export interface NotifySendOutput {
+  /** Notification id (`n3`). */
+  id: string;
   delivered: ("ui" | "os" | "telegram" | "webhook")[];
   failed: {
     /**
@@ -2994,8 +2996,6 @@ export interface NotifySendOutput {
     channel: "ui" | "os" | "telegram" | "webhook";
     error: string;
   }[];
-  /** Notification id (`n3`). */
-  id: string;
   /** Not sent: channel switched off / not configured, or over the rate limit. */
   skipped: ("ui" | "os" | "telegram" | "webhook")[];
 }
@@ -3026,14 +3026,21 @@ export interface NotifyTestOutput {
    * - `"webhook"`: `POST <url>` with the notification as JSON.
    */
   channel: "ui" | "os" | "telegram" | "webhook";
-  error: string | null;
   ok: boolean;
+  error: string | null;
 }
 
 // ---- page.act ----
 
 /** Arguments of `page.act`. */
 export interface PageActArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /**
+   * Element ref from page_snapshot / page_find, e.g. "@4:e3". Optional only for press
+   * (keys go to the focused element) and scroll (scrolls the page).
+   */
+  ref?: string | null;
   /**
    * click, dblclick, fill, type, select, check, uncheck, hover, press, scroll, focus.
    *
@@ -3051,10 +3058,10 @@ export interface PageActArgs {
    */
   action: "click" | "dblclick" | "fill" | "type" | "select" | "check" | "uncheck" | "hover" | "press" | "scroll" | "focus";
   /**
-   * Element ref from page_snapshot / page_find, e.g. "@4:e3". Optional only for press
-   * (keys go to the focused element) and scroll (scrolls the page).
+   * Text for fill/type, option value or label for select, keys for press ("Enter",
+   * "Control+A", "Tab Tab"), direction for scroll (up/down/top/bottom/into_view).
    */
-  ref?: string | null;
+  value?: string | null;
   /**
    * diff (default), snapshot or none.
    *
@@ -3063,27 +3070,20 @@ export interface PageActArgs {
    * - `"none"`: Nothing but the confirmation line.
    */
   returns?: "diff" | "snapshot" | "none" | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
-  /**
-   * Text for fill/type, option value or label for select, keys for press ("Enter",
-   * "Control+A", "Tab Tab"), direction for scroll (up/down/top/bottom/into_view).
-   */
-  value?: string | null;
 }
 
 /** Result of `page.act`. */
 export interface PageActOutput {
   /**
-   * True when the action loaded a new page (then `text` holds a full new snapshot and all
-   * old refs are stale).
-   */
-  navigated: boolean;
-  /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /**
+   * True when the action loaded a new page (then `text` holds a full new snapshot and all
+   * old refs are stale).
+   */
+  navigated: boolean;
   /** What was done, then the diff (`diff 4→5: ...`) or snapshot. */
   text: string;
 }
@@ -3092,8 +3092,15 @@ export interface PageActOutput {
 
 /** Arguments of `page.act_batch`. */
 export interface PageActBatchArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Steps in order, each {ref, action, value?} like page_act. */
   steps: {
+    /**
+     * Element ref from page_snapshot / page_find, e.g. "@4:e3" (or bare "e3" = latest
+     * snapshot). Optional only for press (focused element) and scroll (the page).
+     */
+    ref?: string | null;
     /**
      * What to do with the element.
      *
@@ -3111,11 +3118,6 @@ export interface PageActBatchArgs {
      */
     action: "click" | "dblclick" | "fill" | "type" | "select" | "check" | "uncheck" | "hover" | "press" | "scroll" | "focus";
     /**
-     * Element ref from page_snapshot / page_find, e.g. "@4:e3" (or bare "e3" = latest
-     * snapshot). Optional only for press (focused element) and scroll (the page).
-     */
-    ref?: string | null;
-    /**
      * Text for fill/type, option for select, keys for press ("Enter", "Control+A",
      * "Tab Tab"), direction for scroll.
      */
@@ -3123,29 +3125,27 @@ export interface PageActBatchArgs {
   }[];
   /** Stop at the first failing step (default true). */
   stop_on_error?: boolean | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `page.act_batch`. */
 export interface PageActBatchOutput {
-  navigated: boolean;
-  /** True when every step ran and succeeded. */
-  ok: boolean;
-  steps: {
-    /** The full error ({code, message, retry, hint}) when the step failed. */
-    error?: unknown;
-    ok: boolean;
-    /** 1-based step number. */
-    step: number;
-    /** What was done, or `CODE: message`. */
-    text: string;
-  }[];
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** True when every step ran and succeeded. */
+  ok: boolean;
+  steps: {
+    /** 1-based step number. */
+    step: number;
+    ok: boolean;
+    /** What was done, or `CODE: message`. */
+    text: string;
+    /** The full error ({code, message, retry, hint}) when the step failed. */
+    error?: unknown;
+  }[];
+  navigated: boolean;
   /** Diff (or snapshot after a navigation) after the last step. */
   text: string;
 }
@@ -3154,10 +3154,10 @@ export interface PageActBatchOutput {
 
 /** Arguments of `page.ax_tree`. */
 export interface PageAxTreeArgs {
-  /** Maximum number of lines (default 300). */
-  limit?: number | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Maximum number of lines (default 300). */
+  limit?: number | null;
 }
 
 /** Result of `page.ax_tree`. */
@@ -3172,21 +3172,21 @@ export interface PageAxTreeOutput {
 
 /** Arguments of `page.diff`. */
 export interface PageDiffArgs {
-  /** Snapshot id to compare with (the S of @S:eN). Default: the latest one. */
-  since?: number | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Snapshot id to compare with (the S of @S:eN). Default: the latest one. */
+  since?: number | null;
 }
 
 /** Result of `page.diff`. */
 export interface PageDiffOutput {
-  /** Id of the new snapshot taken for the comparison. */
-  snap: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Id of the new snapshot taken for the comparison. */
+  snap: number;
   /** `diff A→B: + added | ~ changed | - removed`, or a full snapshot if the page navigated. */
   text: string;
 }
@@ -3195,18 +3195,18 @@ export interface PageDiffOutput {
 
 /** Arguments of `page.find`. */
 export interface PageFindArgs {
-  /** Max matches returned (default 10). */
-  limit?: number | null;
-  /** Exact accessible name (case-insensitive). */
-  name?: string | null;
-  /** Regular expression on the name, e.g. "(?i)^sign (in|up)$". */
-  regex?: string | null;
-  /** Role such as button, link, textbox, checkbox, heading. */
-  role?: string | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Role such as button, link, textbox, checkbox, heading. */
+  role?: string | null;
+  /** Exact accessible name (case-insensitive). */
+  name?: string | null;
   /** Case-insensitive substring of name, description or value; also finds plain text. */
   text?: string | null;
+  /** Regular expression on the name, e.g. "(?i)^sign (in|up)$". */
+  regex?: string | null;
+  /** Max matches returned (default 10). */
+  limit?: number | null;
 }
 
 /** Result of `page.find`. */
@@ -3216,22 +3216,22 @@ export interface PageFindOutput {
    * On the wire it is a plain number: `3`.
    */
   tab: number;
-  /** `find S: N of M matches` and one line per match with its ref and location. */
-  text: string;
   /** Total matches before `limit`. */
   total: number;
+  /** `find S: N of M matches` and one line per match with its ref and location. */
+  text: string;
 }
 
 // ---- page.read ----
 
 /** Arguments of `page.read`. */
 export interface PageReadArgs {
-  /** Maximum characters (default 4000). */
-  max_chars?: number | null;
-  /** Read only this element (e.g. a dialog or article) instead of the whole page. */
-  ref?: string | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Read only this element (e.g. a dialog or article) instead of the whole page. */
+  ref?: string | null;
+  /** Maximum characters (default 4000). */
+  max_chars?: number | null;
 }
 
 /** Result of `page.read`. */
@@ -3243,50 +3243,48 @@ export interface PageReadOutput {
   tab: number;
   /** Visible text (innerText). */
   text: string;
-  total_chars: number;
   truncated: boolean;
+  total_chars: number;
 }
 
 // ---- page.screenshot ----
 
 /** Arguments of `page.screenshot`. */
 export interface PageScreenshotArgs {
-  /** The whole page instead of the visible part. */
-  full_page?: boolean | null;
-  /** JPEG quality 1–100 (default 70). */
-  quality?: number | null;
-  /** Crop to this element. */
-  ref?: string | null;
-  /** Size factor, 0.1–2 (default 0.5: half size, few tokens). */
-  scale?: number | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Crop to this element. */
+  ref?: string | null;
+  /** The whole page instead of the visible part. */
+  full_page?: boolean | null;
+  /** Size factor, 0.1–2 (default 0.5: half size, few tokens). */
+  scale?: number | null;
+  /** JPEG quality 1–100 (default 70). */
+  quality?: number | null;
 }
 
 /** Result of `page.screenshot`. */
 export interface PageScreenshotOutput {
-  /** Base64 JPEG. */
-  data: string;
-  height: number;
-  /** Always "image/jpeg". */
-  mime_type: string;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Always "image/jpeg". */
+  mime_type: string;
   /** Image size in pixels. */
   width: number;
+  height: number;
+  /** Base64 JPEG. */
+  data: string;
 }
 
 // ---- page.snapshot ----
 
 /** Arguments of `page.snapshot`. */
 export interface PageSnapshotArgs {
-  /** Levels shown in skeleton mode (default 2). */
-  depth?: number | null;
-  /** Character budget (default 6000 ≈ 1500 tokens); over it the snapshot becomes a skeleton. */
-  max_chars?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /**
    * interactive (default), full or skeleton.
    *
@@ -3295,21 +3293,23 @@ export interface PageSnapshotArgs {
    * - `"skeleton"`: Only the outline (`depth` levels); deeper parts become `→ @S:gN` to drill into.
    */
   mode?: "interactive" | "full" | "skeleton" | null;
+  /** Levels shown in skeleton mode (default 2). */
+  depth?: number | null;
   /** Drill down: show only this part, e.g. "@4:g1" (a collapsed group) or "@4:e3". */
   root?: string | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
+  /** Character budget (default 6000 ≈ 1500 tokens); over it the snapshot becomes a skeleton. */
+  max_chars?: number | null;
 }
 
 /** Result of `page.snapshot`. */
 export interface PageSnapshotOutput {
-  /** Snapshot id: the S in refs `@S:eN`. */
-  snap: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Snapshot id: the S in refs `@S:eN`. */
+  snap: number;
   /** Compact page text: one `- role "name" @S:eN states` line per node. */
   text: string;
 }
@@ -3318,10 +3318,10 @@ export interface PageSnapshotOutput {
 
 /** Arguments of `page.text`. */
 export interface PageTextArgs {
-  /** Maximum number of characters to return (default 8000). */
-  limit?: number | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
+  /** Maximum number of characters to return (default 8000). */
+  limit?: number | null;
 }
 
 /** Result of `page.text`. */
@@ -3330,10 +3330,10 @@ export interface PageTextOutput {
   tab: number;
   /** `document.body.innerText`, cut to `limit` characters. */
   text: string;
-  /** Length of the full text in characters. */
-  total_chars: number;
   /** True when the text was longer than `limit`. */
   truncated: boolean;
+  /** Length of the full text in characters. */
+  total_chars: number;
 }
 
 // ---- passwords.delete ----
@@ -3360,16 +3360,16 @@ export interface PasswordsGetArgs {
 /** Result of `passwords.get`. */
 export interface PasswordsGetOutput {
   entries: {
-    /** Unix ms. */
-    created: number;
     id: number;
-    note: string;
     /** `scheme://host[:port]`. */
     origin: string;
+    username: string;
     /** The password in plain text — only when revealed, otherwise `null`. */
     password: string | null;
+    note: string;
+    /** Unix ms. */
+    created: number;
     updated: number;
-    username: string;
   }[];
 }
 
@@ -3389,16 +3389,16 @@ export interface PasswordsListArgs {
 /** Result of `passwords.list`. */
 export interface PasswordsListOutput {
   entries: {
-    /** Unix ms. */
-    created: number;
     id: number;
-    note: string;
     /** `scheme://host[:port]`. */
     origin: string;
+    username: string;
     /** The password in plain text — only when revealed, otherwise `null`. */
     password: string | null;
+    note: string;
+    /** Unix ms. */
+    created: number;
     updated: number;
-    username: string;
   }[];
 }
 
@@ -3406,21 +3406,21 @@ export interface PasswordsListOutput {
 
 /** Arguments of `passwords.save`. */
 export interface PasswordsSaveArgs {
-  /** Optional free text. */
-  note?: string | null;
   /** Site URL or origin. */
   origin: string;
-  password: string;
   username: string;
+  password: string;
+  /** Optional free text. */
+  note?: string | null;
 }
 
 /** Result of `passwords.save`. */
 export interface PasswordsSaveOutput {
-  /** False when an existing login (same origin + username) was updated. */
-  created: boolean;
   id: number;
   /** The normalized origin it was saved under. */
   origin: string;
+  /** False when an existing login (same origin + username) was updated. */
+  created: boolean;
 }
 
 // ---- proxy.forward_list ----
@@ -3434,12 +3434,12 @@ export type ProxyForwardListArgs = Record<string, never>;
 /** Result of `proxy.forward_list`. */
 export interface ProxyForwardListOutput {
   forwarders: {
-    /** The same port as an HTTP proxy. */
-    http: string;
     /** Id for proxy_forward_stop, e.g. "fwd-1". */
     id: string;
     /** Local proxy without auth for Chromium, e.g. "socks5://127.0.0.1:53121". */
     socks5: string;
+    /** The same port as an HTTP proxy. */
+    http: string;
     /** Upstream, password masked. */
     upstream: string;
   }[];
@@ -3449,24 +3449,24 @@ export interface ProxyForwardListOutput {
 
 /** Arguments of `proxy.forward_start`. */
 export interface ProxyForwardStartArgs {
-  /** Or: pick the upstream from this pool. */
-  pool?: string | null;
   /** Upstream proxy URL (with user:pass). */
   proxy?: string | null;
-  /** Or: a proxy reference such as "lease:POOL/RUN/ROW" (from proxy_lease) or "pool:NAME". */
-  proxy_id?: string | null;
+  /** Or: pick the upstream from this pool. */
+  pool?: string | null;
   /** Run id for sticky pools. */
   run?: string | null;
+  /** Or: a proxy reference such as "lease:POOL/RUN/ROW" (from proxy_lease) or "pool:NAME". */
+  proxy_id?: string | null;
 }
 
 /** Result of `proxy.forward_start`. */
 export interface ProxyForwardStartOutput {
-  /** The same port as an HTTP proxy. */
-  http: string;
   /** Id for proxy_forward_stop, e.g. "fwd-1". */
   id: string;
   /** Local proxy without auth for Chromium, e.g. "socks5://127.0.0.1:53121". */
   socks5: string;
+  /** The same port as an HTTP proxy. */
+  http: string;
   /** Upstream, password masked. */
   upstream: string;
 }
@@ -3489,22 +3489,22 @@ export interface ProxyForwardStopOutput {
 /** Arguments of `proxy.lease`. */
 export interface ProxyLeaseArgs {
   pool: string;
+  /** The mass run, e.g. "run-42". */
+  run_id: string;
+  /** Row number in the run. */
+  row: number;
   /**
    * Give the row a different proxy than it has now (e.g. its IP got blocked). Default
    * false: sticky, the row keeps its proxy.
    */
   rotate?: boolean | null;
-  /** Row number in the run. */
-  row: number;
-  /** The mass run, e.g. "run-42". */
-  run_id: string;
 }
 
 /** Result of `proxy.lease`. */
 export interface ProxyLeaseOutput {
-  /** Active leases on this proxy (including this one). */
-  load: number;
   pool: string;
+  run_id: string;
+  row: number;
   /** The leased proxy, password masked. */
   proxy: string;
   /**
@@ -3514,8 +3514,8 @@ export interface ProxyLeaseOutput {
   proxy_id: string;
   /** True when the row already had this proxy. */
   reused: boolean;
-  row: number;
-  run_id: string;
+  /** Active leases on this proxy (including this one). */
+  load: number;
 }
 
 // ---- proxy.next ----
@@ -3550,11 +3550,11 @@ export interface ProxyPoolAddArgs {
 
 /** Result of `proxy.pool_add`. */
 export interface ProxyPoolAddOutput {
+  pool: string;
   /** New proxies (duplicates are ignored). */
   added: number;
-  pool: string;
-  strategy: "round_robin" | "random" | "sticky";
   total: number;
+  strategy: "round_robin" | "random" | "sticky";
 }
 
 // ---- proxy.pool_check ----
@@ -3570,19 +3570,19 @@ export interface ProxyPoolCheckArgs {
 
 /** Result of `proxy.pool_check`. */
 export interface ProxyPoolCheckOutput {
-  healthy: number;
   pool: string;
+  healthy: number;
+  unhealthy: number;
   proxies: {
-    /** Unix seconds of the last check. */
-    checked_at: number | null;
-    error: string | null;
+    /** URL with the password masked. */
+    proxy: string;
     /** null = never checked. */
     healthy: boolean | null;
     latency_ms: number | null;
-    /** URL with the password masked. */
-    proxy: string;
+    /** Unix seconds of the last check. */
+    checked_at: number | null;
+    error: string | null;
   }[];
-  unhealthy: number;
 }
 
 // ---- proxy.pool_list ----
@@ -3597,17 +3597,17 @@ export type ProxyPoolListArgs = Record<string, never>;
 export interface ProxyPoolListOutput {
   pools: {
     name: string;
+    strategy: "round_robin" | "random" | "sticky";
     proxies: {
-      /** Unix seconds of the last check. */
-      checked_at: number | null;
-      error: string | null;
+      /** URL with the password masked. */
+      proxy: string;
       /** null = never checked. */
       healthy: boolean | null;
       latency_ms: number | null;
-      /** URL with the password masked. */
-      proxy: string;
+      /** Unix seconds of the last check. */
+      checked_at: number | null;
+      error: string | null;
     }[];
-    strategy: "round_robin" | "random" | "sticky";
   }[];
 }
 
@@ -3622,9 +3622,9 @@ export interface ProxyPoolRemoveArgs {
 
 /** Result of `proxy.pool_remove`. */
 export interface ProxyPoolRemoveOutput {
+  removed: boolean;
   /** Proxies left in the pool (0 when the pool was deleted). */
   remaining: number;
-  removed: boolean;
 }
 
 // ---- proxy.release ----
@@ -3632,9 +3632,9 @@ export interface ProxyPoolRemoveOutput {
 /** Arguments of `proxy.release`. */
 export interface ProxyReleaseArgs {
   pool: string;
+  run_id: string;
   /** One row; omit to release every row of the run (when the run ends). */
   row?: number | null;
-  run_id: string;
 }
 
 /** Result of `proxy.release`. */
@@ -3647,8 +3647,6 @@ export interface ProxyReleaseOutput {
 
 /** Arguments of `proxy.rules_set`. */
 export interface ProxyRulesSetArgs {
-  /** Where everything else goes (default "direct"). No rules + direct = remove the routing. */
-  default?: string | null;
   /** Profile id, e.g. "work". */
   profile: string;
   /**
@@ -3664,20 +3662,12 @@ export interface ProxyRulesSetArgs {
     /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
     via: string;
   }[];
+  /** Where everything else goes (default "direct"). No rules + direct = remove the routing. */
+  default?: string | null;
 }
 
 /** Result of `proxy.rules_set`. */
 export interface ProxyRulesSetOutput {
-  default: string;
-  /** Local forwarders the routes go through. */
-  forwarders: string[];
-  /** The generated PAC script (null when no script is needed). */
-  pac_script: string | null;
-  /**
-   * The Chromium `proxy` preference for the profile's request context (the browser applies
-   * it; it is also sent as a proxy.routes_changed event).
-   */
-  pref: unknown;
   profile: string;
   /** The stored rules (passwords masked). */
   rules: {
@@ -3686,6 +3676,16 @@ export interface ProxyRulesSetOutput {
     /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
     via: string;
   }[];
+  default: string;
+  /**
+   * The Chromium `proxy` preference for the profile's request context (the browser applies
+   * it; it is also sent as a proxy.routes_changed event).
+   */
+  pref: unknown;
+  /** The generated PAC script (null when no script is needed). */
+  pac_script: string | null;
+  /** Local forwarders the routes go through. */
+  forwarders: string[];
 }
 
 // ---- proxy.rules_test ----
@@ -3699,21 +3699,21 @@ export interface ProxyRulesTestArgs {
 
 /** Result of `proxy.rules_test`. */
 export interface ProxyRulesTestOutput {
-  host: string;
-  /** The matching rule's pattern. */
-  matched: string | null;
+  profile: string;
   /** What the PAC script sees (https URLs are cut to scheme://host:port/). */
   pac_url: string;
-  profile: string;
+  host: string;
   /** 1-based number of the matching rule; null = the default route. */
   rule: number | null;
+  /** The matching rule's pattern. */
+  matched: string | null;
+  /** The route (passwords masked): direct, fwd-N, pool:NAME, lease:..., or a proxy URL. */
+  via: string;
   /**
    * The upstream proxy behind the route when it is already known (masked); null for
    * direct or a pool the profile has not used yet.
    */
   upstream: string | null;
-  /** The route (passwords masked): direct, fwd-N, pool:NAME, lease:..., or a proxy URL. */
-  via: string;
 }
 
 // ---- record.codegen ----
@@ -3722,37 +3722,39 @@ export interface ProxyRulesTestOutput {
 export interface RecordCodegenArgs {
   /** Recording id. */
   id: string;
-  /** Script file name without .ts (default: the recording name). */
-  name?: string | null;
   /**
    * Turn typed/selected values into `inputs.<name>` with the recorded value as default.
    * Default false (secrets always become required inputs).
    */
   parametrize?: boolean | null;
+  /** Script file name without .ts (default: the recording name). */
+  name?: string | null;
 }
 
 /** Result of `record.codegen`. */
 export interface RecordCodegenOutput {
+  /** Where the script was saved (data/scripts/<name>.ts). */
+  path: string;
   /** The TypeScript. */
   code: string;
   /** Inputs the script reads (`--input name=value`). */
   inputs: {
-    /** The recorded value (`None` for secrets). */
-    default: string | null;
+    name: string;
     /** The label of the field it goes into. */
     label: string;
-    name: string;
+    /** The recorded value (`None` for secrets). */
+    default: string | null;
     /** Required, never stored (passwords). */
     secret: boolean;
   }[];
-  /** Where the script was saved (data/scripts/<name>.ts). */
-  path: string;
 }
 
 // ---- record.get ----
 
 /** Arguments of `record.get`. */
 export interface RecordGetArgs {
+  /** Recording id. */
+  id: string;
   /**
    * summary (default) or jsonl.
    *
@@ -3760,41 +3762,39 @@ export interface RecordGetArgs {
    * - `"summary"`: One readable line per step (default).
    */
   format?: "jsonl" | "summary" | null;
-  /** Recording id. */
-  id: string;
 }
 
 /** Result of `record.get`. */
 export interface RecordGetOutput {
-  active: boolean;
   id: string;
+  active: boolean;
   /** `meta.json` of a recording. */
   meta: {
+    /** Folder name under `data/recordings/`, e.g. `login-20261106-125600`. */
+    id: string;
+    /** Name given to `record.start` (also the default script name). */
+    name: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    started_ms: number;
+    stopped_ms?: number | null;
+    /** URL of the tab when recording started. */
+    start_url: string;
+    /** Number of steps written. */
+    steps: number;
     /**
      * How human actions were captured: `binding` (CDP `Runtime.bindingCalled`), `poll`
      * (queue in the isolated world read every 250 ms), `pending` (not known yet) or
      * `failed: …`.
      */
     human_capture: string;
-    /** Folder name under `data/recordings/`, e.g. `login-20261106-125600`. */
-    id: string;
-    /** Name given to `record.start` (also the default script name). */
-    name: string;
-    /** URL of the tab when recording started. */
-    start_url: string;
-    started_ms: number;
-    /** Number of steps written. */
-    steps: number;
-    stopped_ms?: number | null;
-    /**
-     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-     * On the wire it is a plain number: `3`.
-     */
-    tab: number;
-    /** `traffic.jsonl` inside the recording folder, when `traffic: true`. */
-    traffic?: string | null;
     /** `video.webm`/`video.mp4` inside the recording folder, when `video: true`. */
     video?: string | null;
+    /** `traffic.jsonl` inside the recording folder, when `traffic: true`. */
+    traffic?: string | null;
   };
   steps: number;
   text: string;
@@ -3812,12 +3812,12 @@ export type RecordListArgs = Record<string, never>;
 export interface RecordListOutput {
   /** Newest first. */
   recordings: {
-    active: boolean;
     id: string;
     name: string;
-    start_url: string;
-    started_ms: number;
+    active: boolean;
     steps: number;
+    started_ms: number;
+    start_url: string;
   }[];
 }
 
@@ -3825,20 +3825,18 @@ export interface RecordListOutput {
 
 /** Arguments of `record.start`. */
 export interface RecordStartArgs {
-  /** Name of the recording (also the default script name). Default "recording". */
-  name?: string | null;
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
-  /** Also log network requests to traffic.jsonl. Default false. */
-  traffic?: boolean | null;
+  /** Name of the recording (also the default script name). Default "recording". */
+  name?: string | null;
   /** Also record a video (needs ffmpeg). Default false. */
   video?: boolean | null;
+  /** Also log network requests to traffic.jsonl. Default false. */
+  traffic?: boolean | null;
 }
 
 /** Result of `record.start`. */
 export interface RecordStartOutput {
-  /** Folder with actions.jsonl and meta.json. */
-  dir: string;
   /** Recording id, for record_stop / record_get / record_codegen. */
   id: string;
   /**
@@ -3846,6 +3844,8 @@ export interface RecordStartOutput {
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** Folder with actions.jsonl and meta.json. */
+  dir: string;
   /** Video file being written, when video was asked for. */
   video?: string | null;
 }
@@ -3860,21 +3860,25 @@ export interface RecordStopArgs {
 
 /** Result of `record.stop`. */
 export interface RecordStopOutput {
-  actions: string;
-  /** How human actions were captured (binding, poll, failed: …). */
-  human_capture: string;
   id: string;
-  meta: string;
   /** Steps in actions.jsonl. */
   steps: number;
-  traffic?: string | null;
+  /** How human actions were captured (binding, poll, failed: …). */
+  human_capture: string;
+  actions: string;
+  meta: string;
   video?: string | null;
+  traffic?: string | null;
 }
 
 // ---- record.video_start ----
 
 /** Arguments of `record.video_start`. */
 export interface RecordVideoStartArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Frames per second, 1–60 (default 10). */
+  fps?: number | null;
   /**
    * webm (VP9, default) or mp4 (H.264).
    *
@@ -3882,25 +3886,21 @@ export interface RecordVideoStartArgs {
    * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
    */
   format?: "webm" | "mp4" | null;
-  /** Frames per second, 1–60 (default 10). */
-  fps?: number | null;
   /** 1–100 (default 80): JPEG quality of the frames and encoder quality. */
   quality?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /** Result of `record.video_start`. */
 export interface RecordVideoStartOutput {
   /** Video id for record_video_stop. */
   id: string;
-  /** The file being written. */
-  path: string;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** The file being written. */
+  path: string;
 }
 
 // ---- record.video_stop ----
@@ -3916,24 +3916,24 @@ export interface RecordVideoStopArgs {
  * What a finished video looks like.
  */
 export interface RecordVideoStopOutput {
-  /** File size in bytes (0 when it was not written). */
-  bytes: number;
+  path: string;
   codec: string;
-  /** Why the video failed or is incomplete (encoder error text, …). */
-  error?: string | null;
+  /** Output size (even numbers, as encoders need). */
+  width: number;
+  height: number;
   fps: number;
   /** Screencast frames from Chromium (each one acknowledged). */
   frames_received: number;
   /** Frames written to the encoder (constant rate: repeats included). */
   frames_written: number;
-  height: number;
-  path: string;
   /** Length of the video (`frames_written / fps`). */
   seconds: number;
   /** Real time between the first frame and stop. */
   wall_seconds: number;
-  /** Output size (even numbers, as encoders need). */
-  width: number;
+  /** File size in bytes (0 when it was not written). */
+  bytes: number;
+  /** Why the video failed or is incomplete (encoder error text, …). */
+  error?: string | null;
 }
 
 // ---- run.cancel ----
@@ -3949,44 +3949,7 @@ export interface RunCancelArgs {
  * A run with its row counts.
  */
 export interface RunCancelOutput {
-  /** Rows per status. */
-  counts: {
-    cancelled: number;
-    failed: number;
-    needs_heal: number;
-    ok: number;
-    pending: number;
-    running: number;
-  };
-  created_ms: number;
-  /** Rows that reached a final state (ok + failed + cancelled). */
-  done: number;
-  finished_ms?: number | null;
-  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-  heal?: unknown;
   id: string;
-  /** Why the run stopped or paused (stop_on_error, restart, …). */
-  note?: string | null;
-  /** Run-wide settings, fixed at `run.start`. */
-  options: {
-    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-    heal: boolean;
-    /** Worker slots actually used (after the CPU/RAM auto-limit). */
-    parallel: number;
-    /** What the caller asked for. */
-    parallel_requested: number;
-    /**
-     * Browser profile the rows run in. Today always the default profile (shared by all
-     * rows); isolated per-row profiles come later.
-     */
-    profile?: string | null;
-    /** Extra attempts per row after a failure. */
-    retries: number;
-    /** Stop the whole run at the first failed row. */
-    stop_on_error: boolean;
-    /** Per-row script timeout. */
-    timeout_secs: number;
-  };
   /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
   script: string;
   /**
@@ -3994,54 +3957,91 @@ export interface RunCancelOutput {
    * between (by `run.pause`, a heal request, or a restart of the browser).
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+  };
   total: number;
+  created_ms: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Rows per status. */
+  counts: {
+    pending: number;
+    running: number;
+    ok: number;
+    failed: number;
+    needs_heal: number;
+    cancelled: number;
+  };
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
 }
 
 // ---- run.export ----
 
 /** Arguments of `run.export`. */
 export interface RunExportArgs {
-  /** Rows per webhook request (default 100). */
-  batch_size?: number | null;
   /** Run id from run_start / run_list. */
   id: string;
-  /**
-   * Output file for csv/xlsx/json/sqlite. Default: data/runs/<id>/results.<ext>; a
-   * relative path is inside data/runs/<id>/.
-   */
-  path?: string | null;
-  /**
-   * csv/xlsx: write cells exactly as stored. By default a cell starting with = + - @ tab
-   * or CR (a spreadsheet formula) gets a leading ' in CSV and the quote-prefix flag in
-   * XLSX, so opening the file cannot run formulas planted by a web page.
-   */
-  raw?: boolean | null;
-  /** Only rows with this status (e.g. ok or failed). */
-  status?: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled" | null;
   /**
    * csv, xlsx, json, sqlite, webhook (or google_sheets: not implemented yet).
    *
    * - `"google_sheets"`: Not available yet (needs Google OAuth).
    */
   to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
+  /**
+   * Output file for csv/xlsx/json/sqlite. Default: data/runs/<id>/results.<ext>; a
+   * relative path is inside data/runs/<id>/.
+   */
+  path?: string | null;
   /** Webhook URL (http or https) for `to: webhook`. */
   url?: string | null;
+  /** Only rows with this status (e.g. ok or failed). */
+  status?: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled" | null;
+  /** Rows per webhook request (default 100). */
+  batch_size?: number | null;
+  /**
+   * csv/xlsx: write cells exactly as stored. By default a cell starting with = + - @ tab
+   * or CR (a spreadsheet formula) gets a leading ' in CSV and the quote-prefix flag in
+   * XLSX, so opening the file cannot run formulas planted by a web page.
+   */
+  raw?: boolean | null;
 }
 
 /** Result of `run.export`. */
 export interface RunExportOutput {
-  /** Webhook requests sent. */
-  batches?: number | null;
-  /** The file written. */
-  path?: string | null;
-  /** Rows exported. */
-  rows: number;
   /**
    * Export formats.
    *
    * - `"google_sheets"`: Not available yet (needs Google OAuth).
    */
   to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
+  /** Rows exported. */
+  rows: number;
+  /** The file written. */
+  path?: string | null;
+  /** Webhook requests sent. */
+  batches?: number | null;
 }
 
 // ---- run.heal_apply ----
@@ -4056,10 +4056,10 @@ export interface RunHealApplyArgs {
 /** Result of `run.heal_apply`. */
 export interface RunHealApplyOutput {
   id: string;
-  /** Rows put back into the queue. */
-  requeued: number;
   /** The new script version the run continues with. */
   script: string;
+  /** Rows put back into the queue. */
+  requeued: number;
 }
 
 // ---- run.list ----
@@ -4073,44 +4073,7 @@ export interface RunListArgs {
 /** Result of `run.list`. */
 export interface RunListOutput {
   runs: {
-    /** Rows per status. */
-    counts: {
-      cancelled: number;
-      failed: number;
-      needs_heal: number;
-      ok: number;
-      pending: number;
-      running: number;
-    };
-    created_ms: number;
-    /** Rows that reached a final state (ok + failed + cancelled). */
-    done: number;
-    finished_ms?: number | null;
-    /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-    heal?: unknown;
     id: string;
-    /** Why the run stopped or paused (stop_on_error, restart, …). */
-    note?: string | null;
-    /** Run-wide settings, fixed at `run.start`. */
-    options: {
-      /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-      heal: boolean;
-      /** Worker slots actually used (after the CPU/RAM auto-limit). */
-      parallel: number;
-      /** What the caller asked for. */
-      parallel_requested: number;
-      /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
-       */
-      profile?: string | null;
-      /** Extra attempts per row after a failure. */
-      retries: number;
-      /** Stop the whole run at the first failed row. */
-      stop_on_error: boolean;
-      /** Per-row script timeout. */
-      timeout_secs: number;
-    };
     /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
     script: string;
     /**
@@ -4118,7 +4081,44 @@ export interface RunListOutput {
      * between (by `run.pause`, a heal request, or a restart of the browser).
      */
     status: "running" | "paused" | "finished" | "failed" | "cancelled";
+    /** Run-wide settings, fixed at `run.start`. */
+    options: {
+      /** Worker slots actually used (after the CPU/RAM auto-limit). */
+      parallel: number;
+      /** What the caller asked for. */
+      parallel_requested: number;
+      /** Extra attempts per row after a failure. */
+      retries: number;
+      /** Per-row script timeout. */
+      timeout_secs: number;
+      /** Stop the whole run at the first failed row. */
+      stop_on_error: boolean;
+      /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+      heal: boolean;
+      /**
+       * Browser profile the rows run in. Today always the default profile (shared by all
+       * rows); isolated per-row profiles come later.
+       */
+      profile?: string | null;
+    };
     total: number;
+    created_ms: number;
+    finished_ms?: number | null;
+    /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+    heal?: unknown;
+    /** Why the run stopped or paused (stop_on_error, restart, …). */
+    note?: string | null;
+    /** Rows per status. */
+    counts: {
+      pending: number;
+      running: number;
+      ok: number;
+      failed: number;
+      needs_heal: number;
+      cancelled: number;
+    };
+    /** Rows that reached a final state (ok + failed + cancelled). */
+    done: number;
   }[];
 }
 
@@ -4135,44 +4135,7 @@ export interface RunPauseArgs {
  * A run with its row counts.
  */
 export interface RunPauseOutput {
-  /** Rows per status. */
-  counts: {
-    cancelled: number;
-    failed: number;
-    needs_heal: number;
-    ok: number;
-    pending: number;
-    running: number;
-  };
-  created_ms: number;
-  /** Rows that reached a final state (ok + failed + cancelled). */
-  done: number;
-  finished_ms?: number | null;
-  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-  heal?: unknown;
   id: string;
-  /** Why the run stopped or paused (stop_on_error, restart, …). */
-  note?: string | null;
-  /** Run-wide settings, fixed at `run.start`. */
-  options: {
-    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-    heal: boolean;
-    /** Worker slots actually used (after the CPU/RAM auto-limit). */
-    parallel: number;
-    /** What the caller asked for. */
-    parallel_requested: number;
-    /**
-     * Browser profile the rows run in. Today always the default profile (shared by all
-     * rows); isolated per-row profiles come later.
-     */
-    profile?: string | null;
-    /** Extra attempts per row after a failure. */
-    retries: number;
-    /** Stop the whole run at the first failed row. */
-    stop_on_error: boolean;
-    /** Per-row script timeout. */
-    timeout_secs: number;
-  };
   /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
   script: string;
   /**
@@ -4180,16 +4143,53 @@ export interface RunPauseOutput {
    * between (by `run.pause`, a heal request, or a restart of the browser).
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+  };
   total: number;
+  created_ms: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Rows per status. */
+  counts: {
+    pending: number;
+    running: number;
+    ok: number;
+    failed: number;
+    needs_heal: number;
+    cancelled: number;
+  };
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
 }
 
 // ---- run.results ----
 
 /** Arguments of `run.results`. */
 export interface RunResultsArgs {
+  id: string;
   /** `next_cursor` from the previous page; omit for the first page. */
   cursor?: number | null;
-  id: string;
   /** Rows per page (default 100, max 1000). */
   limit?: number | null;
   /** Only rows with this status. */
@@ -4199,11 +4199,15 @@ export interface RunResultsArgs {
 /** Result of `run.results`. */
 export interface RunResultsOutput {
   id: string;
-  /** Pass as `cursor` for the next page; absent on the last page. */
-  next_cursor?: number | null;
   rows: {
-    attempts: number;
-    duration_ms?: number | null;
+    /** 0-based row number in the input data. */
+    row: number;
+    /** Row status: `pending` → `running` → `ok` / `failed` / `needs_heal` / `cancelled`. */
+    status: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled";
+    /** The row's input columns. */
+    inputs: Record<string, unknown>;
+    /** Merged `browser.output(...)` values; `null` if none. */
+    result: unknown;
     /** What the host printed when a script failed, split into parts an agent can act on. */
     error?: {
       /**
@@ -4213,24 +4217,20 @@ export interface RunResultsOutput {
       code: string;
       /** The browser command that failed, e.g. `page.find`. */
       command?: string | null;
-      /** Line in the script of the top stack frame. */
-      line?: number | null;
       /** First line of the error message. */
       message: string;
+      /** Line in the script of the top stack frame. */
+      line?: number | null;
     } | null;
-    /** The row's input columns. */
-    inputs: Record<string, unknown>;
-    /** Merged `browser.output(...)` values; `null` if none. */
-    result: unknown;
-    /** 0-based row number in the input data. */
-    row: number;
-    /** The script (version) the last attempt ran. */
-    script?: string | null;
-    /** Row status: `pending` → `running` → `ok` / `failed` / `needs_heal` / `cancelled`. */
-    status: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled";
+    attempts: number;
+    duration_ms?: number | null;
     /** End of the script's stdout (last attempt). */
     stdout_tail?: string;
+    /** The script (version) the last attempt ran. */
+    script?: string | null;
   }[];
+  /** Pass as `cursor` for the next page; absent on the last page. */
+  next_cursor?: number | null;
 }
 
 // ---- run.resume ----
@@ -4246,44 +4246,7 @@ export interface RunResumeArgs {
  * A run with its row counts.
  */
 export interface RunResumeOutput {
-  /** Rows per status. */
-  counts: {
-    cancelled: number;
-    failed: number;
-    needs_heal: number;
-    ok: number;
-    pending: number;
-    running: number;
-  };
-  created_ms: number;
-  /** Rows that reached a final state (ok + failed + cancelled). */
-  done: number;
-  finished_ms?: number | null;
-  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-  heal?: unknown;
   id: string;
-  /** Why the run stopped or paused (stop_on_error, restart, …). */
-  note?: string | null;
-  /** Run-wide settings, fixed at `run.start`. */
-  options: {
-    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-    heal: boolean;
-    /** Worker slots actually used (after the CPU/RAM auto-limit). */
-    parallel: number;
-    /** What the caller asked for. */
-    parallel_requested: number;
-    /**
-     * Browser profile the rows run in. Today always the default profile (shared by all
-     * rows); isolated per-row profiles come later.
-     */
-    profile?: string | null;
-    /** Extra attempts per row after a failure. */
-    retries: number;
-    /** Stop the whole run at the first failed row. */
-    stop_on_error: boolean;
-    /** Per-row script timeout. */
-    timeout_secs: number;
-  };
   /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
   script: string;
   /**
@@ -4291,44 +4254,81 @@ export interface RunResumeOutput {
    * between (by `run.pause`, a heal request, or a restart of the browser).
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+  };
   total: number;
+  created_ms: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Rows per status. */
+  counts: {
+    pending: number;
+    running: number;
+    ok: number;
+    failed: number;
+    needs_heal: number;
+    cancelled: number;
+  };
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
 }
 
 // ---- run.start ----
 
 /** Arguments of `run.start`. */
 export interface RunStartArgs {
+  /** Saved script to run once per row. */
+  script: string;
   /** The rows: exactly one of csv_path, json_path, xlsx_path or rows. */
   data: {
     /** CSV file with a header row. */
     csv_path?: string | null;
     /** JSON file: an array of objects (keys = columns). */
     json_path?: string | null;
-    /** Inline rows: an array of objects. */
-    rows?: Record<string, unknown>[] | null;
     /** Excel file (.xlsx/.xls/.ods): first sheet, header row first. */
     xlsx_path?: string | null;
+    /** Inline rows: an array of objects. */
+    rows?: Record<string, unknown>[] | null;
   };
+  /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
+  parallel?: number | null;
+  /** Extra attempts for a failed row, with exponential backoff (default 1). */
+  retries?: number | null;
+  /** Per-row timeout in seconds (default 300). */
+  timeout_secs?: number | null;
+  /** Stop the run at the first failed row (default false). */
+  stop_on_error?: boolean | null;
   /**
    * Pause and emit run.heal_needed when a row breaks on a page.* selector error
    * (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
    */
   heal?: boolean | null;
-  /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
-  parallel?: number | null;
   /**
    * Browser profile for the rows. Only "default" for now (all rows share it); isolated
    * per-row profiles come later.
    */
   profile?: string | null;
-  /** Extra attempts for a failed row, with exponential backoff (default 1). */
-  retries?: number | null;
-  /** Saved script to run once per row. */
-  script: string;
-  /** Stop the run at the first failed row (default false). */
-  stop_on_error?: boolean | null;
-  /** Per-row timeout in seconds (default 300). */
-  timeout_secs?: number | null;
 }
 
 /**
@@ -4336,44 +4336,7 @@ export interface RunStartArgs {
  * A run with its row counts.
  */
 export interface RunStartOutput {
-  /** Rows per status. */
-  counts: {
-    cancelled: number;
-    failed: number;
-    needs_heal: number;
-    ok: number;
-    pending: number;
-    running: number;
-  };
-  created_ms: number;
-  /** Rows that reached a final state (ok + failed + cancelled). */
-  done: number;
-  finished_ms?: number | null;
-  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-  heal?: unknown;
   id: string;
-  /** Why the run stopped or paused (stop_on_error, restart, …). */
-  note?: string | null;
-  /** Run-wide settings, fixed at `run.start`. */
-  options: {
-    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-    heal: boolean;
-    /** Worker slots actually used (after the CPU/RAM auto-limit). */
-    parallel: number;
-    /** What the caller asked for. */
-    parallel_requested: number;
-    /**
-     * Browser profile the rows run in. Today always the default profile (shared by all
-     * rows); isolated per-row profiles come later.
-     */
-    profile?: string | null;
-    /** Extra attempts per row after a failure. */
-    retries: number;
-    /** Stop the whole run at the first failed row. */
-    stop_on_error: boolean;
-    /** Per-row script timeout. */
-    timeout_secs: number;
-  };
   /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
   script: string;
   /**
@@ -4381,7 +4344,44 @@ export interface RunStartOutput {
    * between (by `run.pause`, a heal request, or a restart of the browser).
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+  };
   total: number;
+  created_ms: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Rows per status. */
+  counts: {
+    pending: number;
+    running: number;
+    ok: number;
+    failed: number;
+    needs_heal: number;
+    cancelled: number;
+  };
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
 }
 
 // ---- run.status ----
@@ -4397,44 +4397,7 @@ export interface RunStatusArgs {
  * A run with its row counts.
  */
 export interface RunStatusOutput {
-  /** Rows per status. */
-  counts: {
-    cancelled: number;
-    failed: number;
-    needs_heal: number;
-    ok: number;
-    pending: number;
-    running: number;
-  };
-  created_ms: number;
-  /** Rows that reached a final state (ok + failed + cancelled). */
-  done: number;
-  finished_ms?: number | null;
-  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
-  heal?: unknown;
   id: string;
-  /** Why the run stopped or paused (stop_on_error, restart, …). */
-  note?: string | null;
-  /** Run-wide settings, fixed at `run.start`. */
-  options: {
-    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
-    heal: boolean;
-    /** Worker slots actually used (after the CPU/RAM auto-limit). */
-    parallel: number;
-    /** What the caller asked for. */
-    parallel_requested: number;
-    /**
-     * Browser profile the rows run in. Today always the default profile (shared by all
-     * rows); isolated per-row profiles come later.
-     */
-    profile?: string | null;
-    /** Extra attempts per row after a failure. */
-    retries: number;
-    /** Stop the whole run at the first failed row. */
-    stop_on_error: boolean;
-    /** Per-row script timeout. */
-    timeout_secs: number;
-  };
   /** Script name; changes to `<name>.vN` after `run.heal_apply`. */
   script: string;
   /**
@@ -4442,7 +4405,44 @@ export interface RunStatusOutput {
    * between (by `run.pause`, a heal request, or a restart of the browser).
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
+  /** Run-wide settings, fixed at `run.start`. */
+  options: {
+    /** Worker slots actually used (after the CPU/RAM auto-limit). */
+    parallel: number;
+    /** What the caller asked for. */
+    parallel_requested: number;
+    /** Extra attempts per row after a failure. */
+    retries: number;
+    /** Per-row script timeout. */
+    timeout_secs: number;
+    /** Stop the whole run at the first failed row. */
+    stop_on_error: boolean;
+    /** Pause and ask for a patch when a row breaks on a page.* selector error. */
+    heal: boolean;
+    /**
+     * Browser profile the rows run in. Today always the default profile (shared by all
+     * rows); isolated per-row profiles come later.
+     */
+    profile?: string | null;
+  };
   total: number;
+  created_ms: number;
+  finished_ms?: number | null;
+  /** The open heal request (`run.heal_needed` payload) while the run waits for a patch. */
+  heal?: unknown;
+  /** Why the run stopped or paused (stop_on_error, restart, …). */
+  note?: string | null;
+  /** Rows per status. */
+  counts: {
+    pending: number;
+    running: number;
+    ok: number;
+    failed: number;
+    needs_heal: number;
+    cancelled: number;
+  };
+  /** Rows that reached a final state (ok + failed + cancelled). */
+  done: number;
 }
 
 // ---- script.delete ----
@@ -4469,9 +4469,9 @@ export interface ScriptGetArgs {
 
 /** Result of `script.get`. */
 export interface ScriptGetOutput {
+  name: string;
   /** TypeScript source. */
   code: string;
-  name: string;
 }
 
 // ---- script.list ----
@@ -4485,12 +4485,12 @@ export type ScriptListArgs = Record<string, never>;
 /** Result of `script.list`. */
 export interface ScriptListOutput {
   scripts: {
-    /** Last change, milliseconds since the Unix epoch. */
-    modified_ms: number;
     /** Name without `.ts`, e.g. `login` or `login.v2`. */
     name: string;
     /** Size of the file in bytes. */
     size: number;
+    /** Last change, milliseconds since the Unix epoch. */
+    modified_ms: number;
   }[];
 }
 
@@ -4498,12 +4498,12 @@ export interface ScriptListOutput {
 
 /** Arguments of `script.run`. */
 export interface ScriptRunArgs {
+  /** Saved script to run. Give `name` or `code`. */
+  name?: string | null;
   /** Inline TypeScript to run instead of a saved script. */
   code?: string | null;
   /** Values the script reads as inputs.<key> (passed as strings). */
   inputs?: Record<string, unknown> | null;
-  /** Saved script to run. Give `name` or `code`. */
-  name?: string | null;
   /** Kill the script after this many seconds (default 300). */
   timeout_secs?: number | null;
 }
@@ -4513,7 +4513,20 @@ export interface ScriptRunArgs {
  * How one script run ended.
  */
 export interface ScriptRunOutput {
+  /** True when the script finished without an uncaught error (exit code 0). */
+  ok: boolean;
+  /**
+   * Process exit code (0 ok, 1 script error, 2 setup error, 124 timeout); `None` when the
+   * process was killed.
+   */
+  exit_code: number | null;
   duration_ms: number;
+  /** Merged `browser.output(...)` values; `null` when the script reported nothing. */
+  result: unknown;
+  /** Last few KB of ordinary stdout lines. */
+  stdout: string;
+  /** Last few KB of stderr. */
+  stderr: string;
   /** Set when `ok` is false. */
   error?: {
     /**
@@ -4523,37 +4536,24 @@ export interface ScriptRunOutput {
     code: string;
     /** The browser command that failed, e.g. `page.find`. */
     command?: string | null;
-    /** Line in the script of the top stack frame. */
-    line?: number | null;
     /** First line of the error message. */
     message: string;
+    /** Line in the script of the top stack frame. */
+    line?: number | null;
   } | null;
-  /**
-   * Process exit code (0 ok, 1 script error, 2 setup error, 124 timeout); `None` when the
-   * process was killed.
-   */
-  exit_code: number | null;
-  /** True when the script finished without an uncaught error (exit code 0). */
-  ok: boolean;
-  /** Merged `browser.output(...)` values; `null` when the script reported nothing. */
-  result: unknown;
-  /** Last few KB of stderr. */
-  stderr: string;
-  /** Last few KB of ordinary stdout lines. */
-  stdout: string;
 }
 
 // ---- script.save ----
 
 /** Arguments of `script.save`. */
 export interface ScriptSaveArgs {
+  /** 1-64 chars of A-Z a-z 0-9 _ - (no .ts); overwrites an existing script. */
+  name: string;
   /**
    * TypeScript source. Globals: browser.<ns>.<method>(args) calls a browser command,
    * inputs.<key> (strings), browser.output({...}) reports a structured result, sleep(ms).
    */
   code: string;
-  /** 1-64 chars of A-Z a-z 0-9 _ - (no .ts); overwrites an existing script. */
-  name: string;
 }
 
 /**
@@ -4561,12 +4561,12 @@ export interface ScriptSaveArgs {
  * One script in the library.
  */
 export interface ScriptSaveOutput {
-  /** Last change, milliseconds since the Unix epoch. */
-  modified_ms: number;
   /** Name without `.ts`, e.g. `login` or `login.v2`. */
   name: string;
   /** Size of the file in bytes. */
   size: number;
+  /** Last change, milliseconds since the Unix epoch. */
+  modified_ms: number;
 }
 
 // ---- simplify.get ----
@@ -4579,27 +4579,27 @@ export interface SimplifyGetArgs {
 
 /** Result of `simplify.get`. */
 export interface SimplifyGetOutput {
-  /** Filter lists apply on this host (adblock on and not allowlisted). */
-  adblock: boolean;
-  /** CEF content settings this maps to (applied by the CEF hook later). */
-  content_settings: {
-    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
-    images: string;
-    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
-    javascript: string;
-  };
   host: string;
   /** Patterns that apply, least specific first. */
   matched: string[];
   /** Merged policy (true = allowed). */
   policy: {
-    animations: boolean;
-    fonts: boolean;
-    images: boolean;
     js: boolean;
+    images: boolean;
+    fonts: boolean;
     media: boolean;
     third_party: boolean;
+    animations: boolean;
   };
+  /** CEF content settings this maps to (applied by the CEF hook later). */
+  content_settings: {
+    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
+    javascript: string;
+    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
+    images: string;
+  };
+  /** Filter lists apply on this host (adblock on and not allowlisted). */
+  adblock: boolean;
 }
 
 // ---- simplify.list ----
@@ -4612,44 +4612,44 @@ export type SimplifyListArgs = Record<string, never>;
 
 /** Result of `simplify.list`. */
 export interface SimplifyListOutput {
-  /** Adblock settings as returned by the commands. */
-  adblock: {
-    /** Sites where filter lists are not applied. */
-    allowlist: string[];
-    /** Filter lists are applied (site policies apply regardless). */
-    enabled: boolean;
-    /** Enabled filter lists. */
-    lists: string[];
-  };
   /** Stored policies by host pattern. */
   sites: Record<string, {
-      /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
-      animations?: boolean | null;
-      /** Load web fonts. */
-      fonts?: boolean | null;
-      /** Load images. */
-      images?: boolean | null;
       /** Run JavaScript (false: block script loads and disable script execution). */
       js?: boolean | null;
+      /** Load images. */
+      images?: boolean | null;
+      /** Load web fonts. */
+      fonts?: boolean | null;
       /** Load audio/video. */
       media?: boolean | null;
       /** Load anything from other sites (different registrable domain). */
       third_party?: boolean | null;
+      /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
+      animations?: boolean | null;
     }>;
+  /** Adblock settings as returned by the commands. */
+  adblock: {
+    /** Filter lists are applied (site policies apply regardless). */
+    enabled: boolean;
+    /** Sites where filter lists are not applied. */
+    allowlist: string[];
+    /** Enabled filter lists. */
+    lists: string[];
+  };
 }
 
 // ---- simplify.measure ----
 
 /** Arguments of `simplify.measure`. */
 export interface SimplifyMeasureArgs {
-  /** Keep counting this long after the load event, for late requests (default 3000). */
-  settle_ms?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
-  /** Give up waiting for the load event after this long (default 45000). */
-  timeout_ms?: number | null;
   /** Page to load. */
   url: string;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Keep counting this long after the load event, for late requests (default 3000). */
+  settle_ms?: number | null;
+  /** Give up waiting for the load event after this long (default 45000). */
+  timeout_ms?: number | null;
 }
 
 /**
@@ -4657,47 +4657,47 @@ export interface SimplifyMeasureArgs {
  * What loading the page cost.
  */
 export interface SimplifyMeasureOutput {
-  /** Failed with `net::ERR_BLOCKED_BY_CLIENT` (adblock / site policy). */
-  blocked: number;
-  by_type: Record<string, {
-      bytes: number;
-      requests: number;
-    }>;
-  /** Bytes received over the network (`encodedDataLength`, headers included). */
-  bytes: number;
-  /** Time until `DOMContentLoaded`, milliseconds (0 if not seen). */
-  dom_content_loaded_ms: number;
-  dom_nodes: number;
-  /** Requests that failed (including blocked ones). */
-  failed: number;
-  /** Requests that finished loading. */
-  finished: number;
-  /** `Performance.getMetrics` after settling. */
-  js_heap_used_bytes: number;
-  /** Time until the `load` event, milliseconds. */
-  load_ms: number;
-  /** Requests the page started. */
-  requests: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  url: string;
+  /** Requests the page started. */
+  requests: number;
+  /** Requests that finished loading. */
+  finished: number;
+  /** Requests that failed (including blocked ones). */
+  failed: number;
+  /** Failed with `net::ERR_BLOCKED_BY_CLIENT` (adblock / site policy). */
+  blocked: number;
+  /** Bytes received over the network (`encodedDataLength`, headers included). */
+  bytes: number;
+  /** Time until the `load` event, milliseconds. */
+  load_ms: number;
+  /** Time until `DOMContentLoaded`, milliseconds (0 if not seen). */
+  dom_content_loaded_ms: number;
   /** The load event did not come within `timeout_ms`. */
   timed_out: boolean;
-  url: string;
+  /** `Performance.getMetrics` after settling. */
+  js_heap_used_bytes: number;
+  dom_nodes: number;
+  by_type: Record<string, {
+      requests: number;
+      bytes: number;
+    }>;
 }
 
 // ---- simplify.reader ----
 
 /** Arguments of `simplify.reader`. */
 export interface SimplifyReaderArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
   /** Also replace the page with a clean readable version (dark/light aware). */
   apply?: boolean | null;
   /** Max characters of text returned (default 4000). */
   max_chars?: number | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /**
@@ -4705,82 +4705,82 @@ export interface SimplifyReaderArgs {
  * The readable article of a page.
  */
 export interface SimplifyReaderOutput {
-  /** True when the page was replaced by the clean version. */
-  applied: boolean;
-  byline?: string | null;
-  excerpt?: string | null;
-  lang?: string | null;
-  /** Length of the full article text in characters. */
-  length: number;
-  site_name?: string | null;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  title: string;
+  byline?: string | null;
+  site_name?: string | null;
+  excerpt?: string | null;
+  lang?: string | null;
   /** Article text, cut to `max_chars`. */
   text: string;
-  title: string;
+  /** Length of the full article text in characters. */
+  length: number;
   /** True when `text` was cut. */
   truncated: boolean;
+  /** True when the page was replaced by the clean version. */
+  applied: boolean;
 }
 
 // ---- simplify.site ----
 
 /** Arguments of `simplify.site`. */
 export interface SimplifySiteArgs {
-  /** Allow CSS animations and transitions. */
-  animations?: boolean | null;
-  /** Forget the stored policy of this host first (then apply the given fields). */
-  clear?: boolean | null;
-  /** Allow web fonts. */
-  fonts?: boolean | null;
   /** Host pattern: "example.com" (with subdomains) or "*" for every site. */
   host: string;
-  /** Allow images. */
-  images?: boolean | null;
   /** Allow JavaScript. */
   js?: boolean | null;
+  /** Allow images. */
+  images?: boolean | null;
+  /** Allow web fonts. */
+  fonts?: boolean | null;
   /** Allow audio/video. */
   media?: boolean | null;
   /** Allow requests to other sites. */
   third_party?: boolean | null;
+  /** Allow CSS animations and transitions. */
+  animations?: boolean | null;
+  /** Forget the stored policy of this host first (then apply the given fields). */
+  clear?: boolean | null;
 }
 
 /** Result of `simplify.site`. */
 export interface SimplifySiteOutput {
-  /** Content-setting values per CEF content type (`allow` or `block`). */
-  content_settings: {
-    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
-    images: string;
-    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
-    javascript: string;
-  };
-  /** Effective policy for the host itself, after merging less specific patterns. */
-  effective: {
-    animations: boolean;
-    fonts: boolean;
-    images: boolean;
-    js: boolean;
-    media: boolean;
-    third_party: boolean;
-  };
   /** Normalized pattern the policy is stored under. */
   pattern: string;
   /** Stored fields for this pattern (unset = inherited). */
   stored: {
-    /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
-    animations?: boolean | null;
-    /** Load web fonts. */
-    fonts?: boolean | null;
-    /** Load images. */
-    images?: boolean | null;
     /** Run JavaScript (false: block script loads and disable script execution). */
     js?: boolean | null;
+    /** Load images. */
+    images?: boolean | null;
+    /** Load web fonts. */
+    fonts?: boolean | null;
     /** Load audio/video. */
     media?: boolean | null;
     /** Load anything from other sites (different registrable domain). */
     third_party?: boolean | null;
+    /** Play CSS animations/transitions (false: disable them, prefer reduced motion). */
+    animations?: boolean | null;
+  };
+  /** Effective policy for the host itself, after merging less specific patterns. */
+  effective: {
+    js: boolean;
+    images: boolean;
+    fonts: boolean;
+    media: boolean;
+    third_party: boolean;
+    animations: boolean;
+  };
+  /** Content-setting values per CEF content type (`allow` or `block`). */
+  content_settings: {
+    /** CEF_CONTENT_SETTING_TYPE_JAVASCRIPT. */
+    javascript: string;
+    /** CEF_CONTENT_SETTING_TYPE_IMAGES. */
+    images: string;
   };
 }
 
@@ -4794,24 +4794,24 @@ export interface StealthCheckArgs {
 
 /** Result of `stealth.check`. */
 export interface StealthCheckOutput {
-  checks: {
-    detail: string;
-    name: string;
-    /** pass, warn or fail. */
-    status: string;
-  }[];
-  failed: number;
-  /** The identity applied to the tab, if any (compared in "matches applied identity"). */
-  identity_id: string | null;
-  passed: number;
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** The identity applied to the tab, if any (compared in "matches applied identity"). */
+  identity_id: string | null;
+  passed: number;
+  warned: number;
+  failed: number;
+  checks: {
+    name: string;
+    /** pass, warn or fail. */
+    status: string;
+    detail: string;
+  }[];
   /** The same as a table: `PASS  name  detail` per line. */
   text: string;
-  warned: number;
 }
 
 // ---- stealth.fingerprint_clear ----
@@ -4827,13 +4827,13 @@ export interface StealthFingerprintClearArgs {
  * Result of [`apply`].
  */
 export interface StealthFingerprintClearOutput {
-  /** CDP methods that succeeded, in order. */
-  applied: string[];
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** CDP methods that succeeded, in order. */
+  applied: string[];
   /** Things that did not work or do not fit (the rest was still applied). */
   warnings: string[];
 }
@@ -4842,28 +4842,16 @@ export interface StealthFingerprintClearOutput {
 
 /** Arguments of `stealth.fingerprint_set`. */
 export interface StealthFingerprintSetArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** A saved identity (identity_list). */
+  identity_id?: string | null;
   /** A full identity object (e.g. from identity_generate). */
   identity?: {
-    /**
-     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
-     * "de-DE,de,en-US,en".
-     */
-    accept_language: string;
-    /**
-     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
-     * to 32; older versions capped at 8).
-     */
-    device_memory: number;
-    /** A fake position for the Geolocation API. */
-    geolocation?: {
-      /** Metres. */
-      accuracy: number;
-      latitude: number;
-      longitude: number;
-    } | null;
-    hardware_concurrency: number;
     /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
     id: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
     /**
      * What an identity is good for.
      *
@@ -4871,33 +4859,12 @@ export interface StealthFingerprintSetArgs {
      * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
      */
     kind: "stealth" | "device_emulation";
-    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
-    locale: string;
-    max_touch_points: number;
-    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
-    mobile: boolean;
     /** Operating system family an identity claims. */
     os: "windows" | "macos" | "android" | "ios";
-    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
-    platform: string;
-    /** The preset it was built from, e.g. "windows-1080p". */
-    preset: string;
-    /** Screen size in CSS pixels and the device pixel ratio. */
-    screen: {
-      dpr: number;
-      height: number;
-      width: number;
-    };
-    /** IANA zone, e.g. "Europe/Berlin". */
-    timezone: string;
-    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
-    touch: boolean;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
     /** Client hints; `None` for Safari identities (Safari has none). */
     ua_metadata?: {
-      /** "x86", "arm" or "" (mobile). */
-      architecture: string;
-      /** "64" on desktop, "" on mobile. */
-      bitness: string;
       /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
       brands: {
         brand: string;
@@ -4908,29 +4875,64 @@ export interface StealthFingerprintSetArgs {
         brand: string;
         version: string;
       }[];
-      mobile: boolean;
-      /** Device model on Android ("Pixel 8"), empty on desktop. */
-      model: string;
       /** "Windows", "macOS", "Android". */
       platform: string;
       /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
       platform_version: string;
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      mobile: boolean;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
       wow64: boolean;
     } | null;
-    /** `navigator.userAgent` and the `User-Agent` header. */
-    user_agent: string;
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    hardware_concurrency: number;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      width: number;
+      height: number;
+      dpr: number;
+    };
     /** Forced viewport (mobile). `None` = keep the real window size. */
     viewport?: {
-      height: number;
       width: number;
+      height: number;
     } | null;
-    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
-    webgl_renderer: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /** A fake position for the Geolocation API. */
+    geolocation?: {
+      latitude: number;
+      longitude: number;
+      /** Metres. */
+      accuracy: number;
+    } | null;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
     /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
     webgl_vendor: string;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
   } | null;
-  /** A saved identity (identity_list). */
-  identity_id?: string | null;
   /** A preset name as-is (identity_presets). */
   preset?: string | null;
   /**
@@ -4938,8 +4940,6 @@ export interface StealthFingerprintSetArgs {
    * (default false; the patches are also applied to the current page immediately).
    */
   reload?: boolean | null;
-  /** Tab id from tabs_list. Default: the most recently opened tab. */
-  tab?: number | null;
 }
 
 /**
@@ -4947,8 +4947,11 @@ export interface StealthFingerprintSetArgs {
  * Result of [`apply`].
  */
 export interface StealthFingerprintSetOutput {
-  /** CDP methods that succeeded, in order. */
-  applied: string[];
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
   identity_id: string;
   /**
    * What an identity is good for.
@@ -4957,11 +4960,8 @@ export interface StealthFingerprintSetOutput {
    * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
    */
   kind: "stealth" | "device_emulation";
-  /**
-   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
-   * On the wire it is a plain number: `3`.
-   */
-  tab: number;
+  /** CDP methods that succeeded, in order. */
+  applied: string[];
   /** Things that did not work or do not fit (the rest was still applied). */
   warnings: string[];
 }
@@ -5020,6 +5020,8 @@ export type TabsCloseOutput = Record<string, never>;
 
 /** Arguments of `tabs.freeze`. */
 export interface TabsFreezeArgs {
+  /** Tab id from tabs_list. */
+  tab: number;
   /**
    * freeze = pause the page (keeps memory, no CPU); discard = unload it and keep URL,
    * title and scroll to restore (frees memory); thaw = undo either.
@@ -5029,8 +5031,6 @@ export interface TabsFreezeArgs {
    * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
    */
   mode: "freeze" | "discard" | "thaw";
-  /** Tab id from tabs_list. */
-  tab: number;
 }
 
 /**
@@ -5038,22 +5038,22 @@ export interface TabsFreezeArgs {
  * Result of one freeze/discard/thaw.
  */
 export interface TabsFreezeOutput {
-  /** False when the tab already was in that state. */
-  changed: boolean;
-  /** What a discarded tab remembers (URL, title, scroll). */
-  saved?: {
-    scroll_x: number;
-    scroll_y: number;
-    title: string;
-    url: string;
-  } | null;
-  /** The tab's state afterwards. */
-  state: "live" | "frozen" | "discarded";
   /**
    * Stable id of a tab for the lifetime of the process (CEF browser identifier).
    * On the wire it is a plain number: `3`.
    */
   tab: number;
+  /** The tab's state afterwards. */
+  state: "live" | "frozen" | "discarded";
+  /** False when the tab already was in that state. */
+  changed: boolean;
+  /** What a discarded tab remembers (URL, title, scroll). */
+  saved?: {
+    url: string;
+    title: string;
+    scroll_x: number;
+    scroll_y: number;
+  } | null;
 }
 
 // ---- tabs.list ----
@@ -5066,24 +5066,21 @@ export type TabsListArgs = Record<string, never>;
 
 /** Result of `tabs.list`. */
 export interface TabsListOutput {
-  /** The tab the user is looking at, or null when no tab is open. */
-  activeId: number | null;
-  /** Tab groups (always empty for now). */
-  groups: {
-    /** Set for agent-owned groups. */
-    agentId: string | null;
-    /** grey | blue | red | yellow | green | pink | purple | cyan | orange */
-    color: string;
-    id: string;
-    name: string;
-  }[];
   /** Open tabs in tab-strip order. */
   tabs: {
+    /** Tab id, used as `tab` argument by other commands. */
+    id: number;
+    /** Page title. */
+    title: string;
+    /** Current URL. */
+    url: string;
+    /** True while the page is still loading. */
+    loading: boolean;
     /**
-     * True for the tab shown in its window (one per window).
-     * @default false
+     * Favicon URL; null until the page reports one.
+     * @default null
      */
-    active: boolean;
+    favicon: string | null;
     /**
      * True when `nav.back` would do something.
      * @default false
@@ -5095,39 +5092,42 @@ export interface TabsListOutput {
      */
     canGoForward: boolean;
     /**
-     * Favicon URL; null until the page reports one.
-     * @default null
+     * True for the tab shown in its window (one per window).
+     * @default false
      */
-    favicon: string | null;
+    active: boolean;
     /**
      * Tab group id. Always null for now (tab groups are not implemented yet).
      * @default null
      */
     groupId: string | null;
-    /** Tab id, used as `tab` argument by other commands. */
-    id: number;
-    /** True while the page is still loading. */
-    loading: boolean;
     /**
      * Agent holding the tab lock. Always null for now (agent locks come later).
      * @default null
      */
     lockedBy: string | null;
-    /** Page title. */
-    title: string;
-    /** Current URL. */
-    url: string;
   }[];
+  /** Tab groups (always empty for now). */
+  groups: {
+    id: string;
+    name: string;
+    /** grey | blue | red | yellow | green | pink | purple | cyan | orange */
+    color: string;
+    /** Set for agent-owned groups. */
+    agentId: string | null;
+  }[];
+  /** The tab the user is looking at, or null when no tab is open. */
+  activeId: number | null;
 }
 
 // ---- tabs.open ----
 
 /** Arguments of `tabs.open`. */
 export interface TabsOpenArgs {
-  /** Open without switching to it (default false: the new tab becomes active). */
-  background?: boolean | null;
   /** URL to open. Default: the new tab page. */
   url?: string | null;
+  /** Open without switching to it (default false: the new tab becomes active). */
+  background?: boolean | null;
 }
 
 /**
@@ -5136,11 +5136,21 @@ export interface TabsOpenArgs {
  * (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
  */
 export interface TabsOpenOutput {
+  /** Id of the new tab (same as `id`; kept for older clients). */
+  tab: number;
+  /** Tab id, used as `tab` argument by other commands. */
+  id: number;
+  /** Page title. */
+  title: string;
+  /** Current URL. */
+  url: string;
+  /** True while the page is still loading. */
+  loading: boolean;
   /**
-   * True for the tab shown in its window (one per window).
-   * @default false
+   * Favicon URL; null until the page reports one.
+   * @default null
    */
-  active: boolean;
+  favicon: string | null;
   /**
    * True when `nav.back` would do something.
    * @default false
@@ -5152,30 +5162,20 @@ export interface TabsOpenOutput {
    */
   canGoForward: boolean;
   /**
-   * Favicon URL; null until the page reports one.
-   * @default null
+   * True for the tab shown in its window (one per window).
+   * @default false
    */
-  favicon: string | null;
+  active: boolean;
   /**
    * Tab group id. Always null for now (tab groups are not implemented yet).
    * @default null
    */
   groupId: string | null;
-  /** Tab id, used as `tab` argument by other commands. */
-  id: number;
-  /** True while the page is still loading. */
-  loading: boolean;
   /**
    * Agent holding the tab lock. Always null for now (agent locks come later).
    * @default null
    */
   lockedBy: string | null;
-  /** Id of the new tab (same as `id`; kept for older clients). */
-  tab: number;
-  /** Page title. */
-  title: string;
-  /** Current URL. */
-  url: string;
 }
 
 // ---- term.close ----
@@ -5202,16 +5202,16 @@ export type TermListArgs = Record<string, never>;
 /** Result of `term.list`. */
 export interface TermListOutput {
   terminals: {
-    cols: number;
-    cwd: string;
-    /** Exit code once the shell has ended; `null` while it runs. */
-    exit_code: number | null;
     /** Terminal id, e.g. `t1`. */
     id: string;
-    pid: number | null;
-    rows: number;
     /** Program that was started. */
     shell: string;
+    cwd: string;
+    cols: number;
+    rows: number;
+    pid: number | null;
+    /** Exit code once the shell has ended; `null` while it runs. */
+    exit_code: number | null;
   }[];
 }
 
@@ -5220,24 +5220,24 @@ export interface TermListOutput {
 /** Arguments of `term.open`. */
 export interface TermOpenArgs {
   /**
+   * "pwsh", "cmd", "bash" or a program path; default pwsh (Windows) / $SHELL.
+   * @default null
+   */
+  shell?: string | null;
+  /**
    * Extra arguments for the shell.
    * @default []
    */
   args?: string[];
-  /** @default 80 */
-  cols?: number;
   /**
    * Working directory; default the user's home.
    * @default null
    */
   cwd?: string | null;
+  /** @default 80 */
+  cols?: number;
   /** @default 24 */
   rows?: number;
-  /**
-   * "pwsh", "cmd", "bash" or a program path; default pwsh (Windows) / $SHELL.
-   * @default null
-   */
-  shell?: string | null;
 }
 
 /**
@@ -5245,24 +5245,24 @@ export interface TermOpenArgs {
  * What `term.list` shows.
  */
 export interface TermOpenOutput {
-  cols: number;
-  cwd: string;
-  /** Exit code once the shell has ended; `null` while it runs. */
-  exit_code: number | null;
   /** Terminal id, e.g. `t1`. */
   id: string;
-  pid: number | null;
-  rows: number;
   /** Program that was started. */
   shell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  pid: number | null;
+  /** Exit code once the shell has ended; `null` while it runs. */
+  exit_code: number | null;
 }
 
 // ---- term.resize ----
 
 /** Arguments of `term.resize`. */
 export interface TermResizeArgs {
-  cols: number;
   id: string;
+  cols: number;
   rows: number;
 }
 
@@ -5276,10 +5276,10 @@ export type TermResizeOutput = Record<string, never>;
 
 /** Arguments of `term.write`. */
 export interface TermWriteArgs {
-  /** Text/keystrokes to send, e.g. "dir\r". */
-  data: string;
   /** Terminal id from term.open. */
   id: string;
+  /** Text/keystrokes to send, e.g. "dir\r". */
+  data: string;
 }
 
 /**
@@ -5299,21 +5299,21 @@ export type TriggerListArgs = Record<string, never>;
 /** Result of `trigger.list`. */
 export interface TriggerListOutput {
   triggers: {
-    created_ms: number;
     id: string;
-    inputs: Record<string, unknown>;
     /** Always `cron` for now. */
     kind: string;
+    /** The cron expression as given. */
+    spec: string;
+    script: string;
+    inputs: Record<string, unknown>;
+    created_ms: number;
     last_fired_ms?: number | null;
     /** `ok`, or the error code of the last firing. */
     last_status?: string | null;
-    /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
-    next_fire?: string | null;
     /** Next firing, milliseconds since the Unix epoch. */
     next_fire_ms?: number | null;
-    script: string;
-    /** The cron expression as given. */
-    spec: string;
+    /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
+    next_fire?: string | null;
   }[];
 }
 
@@ -5334,19 +5334,19 @@ export interface TriggerRemoveOutput {
 
 /** Arguments of `trigger.set`. */
 export interface TriggerSetArgs {
-  /** Replace the trigger with this id (default: a new id). */
-  id?: string | null;
-  /** inputs.<key> for the script. */
-  inputs?: Record<string, unknown> | null;
   /** Only "cron" for now. */
   kind: "cron";
-  /** Saved script to run. */
-  script: string;
   /**
    * Cron expression in local time: 5 fields "min hour day month weekday"
    * (e.g. "0 9 * * Mon-Fri") or 6 with seconds first.
    */
   spec: string;
+  /** Saved script to run. */
+  script: string;
+  /** inputs.<key> for the script. */
+  inputs?: Record<string, unknown> | null;
+  /** Replace the trigger with this id (default: a new id). */
+  id?: string | null;
 }
 
 /**
@@ -5354,31 +5354,31 @@ export interface TriggerSetArgs {
  * A trigger plus when it fires next.
  */
 export interface TriggerSetOutput {
-  created_ms: number;
   id: string;
-  inputs: Record<string, unknown>;
   /** Always `cron` for now. */
   kind: string;
+  /** The cron expression as given. */
+  spec: string;
+  script: string;
+  inputs: Record<string, unknown>;
+  created_ms: number;
   last_fired_ms?: number | null;
   /** `ok`, or the error code of the last firing. */
   last_status?: string | null;
-  /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
-  next_fire?: string | null;
   /** Next firing, milliseconds since the Unix epoch. */
   next_fire_ms?: number | null;
-  script: string;
-  /** The cron expression as given. */
-  spec: string;
+  /** Next firing as local RFC 3339 time, e.g. `2026-11-06T09:00:00+02:00`. */
+  next_fire?: string | null;
 }
 
 // ---- ui.answer ----
 
 /** Arguments of `ui.answer`. */
 export interface UiAnswerArgs {
-  /** The pressed action's id. */
-  choice: string;
   /** Notification id from ui.notification. */
   id: string;
+  /** The pressed action's id. */
+  choice: string;
 }
 
 /** Result of `ui.answer`. */
@@ -5392,18 +5392,18 @@ export interface UiAnswerOutput {
 
 /** Arguments of `ui.ask_user`. */
 export interface UiAskUserArgs {
-  /** Default: ui, plus telegram and os when they are enabled (os only shows the question). */
-  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
-  /** 1–8 answer buttons, e.g. ["Yes", "No"]. */
-  choices: string[];
+  question: string;
   /**
    * Optional details under the question.
    * @default ""
    */
   details?: string;
-  question: string;
+  /** 1–8 answer buttons, e.g. ["Yes", "No"]. */
+  choices: string[];
   /** How long to wait (default 300, max 3600). No answer → choice null, via "timeout". */
   timeout_secs?: number | null;
+  /** Default: ui, plus telegram and os when they are enabled (os only shows the question). */
+  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
 }
 
 /**
@@ -5423,13 +5423,13 @@ export interface UiAskUserOutput {
 
 /** Arguments of `ui.layout`. */
 export interface UiLayoutArgs {
-  /** `devicePixelRatio` of the UI view. */
-  dpr?: number | null;
-  h: number;
-  w: number;
   /** Left edge of the page area, CSS px relative to the UI view. */
   x: number;
   y: number;
+  w: number;
+  h: number;
+  /** `devicePixelRatio` of the UI view. */
+  dpr?: number | null;
 }
 
 /**
@@ -5442,17 +5442,17 @@ export type UiLayoutOutput = Record<string, never>;
 
 /** Arguments of `ui.notify`. */
 export interface UiNotifyArgs {
-  /** Default ["ui"]; add "os" / "telegram" to reach the user away from the browser. */
-  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
+  /** Message for the user. */
+  text: string;
+  /** Short heading; default "BrowserMCP". */
+  title?: string | null;
   /**
    * How important a notification is (UI color, Telegram prefix, toast sound).
    * @default "info"
    */
   level?: "info" | "success" | "warning" | "error";
-  /** Message for the user. */
-  text: string;
-  /** Short heading; default "BrowserMCP". */
-  title?: string | null;
+  /** Default ["ui"]; add "os" / "telegram" to reach the user away from the browser. */
+  channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
 }
 
 /**
@@ -5460,6 +5460,8 @@ export interface UiNotifyArgs {
  * What happened to one notification, per channel.
  */
 export interface UiNotifyOutput {
+  /** Notification id (`n3`). */
+  id: string;
   delivered: ("ui" | "os" | "telegram" | "webhook")[];
   failed: {
     /**
@@ -5473,8 +5475,6 @@ export interface UiNotifyOutput {
     channel: "ui" | "os" | "telegram" | "webhook";
     error: string;
   }[];
-  /** Notification id (`n3`). */
-  id: string;
   /** Not sent: channel switched off / not configured, or over the rate limit. */
   skipped: ("ui" | "os" | "telegram" | "webhook")[];
 }

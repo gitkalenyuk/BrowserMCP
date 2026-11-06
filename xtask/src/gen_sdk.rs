@@ -856,7 +856,8 @@ mod tests {
         });
         assert_eq!(
             ts(schema),
-            "{\n  \"bad-name\"?: boolean;\n  for?: number | null;\n  /** URL to load. */\n  url: string;\n}"
+            // Properties in schema order (serde_json `preserve_order`), i.e. struct field order.
+            "{\n  /** URL to load. */\n  url: string;\n  for?: number | null;\n  \"bad-name\"?: boolean;\n}"
         );
         assert_eq!(
             ts(json!({"type": "object", "additionalProperties": false})),
