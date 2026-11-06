@@ -34,7 +34,7 @@ or via `BMCP_SCRIPT_HOST`, `$CARGO_TARGET_DIR/{debug,release}`, or `JobsConfig::
 ```text
 run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
            parallel?: 4, retries?: 1, timeout_secs?: 300, stop_on_error?: false,
-           heal?: true, profile?: "default"}      → run (id, options.parallel, counts …)
+           heal?: "ask", profile?: "default"}     → run (id, options.parallel, counts …)
 ```
 
 * Each row → one script process; its inputs (`inputs.<column>`, strings) go in a temporary
@@ -46,12 +46,20 @@ run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
   `run.results {id, cursor?, limit?, status?}` (paged), `run.pause/resume/cancel {id}`.
   A run interrupted by a browser restart is `paused` after the next start; `run.resume`
   continues it.
-* **Profiles:** today all rows share the browser's default profile (each row should open its
-  own tab). `profile` only accepts `"default"`; TODO: isolated per-row profiles.
-  **Known issue:** with `parallel > 1`, rows that type into pages interfere: `page.act fill`
-  input lands in another (background) tab and background tabs report "no box". The live test
-  below had to run with `parallel: 1` for correct results; parallel rows need isolated
-  windows/profiles (or tab-targeted input) first.
+* **Profiles:** each row's script host gets `BMCP_TAB_DEFAULTS` (JSON), which the host merges
+  into every `tabs.open` call the script makes (keys the script sets itself win):
+  * `profile` omitted / `"default"` → `{run}`: tabs in the browser window, shared profile;
+  * `"isolated"` → `{profile: "<run>-r<row>-a<attempt>", incognito: true, window: "offscreen",
+    run}`: every row attempt gets a fresh in-memory profile (own cookies) and windowless tabs;
+  * any profile id (`profile.create`) → `{profile, run}`: rows share that profile.
+
+  `run` sends the row's downloads to `data/runs/<run>/downloads/`.
+  **Use `"isolated"` for `parallel > 1` rows that type or click:** in one window only the
+  shown tab is visible — a background tab is hidden (`visibilityState: "hidden"`) and
+  `page.act` refuses input to it (`NOT_INTERACTABLE: tab N is hidden`), which is what broke the
+  first live test with `parallel: 3` (7 of 10 rows failed). Off-screen tabs are always visible
+  and each has its own focus, so 3 rows typing at once each reach their own page (live:
+  10/10 rows correct with `parallel: 3`, see `docs/phase2/profiles.md`).
 
 **Self-healing.** When a row fails (after its retries) with `NOT_FOUND`, `NOT_INTERACTABLE`,
 `STALE_REF`, `TIMEOUT` or `AMBIGUOUS_TARGET` from a `page.*` call, the row becomes `needs_heal`,
@@ -59,6 +67,11 @@ the run pauses and `run.heal_needed {id, row, script, error, step, line}` is emi
 proposes a fix and calls `run.heal_apply {id, patched_code}`: the code is saved as
 `<name>.v2.ts` (then `.v3` …), the waiting rows go back into the queue and the run continues
 with the new version. `run.resume` instead skips the fix (those rows count as failed).
+`heal` is `"ask"` (default), `"auto"` or `"off"` (`true`/`false` = ask/off); the mode is
+in the event as `mode`. A hook (`JobsService::set_heal_hook`, installed by `crates/heal`) takes a
+page snapshot before the event goes out; it is stored in the `heal_snapshots` table
+(`JobsService::heal_snapshot`). Proposing, accepting and "auto" are `crates/heal` (see its
+README: `run.heal_propose/accept/reject`, `run.heal_proposed/applied/failed`).
 
 **Exports.** `run.export {id, to: csv|xlsx|json|sqlite|webhook, path?, url?, status?, batch_size?, raw?}`.
 Files default to `data/runs/<id>/results.<ext>`; columns `row, status, <inputs>, <result keys>,
@@ -86,7 +99,7 @@ set, which has `runs.*` for the UI).
 | `run.started` | `{id, script, total, parallel}` |
 | `run.progress` | `{id, done, ok, failed, needs_heal, cancelled, running, pending, total}` |
 | `run.row_failed` | `{id, row, error, attempts}` |
-| `run.heal_needed` | `{id, row, script, error, step, line}` |
+| `run.heal_needed` | `{id, row, script, error, step, line, mode}` |
 | `run.finished` | `{id, status, total, ok, failed, cancelled, needs_heal, duration_ms}` |
 | `trigger.fired` | `{id, script, ok, exit_code, duration_ms, result, error}` |
 

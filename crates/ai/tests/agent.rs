@@ -184,8 +184,12 @@ async fn openai_compatible_agent_runs_registry_tools() {
         names.contains(&"tabs_open") && names.contains(&"nav_goto"),
         "{names:?}"
     );
+    // `ai_handoff` is the one agent-facing `ai_*` command (core toolset): "user, please …".
+    assert!(names.contains(&"ai_handoff"), "{names:?}");
     assert!(
-        !names.iter().any(|n| n.starts_with("ai_")),
+        !names
+            .iter()
+            .any(|n| n.starts_with("ai_") && *n != "ai_handoff"),
         "ai tools must not be offered by default"
     );
 

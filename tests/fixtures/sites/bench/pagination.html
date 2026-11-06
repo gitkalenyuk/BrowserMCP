@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Parts catalog</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  td, th { padding: 4px 10px; text-align: left; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Parts catalog</h1>
+<table>
+  <thead><tr><th>SKU</th><th>Part</th><th>Price</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<nav aria-label="Pages">
+  <button id="prev">Previous</button>
+  <span id="page" aria-live="polite"></span>
+  <button id="next">Next</button>
+</nav>
+<h2>Your answer</h2>
+<label>Answer <input id="answer" autocomplete="off"></label>
+<button id="send">Submit answer</button>
+<script>
+  // Task "pagination": the price of SKU Q-4417 (on page 4 of 5) is $63.10.
+  const NAMES = ['Bracket', 'Hinge', 'Gasket', 'Spring', 'Valve', 'Bearing', 'Clamp', 'Bolt set', 'Washer', 'Seal'];
+  const items = Array.from({ length: 47 }, (_, i) => ({
+    sku: `Q-${1000 + ((i * 397) % 3000)}`,
+    name: `${NAMES[i % NAMES.length]} ${String.fromCharCode(65 + (i % 26))}${i}`,
+    price: `$${(5 + ((i * 7.3) % 90)).toFixed(2)}`,
+  }));
+  items[33] = { sku: 'Q-4417', name: 'Pressure valve V2', price: '$63.10' };
+  const PER_PAGE = 10;
+  const pages = Math.ceil(items.length / PER_PAGE);
+  let page = 1;
+  function render() {
+    const slice = items.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+    document.getElementById('rows').innerHTML = slice
+      .map((it) => `<tr><td>${it.sku}</td><td>${it.name}</td><td>${it.price}</td></tr>`)
+      .join('');
+    document.getElementById('page').textContent = `Page ${page} of ${pages}`;
+    document.getElementById('prev').disabled = page === 1;
+    document.getElementById('next').disabled = page === pages;
+  }
+  document.getElementById('prev').onclick = () => { page--; render(); };
+  document.getElementById('next').onclick = () => { page++; render(); };
+  document.getElementById('send').onclick = () =>
+    benchSubmit('pagination', { answer: document.getElementById('answer').value.trim() });
+  render();
+</script>
+</body>
+</html>

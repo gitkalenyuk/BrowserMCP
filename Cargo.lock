@@ -489,11 +489,16 @@ dependencies = [
 name = "bmcp-cef"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "bmcp-adblock",
  "bmcp-cdp",
  "bmcp-core",
+ "bmcp-data",
+ "bmcp-profiles",
  "cef",
  "include_dir",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -510,6 +515,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -541,6 +547,24 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bmcp-heal"
+version = "0.1.0"
+dependencies = [
+ "bmcp-ai",
+ "bmcp-core",
+ "bmcp-jobs",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wiremock",
 ]
 
 [[package]]
@@ -630,6 +654,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-pagetools"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bmcp-browser",
+ "bmcp-core",
+ "bmcp-perception",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-perception"
 version = "0.1.0"
 dependencies = [
@@ -638,6 +678,39 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "bmcp-plugins"
+version = "0.1.0"
+dependencies = [
+ "bmcp-api",
+ "bmcp-core",
+ "bmcp-jobs",
+ "getrandom 0.3.4",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "bmcp-profiles"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "bmcp-data",
+ "bmcp-identity",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -668,11 +741,15 @@ dependencies = [
  "bmcp-core",
  "bmcp-data",
  "bmcp-governor",
+ "bmcp-heal",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
  "bmcp-notify",
+ "bmcp-pagetools",
+ "bmcp-plugins",
+ "bmcp-profiles",
  "bmcp-record",
 ]
 
@@ -712,16 +789,21 @@ name = "browsermcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmcp-adblock",
  "bmcp-ai",
  "bmcp-api",
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
  "bmcp-governor",
+ "bmcp-heal",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-notify",
+ "bmcp-pagetools",
+ "bmcp-plugins",
+ "bmcp-profiles",
  "bmcp-record",
  "bmcp-registry",
  "serde_json",

@@ -2,6 +2,7 @@
 //!
 //! This crate must never depend on CEF: everything here is plain Rust and unit-testable.
 //!
+//! * [`agents`] — agent identity, tab groups and locks (the real `LockPolicy`);
 //! * [`backend`] — the `BrowserBackend` trait the CEF crate implements;
 //! * [`command`] — the `Command` trait and the `Registry` every API surface is generated from;
 //! * [`commands`] — the built-in commands (`tabs.list`, `nav.goto`, …);
@@ -10,6 +11,7 @@
 //! * [`paths`] — portable data directory layout;
 //! * [`tabs`] — `TabStrip`, the tab order + active tab of one window.
 
+pub mod agents;
 pub mod backend;
 pub mod command;
 pub mod commands;
@@ -20,13 +22,14 @@ pub mod tabs;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+pub use agents::{AgentId, Agents};
 pub use backend::{
     BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, NEW_TAB_URL,
-    TabId, TabInfo,
+    OpenTabOptions, TabId, TabInfo, WindowTarget,
 };
 pub use command::{
-    Caller, CmdError, Command, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta, Registry, Retry,
-    Sensitivity, Toolset, wire_name,
+    Caller, CmdError, Command, CommandGuard, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta,
+    Registry, Retry, Sensitivity, Toolset, wire_name,
 };
 pub use events::{Event, EventBus};
 pub use extensions::Extensions;

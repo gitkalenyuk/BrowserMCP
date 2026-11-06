@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ShopFind – product search</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 760px; }
+  article { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; margin: 10px 0; }
+  .meta { color: #555; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>ShopFind</h1>
+<form id="search" role="search">
+  <label>Search products <input name="q" type="search" autocomplete="off"></label>
+  <button type="submit">Search</button>
+</form>
+<p id="summary" role="status"></p>
+<main id="results" aria-label="Results"></main>
+<script>
+  // Task "search": search for "wireless keyboard" and add the one sold by KeyCo to the cart.
+  const PRODUCTS = [
+    { id: 'kb-typeflow', title: 'TypeFlow Wireless Keyboard', seller: 'Gadgetry', price: '$49.00' },
+    { id: 'kb-keyco-k7', title: 'K7 Wireless Keyboard, low profile', seller: 'KeyCo', price: '$59.00' },
+    { id: 'kb-keyco-wired', title: 'K3 Wired Keyboard', seller: 'KeyCo', price: '$29.00' },
+    { id: 'kb-mx', title: 'MX Wireless Keyboard and Mouse set', seller: 'OfficeHub', price: '$89.00' },
+    { id: 'kb-tiny', title: 'Tiny Wireless Keyboard for tablets', seller: 'Gadgetry', price: '$25.00' },
+    { id: 'ms-keyco', title: 'KeyCo Wireless Mouse', seller: 'KeyCo', price: '$19.00' },
+    { id: 'hd-sound', title: 'Wireless Headphones Pro', seller: 'SoundCo', price: '$129.00' },
+    { id: 'kb-mech', title: 'Mechanical Keyboard RGB', seller: 'GameGear', price: '$99.00' },
+  ];
+  const form = document.getElementById('search');
+  const results = document.getElementById('results');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const words = form.q.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = PRODUCTS.filter((p) => words.length && words.every((w) => p.title.toLowerCase().includes(w)));
+    document.getElementById('summary').textContent = `${hits.length} results for "${form.q.value}"`;
+    results.replaceChildren(
+      ...hits.map((p) => {
+        const a = document.createElement('article');
+        a.innerHTML = `<h2>${p.title}</h2><p class="meta">Sold by ${p.seller} · ${p.price}</p>`;
+        const add = document.createElement('button');
+        add.textContent = 'Add to cart';
+        add.addEventListener('click', () => {
+          add.textContent = 'In cart';
+          add.disabled = true;
+          benchSubmit('search', { product: p.id, query: form.q.value });
+        });
+        a.append(add);
+        return a;
+      }),
+    );
+  });
+</script>
+</body>
+</html>

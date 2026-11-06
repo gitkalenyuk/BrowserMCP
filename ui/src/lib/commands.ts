@@ -20,6 +20,8 @@ export const COMMANDS: CommandMeta[] = [
   { id: 'nav.reload', title: 'Reload page' },
   { id: 'nav.stop', title: 'Stop loading' },
   { id: 'omnibox.focus', title: 'Focus address bar' },
+  // Hidden: in the browser the palette is another page, which has no find bar to open.
+  { id: 'find.open', title: 'Find in page', hidden: true },
   { id: 'hints.show', title: 'Show link hints' },
   { id: 'ui.toggleVerticalTabs', title: 'Toggle vertical tabs' },
   { id: 'ui.toggleTheme', title: 'Toggle light / dark theme' },

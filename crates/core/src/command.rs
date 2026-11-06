@@ -47,6 +47,7 @@
 //! when there are no arguments.
 
 mod error;
+mod guard;
 mod lock;
 mod registry;
 mod schema;
@@ -67,6 +68,7 @@ use crate::events::EventBus;
 use crate::extensions::Extensions;
 
 pub use error::{CmdError, ErrorCode, Retry};
+pub use guard::CommandGuard;
 pub use lock::{AllowAll, LockPolicy};
 pub use registry::{CommandInfo, Registry};
 pub use schema::{args_schema, output_schema};
@@ -269,6 +271,30 @@ pub enum Caller {
     },
     /// A keyboard shortcut.
     Keymap,
+    /// A plugin (`data/plugins/<name>`), over its own restricted WebSocket connection: the API
+    /// only lets it run the commands its `plugin.json` asks for (see `bmcp_api::access`).
+    Plugin {
+        name: String,
+    },
+}
+
+impl Caller {
+    /// The agent behind this caller: `?agent=` / client name on MCP, or the built-in agent.
+    pub fn agent_id(&self) -> Option<&str> {
+        match self {
+            Caller::Mcp {
+                agent: Some(agent), ..
+            } => Some(agent),
+            Caller::Agent { id } => Some(id),
+            _ => None,
+        }
+    }
+
+    /// A person at the browser (UI buttons, omnibox, palette, shortcuts). Humans always win
+    /// over agent locks.
+    pub fn is_human(&self) -> bool {
+        matches!(self, Caller::Ui | Caller::Keymap)
+    }
 }
 
 /// Everything a command may use while running. Cheap to clone.
@@ -282,6 +308,7 @@ pub struct Ctx {
     pub extensions: Arc<Extensions>,
     // Set by the registry for each call.
     lock: Arc<dyn LockPolicy>,
+    guards: Arc<Vec<Arc<dyn CommandGuard>>>,
     mutates_tab: bool,
     call_id: u64,
 }
@@ -296,6 +323,7 @@ impl Ctx {
             events,
             extensions: Arc::new(Extensions::new()),
             lock: Arc::new(AllowAll),
+            guards: Arc::new(Vec::new()),
             mutates_tab: false,
             call_id: 0,
         }
@@ -307,7 +335,9 @@ impl Ctx {
         self.call_id
     }
 
-    /// `Some(tab)` → that tab. `None` → the most recently opened tab (highest id), or `NO_TABS`.
+    /// `Some(tab)` → that tab. `None` → the caller's own tab when the lock policy knows one
+    /// (an agent's most recently claimed tab), else the most recently opened tab (highest
+    /// id), or `NO_TABS`.
     ///
     /// When the running command mutates tabs, a default-picked tab is lock-checked here (an
     /// explicit tab was already checked by the registry via [`Command::target_tab`]).
@@ -315,18 +345,30 @@ impl Ctx {
         if let Some(tab) = tab {
             return Ok(tab);
         }
-        let tab = self
+        let open: Vec<TabId> = self
             .backend
             .list_tabs()
             .await?
-            .into_iter()
+            .iter()
             .map(|t| t.id)
-            .max()
+            .collect();
+        // An agent works in its own tab by default (the lock policy knows which one).
+        let own = self
+            .lock
+            .default_tab(&self.caller)
+            .filter(|t| open.contains(t));
+        let tab = own
+            .or_else(|| open.iter().copied().max())
             .ok_or_else(|| CmdError::from(crate::backend::BackendError::NoTabs))?;
         if self.mutates_tab {
-            self.lock.check(&self.caller, Some(tab))?;
+            self.lock.acquire(self, Some(tab))?;
         }
         Ok(tab)
+    }
+
+    /// Tell the lock policy that this caller opened `tab` (an agent then owns it).
+    pub fn tab_opened(&self, tab: TabId) {
+        self.lock.opened(self, tab);
     }
 }
 

@@ -15,9 +15,11 @@
 //! processes. Everything is in the database, so after a browser restart a run shows up as
 //! `paused` and `run.resume` continues it (see `Store::recover_interrupted`).
 //!
-//! TODO(profiles): all rows share the browser's default profile today. Isolated per-row
-//! profiles (`profile: "isolated"` → a fresh incognito/temporary profile per row) come with
-//! the profile commands; `RunOptions::profile` is already stored for it.
+//! Profiles ([`tab_defaults`]): every row's script host gets `BMCP_TAB_DEFAULTS`, which the
+//! host merges into the script's `tabs.open` calls. `profile: "isolated"` gives each row
+//! attempt a fresh in-memory profile and off-screen (windowless) tabs, so parallel rows never
+//! share cookies, keyboard focus or visibility (a background tab of a window is hidden and
+//! ignores input). The run id is always passed, so downloads land in `data/runs/<run>/`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,7 +35,7 @@ use crate::Inner;
 use crate::data::Row;
 use crate::host::{HostOutcome, HostRun, ScriptFailure, locate_host, run_host};
 use crate::store::{
-    ClaimedRow, Counts, RowStatus, RowUpdate, RunOptions, RunRecord, RunStatus, now_ms,
+    ClaimedRow, Counts, HealMode, RowStatus, RowUpdate, RunOptions, RunRecord, RunStatus, now_ms,
 };
 use crate::topics;
 
@@ -69,9 +71,51 @@ pub struct StartRequest {
     pub retries: Option<u32>,
     pub timeout_secs: Option<u64>,
     pub stop_on_error: bool,
-    pub heal: bool,
+    pub heal: HealMode,
     pub profile: Option<String>,
 }
+
+/// `run.start {profile}` value for per-row isolation.
+pub const ISOLATED: &str = "isolated";
+
+/// Environment variable the script host reads: JSON merged into `tabs.open` arguments.
+pub const TAB_DEFAULTS_ENV: &str = "BMCP_TAB_DEFAULTS";
+
+/// The `tabs.open` defaults of one row attempt (see the module docs).
+pub fn tab_defaults(run: &str, row: u64, attempt: u32, profile: Option<&str>) -> Value {
+    match profile {
+        Some(ISOLATED) => json!({
+            // In-memory profile names: a-z 0-9 - _, at most 64 chars.
+            "profile": format!("{}-r{row}-a{attempt}", run.to_ascii_lowercase()),
+            "incognito": true,
+            "window": "offscreen",
+            "run": run,
+        }),
+        Some(p) if p != bmcp_core::ProfileId::DEFAULT => json!({ "profile": p, "run": run }),
+        _ => json!({ "run": run }),
+    }
+}
+
+/// How long the heal hook may take before `run.heal_needed` goes out without a snapshot.
+const HEAL_HOOK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// A row that broke on a selector error and opened a heal request; given to the heal hook.
+#[derive(Debug, Clone)]
+pub struct HealTrigger {
+    pub run: String,
+    pub row: u64,
+    /// The script (version) the row ran.
+    pub script: String,
+    pub error: Option<ScriptFailure>,
+    pub mode: HealMode,
+    /// The `run.heal_needed` event data.
+    pub payload: Value,
+}
+
+/// Called once per heal request, before `run.heal_needed` is emitted. Returns the text of a
+/// page snapshot of the row's tab (stored with [`crate::store::Store::save_heal_snapshot`]).
+pub type HealHook =
+    Arc<dyn Fn(HealTrigger) -> bmcp_core::BoxFuture<'static, Option<String>> + Send + Sync>;
 
 /// How a worker finished its row.
 struct RowEnd {
@@ -88,6 +132,7 @@ impl Inner {
         &self,
         source: ScriptSource<'_>,
         inputs: &[(String, String)],
+        env: &[(String, String)],
         timeout: Duration,
         cancel: &CancellationToken,
     ) -> Result<HostOutcome, CmdError> {
@@ -103,6 +148,7 @@ impl Inner {
                 ws_url: &ws_url,
                 script: &path,
                 inputs,
+                env,
                 timeout,
                 kill_grace: self.config.kill_grace,
             },
@@ -116,7 +162,7 @@ impl Inner {
     }
 
     /// `data/scripts/.adhoc-<ms>-<n>.ts` (hidden from `script.list` by the leading dot).
-    fn write_temp_script(&self, code: &str) -> Result<PathBuf, CmdError> {
+    pub(crate) fn write_temp_script(&self, code: &str) -> Result<PathBuf, CmdError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -133,15 +179,14 @@ impl Inner {
     pub fn start_run(self: &Arc<Self>, req: StartRequest) -> Result<RunRecord, CmdError> {
         self.scripts.require(&req.script)?;
         if let Some(profile) = &req.profile
-            && profile != bmcp_core::ProfileId::DEFAULT
+            && profile != ISOLATED
+            && bmcp_core::ProfileId::new(profile.as_str()).is_err()
         {
             return Err(CmdError::new(
-                ErrorCode::NotImplemented,
-                format!("profile {profile:?}: runs use the default profile for now"),
+                ErrorCode::InvalidParams,
+                format!("profile {profile:?} is not a valid profile id"),
             )
-            .with_hint(
-                "Omit `profile` (or pass \"default\"); per-row isolated profiles come later.",
-            ));
+            .with_hint("Use \"default\", \"isolated\" (fresh profile per row) or a profile id."));
         }
         let requested = req.parallel.unwrap_or(4).max(1);
         let options = RunOptions {
@@ -150,7 +195,8 @@ impl Inner {
             retries: req.retries.unwrap_or(1),
             timeout_secs: req.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1),
             stop_on_error: req.stop_on_error,
-            heal: req.heal,
+            heal: req.heal != HealMode::Off,
+            heal_mode: Some(req.heal),
             profile: req.profile,
         };
         let run = RunRecord {
@@ -292,7 +338,7 @@ impl Inner {
     }
 
     /// After every finished row: progress event, stop_on_error, heal pause.
-    fn after_row(&self, id: &str, end: &RowEnd) -> Result<(), CmdError> {
+    fn after_row(self: &Arc<Self>, id: &str, end: &RowEnd) -> Result<(), CmdError> {
         let run = self.store.run(id)?;
         let counts = self.store.counts(id)?;
         self.events
@@ -309,6 +355,7 @@ impl Inner {
             // The first broken row of a pause opens the heal request; later ones just wait.
             RowStatus::NeedsHeal if run.heal.is_none() && !run.status.is_final() => {
                 let error = end.error.clone();
+                let mode = run.options.heal_mode.unwrap_or(HealMode::Ask);
                 let heal = json!({
                     "id": id,
                     "row": end.idx,
@@ -316,6 +363,7 @@ impl Inner {
                     "error": error,
                     "step": error.as_ref().and_then(|e| e.command.clone()),
                     "line": error.as_ref().and_then(|e| e.line),
+                    "mode": mode.as_str(),
                 });
                 self.store.set_heal(id, Some(&heal))?;
                 self.store.set_status(
@@ -325,11 +373,49 @@ impl Inner {
                         "waiting for a patched script: call run_heal_apply (or run_resume to skip)",
                     ),
                 )?;
-                self.events.emit(topics::RUN_HEAL_NEEDED, heal);
+                self.announce_heal(HealTrigger {
+                    run: id.to_string(),
+                    row: end.idx,
+                    script: run.script.clone(),
+                    error,
+                    mode,
+                    payload: heal,
+                });
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Emit `run.heal_needed`. With a snapshot hook installed (see
+    /// [`crate::JobsService::set_heal_hook`]) the page snapshot is taken and stored first, so
+    /// whoever reacts to the event finds it in the database.
+    fn announce_heal(self: &Arc<Self>, trigger: HealTrigger) {
+        let hook = self
+            .heal_hook
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(hook) = hook else {
+            self.events.emit(topics::RUN_HEAL_NEEDED, trigger.payload);
+            return;
+        };
+        let inner = self.clone();
+        tokio::spawn(async move {
+            // A hanging snapshot must not hold the heal request back for long.
+            let snapshot = tokio::time::timeout(HEAL_HOOK_TIMEOUT, hook(trigger.clone()))
+                .await
+                .ok()
+                .flatten();
+            if let Some(text) = snapshot
+                && let Err(err) = inner
+                    .store
+                    .save_heal_snapshot(&trigger.run, trigger.row, &text)
+            {
+                tracing::warn!(run = %trigger.run, %err, "cannot store the heal snapshot");
+            }
+            inner.events.emit(topics::RUN_HEAL_NEEDED, trigger.payload);
+        });
     }
 
     fn emit_finished(&self, run: &RunRecord) {
@@ -450,10 +536,13 @@ async fn work_row(
         }
         attempts += 1;
         let _ = inner.store.set_attempts(id, row.idx, attempts);
+        let defaults = tab_defaults(id, row.idx, attempts, run.options.profile.as_deref());
+        let env = [(TAB_DEFAULTS_ENV.to_string(), defaults.to_string())];
         let outcome = inner
             .run_script(
                 ScriptSource::Name(&run.script),
                 &row.inputs,
+                &env,
                 timeout,
                 &cancel,
             )

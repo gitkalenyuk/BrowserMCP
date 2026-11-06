@@ -8,7 +8,7 @@ use crate::ax::{AxNode, AxTree};
 use crate::error::{PerceptionError, Result};
 use crate::refs::RefRegistry;
 use crate::roles;
-use crate::snapshot::descendant_text;
+use crate::snapshot::{MAX_TREE_DEPTH, descendant_text};
 use crate::text::{MAX_NAME_CHARS, clean, contains_ci, eq_ci, quote, truncate};
 
 /// What to look for. Every field that is set must match (AND).
@@ -48,6 +48,9 @@ pub struct FindResult {
     /// Number of matches before applying `limit`.
     pub total: usize,
     pub matches: Vec<Match>,
+    /// True when the page tree is deeper than [`MAX_TREE_DEPTH`] and the deeper part was
+    /// not searched.
+    pub too_deep: bool,
 }
 
 impl FindResult {
@@ -65,6 +68,11 @@ impl FindResult {
         );
         if self.total > self.matches.len() {
             out.push_str(" (narrow the filter to see the rest)");
+        }
+        if self.too_deep {
+            out.push_str(&format!(
+                "\n! the page tree is deeper than {MAX_TREE_DEPTH} levels; deeper parts were not searched"
+            ));
         }
         for m in &self.matches {
             out.push_str("\n- ");
@@ -123,15 +131,19 @@ pub fn find(
         regex,
         found: Vec::new(),
         visited: vec![false; tree.nodes.len()],
+        too_deep: false,
     };
     if let Some(root) = tree.root() {
         let mut ancestors = Vec::new();
-        search.walk(root, &mut ancestors, "");
+        search.walk(root, &mut ancestors, "", 0);
     }
 
     // Only the returned matches get refs (no point numbering 500 hidden hits).
     let total = search.found.len();
-    let id = registry.begin_snapshot();
+    // Hold the shared counters while handing out the id and e-numbers (see `snapshot`).
+    let space = registry.space();
+    let mut counters = space.lock();
+    let id = registry.begin_snapshot(&mut counters);
     let mut matches = Vec::new();
     for (index, context) in search.found.into_iter().take(limit) {
         let node = &tree.nodes[index];
@@ -148,8 +160,13 @@ pub fn find(
             context,
         });
     }
-    registry.finish_snapshot(id, Vec::new());
-    Ok(FindResult { id, total, matches })
+    registry.finish_snapshot(&mut counters, id, Vec::new());
+    Ok(FindResult {
+        id,
+        total,
+        matches,
+        too_deep: search.too_deep,
+    })
 }
 
 struct Search<'a> {
@@ -159,13 +176,27 @@ struct Search<'a> {
     /// (node position, context text)
     found: Vec<(usize, String)>,
     visited: Vec<bool>,
+    /// Set when part of the tree was deeper than [`MAX_TREE_DEPTH`] and was skipped.
+    too_deep: bool,
 }
 
 impl Search<'_> {
-    /// Depth-first walk. `ancestors` holds context labels of enclosing containers;
-    /// `context_name` is the nearest ancestor name (to skip text repeating it).
-    fn walk(&mut self, index: usize, ancestors: &mut Vec<String>, context_name: &str) {
+    /// Depth-first walk; `index` is `depth` levels below the root. `ancestors` holds
+    /// context labels of enclosing containers; `context_name` is the nearest ancestor name
+    /// (to skip text repeating it).
+    fn walk(
+        &mut self,
+        index: usize,
+        ancestors: &mut Vec<String>,
+        context_name: &str,
+        depth: usize,
+    ) {
         if self.visited[index] {
+            return;
+        }
+        // Recursion limit: a page nested thousands of levels deep must not overflow the stack.
+        if depth > MAX_TREE_DEPTH {
+            self.too_deep = true;
             return;
         }
         self.visited[index] = true;
@@ -198,7 +229,7 @@ impl Search<'_> {
             context_name.to_string()
         };
         for child in tree.children(index) {
-            self.walk(child, ancestors, &child_context);
+            self.walk(child, ancestors, &child_context, depth + 1);
         }
         if pushed {
             ancestors.pop();

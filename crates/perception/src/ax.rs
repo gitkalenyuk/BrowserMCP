@@ -73,6 +73,10 @@ pub struct AxNode {
     #[serde(rename = "backendDOMNodeId")]
     pub backend_dom_node_id: Option<i64>,
     pub frame_id: Option<String>,
+    /// Not from CDP: set by [`AxTree::attach_frame`] on an iframe node to the URL of the
+    /// document inside, printed as `(host)`.
+    #[serde(skip)]
+    pub frame_url: Option<String>,
 }
 
 /// Borrow the string inside an optional `AxValue`, or `""`.
@@ -219,6 +223,54 @@ impl AxTree {
         }
     }
 
+    /// Put the accessibility tree of the document inside an iframe under the iframe's node,
+    /// so one snapshot shows the page and its frames.
+    ///
+    /// * `owner`: position of the iframe node (role `Iframe`) in this tree.
+    /// * `child`: the frame's own tree (`Accessibility.getFullAXTree` for that frame).
+    /// * `prefix`: put in front of the child's AX node ids, which every frame numbers on
+    ///   its own (use something unique and stable per frame, like `"<frameId>:"`).
+    /// * `url`: the frame's URL, printed as `(host)` after the iframe.
+    /// * `map_backend`: maps the child's `backendDOMNodeId`s. An out-of-process frame
+    ///   numbers its DOM nodes on its own, so the caller makes them unique.
+    ///
+    /// Positions of the nodes already in the tree do not change.
+    pub fn attach_frame(
+        &mut self,
+        owner: usize,
+        child: AxTree,
+        prefix: &str,
+        url: &str,
+        map_backend: impl Fn(i64) -> i64,
+    ) {
+        self.nodes[owner].frame_url = Some(url.to_string());
+        let Some(child_root) = child.root() else {
+            return;
+        };
+        let owner_id = self.nodes[owner].node_id.clone();
+        let mut nodes = std::mem::take(&mut self.nodes);
+        nodes[owner]
+            .child_ids
+            .push(format!("{prefix}{}", child.nodes[child_root].node_id));
+        for (index, mut node) in child.nodes.into_iter().enumerate() {
+            node.node_id = format!("{prefix}{}", node.node_id);
+            node.child_ids = node
+                .child_ids
+                .iter()
+                .map(|id| format!("{prefix}{id}"))
+                .collect();
+            node.parent_id = if index == child_root {
+                Some(owner_id.clone())
+            } else {
+                node.parent_id.map(|id| format!("{prefix}{id}"))
+            };
+            node.backend_dom_node_id = node.backend_dom_node_id.map(&map_backend);
+            nodes.push(node);
+        }
+        let layout = std::mem::take(&mut self.layout);
+        *self = AxTree::from_nodes(nodes).with_layout(layout);
+    }
+
     /// Attach optional per-node layout/DOM info (see [`NodeLayout`]).
     pub fn with_layout(mut self, layout: HashMap<i64, NodeLayout>) -> AxTree {
         self.layout = layout;
@@ -290,6 +342,37 @@ mod tests {
         assert_eq!(button.name(), "OK");
         assert!(button.prop_true("focusable"));
         assert_eq!(tree.index_of_backend(7), Some(1));
+    }
+
+    #[test]
+    fn attaches_frame_trees_under_their_iframe() {
+        let page = AxTree::from_json_str(
+            r#"{"nodes": [
+            {"nodeId": "1", "role": {"value": "RootWebArea"}, "childIds": ["2", "3"], "backendDOMNodeId": 1},
+            {"nodeId": "2", "parentId": "1", "role": {"value": "button"}, "backendDOMNodeId": 2},
+            {"nodeId": "3", "parentId": "1", "role": {"value": "Iframe"}, "backendDOMNodeId": 3}
+        ]}"#,
+        )
+        .unwrap();
+        // The frame numbers its nodes on its own: ids 1 and 2 again.
+        let frame = AxTree::from_json_str(
+            r#"{"nodes": [
+            {"nodeId": "1", "role": {"value": "RootWebArea"}, "childIds": ["2"], "backendDOMNodeId": 1},
+            {"nodeId": "2", "parentId": "1", "role": {"value": "button"}, "backendDOMNodeId": 2}
+        ]}"#,
+        )
+        .unwrap();
+        let mut tree = page;
+        tree.attach_frame(2, frame, "F:", "https://x.test/", |b| b + 1000);
+        assert_eq!(tree.nodes.len(), 5);
+        assert_eq!(tree.nodes[2].frame_url.as_deref(), Some("https://x.test/"));
+        assert_eq!(tree.root(), Some(0));
+        let inner = tree.index_of_backend(1002).unwrap();
+        assert_eq!(tree.nodes[inner].node_id, "F:2");
+        let frame_root = tree.parent(inner).unwrap();
+        assert_eq!(tree.parent(frame_root), Some(2));
+        // The page's own nodes keep their positions and ids.
+        assert_eq!(tree.index_of_backend(2), Some(1));
     }
 
     #[test]

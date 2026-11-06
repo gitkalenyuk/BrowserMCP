@@ -21,7 +21,14 @@ bmcp-data = { path = "../data" }
 bmcp-identity = { path = "../identity" }
 bmcp-record = { path = "../record" }
 bmcp-jobs = { path = "../jobs" }
+# Adblock gate and permission rules are created before the browser starts.
+bmcp-adblock = { path = "../adblock" }
+bmcp-profiles = { path = "../profiles" }
+bmcp-plugins = { path = "../plugins" }
 bmcp-governor = { path = "../governor" }
+# Dialog watcher (Page.enable + auto-handling on every tab); commands are in bmcp-registry.
+bmcp-pagetools = { path = "../pagetools" }
+bmcp-heal = { path = "../heal" }
 bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }
 serde_json.workspace = true

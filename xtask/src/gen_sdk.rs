@@ -274,12 +274,14 @@ fn script_dts(commands: &[Cmd]) -> Result<String> {
          export interface Browser {\n    \
          /** Low level: `browser.call(\"tabs.list\", {})`. Also accepts wire names (`tabs_list`). */\n    \
          call<N extends keyof Commands>(name: N, args?: Commands[N][\"args\"]): Promise<Commands[N][\"output\"]>;\n    \
+         /** Report a structured result (`##bmcp:result` line; several calls merge object keys). */\n    \
+         output(value: unknown): void;\n    \
          /**\n     \
-         * Report a structured result to whoever started the script (`script.run`, a `run.start`\n     \
-         * row): prints `##bmcp:result <json>`. Several calls merge (object keys combine, later\n     \
-         * values win; any other value replaces).\n     \
-         */\n    \
-         output(value: unknown): void;\n",
+          * Call `handler(data, topic)` for every event matching `pattern` (exact topic, `\"prefix.*\"`\n     \
+          * or `\"*\"`). Returns a function that removes the handler. While handlers exist the script\n     \
+          * keeps running (plugins); it ends when the browser connection closes.\n     \
+          */\n    \
+         on(pattern: string, handler: (data: any, topic: string) => void | Promise<void>): () => void;\n",
     );
     out.push_str(&interface_members(&tree, commands, 2, false));
     out.push_str("  }\n}\n");

@@ -1,8 +1,9 @@
 //! The Rust functions ("ops") that JavaScript can call, bundled with the JS
 //! prelude into one deno_core `Extension` named `bmcp`.
 //!
-//! Only FOUR ops exist on purpose. Every browser command goes through the one
+//! Only a handful of ops exist on purpose. Every browser command goes through the one
 //! generic `op_bmcp_call`, so adding a browser command never touches this file.
+//! `op_bmcp_next_event` feeds `browser.on(topic, handler)` (plugins, long-lived scripts).
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -36,9 +37,55 @@ async fn op_bmcp_call(
     // Clone the Rc and release the RefCell borrow BEFORE awaiting:
     // holding a borrow across `.await` would panic if another op ran meanwhile.
     let sink = state.borrow().borrow::<SinkHandle>().0.clone();
+    let args = with_tab_defaults(&name, args, tab_defaults());
     sink.call(name.clone(), args)
         .await
         .map_err(|e| JsErrorBox::generic(format!("browser.{name} failed: {e}")))
+}
+
+/// `BMCP_TAB_DEFAULTS` (set by mass runs, e.g. `{"profile": "run-1-r3-a1", "incognito":
+/// true, "window": "offscreen", "run": "run-1"}`), read once.
+fn tab_defaults() -> &'static serde_json::Value {
+    static DEFAULTS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        std::env::var("BMCP_TAB_DEFAULTS")
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null)
+    })
+}
+
+/// For `tabs.open`: add every default the script did not set itself (so each row of a
+/// mass run opens its tabs in its own profile/window without changing the script).
+pub fn with_tab_defaults(
+    name: &str,
+    mut args: serde_json::Value,
+    defaults: &serde_json::Value,
+) -> serde_json::Value {
+    let (Some(defaults), true) = (defaults.as_object(), name == "tabs.open") else {
+        return args;
+    };
+    if args.is_null() {
+        args = serde_json::json!({});
+    }
+    if let Some(object) = args.as_object_mut() {
+        for (key, value) in defaults {
+            object.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    args
+}
+
+/// Next browser event as `{topic, data}`, or `null` when no more events will come (the
+/// prelude's dispatch loop then stops, so the script can finish).
+#[op2]
+#[serde]
+async fn op_bmcp_next_event(state: Rc<RefCell<OpState>>) -> serde_json::Value {
+    let sink = state.borrow().borrow::<SinkHandle>().0.clone();
+    match sink.next_event().await {
+        Some((topic, data)) => serde_json::json!({ "topic": topic, "data": data }),
+        None => Value::Null,
+    }
 }
 
 /// Returns the inputs object; the prelude freezes it into `globalThis.inputs`.
@@ -73,7 +120,7 @@ async fn op_bmcp_sleep(ms: f64) {
 // already read `inputs` (putting state in afterwards would be too late).
 deno_core::extension!(
     bmcp,
-    ops = [op_bmcp_call, op_bmcp_inputs, op_bmcp_log, op_bmcp_sleep],
+    ops = [op_bmcp_call, op_bmcp_inputs, op_bmcp_log, op_bmcp_sleep, op_bmcp_next_event],
     esm_entry_point = "ext:bmcp/prelude.js",
     esm = [dir "src/js", "prelude.js"],
     options = { sink: SinkHandle, inputs: Inputs },
@@ -82,3 +129,32 @@ deno_core::extension!(
         state.put(options.inputs);
     },
 );
+
+#[cfg(test)]
+mod tests {
+    use deno_core::serde_json::{self, json};
+
+    use super::with_tab_defaults;
+
+    #[test]
+    fn tab_defaults_fill_only_missing_tabs_open_args() {
+        let defaults = json!({"profile": "p1", "window": "offscreen", "run": "r"});
+        assert_eq!(
+            with_tab_defaults("tabs.open", json!({"url": "u", "window": "new"}), &defaults),
+            json!({"url": "u", "window": "new", "profile": "p1", "run": "r"})
+        );
+        assert_eq!(
+            with_tab_defaults("tabs.open", serde_json::Value::Null, &defaults),
+            defaults
+        );
+        // Other commands and missing defaults: untouched.
+        assert_eq!(
+            with_tab_defaults("nav.goto", json!({"url": "u"}), &defaults),
+            json!({"url": "u"})
+        );
+        assert_eq!(
+            with_tab_defaults("tabs.open", json!({"url": "u"}), &serde_json::Value::Null),
+            json!({"url": "u"})
+        );
+    }
+}

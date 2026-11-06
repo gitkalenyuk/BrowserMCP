@@ -163,6 +163,7 @@ async fn fire(inner: Arc<Inner>, trigger: TriggerRecord) {
         .run_script(
             ScriptSource::Name(&trigger.script),
             &inputs,
+            &[],
             Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             &inner.shutdown,
         )

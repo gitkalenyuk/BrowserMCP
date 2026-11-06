@@ -3,31 +3,29 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{NEW_TAB_URL, TabId, TabInfo};
-use crate::command::{CmdError, Command, Ctx, Empty, Meta, Toolset};
+use crate::agents::{Agents, TabGroup, TabLock};
+use crate::backend::{NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
+use crate::command::{Caller, CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `tabs.list`: all open tabs.
 pub struct List;
 
-/// A tab group (named, colored run of tabs). Not implemented yet: `tabs.list` always
-/// returns an empty list, the type is here so the output schema is complete.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TabGroup {
-    pub id: String,
-    pub name: String,
-    /// grey | blue | red | yellow | green | pink | purple | cyan | orange
-    pub color: String,
-    /// Set for agent-owned groups.
-    pub agent_id: Option<String>,
+/// One tab in `tabs.list`: the tab plus its agent lock.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListedTab {
+    #[serde(flatten)]
+    pub info: TabInfo,
+    /// Agent lock of the tab; null when no agent owns it.
+    pub lock: Option<TabLock>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListOutput {
-    /// Open tabs in tab-strip order.
-    pub tabs: Vec<TabInfo>,
-    /// Tab groups (always empty for now).
+    /// Open tabs in tab-strip order; `groupId` / `lockedBy` / `lock` say which agent owns
+    /// a tab.
+    pub tabs: Vec<ListedTab>,
+    /// Tab groups: one per known agent (`agent:<id>`).
     pub groups: Vec<TabGroup>,
     /// The tab the user is looking at, or null when no tab is open.
     pub active_id: Option<TabId>,
@@ -41,7 +39,8 @@ impl Command for List {
     fn meta() -> Meta {
         Meta::new(
             "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, \
-             canGoForward, active; plus activeId.",
+             canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and \
+             activeId.",
             Toolset::Core,
         )
         .palette("List tabs")
@@ -50,9 +49,22 @@ impl Command for List {
     async fn run(ctx: Ctx, _args: Empty) -> Result<ListOutput, CmdError> {
         let tabs = ctx.backend.list_tabs().await?;
         let active_id = tabs.iter().find(|t| t.active).map(|t| t.id);
+        let agents = Agents::from_ctx(&ctx);
+        let open: Vec<TabId> = tabs.iter().map(|t| t.id).collect();
+        agents.retain_open(&ctx.events, &open);
+        let tabs = tabs
+            .into_iter()
+            .map(|mut info| {
+                agents.decorate(&mut info);
+                ListedTab {
+                    lock: agents.tab_lock(info.id),
+                    info,
+                }
+            })
+            .collect();
         Ok(ListOutput {
             tabs,
-            groups: Vec::new(),
+            groups: agents.groups(),
             active_id,
         })
     }
@@ -68,6 +80,17 @@ pub struct OpenArgs {
     pub url: Option<String>,
     /// Open without switching to it (default false: the new tab becomes active).
     pub background: Option<bool>,
+    /// Profile to open it in (profile_list / profile_create): own cookies, cache, proxy and
+    /// identity. Default: the profile the browser started with.
+    pub profile: Option<String>,
+    /// In-memory profile, nothing is written to disk (default false). With `profile`: the
+    /// in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+    pub incognito: Option<bool>,
+    /// "current" (default): a tab in the current window; "new": a window of its own;
+    /// "offscreen": no visible window (automation; input and screenshots still work).
+    pub window: Option<WindowTarget>,
+    /// Mass run id this tab belongs to (set by run_start; downloads go to the run's folder).
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -87,8 +110,10 @@ impl Command for Open {
     fn meta() -> Meta {
         // Not `mutates_tab`: it creates a tab instead of changing an existing one.
         Meta::new(
-            "Open a URL in a new tab (background: true keeps the current tab shown). Returns \
-             the new tab; its id is in `tab` and `id`.",
+            "Open a URL in a new tab (background: true keeps the current tab shown). Optional: \
+             profile (own cookies/proxy/identity), incognito (in memory), window: \"new\" | \
+             \"offscreen\" (own window / no window, for parallel automation). Returns the new \
+             tab; its id is in `tab` and `id`.",
             Toolset::Core,
         )
         .act()
@@ -97,8 +122,16 @@ impl Command for Open {
 
     async fn run(ctx: Ctx, args: OpenArgs) -> Result<OpenOutput, CmdError> {
         let url = args.url.unwrap_or_else(|| NEW_TAB_URL.to_owned());
-        let background = args.background.unwrap_or(false);
-        let tab = ctx.backend.open_tab(url.clone(), background).await?;
+        let options = OpenTabOptions {
+            background: args.background.unwrap_or(false),
+            profile: args.profile.filter(|p| !p.is_empty()),
+            incognito: args.incognito.unwrap_or(false),
+            window: args.window.unwrap_or_default(),
+            run: args.run.filter(|r| !r.is_empty()),
+        };
+        let tab = ctx.backend.open_tab_with(url.clone(), options).await?;
+        // An agent owns the tabs it opens.
+        ctx.tab_opened(tab);
         // The browser exists now but may not have reported anything yet: fall back to
         // the requested URL.
         let info = ctx
@@ -108,6 +141,8 @@ impl Command for Open {
             .into_iter()
             .find(|t| t.id == tab)
             .unwrap_or_else(|| TabInfo::new(tab, url));
+        let mut info = info;
+        Agents::from_ctx(&ctx).decorate(&mut info);
         Ok(OpenOutput { tab, info })
     }
 }
@@ -130,8 +165,9 @@ impl Command for Close {
 
     fn meta() -> Meta {
         Meta::new(
-            "Close a tab. Closing the last tab of a window closes the window (and the last \
-             window quits the browser).",
+            "Close a tab. If it is the last tab of its window, the new tab page takes its \
+             place and the window stays open (only a person closing the last tab closes the \
+             window).",
             Toolset::Core,
         )
         .mutates_tab()
@@ -144,9 +180,24 @@ impl Command for Close {
     }
 
     async fn run(ctx: Ctx, args: TabArgs) -> Result<Empty, CmdError> {
-        ctx.backend.close_tab(args.tab).await?;
+        let keep_window = keeps_window(&ctx.caller);
+        // Logged so an "unexplained" window close / quit can be traced to its caller.
+        tracing::info!(tab = %args.tab, caller = ?ctx.caller, keep_window, "tabs.close");
+        if keep_window {
+            ctx.backend.close_tab_keep_window(args.tab).await?;
+        } else {
+            ctx.backend.close_tab(args.tab).await?;
+        }
         Ok(Empty {})
     }
+}
+
+/// May closing a tab also close its window (when it is the last one)? Only when a person
+/// does it (the browser UI, a keyboard shortcut). Agents, scripts, MCP/REST/WS clients and
+/// runs get the new tab page in place of the last tab instead, so one automation cannot shut
+/// down the browser everyone else is using.
+pub fn keeps_window(caller: &Caller) -> bool {
+    !matches!(caller, Caller::Ui | Caller::Keymap)
 }
 
 /// `tabs.activate`: show a tab.
@@ -169,5 +220,35 @@ impl Command for Activate {
     async fn run(ctx: Ctx, args: TabArgs) -> Result<Empty, CmdError> {
         ctx.backend.activate_tab(args.tab).await?;
         Ok(Empty {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keeps_window;
+    use crate::command::Caller;
+
+    #[test]
+    fn only_people_may_close_the_last_window_through_tabs_close() {
+        // A person: closing the last tab closes the window (normal browser behaviour).
+        assert!(!keeps_window(&Caller::Ui));
+        assert!(!keeps_window(&Caller::Keymap));
+        // Automation: the new tab page replaces the last tab, the window stays.
+        for caller in [
+            Caller::Rest,
+            Caller::Ws { conn: 1 },
+            Caller::Mcp {
+                session: "s".into(),
+                agent: None,
+            },
+            Caller::Script { id: "x".into() },
+            Caller::Agent { id: "a".into() },
+            Caller::Job {
+                run: "r".into(),
+                step: 1,
+            },
+        ] {
+            assert!(keeps_window(&caller), "{caller:?}");
+        }
     }
 }

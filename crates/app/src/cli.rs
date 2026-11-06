@@ -26,6 +26,8 @@ pub struct Cli {
     pub ui_dir: Option<PathBuf>,
     /// `--ui-dev <URL>`: load the chrome from a Vite dev server (hot reload).
     pub ui_dev: Option<String>,
+    /// `--cdp-port <N>`: open Chromium's remote debugging port (Playwright/Puppeteer).
+    pub cdp_port: Option<u16>,
 }
 
 impl Default for Cli {
@@ -41,6 +43,7 @@ impl Default for Cli {
             dump_ax: false,
             ui_dir: None,
             ui_dev: None,
+            cdp_port: None,
         }
     }
 }
@@ -63,6 +66,9 @@ Options:
                        instead of the copy built into the executable
   --ui-dev <URL>       Load the UI from a Vite dev server, e.g. http://localhost:5173
                        (hot reload; also set BMCP_DEV_UI=1 so the API accepts it)
+  --cdp-port <PORT>    Open the Chrome DevTools Protocol port for Playwright/Puppeteer
+                       (connectOverCDP http://127.0.0.1:<PORT>). Off by default; refused
+                       while any profile has a stealth identity
   --dump-ax            Print the page's accessibility tree and exit
   -h, --help           Show this help
 
@@ -111,6 +117,11 @@ impl Cli {
                 "--dump-ax" => cli.dump_ax = true,
                 "--ui-dir" => cli.ui_dir = value(&mut args).map(PathBuf::from),
                 "--ui-dev" => cli.ui_dev = value(&mut args),
+                "--cdp-port" => {
+                    cli.cdp_port = value(&mut args)
+                        .and_then(|v| v.parse().ok())
+                        .filter(|p: &u16| *p != 0);
+                }
                 "--api-port" => {
                     if let Some(port) = value(&mut args).and_then(|v| v.parse().ok()) {
                         cli.api_port = port;
@@ -184,6 +195,14 @@ mod tests {
         let cli = Cli::parse(["--ui-dir", "ui/dist", "--ui-dev=http://localhost:5173"]);
         assert_eq!(cli.ui_dir, Some(PathBuf::from("ui/dist")));
         assert_eq!(cli.ui_dev.as_deref(), Some("http://localhost:5173"));
+    }
+
+    #[test]
+    fn cdp_port_flag() {
+        assert_eq!(Cli::parse(Vec::<String>::new()).cdp_port, None);
+        assert_eq!(Cli::parse(["--cdp-port", "9333"]).cdp_port, Some(9333));
+        assert_eq!(Cli::parse(["--cdp-port=0"]).cdp_port, None);
+        assert_eq!(Cli::parse(["--cdp-port", "x"]).cdp_port, None);
     }
 
     #[test]

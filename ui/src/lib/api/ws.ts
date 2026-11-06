@@ -8,7 +8,7 @@ export const DEFAULT_WS_URL = 'ws://127.0.0.1:47800/v1/ws';
  * the side panels render AI sessions, terminals and traffic; ui.* carries notifications.
  * Subscribing twice is harmless.
  */
-export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*'];
+export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*'];
 
 interface Pending {
   resolve: (value: unknown) => void;

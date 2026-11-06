@@ -10,18 +10,35 @@
 mod backend;
 mod bridge;
 mod chrome;
+mod cookies;
+mod downloads;
+mod hooks;
+mod net;
+mod osr;
+mod profiles;
 mod scheme;
 mod shell;
 mod switches;
 mod ui_files;
 
 pub use backend::CefBackend;
+pub use hooks::set_tab_preparer;
 pub use shell::ReadyCallback;
 
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
+use bmcp_adblock::ResourceGate;
 use bmcp_core::{DataDir, EventBus, ProfileId};
+use bmcp_profiles::PermissionStore;
 use cef::{CefString, Settings, api_hash, args::Args, execute_process, sys};
+
+/// Site permission rules (shared with the `permissions.*` commands).
+static PERMISSIONS: OnceLock<PermissionStore> = OnceLock::new();
+
+pub(crate) fn permission_store() -> Option<&'static PermissionStore> {
+    PERMISSIONS.get()
+}
 
 /// Which CEF runtime style windows use.
 ///
@@ -71,6 +88,15 @@ pub struct LaunchOptions {
     /// Runs on the UI thread once the first window exists. Hand the backend to async
     /// code (API servers, scripts) from here; do not block.
     pub on_ready: Option<ReadyCallback>,
+    /// Asked for every network request of web pages (adblock + site policies, see
+    /// `crates/adblock/README.md`). `None` = nothing is filtered in the network stack.
+    pub resource_gate: Option<Arc<dyn ResourceGate>>,
+    /// Site permission rules; `None` = every web permission request is denied.
+    pub permissions: Option<PermissionStore>,
+    /// Open Chromium's remote debugging port (for Playwright/Puppeteer `connectOverCDP`).
+    /// Off by default; the caller must not combine it with stealth profiles (a debugging
+    /// port is easy to detect).
+    pub cdp_port: Option<u16>,
 }
 
 /// What [`start`] found out about the current process.
@@ -127,11 +153,28 @@ impl Browser {
             cache_path: cef_path(&profile_dir),
             log_file: cef_path(&opts.data.logs().join("cef.log")),
             persist_session_cookies: 1,
+            // Off-screen tabs (`tabs.open {window: "offscreen"}`) are windowless browsers.
+            windowless_rendering_enabled: 1,
+            // 0 = no remote debugging port.
+            remote_debugging_port: opts.cdp_port.map_or(0, i32::from),
             ..Default::default()
         };
 
         bridge::set_events(opts.events);
         scheme::configure(&opts.ui);
+        profiles::set_launch(opts.data.root().to_path_buf(), opts.profile.to_string());
+        if let Some(gate) = opts.resource_gate {
+            net::set_gate(gate);
+        }
+        if let Some(permissions) = opts.permissions {
+            let _ = PERMISSIONS.set(permissions);
+        }
+        if let Some(port) = opts.cdp_port {
+            tracing::warn!(
+                port,
+                "remote debugging port open: any local program can control this browser"
+            );
+        }
 
         let mut app = shell::ShellApp::new(std::sync::Arc::new(shell::StartConfig {
             url: opts.start_url,
@@ -161,5 +204,18 @@ impl Browser {
 }
 
 fn cef_path(path: &std::path::Path) -> CefString {
-    CefString::from(path.to_string_lossy().as_ref())
+    CefString::from(native_path(path).as_str())
+}
+
+/// A path as one string with the platform's own separators. Pitfall (Windows): Chromium
+/// compares profile folders as strings — a context's `cache_path` must be a direct child of
+/// `root_cache_path` — so `C:/data\profiles\work` (forward slashes from `--data-dir` plus
+/// joined backslashes) was refused ("Cannot create profile at path").
+pub(crate) fn native_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('/', "\\")
+    } else {
+        text.into_owned()
+    }
 }

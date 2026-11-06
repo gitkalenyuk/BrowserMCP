@@ -12,7 +12,7 @@ use crate::rest::status_for;
 
 /// Every error code, for the `CmdError.code` enum. Keep in sync with `bmcp_core::ErrorCode`
 /// (`rest::status_for` is an exhaustive match, so a new code is noticed there first).
-const ERROR_CODES: [ErrorCode; 17] = [
+const ERROR_CODES: [ErrorCode; 18] = [
     ErrorCode::StaleRef,
     ErrorCode::AmbiguousTarget,
     ErrorCode::Timeout,
@@ -29,6 +29,7 @@ const ERROR_CODES: [ErrorCode; 17] = [
     ErrorCode::InvalidParams,
     ErrorCode::ShuttingDown,
     ErrorCode::NotImplemented,
+    ErrorCode::DialogOpen,
     ErrorCode::Internal,
 ];
 
@@ -188,6 +189,7 @@ fn cmd_error_schema() -> Value {
             "retry": { "type": "string", "enum": ["now", "after_wait", "after_snapshot", "no"] },
             "hint": { "type": "string" },
             "candidates": { "type": "array", "description": "Possible intended targets/names." },
+            "owner": { "type": "string", "description": "TAB_LOCKED: agent id holding the tab, or \"user\"." },
         },
         "required": ["code", "message", "retry"],
     })

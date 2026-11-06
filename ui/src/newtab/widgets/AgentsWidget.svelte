@@ -20,7 +20,7 @@
     ];
     Promise.all([api.call('agents.list'), api.call('runs.list')])
       .then(([a, r]) => {
-        agents = a;
+        agents = a.agents;
         runs = r.runs;
         patches = r.patches;
         loaded = true;

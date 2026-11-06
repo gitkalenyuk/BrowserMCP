@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feed</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 560px; }
+  article { border-bottom: 1px solid #ddd; padding: 18px 0; min-height: 90px; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Community feed</h1>
+<main id="feed" aria-label="Posts"></main>
+<p id="loading" role="status">Scroll down to load more posts.</p>
+<script>
+  // Task "scroll": like post #42 (only exists after scrolling far enough) and nothing else.
+  const AUTHORS = ['Ana', 'Ben', 'Chloe', 'Dmytro', 'Eva', 'Femi', 'Gita'];
+  const TOPICS = ['gardening', 'rust', 'cycling', 'baking', 'chess', 'jazz', 'hiking', 'photography'];
+  const TOTAL = 60;
+  let shown = 0;
+  let busy = false;
+  function addPosts(n) {
+    const feed = document.getElementById('feed');
+    for (let i = 0; i < n && shown < TOTAL; i++) {
+      shown++;
+      const id = shown;
+      const a = document.createElement('article');
+      a.innerHTML = `<h2>Post #${id}: thoughts on ${TOPICS[id % TOPICS.length]}</h2><p>by ${AUTHORS[id % AUTHORS.length]}</p>`;
+      const like = document.createElement('button');
+      like.textContent = 'Like';
+      like.setAttribute('aria-label', `Like post #${id}`);
+      like.onclick = () => {
+        like.textContent = 'Liked';
+        like.disabled = true;
+        benchSubmit('scroll', { post: id });
+      };
+      a.append(like);
+      feed.append(a);
+    }
+    document.getElementById('loading').textContent =
+      shown < TOTAL ? `Showing ${shown} posts. Scroll down to load more.` : 'No more posts.';
+  }
+  // Load 10 more when the bottom of the page comes into view (with a short "network" delay).
+  window.addEventListener('scroll', () => {
+    const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 200;
+    if (!nearBottom || busy || shown >= TOTAL) return;
+    busy = true;
+    document.getElementById('loading').textContent = 'Loading…';
+    setTimeout(() => {
+      addPosts(10);
+      busy = false;
+    }, 300);
+  });
+  addPosts(10);
+</script>
+</body>
+</html>
