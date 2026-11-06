@@ -77,6 +77,32 @@ export default async function setup(project: TestProject) {
     `[e2e] browser pid ${env.pid} api ${apiPort} cdp ${cdpPort}, fixtures ${env.fixtures} (pid ${fixtures.pid}), ` +
       `data ${dataDir}, script host: ${env.scriptHost ? "yes" : "no"}, ffmpeg: ${env.ffmpeg ? "yes" : "no"}`,
   );
+  // Optional capabilities: without them some tests are skipped. Say so loudly, and fail when
+  // BMCP_E2E_REQUIRE (e.g. "script-host,ffmpeg", set by CI) says they must be there.
+  const missing = [
+    ...(env.scriptHost ? [] : ["script-host"]),
+    ...(env.ffmpeg ? [] : ["ffmpeg"]),
+  ];
+  if (missing.length > 0) {
+    console.warn(
+      `[e2e] WARNING: missing ${missing.join(", ")}; skipped: ` +
+        [
+          ...(env.scriptHost ? [] : ["record → script and mass-run tests (build with `cargo xtask e2e --all`)"]),
+          ...(env.ffmpeg ? [] : ["the screencast video test (put ffmpeg on PATH)"]),
+        ].join("; "),
+    );
+  }
+  const required = (process.env.BMCP_E2E_REQUIRE ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unmet = required.filter((r) => missing.includes(r));
+  if (unmet.length > 0) {
+    await browser?.stop();
+    fixtures?.stop();
+    await removeDir(dataDir);
+    throw new Error(`[e2e] BMCP_E2E_REQUIRE needs ${unmet.join(", ")}, which is missing`);
+  }
   project.provide("e2e", env);
 
   return async () => {

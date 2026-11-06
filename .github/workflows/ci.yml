@@ -5,7 +5,8 @@ name: CI
 #           (+ no tracked file is gitignored)
 #   node:   pnpm install, pnpm -r build, pnpm -r test, pnpm -C ui check
 #   script: cargo test -p bmcp-script (V8, slow) — only when the script host can be affected
-#   e2e:    cargo xtask e2e (tests/e2e against browsermcp --headless), after rust
+#   e2e:    cargo xtask e2e --all (tests/e2e against browsermcp --headless, incl. the script
+#           host and ffmpeg), after rust
 #   release: cargo xtask dist (portable zip) on v* tags and manual runs, after rust + node
 # The jobs run in parallel.
 
@@ -195,9 +196,10 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # End-to-end suite (tests/e2e): builds the debug browser, then vitest + the SDK against
-  # `browsermcp --headless` on local fixture sites (no windows, no network). The V8 script
-  # host is not built here, so the record→script and mass-run tests are skipped.
+  # End-to-end suite (tests/e2e): builds the debug browser and the V8 script host (--all), then
+  # vitest + the SDK against `browsermcp --headless` on local fixture sites (no windows, no
+  # network). ffmpeg is installed for the video test; BMCP_E2E_REQUIRE makes the suite fail
+  # instead of silently skipping when the script host or ffmpeg is missing.
   e2e:
     needs: rust
     runs-on: windows-latest
@@ -207,8 +209,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Ninja
-        run: choco install ninja -y --no-progress
+      - name: Install Ninja and ffmpeg
+        run: choco install ninja ffmpeg -y --no-progress
 
       - name: Cache CEF binaries
         uses: actions/cache@v6
@@ -230,5 +232,7 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: E2E (headless)
-        run: cargo xtask e2e
+      - name: E2E (headless, with the script host)
+        env:
+          BMCP_E2E_REQUIRE: script-host,ffmpeg
+        run: cargo xtask e2e --all
