@@ -289,6 +289,10 @@ export class MockApi implements BrowserApi {
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },
+    'ui.answer': ({ id, choice }) => {
+      this.#emit('ui.notification_closed', { id, choice, label: choice, via: 'ui' });
+      return { id, label: choice };
+    },
   };
 
   // ---- helpers --------------------------------------------------------------

@@ -191,9 +191,19 @@ async fn start_api(
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
     }
+    // Notifications: UI toasts, Windows toasts, Telegram bot, webhook (data/config/notify.json).
+    // Routes bus events (run.finished, run.heal_needed, …) by its rules; serves ui.ask_user.
+    let notify = registry
+        .extensions()
+        .insert(bmcp_notify::NotifyService::start(
+            bmcp_notify::NotifyOptions::new(data.config().join("notify.json")),
+            events.clone(),
+        ));
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    // Notification buttons (heal: Skip row / Stop run) run commands through the registry.
+    bmcp_notify::attach(&registry, backend.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
@@ -208,6 +218,7 @@ async fn start_api(
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
+                notify.shutdown();
                 if let Some(jobs) = jobs {
                     jobs.shutdown();
                 }
