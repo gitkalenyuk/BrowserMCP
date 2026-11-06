@@ -217,6 +217,10 @@ pub struct ProviderSettings {
 pub struct AiConfig {
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderSettings>,
+    /// Provider used by background AI features (self-healing, `page.extract`) when the call
+    /// names none. `None` = the first configured one (see `AiService::default_provider`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
 }
 
 impl AiConfig {

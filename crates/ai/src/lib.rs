@@ -5,7 +5,9 @@
 //! * [`agent`] — the agent loop for API providers; tools are the registry's commands;
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
 //! * [`session`] — agent id, color, status, transcript, touched tabs, `ai.*` events;
-//! * [`term`] — PTY terminals (`term.*`).
+//! * [`term`] — PTY terminals (`term.*`);
+//! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects);
+//! * [`oneshot`] — one-shot text completions (no tools) for self-healing and `page.extract`.
 //!
 //! Wiring (in `crates/app`):
 //!
@@ -21,6 +23,8 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod model;
+pub mod oneshot;
+pub mod proc_tree;
 pub mod session;
 pub mod term;
 
@@ -178,7 +182,20 @@ impl AiService {
 
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("{}-{n}", opts.provider);
-        let color = COLORS[(n as usize - 1) % COLORS.len()].to_string();
+        // The agent registry hands out the tab-group color, so the chat and the tab group
+        // match; its named colors map onto `COLORS` in the same order.
+        let color = match ctx.extensions.get::<bmcp_core::Agents>() {
+            Some(agents) => {
+                let name = format!("{} {n}", resolved.preset.name);
+                let named = agents.ensure(&ctx.events, &id, Some(&name)).color;
+                let index = bmcp_core::agents::COLORS
+                    .iter()
+                    .position(|c| *c == named)
+                    .unwrap_or(0);
+                COLORS[index % COLORS.len()].to_string()
+            }
+            None => COLORS[(n as usize - 1) % COLORS.len()].to_string(),
+        };
         let dir = self.sessions_dir();
         let log = std::fs::create_dir_all(&dir)
             .ok()

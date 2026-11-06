@@ -126,3 +126,67 @@ fn output_prints_result_lines() {
         "##bmcp:result {\"email\":\"a@x.test\",\"step\":1}\nplain log line\n##bmcp:result {\"step\":2}\n"
     );
 }
+
+/// `--inputs-file`: values far beyond the Windows 32K command-line limit and NUL bytes reach
+/// the script; a later `--input` overrides the file; non-string JSON values become text.
+#[test]
+fn inputs_file_carries_long_values_and_nul_bytes() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let script = repo_root().join("crates/script/tests/fixtures/inputs.ts");
+    let file = dir.join(format!("inputs-{}.json", std::process::id()));
+    let big = format!("{}{}end", "x".repeat(100_000), char::from(0));
+    let json = deno_core::serde_json::json!({ "name": "Ada", "times": 3, "big": big });
+    std::fs::write(&file, json.to_string()).unwrap();
+    let file_arg = file.to_string_lossy().into_owned();
+    let out = run(
+        script.clone(),
+        &["--inputs-file", &file_arg, "--input", "name=Bob"],
+    );
+    let _ = std::fs::remove_file(&file);
+    assert!(out.status.success(), "stderr:\n{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "name=Bob times=3\nbig length=100004 nul=true\n"
+    );
+
+    // Not an object: usage error (exit 2).
+    let bad = dir.join(format!("inputs-bad-{}.json", std::process::id()));
+    std::fs::write(&bad, "[1, 2]").unwrap();
+    let bad_arg = bad.to_string_lossy().into_owned();
+    let out = run(script, &["--inputs-file", &bad_arg]);
+    let _ = std::fs::remove_file(&bad);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("must hold a JSON object"));
+}
+
+#[test]
+fn check_transpiles_without_running() {
+    let dir = std::env::temp_dir().join(format!("bmcp-check-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = dir.join("good.ts");
+    let bad = dir.join("bad.ts");
+    // Valid TypeScript that would fail if it ran (no browser): `check` must not run it.
+    std::fs::write(
+        &good,
+        "const n: number = 1;\nawait browser.tabs.close({ tab: n });\nthrow new Error(\"ran\");\n",
+    )
+    .unwrap();
+    std::fs::write(&bad, "const x = {;\n").unwrap();
+    let check = |file: &PathBuf| {
+        Command::new(env!("CARGO_BIN_EXE_bmcp-script-host"))
+            .arg("check")
+            .arg(file)
+            .output()
+            .unwrap()
+    };
+    let ok = check(&good);
+    let err = check(&bad);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok.status.success(), "stderr: {}", text(&ok.stderr));
+    assert_eq!(err.status.code(), Some(1));
+    assert!(
+        text(&err.stderr).starts_with("error: "),
+        "{}",
+        text(&err.stderr)
+    );
+}

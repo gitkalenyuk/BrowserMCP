@@ -175,7 +175,7 @@ fn dechunk(mut body: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::proxy::forward::tests::fake_socks5;
     use tokio::net::TcpListener;
@@ -183,7 +183,7 @@ mod tests {
     const ANSWER: &str = r#"{"status":"success","country":"Germany","countryCode":"DE","regionName":"Hesse","city":"Frankfurt am Main","lat":50.1109,"lon":8.68213,"timezone":"Europe/Berlin","isp":"Hetzner","query":"203.0.113.7"}"#;
 
     /// Fake ip-api: answers every request with [`ANSWER`] (chunked when asked).
-    async fn fake_ip_api(chunked: bool) -> std::net::SocketAddr {
+    pub async fn fake_ip_api(chunked: bool) -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {

@@ -30,8 +30,8 @@ rust_xlsxwriter = "0.102"
 # Cron triggers (`cron` needs chrono for its date types).
 cron = "0.17"
 chrono = "0.4"
-# Parallelism auto-limit by free RAM.
-sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+# Parallelism auto-limit by CPUs and free RAM (`recommend_parallel`).
+bmcp-governor.workspace = true
 # Webhook export. native-tls = SChannel on Windows (no NASM / aws-lc build).
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 # Parsing the script host's error output.
@@ -40,5 +40,6 @@ regex = "1"
 [dev-dependencies]
 bmcp-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-axum.workspace = true
+# `ws`: an idle WebSocket endpoint for the real-host debug test.
+axum = { workspace = true, features = ["ws"] }
 tokio = { workspace = true, features = ["process", "io-util", "fs", "test-util"] }

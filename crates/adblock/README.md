@@ -135,12 +135,25 @@ CDP `Network.ResourceType` (interim path, `ResourceType::from_cdp`): `Document` 
 
 ## Interim path details (`adblock.apply`)
 
-* Subscribes to the tab's CDP events, then `Fetch.enable {patterns: [{urlPattern: "*",
-  requestStage: "Request"}]}` and `Page.enable`.
-* `Fetch.requestPaused` → gate → `Fetch.failRequest {errorReason: "BlockedByClient"}` /
-  `Fetch.fulfillRequest` (redirect) / `Fetch.continueRequest`. If a block answer fails, it
-  still tries `continueRequest`; if events were lost (`Lagged`), it re-enables Fetch, which
-  releases every paused request.
+* Holds `Page` through the shared domain refcount and registers as client `adblock` (order
+  10, before `bmcp-net`) of the tab's Fetch coordinator (`crates/cdpshare`) with the pattern
+  `{urlPattern: "*", requestStage: "Request"}`. The coordinator sends one `Fetch.enable` with
+  the union of all clients' patterns (e.g. plus net's rules/breakpoints). It sends
+  `Fetch.disable` only when the last client leaves, so `adblock.apply {on: false}` keeps net's
+  interception running.
+* Each paused request goes to the gate first:
+  * block → `Fetch.failRequest {errorReason: "BlockedByClient"}`;
+  * redirect → `Fetch.fulfillRequest`;
+  * allow → passed on to net's rules/breakpoints, then a plain `continueRequest`.
+
+  Response-stage pauses are never adblock's (they belong to net) and are passed on as well.
+  The coordinator sends exactly one answer per pause and falls back to `continueRequest` when
+  a block answer fails. If events were lost, the coordinator recovers the stranded requests
+  itself without `Fetch.disable`, which would also release requests that net breakpoints hold.
+  Adblock's own event loop only reads `Page.*` events, so its `lagged` counter is about
+  cosmetics only.
+* `simplify.measure` holds `Network`/`Page` through the refcount too, so its cleanup never
+  turns `Network` off under `net.capture` or a recording's traffic log.
 * Paused requests are answered with browser-side `Fetch.*` calls only. Renderer-handled
   commands (`Page.addScriptToEvaluateOnNewDocument`, `Runtime.*`, `Emulation.*`) are held
   back by Chromium while a main-frame navigation is pending, so awaiting one before
@@ -187,8 +200,8 @@ Reader mode on https://en.wikipedia.org/wiki/Ad_blocking: 790 ms, title "Ad bloc
   rules block instead of redirecting and `##+js(...)` scriptlets are not run.
 * Procedural cosmetic filters (`:has-text`, `:upward`, …) are not applied (only plain hide
   selectors).
-* Interim path: only the page target is intercepted — OOPIF iframes and service workers are
-  not; another component enabling `Fetch` on the same tab (e.g. `bmcp-net` rules/breakpoints)
-  would conflict: both would answer the same paused requests.
+* Interim path: only the page target is intercepted, not OOPIF iframes or service workers.
+  `bmcp-net` rules and breakpoints on the same tab are fine: both go through the shared Fetch
+  coordinator.
 * A strict page CSP (`style-src` without `'unsafe-inline'`) can block the injected `<style>`;
   reader mode additionally uses a constructable stylesheet for that case.

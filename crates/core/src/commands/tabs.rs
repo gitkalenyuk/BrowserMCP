@@ -3,31 +3,29 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::agents::{Agents, TabGroup, TabLock};
 use crate::backend::{NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
 use crate::command::{Caller, CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `tabs.list`: all open tabs.
 pub struct List;
 
-/// A tab group (named, colored run of tabs). Not implemented yet: `tabs.list` always
-/// returns an empty list, the type is here so the output schema is complete.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TabGroup {
-    pub id: String,
-    pub name: String,
-    /// grey | blue | red | yellow | green | pink | purple | cyan | orange
-    pub color: String,
-    /// Set for agent-owned groups.
-    pub agent_id: Option<String>,
+/// One tab in `tabs.list`: the tab plus its agent lock.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListedTab {
+    #[serde(flatten)]
+    pub info: TabInfo,
+    /// Agent lock of the tab; null when no agent owns it.
+    pub lock: Option<TabLock>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListOutput {
-    /// Open tabs in tab-strip order.
-    pub tabs: Vec<TabInfo>,
-    /// Tab groups (always empty for now).
+    /// Open tabs in tab-strip order; `groupId` / `lockedBy` / `lock` say which agent owns
+    /// a tab.
+    pub tabs: Vec<ListedTab>,
+    /// Tab groups: one per known agent (`agent:<id>`).
     pub groups: Vec<TabGroup>,
     /// The tab the user is looking at, or null when no tab is open.
     pub active_id: Option<TabId>,
@@ -41,7 +39,8 @@ impl Command for List {
     fn meta() -> Meta {
         Meta::new(
             "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, \
-             canGoForward, active; plus activeId.",
+             canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and \
+             activeId.",
             Toolset::Core,
         )
         .palette("List tabs")
@@ -50,9 +49,22 @@ impl Command for List {
     async fn run(ctx: Ctx, _args: Empty) -> Result<ListOutput, CmdError> {
         let tabs = ctx.backend.list_tabs().await?;
         let active_id = tabs.iter().find(|t| t.active).map(|t| t.id);
+        let agents = Agents::from_ctx(&ctx);
+        let open: Vec<TabId> = tabs.iter().map(|t| t.id).collect();
+        agents.retain_open(&ctx.events, &open);
+        let tabs = tabs
+            .into_iter()
+            .map(|mut info| {
+                agents.decorate(&mut info);
+                ListedTab {
+                    lock: agents.tab_lock(info.id),
+                    info,
+                }
+            })
+            .collect();
         Ok(ListOutput {
             tabs,
-            groups: Vec::new(),
+            groups: agents.groups(),
             active_id,
         })
     }
@@ -118,6 +130,8 @@ impl Command for Open {
             run: args.run.filter(|r| !r.is_empty()),
         };
         let tab = ctx.backend.open_tab_with(url.clone(), options).await?;
+        // An agent owns the tabs it opens.
+        ctx.tab_opened(tab);
         // The browser exists now but may not have reported anything yet: fall back to
         // the requested URL.
         let info = ctx
@@ -127,6 +141,8 @@ impl Command for Open {
             .into_iter()
             .find(|t| t.id == tab)
             .unwrap_or_else(|| TabInfo::new(tab, url));
+        let mut info = info;
+        Agents::from_ctx(&ctx).decorate(&mut info);
         Ok(OpenOutput { tab, info })
     }
 }

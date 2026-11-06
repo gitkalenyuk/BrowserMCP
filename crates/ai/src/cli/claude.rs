@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use super::{StderrTail, command};
+use super::{StderrTail, command, join_reader, kill_tree, spawn};
 use crate::session::{AgentEvent, Session, Status, summarize};
 
 /// Name of the MCP server in the generated config; tools appear as `mcp__browsermcp__<tool>`.
@@ -223,8 +223,9 @@ impl ClaudeCode {
             self.model.as_deref(),
             &crate::agent::system_prompt(&session.id),
         ));
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
+        // `tree` also covers the real agent behind an npm `claude.cmd` shim (a grandchild).
+        let (mut child, tree) = match spawn(&mut cmd) {
+            Ok(spawned) => spawned,
             Err(err) => return fail(format!("cannot start {}: {err}", self.binary.display())),
         };
         let (Some(mut stdin), Some(stdout), Some(stderr)) =
@@ -274,15 +275,19 @@ impl ClaudeCode {
         match exit {
             None => {
                 let was_running = session.status() == Status::Running;
-                let _ = child.kill().await;
-                let _ = reader.await;
+                // Close stdin first (claude exits on EOF), then kill the whole tree: killing
+                // only `cmd.exe` would leave node.exe running and holding stdout open.
+                drop(stdin);
+                kill_tree(&mut child, &tree).await;
+                join_reader(reader).await;
                 if was_running {
                     session.apply(AgentEvent::Done("stopped".into()));
                 }
                 session.set_status(Status::Stopped);
             }
             Some(status) => {
-                let _ = reader.await;
+                join_reader(reader).await;
+                tree.kill(); // helpers the agent left behind
                 let ok = status.as_ref().is_ok_and(|s| s.success());
                 if ok {
                     session.set_status(Status::Stopped);
@@ -372,6 +377,58 @@ mod tests {
             vec![AgentEvent::Done("error: error_max_turns".into())]
         );
         assert!(parser.line("not json").is_empty());
+    }
+
+    /// Regression: with an npm-style `claude.cmd` shim the child is cmd.exe and the real work
+    /// runs in a grandchild that holds stdout open. Stopping must kill the whole tree, so the
+    /// session task ends promptly (stdout EOF, not the reader timeout), reaches Stopped and
+    /// removes its MCP config.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn stop_kills_the_agent_behind_a_cmd_shim() {
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("claude.cmd");
+        std::fs::write(&shim, "@ping -n 60 127.0.0.1\r\n").unwrap();
+        let (session, input) = Session::new(
+            "cc-test".into(),
+            "claude-code".into(),
+            None,
+            "#888888".into(),
+            bmcp_core::EventBus::new(),
+            None,
+        );
+        let session = Arc::new(session);
+        let mcp_config = dir.path().join("s.mcp.json");
+        let agent = ClaudeCode {
+            session: session.clone(),
+            binary: shim,
+            model: None,
+            mcp_url: "http://127.0.0.1:9/mcp?agent=cc-test".into(),
+            mcp_config: mcp_config.clone(),
+            cwd: dir.path().to_path_buf(),
+        };
+        let task = tokio::spawn(agent.run(input));
+        // Give cmd.exe time to start ping.exe.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(mcp_config.exists());
+
+        let stopped = Instant::now();
+        session.cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .expect("the session task must finish after stop")
+            .unwrap();
+        // Well below the (test) reader grace of 20 s: stdout closed because ping.exe died too,
+        // not because the grace ran out. Generous margin for a busy CI/dev machine.
+        assert!(
+            stopped.elapsed() < Duration::from_secs(12),
+            "took {:?}",
+            stopped.elapsed()
+        );
+        assert_eq!(session.status(), Status::Stopped);
+        assert!(!mcp_config.exists());
     }
 
     #[test]

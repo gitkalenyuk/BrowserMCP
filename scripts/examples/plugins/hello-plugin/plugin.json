@@ -1,0 +1,11 @@
+{
+  "name": "hello-plugin",
+  "version": "0.1.0",
+  "description": "Logs every finished page load and adds a Ctrl+K command that counts the open tabs.",
+  "main": "main.ts",
+  "permissions": ["tabs.list"],
+  "events": ["tab.updated"],
+  "ui": {
+    "palette": [{ "id": "count-tabs", "title": "Hello plugin: count open tabs" }]
+  }
+}

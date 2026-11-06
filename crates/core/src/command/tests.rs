@@ -78,19 +78,25 @@ fn list_is_sorted_and_filters_by_toolset() {
     assert_eq!(
         names,
         [
+            "agents.forget",
+            "agents.list",
+            "ai.handoff",
             "nav.goto",
             "nav.stop",
             "page.text",
             "system.ping",
             "tabs.activate",
             "tabs.close",
+            "tabs.groups",
             "tabs.list",
-            "tabs.open"
+            "tabs.lock",
+            "tabs.open",
+            "tabs.unlock"
         ]
     );
 
     let core = registry.list(Some(&[Toolset::Core]));
-    assert_eq!(core.len(), 8);
+    assert_eq!(core.len(), 12);
     assert!(registry.list(Some(&[Toolset::Net])).is_empty());
 
     // Hidden: the test's secret command and the UI plumbing `ui.layout`.
@@ -190,8 +196,11 @@ async fn unknown_command_is_not_found_with_candidates() {
         vec![
             json!("tabs_activate"),
             json!("tabs_close"),
+            json!("tabs_groups"),
             json!("tabs_list"),
-            json!("tabs_open")
+            json!("tabs_lock"),
+            json!("tabs_open"),
+            json!("tabs_unlock")
         ]
     );
 
@@ -204,8 +213,11 @@ async fn unknown_command_is_not_found_with_candidates() {
         vec![
             json!("tabs.activate"),
             json!("tabs.close"),
+            json!("tabs.groups"),
             json!("tabs.list"),
-            json!("tabs.open")
+            json!("tabs.lock"),
+            json!("tabs.open"),
+            json!("tabs.unlock")
         ]
     );
 }
@@ -294,7 +306,12 @@ async fn events_are_emitted_in_seq_order() {
         .await
         .unwrap_err();
 
-    let events = drain(&mut rx);
+    // The agent's `agents.updated` / `tab.updated` events are interleaved; only look at
+    // the command events here.
+    let events: Vec<Event> = drain(&mut rx)
+        .into_iter()
+        .filter(|e| e.topic.starts_with("command."))
+        .collect();
     let topics_seen: Vec<_> = events.iter().map(|e| e.topic.as_str()).collect();
     assert_eq!(
         topics_seen,
@@ -307,7 +324,7 @@ async fn events_are_emitted_in_seq_order() {
         ]
     );
     let seqs: Vec<_> = events.iter().map(|e| e.seq).collect();
-    assert_eq!(seqs, [1, 2, 3, 4, 5]);
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
 
     let started = &events[0].data;
     assert_eq!(started["name"], "tabs.list");
@@ -473,7 +490,80 @@ fn cmd_error_wire_format() {
         ErrorCode::NavigationInterrupted,
         ErrorCode::BlockedInStealth,
         ErrorCode::NeedsApproval,
+        ErrorCode::DialogOpen,
     ] {
         assert_eq!(serde_json::to_value(code).unwrap(), json!(code.as_str()));
     }
+}
+
+/// A command that takes 300 ms.
+struct Slow;
+
+impl Command for Slow {
+    const NAME: &'static str = "test.slow";
+    type Args = Empty;
+    type Output = Empty;
+
+    fn meta() -> Meta {
+        Meta::new("Test only.", Toolset::Hidden)
+    }
+
+    async fn run(_ctx: Ctx, _args: Empty) -> Result<Empty, CmdError> {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        Ok(Empty {})
+    }
+}
+
+/// Fires for `test.slow` only, after `after` (zero = at once).
+struct TestGuard {
+    after: Duration,
+}
+
+impl CommandGuard for TestGuard {
+    fn watch(
+        &self,
+        _ctx: &Ctx,
+        name: &'static str,
+        _args: &Value,
+    ) -> Option<crate::BoxFuture<'static, CmdError>> {
+        if name != "test.slow" {
+            return None;
+        }
+        let after = self.after;
+        Some(Box::pin(async move {
+            tokio::time::sleep(after).await;
+            CmdError::new(ErrorCode::DialogOpen, "alert \"hi\" is open")
+        }))
+    }
+}
+
+#[tokio::test]
+async fn guards_stop_commands_before_and_while_they_run() {
+    let fake = FakeBackend::with_tabs(&["https://a.test"]);
+    for after in [Duration::ZERO, Duration::from_millis(30)] {
+        let mut registry = registry();
+        registry.add::<Slow>();
+        registry.add_guard(Arc::new(TestGuard { after }));
+        let started = std::time::Instant::now();
+        let err = registry
+            .call(ctx(mcp(), fake.clone()), "test.slow", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::DialogOpen);
+        assert_eq!(err.retry, Retry::No);
+        // Cancelled when the guard fired, not after the command's 300 ms.
+        assert!(started.elapsed() < Duration::from_millis(250));
+        // Commands the guard does not watch run normally.
+        registry
+            .call(ctx(mcp(), fake.clone()), "tabs.list", json!({}))
+            .await
+            .unwrap();
+    }
+    // Without guards the slow command finishes.
+    let mut registry = registry();
+    registry.add::<Slow>();
+    registry
+        .call(ctx(mcp(), fake), "test.slow", json!({}))
+        .await
+        .unwrap();
 }

@@ -3,6 +3,13 @@ import type { ApiEvents, CallArgs, ConnectionStatus, EventName, Method, Result }
 
 export const DEFAULT_WS_URL = 'ws://127.0.0.1:47800/v1/ws';
 
+/**
+ * Topics asked for on every connection, on top of the server's defaults (tab.*, tabs.*, …):
+ * the side panels render AI sessions, terminals and traffic; ui.* carries notifications.
+ * Subscribing twice is harmless.
+ */
+export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*'];
+
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
@@ -26,6 +33,8 @@ export interface WsApiOptions {
   /** Reconnect backoff bounds in ms. */
   minBackoff?: number;
   maxBackoff?: number;
+  /** Extra event topics to subscribe to after each (re)connect (default EXTRA_TOPICS). */
+  topics?: string[];
 }
 
 /**
@@ -52,6 +61,7 @@ export class WsApi implements BrowserApi {
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #closedByUser = false;
   #openWaiters: Array<() => void> = [];
+  #topics: string[];
 
   constructor(opts: WsApiOptions = {}) {
     this.#url = opts.url ?? DEFAULT_WS_URL;
@@ -59,6 +69,7 @@ export class WsApi implements BrowserApi {
     this.#minBackoff = opts.minBackoff ?? 250;
     this.#maxBackoff = opts.maxBackoff ?? 5_000;
     this.#backoff = this.#minBackoff;
+    this.#topics = opts.topics ?? EXTRA_TOPICS;
   }
 
   get status(): ConnectionStatus {
@@ -129,6 +140,10 @@ export class WsApi implements BrowserApi {
     this.#ws = ws;
     ws.onopen = () => {
       this.#backoff = this.#minBackoff;
+      if (this.#topics.length > 0) {
+        // A notification (no id): the server applies it before any later request, no answer.
+        ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'events.subscribe', params: { topics: this.#topics } }));
+      }
       this.#setStatus('open');
       const waiters = this.#openWaiters;
       this.#openWaiters = [];

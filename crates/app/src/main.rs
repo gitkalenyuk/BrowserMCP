@@ -73,8 +73,17 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     // One bus for everything: the CEF layer emits `tab.*` on it, the API forwards them.
     let events = bmcp_core::EventBus::new();
-    // The UI pages need the real API port before the server starts, so pick it now.
-    let api_port = resolve_port(cli.api_port);
+    // Bind the API socket BEFORE starting CEF: the UI pages and AI agents are told this port,
+    // so it must already be ours (otherwise they could talk to whatever else owns it).
+    let api_listener = if cli.dump_ax {
+        None
+    } else {
+        Some(bind_api(cli.api_port, &data)?)
+    };
+    let api_port = api_listener
+        .as_ref()
+        .and_then(|l| l.local_addr().ok())
+        .map_or(cli.api_port, |addr| addr.port());
 
     // Services the browser needs from its first request on: the adblock gate (asked in the
     // network stack for every request) and the site permission rules. The same instances go
@@ -90,18 +99,18 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         let runtime_dir = data.runtime();
         let events = events.clone();
         let data = data.clone();
-        let dump_ax = cli.dump_ax;
         let permissions = permissions.clone();
         let profile = profile.to_string();
-        Box::new(move |backend: Arc<dyn BrowserBackend>| {
-            if dump_ax {
+        Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
+            None => {
                 handle.spawn(dump_ax_and_quit(backend));
-            } else {
+            }
+            Some(listener) => {
                 handle.spawn(start_api(
                     backend,
                     ApiServices {
                         events,
-                        port: api_port,
+                        listener,
                         shutdown,
                         runtime_dir,
                         data,
@@ -146,16 +155,15 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `--api-port 0` means "any free port": ask the OS for one now (the UI pages are told the
-/// port before the server starts). Another program could grab it in between; then the
-/// server logs a bind error.
-fn resolve_port(port: u16) -> u16 {
-    if port != 0 {
-        return port;
-    }
-    std::net::TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|l| l.local_addr())
-        .map_or(cli::DEFAULT_API_PORT, |addr| addr.port())
+/// Bind 127.0.0.1:`port` (`0` = any free port) for the API. A busy port usually means another
+/// BrowserMCP is already running on this data folder or port.
+fn bind_api(port: u16, data: &DataDir) -> anyhow::Result<std::net::TcpListener> {
+    std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| {
+        format!(
+            "cannot use API port {port} on 127.0.0.1 (another BrowserMCP may be running: see {});              pick another with --api-port <n> or --api-port 0",
+            data.runtime().join("endpoint.json").display()
+        )
+    })
 }
 
 /// `--cdp-port`, unless a profile has a stealth identity: an open debugging port is easy for
@@ -183,7 +191,7 @@ fn checked_cdp_port(port: Option<u16>, data: &DataDir) -> Option<u16> {
 /// Everything `start_api` needs besides the backend.
 struct ApiServices {
     events: bmcp_core::EventBus,
-    port: u16,
+    listener: std::net::TcpListener,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
     data: DataDir,
@@ -196,7 +204,7 @@ struct ApiServices {
 async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     let ApiServices {
         events,
-        port,
+        listener,
         shutdown,
         runtime_dir,
         data,
@@ -204,6 +212,7 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         permissions,
         profile,
     } = services;
+    let port = listener.local_addr().map_or(0, |addr| addr.port());
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
     // Command crates that keep files (filter lists, site policies…) find the data folder here.
@@ -250,6 +259,28 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
     }
+    // Self-healing of runs and page.extract (data/extract-cache).
+    registry
+        .extensions()
+        .insert(bmcp_heal::HealService::new(bmcp_heal::HealConfig::new(
+            &data,
+        )));
+    // Plugins, userscripts and webhook triggers (data/plugins, data/userscripts,
+    // data/config/webhooks.json). The auth handle lets the API restrict plugin connections.
+    let plugins = bmcp_plugins::PluginsService::open(
+        bmcp_plugins::PluginsConfig::new(&data, port),
+        events.clone(),
+    );
+    registry.extensions().insert(plugins.clone());
+    registry.extensions().insert(plugins.auth_handle());
+    // Notifications: UI toasts, Windows toasts, Telegram bot, webhook (data/config/notify.json).
+    // Routes bus events (run.finished, run.heal_needed, …) by its rules; serves ui.ask_user.
+    let notify = registry
+        .extensions()
+        .insert(bmcp_notify::NotifyService::start(
+            bmcp_notify::NotifyOptions::new(data.config().join("notify.json")),
+            events.clone(),
+        ));
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
@@ -268,25 +299,46 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         backend.clone(),
         events.clone(),
     ));
+    // Tab freezing/discarding and automatic limits from RAM (data/config/governor.json).
+    bmcp_governor::start(registry.extensions(), backend.clone(), events.clone());
+    // Watch every tab for JavaScript dialogs (events, auto-policy, DIALOG_OPEN errors).
+    bmcp_pagetools::start(&registry, backend.clone(), events.clone());
+    // Notification buttons (heal: Skip row / Stop run) run commands through the registry.
+    bmcp_notify::attach(&registry, backend.clone());
+    // Watches run.heal_needed (proposes patches) and takes the page snapshot of broken rows.
+    bmcp_heal::attach(&registry, backend.clone(), events.clone());
+    // Webhooks start runs through the registry.
+    plugins.attach(&registry);
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus, and
     // downloads from the `download.*` events of the CEF download handler.
     if let Some(store) = store {
         bmcp_data::downloads::spawn_download_recorder(store.clone(), &events);
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
-    match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
+    // Link hints in every tab (the in-page `f` / `F` keys).
+    bmcp_hints::start(
+        registry.extensions().clone(),
+        backend.clone(),
+        events.clone(),
+    );
+    // Serve on the socket bound before CEF started (binding the port again would fail).
+    match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
             if let Some(jobs) = &jobs {
                 jobs.set_ws_url(server.ws_url());
             }
-            // Kill agent, terminal and script child processes when the browser quits.
+            // Plugin processes connect to the API, so they start once it listens.
+            plugins.start(server.ws_url());
+            // Kill agent, terminal, script and plugin child processes when the browser quits.
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
+                notify.shutdown();
                 if let Some(jobs) = jobs {
                     jobs.shutdown();
                 }
+                plugins.shutdown();
             });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

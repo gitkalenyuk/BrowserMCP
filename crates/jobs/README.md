@@ -34,10 +34,11 @@ or via `BMCP_SCRIPT_HOST`, `$CARGO_TARGET_DIR/{debug,release}`, or `JobsConfig::
 ```text
 run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
            parallel?: 4, retries?: 1, timeout_secs?: 300, stop_on_error?: false,
-           heal?: true, profile?: "default"}      → run (id, options.parallel, counts …)
+           heal?: "ask", profile?: "default"}     → run (id, options.parallel, counts …)
 ```
 
-* Each row → one script process with `--input <column>=<value>` (`inputs.<column>`, strings).
+* Each row → one script process; its inputs (`inputs.<column>`, strings) go in a temporary
+  JSON file passed as `--inputs-file` (no command-line length limit, NUL bytes allowed).
   CSV/Excel: first row = header (Excel: first sheet); JSON: array of objects.
 * `parallel` is limited to `min(requested, CPUs/2, free RAM/400 MB)` (and 32).
 * Failed rows are retried `retries` times with backoff 1 s, 2 s, 4 s … (max 30 s).
@@ -66,10 +67,18 @@ the run pauses and `run.heal_needed {id, row, script, error, step, line}` is emi
 proposes a fix and calls `run.heal_apply {id, patched_code}`: the code is saved as
 `<name>.v2.ts` (then `.v3` …), the waiting rows go back into the queue and the run continues
 with the new version. `run.resume` instead skips the fix (those rows count as failed).
+`heal` is `"ask"` (default), `"auto"` or `"off"` (`true`/`false` = ask/off); the mode is
+in the event as `mode`. A hook (`JobsService::set_heal_hook`, installed by `crates/heal`) takes a
+page snapshot before the event goes out; it is stored in the `heal_snapshots` table
+(`JobsService::heal_snapshot`). Proposing, accepting and "auto" are `crates/heal` (see its
+README: `run.heal_propose/accept/reject`, `run.heal_proposed/applied/failed`).
 
-**Exports.** `run.export {id, to: csv|xlsx|json|sqlite|webhook, path?, url?, status?, batch_size?}`.
+**Exports.** `run.export {id, to: csv|xlsx|json|sqlite|webhook, path?, url?, status?, batch_size?, raw?}`.
 Files default to `data/runs/<id>/results.<ext>`; columns `row, status, <inputs>, <result keys>,
-error_code, error, attempts, duration_ms`. Webhook: `POST {run, script, batch, batches, rows}`
+error_code, error, attempts, duration_ms`, unique ignoring case (`input.status`,
+`result.<key>`, then `_2`, … on clashes). CSV cells starting with `= + - @` tab or CR get a
+leading `'` (XLSX: the quote-prefix flag) so spreadsheets do not run scraped formulas;
+`raw: true` writes them unchanged. Webhook: `POST {run, script, batch, batches, rows}`
 batches (100 rows), 3 attempts on network errors/408/429/5xx. `google_sheets` →
 `NOT_IMPLEMENTED` (needs OAuth).
 
@@ -90,7 +99,7 @@ set, which has `runs.*` for the UI).
 | `run.started` | `{id, script, total, parallel}` |
 | `run.progress` | `{id, done, ok, failed, needs_heal, cancelled, running, pending, total}` |
 | `run.row_failed` | `{id, row, error, attempts}` |
-| `run.heal_needed` | `{id, row, script, error, step, line}` |
+| `run.heal_needed` | `{id, row, script, error, step, line, mode}` |
 | `run.finished` | `{id, status, total, ok, failed, cancelled, needs_heal, duration_ms}` |
 | `trigger.fired` | `{id, script, ok, exit_code, duration_ms, result, error}` |
 

@@ -129,7 +129,8 @@ pub(crate) fn newtab_url() -> String {
 /// page: the chrome and palette pages have no business inside a tab.
 pub(crate) fn is_allowed_in_content(url: &str) -> bool {
     if url.starts_with("bmcp:") {
-        return url == newtab_url();
+        // The script library page may also be opened in a tab (exactly, no query).
+        return url == newtab_url() || url == format!("{UI_PREFIX}library.html");
     }
     true
 }

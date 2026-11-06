@@ -7,6 +7,11 @@
 //!   is dotted (`tabs.list`) or the wire name (`tabs_list`). 200 + output JSON, or an error
 //!   status (see [`status_for`]) + `CmdError` JSON `{code,message,retry,hint?,candidates?}`.
 //! * `GET  /openapi.json` — OpenAPI 3.1 document, see [`crate::openapi`].
+//! * `POST /v1/hooks/{id}` — webhook trigger: the raw body and the `X-BMCP-Signature:
+//!   sha256=<hex HMAC of the body>` header go to the hidden command [`WEBHOOK_COMMAND`]
+//!   (implemented by `bmcp-plugins`), which checks the signature and starts the hook's script.
+//!   Same Host/Origin guard as every other route: the API listens on 127.0.0.1 only, so an
+//!   outside service reaches it through a tunnel that rewrites `Host` to `127.0.0.1`.
 
 use std::str::FromStr;
 
@@ -27,8 +32,15 @@ pub fn router() -> axum::Router<ApiState> {
         .route("/v1/health", get(health))
         .route("/v1/commands", get(list_commands))
         .route("/v1/cmd/{name}", post(call_command))
+        .route("/v1/hooks/{id}", post(webhook))
         .route("/openapi.json", get(openapi))
 }
+
+/// The command behind `POST /v1/hooks/{id}`. Arguments: `{id, signature, body}` (`body` is the
+/// raw request body as text, so the HMAC is checked over exactly the bytes that were sent).
+pub const WEBHOOK_COMMAND: &str = "trigger.webhook_fire";
+/// Header carrying `sha256=<hex HMAC-SHA256 of the body>`.
+pub const SIGNATURE_HEADER: &str = "x-bmcp-signature";
 
 /// HTTP status for each error code. The match has no `_` arm on purpose: adding a new
 /// `ErrorCode` fails to compile until it gets a status here.
@@ -41,7 +53,8 @@ pub fn status_for(code: ErrorCode) -> StatusCode {
         ErrorCode::StaleRef
         | ErrorCode::AmbiguousTarget
         | ErrorCode::NoTabs
-        | ErrorCode::NavigationInterrupted => StatusCode::CONFLICT,
+        | ErrorCode::NavigationInterrupted
+        | ErrorCode::DialogOpen => StatusCode::CONFLICT,
         ErrorCode::TabClosed => StatusCode::GONE,
         ErrorCode::NotInteractable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::TabLocked => StatusCode::LOCKED,
@@ -128,10 +141,15 @@ async fn call_command(
         }
     };
 
+    run_command(&state, &name, args).await
+}
+
+/// Run one command as `Caller::Rest` and turn the result into a response.
+async fn run_command(state: &ApiState, name: &str, args: Value) -> Response {
     let ctx = state.ctx(Caller::Rest);
     // Run the command in its own task: if the HTTP client disconnects, axum drops this
     // handler, but the command still finishes cleanly (and emits `command.finished`).
-    let call = tokio::spawn(state.registry.call(ctx, &name, args));
+    let call = tokio::spawn(state.registry.call(ctx, name, args));
     match call.await {
         Ok(Ok(output)) => Json(output).into_response(),
         Ok(Err(err)) => error_response(err),
@@ -139,6 +157,32 @@ async fn call_command(
             "command {name} panicked: {join_err}"
         ))),
     }
+}
+
+/// `POST /v1/hooks/{id}`: hand the raw body + signature to [`WEBHOOK_COMMAND`].
+async fn webhook(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if state.registry.get(WEBHOOK_COMMAND).is_none() {
+        return error_response(CmdError::new(
+            ErrorCode::NotFound,
+            "webhook triggers are not available in this build",
+        ));
+    }
+    let Ok(body) = String::from_utf8(body.to_vec()) else {
+        return error_response(CmdError::invalid_params(
+            "the body must be UTF-8 text (JSON)",
+        ));
+    };
+    let signature = headers
+        .get(SIGNATURE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let args = json!({ "id": id, "signature": signature, "body": body });
+    run_command(&state, WEBHOOK_COMMAND, args).await
 }
 
 async fn openapi(State(state): State<ApiState>, headers: HeaderMap) -> Json<Value> {

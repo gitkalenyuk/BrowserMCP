@@ -51,6 +51,9 @@ pub enum ErrorCode {
     ShuttingDown,
     /// The command exists but this option is not built yet (see `hint`).
     NotImplemented,
+    /// A JavaScript dialog (alert/confirm/prompt/beforeunload) is open and blocks the page;
+    /// `candidates[0]` describes it. Answer it with `page_dialog`, then retry.
+    DialogOpen,
     /// A bug or an unexpected failure.
     Internal,
 }
@@ -75,6 +78,7 @@ impl ErrorCode {
             ErrorCode::InvalidParams => "INVALID_PARAMS",
             ErrorCode::ShuttingDown => "SHUTTING_DOWN",
             ErrorCode::NotImplemented => "NOT_IMPLEMENTED",
+            ErrorCode::DialogOpen => "DIALOG_OPEN",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -98,6 +102,8 @@ impl ErrorCode {
             | ErrorCode::InvalidParams
             | ErrorCode::ShuttingDown
             | ErrorCode::NotImplemented
+            // The dialog stays until someone answers it (page_dialog); retrying does not help.
+            | ErrorCode::DialogOpen
             | ErrorCode::Internal => Retry::No,
         }
     }
@@ -143,6 +149,9 @@ pub struct CmdError {
     /// Possible intended targets (for `AMBIGUOUS_TARGET`, unknown command names, …).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidates: Vec<Value>,
+    /// `TAB_LOCKED`: who holds the tab — an agent id, or `"user"` after a human took over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 impl CmdError {
@@ -154,6 +163,7 @@ impl CmdError {
             retry: code.default_retry(),
             hint: None,
             candidates: Vec::new(),
+            owner: None,
         }
     }
 
@@ -172,6 +182,12 @@ impl CmdError {
         self
     }
 
+    /// Set [`CmdError::owner`] (who holds a locked tab).
+    pub fn with_owner(mut self, owner: impl Into<String>) -> Self {
+        self.owner = Some(owner.into());
+        self
+    }
+
     /// Shortcut for `INVALID_PARAMS`.
     pub fn invalid_params(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::InvalidParams, message)
@@ -182,12 +198,13 @@ impl CmdError {
         Self::new(ErrorCode::Internal, message)
     }
 
-    /// Shortcut for `TAB_LOCKED`; `holder` describes who owns the lock (e.g. "agent claude-1").
+    /// Shortcut for `TAB_LOCKED`; `holder` is who owns the lock (an agent id, or "user").
     pub fn tab_locked(tab: crate::TabId, holder: impl fmt::Display) -> Self {
         Self::new(
             ErrorCode::TabLocked,
             format!("tab {tab} is locked by {holder}"),
         )
+        .with_owner(holder.to_string())
         .with_hint("Wait until the lock is released, or use another tab (tabs_open).")
     }
 }

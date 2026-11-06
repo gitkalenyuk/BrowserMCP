@@ -579,49 +579,14 @@ pub const REGIONS: &[Region] = &[
 ];
 
 /// The usual locale for a country code ("de" → "de-DE"), for countries outside [`REGIONS`]
-/// too. `None` = unknown (the caller keeps its default).
+/// too (from the offline table in [`crate::country`]). `None` = unknown (the caller keeps its
+/// default).
 pub fn locale_for_country(country: &str) -> Option<&'static str> {
     let cc = country.trim().to_ascii_uppercase();
     if let Some(r) = REGIONS.iter().find(|r| r.country == cc) {
         return Some(r.locale);
     }
-    Some(match cc.as_str() {
-        "AT" => "de-AT",
-        "CH" => "de-CH",
-        "BE" => "nl-BE",
-        "PT" => "pt-PT",
-        "BR" => "pt-BR",
-        "MX" => "es-MX",
-        "AR" => "es-AR",
-        "SE" => "sv-SE",
-        "NO" => "nb-NO",
-        "DK" => "da-DK",
-        "FI" => "fi-FI",
-        "CZ" => "cs-CZ",
-        "SK" => "sk-SK",
-        "RO" => "ro-RO",
-        "HU" => "hu-HU",
-        "TR" => "tr-TR",
-        "JP" => "ja-JP",
-        "KR" => "ko-KR",
-        "CN" => "zh-CN",
-        "TW" => "zh-TW",
-        "IN" => "en-IN",
-        "AU" => "en-AU",
-        "NZ" => "en-NZ",
-        "IE" => "en-IE",
-        "SG" => "en-SG",
-        "IL" => "he-IL",
-        "GR" => "el-GR",
-        "BG" => "bg-BG",
-        "LT" => "lt-LT",
-        "LV" => "lv-LV",
-        "EE" => "et-EE",
-        "GE" => "ka-GE",
-        "KZ" => "kk-KZ",
-        "RU" => "ru-RU",
-        _ => return None,
-    })
+    crate::country::country(&cc).map(|c| c.languages[0])
 }
 
 /// The language list for a locale the way Chrome users usually have it: the locale, its

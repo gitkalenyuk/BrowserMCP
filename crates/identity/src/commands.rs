@@ -6,7 +6,9 @@
 //!   `device.emulate`, `device.clear`;
 //! * proxies: `proxy.pool_add`, `proxy.pool_list`, `proxy.pool_check`, `proxy.pool_remove`,
 //!   `proxy.next`, `proxy.forward_start`, `proxy.forward_stop`, `proxy.forward_list`,
-//!   `geo.lookup`.
+//!   `geo.lookup`;
+//! * routing and mass runs: `proxy.rules_set`, `proxy.rules_test`, `proxy.lease`,
+//!   `proxy.release`, `identity.fit_to_proxy`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -18,9 +20,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Services;
+use crate::fit::{self, Change};
 use crate::identity::{self, Identity, Kind, Os, Overrides, PRESETS, Screen};
+use crate::proxy::route::{self, ProxyRef, Rule, RuleSet};
 use crate::proxy::{Forwarder, GeoInfo, ProxyConfig, Strategy, forward, geo};
 use crate::rng::Rng;
+use crate::routing::{self, ROUTES_CHANGED};
 use crate::stealth::{self, ApplyReport, Scope};
 
 /// Names: 1-64 chars of a-z, 0-9, '-' and '_' (same rule as profile ids).
@@ -1079,6 +1084,8 @@ pub struct ForwardStartArgs {
     pub pool: Option<String>,
     /// Run id for sticky pools.
     pub run: Option<String>,
+    /// Or: a proxy reference such as "lease:POOL/RUN/ROW" (from proxy_lease) or "pool:NAME".
+    pub proxy_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1119,13 +1126,23 @@ impl Command for ForwardStart {
 
     async fn run(ctx: Ctx, args: ForwardStartArgs) -> Result<ForwarderInfo, CmdError> {
         let services = Services::from_ctx(&ctx)?;
-        let upstream = proxy_from_args(
-            &services,
-            args.proxy.as_deref(),
-            args.pool.as_deref(),
-            args.run.as_deref(),
-        )?
-        .ok_or_else(|| CmdError::invalid_params("give proxy or pool"))?;
+        let upstream = match &args.proxy_id {
+            Some(_) if args.proxy.is_some() || args.pool.is_some() => {
+                return Err(CmdError::invalid_params(
+                    "give proxy, pool or proxy_id, not several",
+                ));
+            }
+            Some(text) => services.upstream(&parse_ref(text)?, None)?,
+            None => proxy_from_args(
+                &services,
+                args.proxy.as_deref(),
+                args.pool.as_deref(),
+                args.run.as_deref(),
+            )?,
+        }
+        .ok_or_else(|| {
+            CmdError::invalid_params("give proxy, pool or a proxy_id that is not direct")
+        })?;
         let forwarder = Forwarder::start(upstream)
             .await
             .map_err(|e| CmdError::internal(format!("cannot listen on 127.0.0.1: {e}")))?;
@@ -1257,5 +1274,407 @@ impl Command for GeoLookup {
             via: via.map(|p| p.masked()),
             geo: info,
         })
+    }
+}
+
+// ================================================================== proxy.rules_set / rules_test
+
+fn parse_ref(text: &str) -> Result<ProxyRef, CmdError> {
+    ProxyRef::parse(text).map_err(|e| {
+        CmdError::invalid_params(e).with_hint(
+            "Use direct, fwd-N (proxy_forward_list), pool:NAME (proxy_pool_list), \
+             lease:POOL/RUN/ROW (proxy_lease) or a proxy URL.",
+        )
+    })
+}
+
+pub struct RulesSet;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RulesSetArgs {
+    /// Profile id, e.g. "work".
+    pub profile: String,
+    /// Checked in order; the first match wins. `match`: host glob ("*.example.com" also
+    /// matches example.com), URL glob ("http://example.com/api/*") or "re:REGEX" (searched in
+    /// the URL, case-insensitive). `via`: direct, fwd-N, pool:NAME, lease:POOL/RUN/ROW or a
+    /// proxy URL. Note: for https URLs only scheme://host:port/ is visible to the rules.
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+    /// Where everything else goes (default "direct"). No rules + direct = remove the routing.
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RulesSetOutput {
+    pub profile: String,
+    /// The stored rules (passwords masked).
+    pub rules: Vec<Rule>,
+    pub default: String,
+    /// The Chromium `proxy` preference for the profile's request context (the browser applies
+    /// it; it is also sent as a proxy.routes_changed event).
+    pub pref: Value,
+    /// The generated PAC script (null when no script is needed).
+    pub pac_script: Option<String>,
+    /// Local forwarders the routes go through.
+    pub forwarders: Vec<String>,
+}
+
+impl Command for RulesSet {
+    const NAME: &'static str = "proxy.rules_set";
+    type Args = RulesSetArgs;
+    type Output = RulesSetOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Split routing for a profile: send matching sites through given proxies (or \
+             direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and \
+             the browser proxy preference; proxies go through local forwarders, never with a \
+             fallback to direct. Test a URL with proxy_rules_test.",
+            Toolset::Stealth,
+        )
+        .act()
+        .secret()
+    }
+
+    async fn run(ctx: Ctx, args: RulesSetArgs) -> Result<RulesSetOutput, CmdError> {
+        check_name("profile", &args.profile)?;
+        let services = Services::from_ctx(&ctx)?;
+        let mut set = RuleSet {
+            rules: args.rules,
+            default: args.default.unwrap_or_else(|| "direct".into()),
+        };
+        let parsed = set.parse().map_err(|e| {
+            CmdError::invalid_params(e).with_hint("See the rules field description.")
+        })?;
+        // Store references in their normalized form (proxy URLs as parsed).
+        for (rule, (_, via)) in set.rules.iter_mut().zip(&parsed.rules) {
+            rule.via = via.to_stored();
+        }
+        set.default = parsed.default.to_stored();
+
+        // Resolve first: nothing is stored when a route cannot work (e.g. an empty pool).
+        let proxy = services.proxy_pref_for(&args.profile, &set).await?;
+        let pools: Vec<&str> = parsed
+            .rules
+            .iter()
+            .map(|(_, v)| v)
+            .chain([&parsed.default])
+            .filter_map(|v| match v {
+                ProxyRef::Pool(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .collect();
+        let holder = routing::profile_run(&args.profile);
+        services.proxies.update(|f| {
+            if set.is_direct() {
+                f.routes.remove(&args.profile);
+            } else {
+                f.routes.insert(args.profile.clone(), set.clone());
+            }
+            // Pools the profile no longer routes through give its proxy back.
+            for (name, pool) in f.pools.iter_mut() {
+                if !pools.contains(&name.as_str()) {
+                    pool.release(&holder, None);
+                }
+            }
+            Ok(())
+        })?;
+        ctx.events.emit(
+            ROUTES_CHANGED,
+            json!({ "profile": args.profile, "pref": proxy.pref }),
+        );
+        let masked = set.masked();
+        Ok(RulesSetOutput {
+            profile: args.profile,
+            rules: masked.rules,
+            default: masked.default,
+            pref: proxy.pref,
+            pac_script: proxy.pac_script,
+            forwarders: proxy.forwarders,
+        })
+    }
+}
+
+pub struct RulesTest;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RulesTestArgs {
+    pub profile: String,
+    /// Full URL, e.g. "https://www.example.com/page".
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RulesTestOutput {
+    pub profile: String,
+    /// What the PAC script sees (https URLs are cut to scheme://host:port/).
+    pub pac_url: String,
+    pub host: String,
+    /// 1-based number of the matching rule; null = the default route.
+    pub rule: Option<usize>,
+    /// The matching rule's pattern.
+    pub matched: Option<String>,
+    /// The route (passwords masked): direct, fwd-N, pool:NAME, lease:..., or a proxy URL.
+    pub via: String,
+    /// The upstream proxy behind the route when it is already known (masked); null for
+    /// direct or a pool the profile has not used yet.
+    pub upstream: Option<String>,
+}
+
+impl Command for RulesTest {
+    const NAME: &'static str = "proxy.rules_test";
+    type Args = RulesTestArgs;
+    type Output = RulesTestOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Show which route a URL takes under a profile's proxy rules (proxy_rules_set): \
+             the matching rule and the proxy, evaluated like the PAC script does.",
+            Toolset::Stealth,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: RulesTestArgs) -> Result<RulesTestOutput, CmdError> {
+        let services = Services::from_ctx(&ctx)?;
+        let file = services.proxies.read()?;
+        let set = file.routes.get(&args.profile).cloned().unwrap_or_default();
+        let parsed = set
+            .parse()
+            .map_err(|e| CmdError::internal(format!("stored rules: {e}")))?;
+        let r = route::route(&parsed, &args.url).map_err(CmdError::invalid_params)?;
+        // The upstream, without picking or leasing anything.
+        let upstream = match &r.via {
+            ProxyRef::Direct => None,
+            ProxyRef::Url(p) => Some(p.masked()),
+            ProxyRef::Forwarder(id) => services.forwarders().get(id).map(|f| f.upstream().masked()),
+            ProxyRef::Pool(pool) => file
+                .pools
+                .get(pool)
+                .and_then(|p| p.leased(&routing::profile_run(&args.profile), 0))
+                .and_then(|u| u.parse::<ProxyConfig>().ok())
+                .map(|p| p.masked()),
+            ProxyRef::Lease { pool, run, row } => file
+                .pools
+                .get(pool)
+                .and_then(|p| p.leased(run, *row))
+                .and_then(|u| u.parse::<ProxyConfig>().ok())
+                .map(|p| p.masked()),
+        };
+        Ok(RulesTestOutput {
+            profile: args.profile,
+            pac_url: r.pac_url,
+            host: r.host,
+            rule: r.rule.map(|i| i + 1),
+            matched: r.rule.map(|i| set.rules[i].pattern.clone()),
+            via: r.via.to_string(),
+            upstream,
+        })
+    }
+}
+
+// ================================================================== identity.fit_to_proxy
+
+pub struct FitToProxy;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FitToProxyArgs {
+    /// Saved identity (identity_list).
+    pub identity_id: String,
+    /// The proxy whose exit IP to fit: fwd-N, pool:NAME, lease:POOL/RUN/ROW or a proxy URL
+    /// (direct = this machine's IP).
+    pub proxy_id: String,
+    /// For pool:NAME: use the proxy this profile is routed through (its lease) instead of
+    /// a fresh pick.
+    pub profile: Option<String>,
+    /// Save the changed identity (default true).
+    pub save: Option<bool>,
+    /// Lookup endpoint (http:// only, ip-api.com JSON format). Default: ip-api.com.
+    pub url: Option<String>,
+    /// Timeout in milliseconds (default 10000).
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FitToProxyOutput {
+    pub identity_id: String,
+    /// The proxy the lookup went through (masked), null = direct.
+    pub via: Option<String>,
+    pub geo: GeoInfo,
+    /// What changed (empty = it already fit). The device (UA, platform, screen) never does.
+    pub changes: Vec<Change>,
+    pub saved: bool,
+    pub identity: Identity,
+}
+
+impl Command for FitToProxy {
+    const NAME: &'static str = "identity.fit_to_proxy";
+    type Args = FitToProxyArgs;
+    type Output = FitToProxyOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set \
+             timezone, locale + languages (Accept-Language) and geolocation (city with small \
+             jitter) to match the country/region; keeps UA, platform and hardware. Reports \
+             what changed; re-apply with stealth_fingerprint_set.",
+            Toolset::Stealth,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: FitToProxyArgs) -> Result<FitToProxyOutput, CmdError> {
+        let services = Services::from_ctx(&ctx)?;
+        let mut identity = services.identities.read()?.get(&args.identity_id)?.clone();
+        let via = parse_ref(&args.proxy_id)?;
+        if let Some(p) = &args.profile {
+            check_name("profile", p)?;
+        }
+        let holder = args.profile.as_deref().map(routing::profile_run);
+        let upstream = services.upstream(&via, holder.as_deref())?;
+        let url = args.url.as_deref().unwrap_or(geo::DEFAULT_URL);
+        let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(10_000).clamp(100, 60_000));
+        let info = geo::lookup(upstream.as_ref(), url, timeout)
+            .await
+            .map_err(|e| {
+                CmdError::new(ErrorCode::Internal, format!("geo lookup failed: {e}"))
+                    .with_retry(bmcp_core::Retry::AfterWait)
+            })?;
+        let changes = fit::fit_to_geo(&mut identity, &info);
+        let saved = args.save.unwrap_or(true) && !changes.is_empty();
+        if saved {
+            let copy = identity.clone();
+            services.identities.update(|f| {
+                f.identities.insert(copy.id.clone(), copy);
+                Ok(())
+            })?;
+        }
+        Ok(FitToProxyOutput {
+            identity_id: args.identity_id,
+            via: upstream.map(|p| p.masked()),
+            geo: info,
+            changes,
+            saved,
+            identity,
+        })
+    }
+}
+
+// ================================================================== proxy.lease / release
+
+fn check_run(run: &str) -> Result<(), CmdError> {
+    if route::valid_name(run) {
+        Ok(())
+    } else {
+        Err(CmdError::invalid_params(format!(
+            "run_id {run:?} is invalid: use 1-64 chars of a-z, A-Z, 0-9, '-', '_' or '.'"
+        )))
+    }
+}
+
+pub struct Lease;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LeaseArgs {
+    pub pool: String,
+    /// The mass run, e.g. "run-42".
+    pub run_id: String,
+    /// Row number in the run.
+    pub row: u64,
+    /// Give the row a different proxy than it has now (e.g. its IP got blocked). Default
+    /// false: sticky, the row keeps its proxy.
+    pub rotate: Option<bool>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LeaseOutput {
+    pub pool: String,
+    pub run_id: String,
+    pub row: u64,
+    /// The leased proxy, password masked.
+    pub proxy: String,
+    /// Reference for proxy_rules_set (via/default), identity_fit_to_proxy and
+    /// proxy_forward_start: "lease:POOL/RUN/ROW".
+    pub proxy_id: String,
+    /// True when the row already had this proxy.
+    pub reused: bool,
+    /// Active leases on this proxy (including this one).
+    pub load: usize,
+}
+
+impl Command for Lease {
+    const NAME: &'static str = "proxy.lease";
+    type Args = LeaseArgs;
+    type Output = LeaseOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the \
+             row keeps its proxy across retries — or rotate=true for a different one. New \
+             leases go to the least-used healthy proxy. Release with proxy_release.",
+            Toolset::Stealth,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: LeaseArgs) -> Result<LeaseOutput, CmdError> {
+        check_name("pool", &args.pool)?;
+        check_run(&args.run_id)?;
+        let services = Services::from_ctx(&ctx)?;
+        let (proxy, leased) = services.lease(
+            &args.pool,
+            &args.run_id,
+            args.row,
+            args.rotate.unwrap_or(false),
+        )?;
+        Ok(LeaseOutput {
+            proxy: proxy.masked(),
+            proxy_id: route::lease_ref(&args.pool, &args.run_id, args.row),
+            reused: leased.reused,
+            load: leased.load,
+            pool: args.pool,
+            run_id: args.run_id,
+            row: args.row,
+        })
+    }
+}
+
+pub struct Release;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseArgs {
+    pub pool: String,
+    pub run_id: String,
+    /// One row; omit to release every row of the run (when the run ends).
+    pub row: Option<u64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReleaseOutput {
+    /// How many leases were released.
+    pub released: usize,
+}
+
+impl Command for Release {
+    const NAME: &'static str = "proxy.release";
+    type Args = ReleaseArgs;
+    type Output = ReleaseOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Release proxy leases of a mass run (one row, or the whole run).",
+            Toolset::Stealth,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: ReleaseArgs) -> Result<ReleaseOutput, CmdError> {
+        let services = Services::from_ctx(&ctx)?;
+        let released = services.release(&args.pool, &args.run_id, args.row)?;
+        Ok(ReleaseOutput { released })
     }
 }

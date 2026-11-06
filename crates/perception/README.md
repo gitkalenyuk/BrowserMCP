@@ -56,11 +56,51 @@ snap 7 tab=3 "Sign in – Acme" https://acme.com/login vp=1280x720 y=0/1840
 ### Refs
 
 * `@S:eN` – element. N is stable per `backendDOMNodeId` for the whole document, so
-  `@7:e3` and `@8:e3` are the same node. Bare `e3` means "latest snapshot".
-* `@S:gN` – group (collapsed part of snapshot S), only for `root=`.
+  `@7:e3` and `@8:e3` are the same node. Bare `e3` means "latest snapshot". An element
+  ref stays valid as long as the document does, however many snapshots ago `S` was
+  taken (only the e-number is looked up; `S` is checked when it is still remembered).
+* `@S:gN` – group (collapsed part of snapshot S), only for `root=`. Needs the record of
+  snapshot S: the last 64 per tab are kept, snapshots with groups are kept longest.
 * After `RefRegistry::new_document()` (call it when the page navigates) old refs give
   `STALE_REF`. Numbers keep increasing across documents, so an old `e3` never silently
   points at a new node.
+* **Tabs**: snapshot ids and e-numbers come from a `RefSpace`. Give every tab's registry
+  the same space (`RefRegistry::with_space`) and they are unique across tabs: the first
+  snapshot of a second tab is `snap 2` (or later) and its numbers continue after the
+  first tab's, e.g. tab 3 shows `@1:e1..e20`, then tab 4 shows `@2:e21..`. A ref from
+  another tab therefore never resolves; `RefRegistry::issued(ref)` tells which registry
+  handed it out, so the caller can answer "belongs to tab 3, pass tab=3".
+  `RefRegistry::new()` has its own space (numbers start at 1, as in the examples above).
+* Depth: snapshots and `find` look at most `MAX_TREE_DEPTH` (512) levels deep; deeper
+  parts are left out with a `! the page tree is deeper than 512 levels ...` line (and
+  `Snapshot::cut` / `FindResult::too_deep` set), so a hostile page cannot overflow the
+  stack.
+
+### Iframes and shadow DOM
+
+```
+- button "Buy" @7:e1
+- iframe "Payment" (pay.example.com)
+  - textbox "Card number" @7:e2
+```
+
+* `AxTree::attach_frame(owner, child, prefix, url, map_backend)` puts a frame's own AX tree
+  under its `Iframe` node; the iframe prints as `- iframe "<title>" (<src host>)` (role
+  `Iframe` is structure: kept when something inside is kept) and the frame's document
+  node is flattened. Child AX node ids get `prefix`; `map_backend` lets the caller give
+  the frame's DOM node ids a range of their own (an out-of-process frame numbers its
+  nodes independently), so refs stay unique.
+* The caller (`bmcp-browser`, `frames.rs`) fetches the trees: same-process frames with
+  `Accessibility.getFullAXTree {frameId}` in the page session, out-of-process frames
+  (other sites) in their child session from `Target.setAutoAttach {flatten: true}`. Their
+  merged ids are `slot << 32 | backendNodeId`; `page.act` turns them back into (session,
+  node), runs the checks in the frame's session and sends mouse input to the page at
+  coordinates moved by the iframe's content-box position (`DOM.getBoxModel`).
+* Shadow DOM needs nothing here: Chrome's AX tree already includes open and closed shadow
+  roots. The hit test (`HIT_OK_JS`) and `page.read` walk across shadow boundaries
+  (`page.read` cannot see inside *closed* shadow roots; their controls still work by ref).
+* Fixtures: `tests/fixtures/sites/iframe.html` (+ `iframe_child.html`, cross-origin from a
+  second server, `?xport=PORT`) and `shadow.html`.
 
 ### Diff
 
@@ -76,7 +116,8 @@ Nodes are matched by `backendDOMNodeId`; compare snapshots taken with the same o
 
 ```rust
 let tree = AxTree::from_cdp(&cdp_result)?;          // + .with_layout(map) optionally
-let mut registry = RefRegistry::new();               // one per tab
+let space = RefSpace::new();                         // one per browser
+let mut registry = RefRegistry::with_space(space.clone()); // one per tab
 let snap = snapshot(&tree, &mut registry, &SnapshotOptions::default(), header)?;
 snap.text;                                           // for the model
 snap.refs;                                           // Vec<RefEntry { ref_str, backend_node_id, role, name }>

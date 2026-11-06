@@ -1,8 +1,11 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
+import { createDataMocks } from './mock-data';
+import { createPanelMocks } from './mock-panels';
+import { createRecordRunsMocks } from './mock-record-runs';
+import { createScriptMocks } from './mock-scripts';
 import type {
   Agent,
   ApiEvents,
-  Bookmark,
   CallArgs,
   ConnectionStatus,
   EventName,
@@ -105,8 +108,15 @@ export class MockApi implements BrowserApi {
     ];
     this.#activeWorkspace = 'personal';
     this.#agents = [
-      { id: 'claude', name: 'Claude', color: 'orange', status: 'running', task: 'Comparing ThinkPad prices across 4 stores' },
-      { id: 'codex', name: 'Codex', color: 'green', status: 'running', task: 'Triaging new GitHub issues' },
+      {
+        id: 'claude',
+        name: 'Claude',
+        color: 'orange',
+        status: 'running',
+        task: 'Comparing ThinkPad prices across 4 stores',
+        groupId: 'g-claude',
+      },
+      { id: 'codex', name: 'Codex', color: 'green', status: 'running', task: 'Triaging new GitHub issues', groupId: 'g-codex' },
     ];
     this.#runs = [
       { id: 'run-1', name: 'Price watch · laptops.csv', status: 'running', done: 132, total: 500, failed: 3 },
@@ -201,18 +211,54 @@ export class MockApi implements BrowserApi {
       this.#require(tab);
       this.#activate(tab);
     },
+    // Same rules as the core (crates/core/src/agents.rs): Take over pauses the agent's lock,
+    // Done ends a handoff, Give back (tabs.lock) re-activates it.
     'tabs.unlock': ({ tab }) => {
       const t = this.#require(tab);
-      if (!t.lockedBy) return;
-      const agentId = t.lockedBy;
-      this.#update(tab, { lockedBy: null });
-      const stillOwns = [...this.#state.values()].some((s) => s.tabs.some((x) => x.lockedBy === agentId));
+      const owner = t.lock?.owner ?? t.lockedBy;
+      if (!owner) return { tab, lock: null };
+      const state = t.lock?.state ?? 'active';
+      const next = state === 'handoff' ? 'active' : 'paused';
+      const lock = { owner, state: next, reason: null, sinceMs: Date.now() } as const;
+      this.#update(tab, { lockedBy: next === 'active' ? owner : null, lock });
+      const stillOwns = [...this.#state.values()].some((s) => s.tabs.some((x) => x.lockedBy === owner));
       if (!stillOwns) {
         this.#agents = this.#agents.map((a) =>
-          a.id === agentId ? { ...a, status: 'idle', task: 'Paused — human took over' } : a,
+          a.id === owner ? { ...a, status: 'idle', task: 'Paused — human took over' } : a,
         );
         this.#emit('agents.updated', { agents: structuredClone(this.#agents) });
       }
+      return { tab, lock };
+    },
+    'tabs.lock': ({ tab, agent }) => {
+      const t = this.#require(tab);
+      const owner = agent ?? t.lock?.owner ?? t.lockedBy;
+      if (!owner) throw new RpcError('INVALID_PARAMS', `tab ${tab} is not in an agent group; pass agent`);
+      const lock = { owner, state: 'active', reason: null, sinceMs: Date.now() } as const;
+      this.#update(tab, { lockedBy: owner, lock });
+      this.#agents = this.#agents.map((a) => (a.id === owner ? { ...a, status: 'running', task: a.task } : a));
+      this.#emit('agents.updated', { agents: structuredClone(this.#agents) });
+      return { tab, lock };
+    },
+    'tabs.groups': () => ({
+      groups: this.#ws.groups.map((g) => ({
+        ...g,
+        tabs: this.#ws.tabs.filter((t) => t.groupId === g.id).map((t) => t.id),
+      })),
+    }),
+    'agents.forget': ({ id }) => {
+      const released: TabId[] = [];
+      for (const s of this.#state.values()) {
+        for (const t of s.tabs) {
+          if ((t.lock?.owner ?? t.lockedBy) === id) {
+            released.push(t.id);
+            this.#update(t.id, { lockedBy: null, lock: null, groupId: null });
+          }
+        }
+      }
+      this.#agents = this.#agents.filter((a) => a.id !== id);
+      this.#emit('agents.updated', { agents: structuredClone(this.#agents) });
+      return { released };
     },
     'nav.goto': ({ tab, url }) => {
       this.#require(tab);
@@ -231,7 +277,8 @@ export class MockApi implements BrowserApi {
       this.#require(tab);
       this.#update(tab, { loading: false });
     },
-    'agents.list': () => this.#agents,
+    'hints.show': () => ({ count: 0 }), // the mock has no page to label
+    'agents.list': () => ({ agents: this.#agents }),
     'workspaces.list': () => ({ workspaces: this.#workspaces, activeId: this.#activeWorkspace }),
     'workspaces.activate': ({ id }) => {
       if (!this.#state.has(id)) throw new RpcError('NOT_FOUND', `No workspace ${id}`);
@@ -263,30 +310,24 @@ export class MockApi implements BrowserApi {
       this.#emitRuns();
       return { runId };
     },
-    'data.bookmarks': (): { bookmarks: Bookmark[] } => ({ bookmarks: [
-      { title: 'GitHub', url: 'https://github.com/' },
-      { title: 'MDN', url: 'https://developer.mozilla.org/' },
-      { title: 'Svelte', url: 'https://svelte.dev/docs' },
-      { title: 'docs.rs', url: 'https://docs.rs/' },
-      { title: 'crates.io', url: 'https://crates.io/' },
-      { title: 'CEF forum', url: 'https://magpcss.org/ceforum/' },
-    ] }),
-    'data.top_sites': (): { sites: Bookmark[] } => ({ sites: [
-      { title: 'Hacker News', url: 'https://news.ycombinator.com/' },
-      { title: 'YouTube', url: 'https://www.youtube.com/' },
-      { title: 'Gmail', url: 'https://mail.google.com/' },
-      { title: 'Reddit', url: 'https://www.reddit.com/' },
-      { title: 'Wikipedia', url: 'https://en.wikipedia.org/' },
-      { title: 'Claude', url: 'https://claude.ai/' },
-      { title: 'OpenAI', url: 'https://chatgpt.com/' },
-      { title: 'Linear', url: 'https://linear.app/' },
-    ] }),
-    'ai.prompt': ({ text, provider }) => {
-      console.info('[mock] ai.prompt', { provider, text });
-      return { sessionId: `ai-${Date.now().toString(36)}` };
-    },
+    ...createDataMocks({ empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1' }),
+    ...createScriptMocks((event, payload) => this.#emit(event, payload), {
+      getCode: async (name) => (await this.#handlers['script.get']({ name })).code,
+    }),
+    ...createPanelMocks(
+      (event, payload) => this.#emit(event, payload),
+      () => this.#ws.activeId,
+    ),
+    ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
+    },
+    // The mock has no page content: find in page never matches.
+    'page.find_text': ({ tab }) => ({ tab: tab ?? 0, count: 0, index: 0, context: '' }),
+    'page.find_clear': ({ tab }) => ({ tab: tab ?? 0 }),
+    'ui.answer': ({ id, choice }) => {
+      this.#emit('ui.notification_closed', { id, choice, label: choice, via: 'ui' });
+      return { id, label: choice };
     },
   };
 

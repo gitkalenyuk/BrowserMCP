@@ -1,6 +1,7 @@
 <script lang="ts">
   import { useChrome } from '../state/chrome.svelte';
   import { displayUrl, isNewTab, omniboxIntent } from '../urls';
+  import BookmarkStar from './BookmarkStar.svelte';
   import Icon, { type IconName } from './Icon.svelte';
 
   const chrome = useChrome();
@@ -82,6 +83,8 @@
     <span class="hint" aria-hidden="true">
       {intent === 'search' ? 'Search Google' : 'Open'} <kbd>Enter</kbd>
     </span>
+  {:else}
+    <BookmarkStar />
   {/if}
 </div>
 

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contact support</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 520px; }
+  label { display: block; margin: 8px 0; }
+  textarea { width: 100%; height: 90px; }
+  .error { color: #b00; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Contact support</h1>
+<form id="contact">
+  <label>Your name <input name="name" autocomplete="off"></label>
+  <label>Message <textarea name="message"></textarea></label>
+  <p id="err" class="error" role="alert"></p>
+  <button type="submit">Send message</button>
+</form>
+<p id="ok" role="status"></p>
+<script>
+  // Task "recovery": the first send fails (503) and clears the message; the agent must notice,
+  // re-enter the message and send again.
+  const form = document.getElementById('contact');
+  let attempts = 0;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempts++;
+    const err = document.getElementById('err');
+    err.textContent = 'Sending…';
+    setTimeout(() => {
+      if (attempts === 1) {
+        err.textContent = 'Server is busy (503). Your message was NOT sent and has been cleared. Please try again.';
+        form.message.value = '';
+        return;
+      }
+      if (!form.message.value.trim()) {
+        err.textContent = 'Please enter a message.';
+        return;
+      }
+      err.textContent = '';
+      form.hidden = true;
+      document.getElementById('ok').textContent = 'Thanks! Your message was sent.';
+      benchSubmit('recovery', { name: form.name.value.trim(), message: form.message.value.trim(), attempts });
+    }, 400);
+  });
+</script>
+</body>
+</html>

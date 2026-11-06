@@ -624,6 +624,12 @@ pub(crate) fn handle_shortcut(browser: &Browser, shortcut: Shortcut) -> bool {
             }
             set_palette(key, PaletteAction::Hide);
         }
+        Shortcut::Find => {
+            set_palette(key, PaletteAction::Hide);
+            // The find field must get the keys, so the UI view needs keyboard focus first.
+            views.ui.request_focus();
+            run_js(&views.ui, &protocol::run_script("find.open"));
+        }
         Shortcut::Ui(command) => {
             set_palette(key, PaletteAction::Hide);
             // Same code path as pressing the key in the UI itself (its keymap + WS calls).

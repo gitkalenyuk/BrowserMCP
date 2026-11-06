@@ -6,13 +6,16 @@
 //! Once the CEF crate calls the gate, `adblock.apply` only keeps the cosmetic part.
 //!
 //! How it works for one tab:
-//! 1. subscribe to the tab's CDP events, then `Fetch.enable` with one pattern
-//!    `{urlPattern: "*", requestStage: "Request"}` — every request pauses before it is sent;
-//! 2. for each `Fetch.requestPaused` ask the [`Gate`] (filter lists + site policy) and answer
-//!    with `Fetch.failRequest {errorReason: "BlockedByClient"}`, `Fetch.fulfillRequest`
-//!    (redirect) or `Fetch.continueRequest`. Every paused request is always answered: if the
-//!    block answer fails we still try to continue it, and if events were lost (`Lagged`) we
-//!    toggle `Fetch.disable`/`Fetch.enable`, which releases everything still paused;
+//! 1. register as the "adblock" client of the tab's Fetch coordinator (`bmcp-cdpshare`) with
+//!    one pattern `{urlPattern: "*", requestStage: "Request"}` — every request pauses before it
+//!    is sent. The coordinator owns `Fetch.enable` (the union with other clients' patterns,
+//!    e.g. `bmcp-net` rules) and asks adblock **first** about every pause;
+//! 2. for each paused request ask the [`Gate`] (filter lists + site policy): block →
+//!    `Fetch.failRequest {errorReason: "BlockedByClient"}`, redirect → `Fetch.fulfillRequest`,
+//!    allow → pass it on (net rules/breakpoints next, then a plain continue). The coordinator
+//!    sends exactly one answer per pause, falls back to a continue when an answer fails, and
+//!    recovers pauses whose events were lost — without `Fetch.disable`, which would also
+//!    release requests other clients hold;
 //! 3. cosmetic filtering: the host's hide CSS is registered with
 //!    `Page.addScriptToEvaluateOnNewDocument` in an isolated world, so every later document of
 //!    that host gets it at document start. When the main frame commits a new page
@@ -29,14 +32,17 @@
 //! it cannot commit while we keep its request paused: a 30 s CDP timeout each time (seen
 //! live). `Fetch.*` is handled in the browser process and always answers.
 //!
-//! The decision is made right in the event loop (it is synchronous and takes microseconds);
-//! the CDP answers are sent from spawned tasks so a slow answer never delays the next event.
+//! The decision is synchronous and takes microseconds; the coordinator sends the answer.
+//! Adblock's own event loop only reads `Page.*` events (for the cosmetic part).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use bmcp_core::{BackendError, BrowserBackend, CdpEvent, TabId};
+use bmcp_cdpshare::{
+    Answer, Answered, CdpShare, FetchClient, FetchHandler, ORDER_ADBLOCK, PausedRequest, Verdict,
+};
+use bmcp_core::{BackendError, BoxFuture, BrowserBackend, CdpEvent, TabId};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -47,6 +53,9 @@ use crate::gate::{Gate, GateAction, GateDecision, RequestInfo, ResourceGate};
 
 /// Name of our isolated world (the page's own scripts cannot see it).
 pub const WORLD: &str = "bmcp-adblock";
+
+/// Our client name at the tab's Fetch coordinator and holder name of the `Page` domain.
+pub const CLIENT: &str = "adblock";
 
 /// CSS that stops animations and transitions (site policy `animations: false`).
 const NO_ANIMATIONS_CSS: &str = "*,*::before,*::after{animation:none!important;\
@@ -113,6 +122,8 @@ pub(crate) struct Session {
 pub(crate) struct Shared {
     tab: TabId,
     backend: Arc<dyn BrowserBackend>,
+    /// The tab's shared CDP state (Fetch coordinator, domain refcount).
+    share: Arc<CdpShare>,
     gate: Arc<Gate>,
     /// Main frame id (= target id); `Document` requests of this frame are navigations.
     main_frame: Mutex<String>,
@@ -137,7 +148,7 @@ pub(crate) struct Metrics {
     continued: AtomicU64,
     /// CDP answers that failed (request gone, tab navigated away…).
     errors: AtomicU64,
-    /// Events lost because the loop fell behind (then Fetch was reset).
+    /// Page events lost because our loop fell behind (cosmetics only).
     lagged: AtomicU64,
     decision_ns: AtomicU64,
     decision_ns_max: AtomicU64,
@@ -156,9 +167,11 @@ pub struct InterimStats {
     pub blocked: u64,
     /// Answered with `Fetch.fulfillRequest` (redirect resources).
     pub fulfilled: u64,
-    /// Answered with `Fetch.continueRequest`.
+    /// Let through (continued, or answered by another interception client such as net rules).
     pub continued: u64,
     pub errors: u64,
+    /// Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+    /// recovered by the shared Fetch coordinator).
     pub lagged: u64,
     /// Average time of the gate decision itself (filter lists + policy), microseconds.
     pub avg_decision_us: f64,
@@ -224,10 +237,12 @@ pub struct ApplyReport {
 /// Start intercepting `tab`. The caller checks that no session runs yet.
 pub(crate) async fn start(
     backend: Arc<dyn BrowserBackend>,
+    share: Arc<CdpShare>,
     gate: Arc<Gate>,
     tab: TabId,
 ) -> Result<(Session, ApplyReport), BackendError> {
-    // Subscribe before enabling Fetch, so no paused request can be missed.
+    // Our own subscription is for Page events only; paused requests come from the
+    // coordinator (which subscribes before it enables Fetch).
     let events = backend.cdp_events(tab).await?;
     let tree = backend
         .cdp(tab, "Page.getFrameTree".into(), json!({}))
@@ -236,6 +251,7 @@ pub(crate) async fn start(
     let shared = Arc::new(Shared {
         tab,
         backend: backend.clone(),
+        share: share.clone(),
         gate,
         main_frame: Mutex::new(frame["id"].as_str().unwrap_or_default().to_string()),
         page_url: Mutex::new(frame["url"].as_str().unwrap_or_default().to_string()),
@@ -246,16 +262,26 @@ pub(crate) async fn start(
     });
     *lock(&shared.metrics.started) = Some(Instant::now());
     // Page events: DOMContentLoaded (generic cosmetic pass) and frameNavigated (page URL).
-    shared.cdp("Page.enable", json!({})).await?;
-    // The loop must already run when the first request pauses (the cosmetic calls below may
-    // wait for a navigation, which waits for its paused request).
+    share
+        .acquire(&backend, tab, "Page", CLIENT, json!({}))
+        .await?;
     let task = tokio::spawn(event_loop(shared.clone(), events));
     // With the CEF network hook (`Gate::is_native`) every request is already decided in the
-    // browser's network stack: only the cosmetic part below is needed here.
+    // browser's network stack: only the cosmetic part below is needed here, no Fetch client.
     let native = shared.gate.is_native();
-    if !native && let Err(err) = shared.cdp("Fetch.enable", fetch_patterns()).await {
-        task.abort();
-        return Err(err);
+    if !native {
+        // Registered before the cosmetic calls below: they may wait for a navigation, which
+        // waits for its paused request to be answered.
+        let client = FetchClient {
+            name: CLIENT.to_string(),
+            order: ORDER_ADBLOCK,
+            patterns: vec![json!({ "urlPattern": "*", "requestStage": "Request" })],
+            handler: Arc::new(AdblockFetch(shared.clone())),
+        };
+        if let Err(err) = share.set_fetch(&backend, tab, client).await {
+            task.abort();
+            return Err(err);
+        }
     }
 
     let url = shared.page_url();
@@ -276,8 +302,16 @@ pub(crate) async fn start(
 pub(crate) async fn stop(session: Session) {
     session.task.abort();
     let shared = session.shared;
-    // Disabling Fetch also releases any request that is still paused.
-    let _ = shared.cdp("Fetch.disable", json!({})).await;
+    // The coordinator disables Fetch only when no other client (e.g. net rules) is left; our
+    // own pauses are always answered at once, so none of them is still waiting.
+    let _ = shared
+        .share
+        .clear_fetch(&shared.backend, shared.tab, CLIENT)
+        .await;
+    let _ = shared
+        .share
+        .release(&shared.backend, shared.tab, "Page", CLIENT)
+        .await;
     let old = lock(&shared.script_id).take();
     if let Some(identifier) = old {
         let _ = shared
@@ -303,28 +337,16 @@ pub(crate) async fn stop(session: Session) {
     let _ = evaluate_isolated(&shared, REMOVE_JS).await;
 }
 
-fn fetch_patterns() -> Value {
-    json!({ "patterns": [{ "urlPattern": "*", "requestStage": "Request" }] })
-}
-
-/// Read the tab's events until it closes (or the session is stopped).
+/// Read the tab's Page events until it closes (or the session is stopped).
 async fn event_loop(shared: Arc<Shared>, mut events: bmcp_core::CdpEvents) {
     loop {
         let event = match events.recv().await {
             Ok(event) => event,
             Err(RecvError::Lagged(lost)) => {
-                // Lost `requestPaused` events would leave requests hanging forever:
-                // re-enabling Fetch releases everything that is still paused.
-                tracing::warn!(tab = %shared.tab, lost, "adblock: CDP events lost; resetting Fetch");
+                // Only cosmetic work can be missed here: paused requests do not come through
+                // this loop (the Fetch coordinator reads and recovers them itself).
+                tracing::warn!(tab = %shared.tab, lost, "adblock: page events lost");
                 shared.metrics.lagged.fetch_add(lost, Ordering::Relaxed);
-                if shared.gate.is_native() {
-                    continue; // Fetch is not enabled: nothing can be left paused
-                }
-                let shared = shared.clone();
-                tokio::spawn(async move {
-                    let _ = shared.cdp("Fetch.disable", json!({})).await;
-                    let _ = shared.cdp("Fetch.enable", fetch_patterns()).await;
-                });
                 continue;
             }
             Err(RecvError::Closed) => break, // tab closed
@@ -334,13 +356,12 @@ async fn event_loop(shared: Arc<Shared>, mut events: bmcp_core::CdpEvents) {
 }
 
 fn handle_event(shared: &Arc<Shared>, event: CdpEvent) {
-    // Events of child sessions (OOPIFs, workers) are not ours: we only enabled Fetch on the
-    // page target, and could not answer in another session anyway.
+    // Events of child sessions (OOPIFs, workers) are not ours: we only work on the page
+    // target.
     if event.session_id.is_some() {
         return;
     }
     match event.method.as_str() {
-        "Fetch.requestPaused" => on_request_paused(shared, &event.params),
         "Page.domContentEventFired" => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -368,106 +389,96 @@ fn handle_event(shared: &Arc<Shared>, event: CdpEvent) {
     }
 }
 
-/// Decide now; answer from a spawned task.
-fn on_request_paused(shared: &Arc<Shared>, params: &Value) {
-    let received = Instant::now();
+/// Adblock as the first client of the tab's Fetch coordinator.
+struct AdblockFetch(Arc<Shared>);
+
+impl FetchHandler for AdblockFetch {
+    fn on_paused<'a>(&'a self, req: &'a PausedRequest) -> BoxFuture<'a, Verdict> {
+        // Decided synchronously; the coordinator sends the answer with browser-side `Fetch.*`
+        // calls only (see the module docs on why the renderer must not be touched here).
+        let verdict = decide(&self.0, req);
+        Box::pin(async move { verdict })
+    }
+
+    fn done(&self, req: &PausedRequest, answered: &Answered<'_>) {
+        count_answer(&self.0, req, answered);
+    }
+}
+
+/// The gate's verdict on one paused request.
+fn decide(shared: &Shared, req: &PausedRequest) -> Verdict {
     let metrics = &shared.metrics;
     metrics.paused.fetch_add(1, Ordering::Relaxed);
-    let Some(request_id) = params["requestId"].as_str().map(str::to_string) else {
-        return;
-    };
-    let url = params["request"]["url"].as_str().unwrap_or_default();
-    // We only intercept at the request stage; anything else is just let through.
-    let response_stage =
-        params.get("responseStatusCode").is_some() || params.get("responseErrorReason").is_some();
+    // We only intercept at the request stage: a response-stage pause belongs to another
+    // client (net rules/breakpoints) and is not ours to judge.
+    if req.response_stage {
+        return Verdict::Pass;
+    }
+    let params = &req.params;
+    let url = req.url();
     let is_main_frame = params["resourceType"] == "Document"
         && params["frameId"].as_str() == Some(lock(&shared.main_frame).as_str());
-    let resource_type =
-        ResourceType::from_cdp(params["resourceType"].as_str().unwrap_or(""), is_main_frame);
-
-    let decision = if response_stage {
-        GateDecision::allow()
+    let resource_type = ResourceType::from_cdp(req.resource_type(), is_main_frame);
+    let source = if is_main_frame {
+        url.to_string()
     } else {
-        let source = if is_main_frame {
-            url.to_string()
-        } else {
-            shared.page_url()
-        };
-        let started = Instant::now();
-        let decision = shared.gate.on_request(&RequestInfo {
-            tab: Some(shared.tab),
-            url,
-            source_url: &source,
-            resource_type,
-        });
-        let ns = started.elapsed().as_nanos() as u64;
-        metrics.decision_ns.fetch_add(ns, Ordering::Relaxed);
-        metrics.decision_ns_max.fetch_max(ns, Ordering::Relaxed);
-        decision
+        shared.page_url()
     };
+    let started = Instant::now();
+    let decision = shared.gate.on_request(&RequestInfo {
+        tab: Some(shared.tab),
+        url,
+        source_url: &source,
+        resource_type,
+    });
+    let ns = started.elapsed().as_nanos() as u64;
+    metrics.decision_ns.fetch_add(ns, Ordering::Relaxed);
+    metrics.decision_ns_max.fetch_max(ns, Ordering::Relaxed);
     // Subresources that follow belong to the new page.
     if is_main_frame {
         *lock(&shared.page_url) = url.to_string();
     }
-
-    // Only browser-side `Fetch.*` calls from here on: see the module docs on why we must not
-    // touch the renderer while a navigation request is paused.
-    let shared = shared.clone();
-    tokio::spawn(async move {
-        answer(&shared, &request_id, &decision).await;
-        let us = received.elapsed().as_micros() as u64;
-        shared.metrics.roundtrip_us.fetch_add(us, Ordering::Relaxed);
-        shared
-            .metrics
-            .roundtrip_us_max
-            .fetch_max(us, Ordering::Relaxed);
-    });
+    verdict_of(&decision)
 }
 
-/// Resolve one paused request according to the decision. Never leaves it paused if CDP lets
-/// us answer at all.
-async fn answer(shared: &Shared, request_id: &str, decision: &GateDecision) {
-    let metrics = &shared.metrics;
-    let first = match decision.action {
-        GateAction::Block => shared
-            .cdp(
-                "Fetch.failRequest",
-                json!({ "requestId": request_id, "errorReason": "BlockedByClient" }),
-            )
-            .await
-            .map(|_| &metrics.blocked),
+fn verdict_of(decision: &GateDecision) -> Verdict {
+    let block = || Verdict::Answer(Answer::fail("BlockedByClient"));
+    match decision.action {
+        // Not ours to stop: net rules (if any) come next, then a plain continue.
+        GateAction::Allow => Verdict::Pass,
+        GateAction::Block => block(),
         GateAction::Redirect => match decision.redirect.as_deref().and_then(fulfill_params) {
-            Some(mut params) => {
-                params["requestId"] = json!(request_id);
-                shared
-                    .cdp("Fetch.fulfillRequest", params)
-                    .await
-                    .map(|_| &metrics.fulfilled)
-            }
+            Some(params) => Verdict::Answer(Answer::new("Fetch.fulfillRequest", params)),
             // A redirect we cannot express: block instead.
-            None => shared
-                .cdp(
-                    "Fetch.failRequest",
-                    json!({ "requestId": request_id, "errorReason": "BlockedByClient" }),
-                )
-                .await
-                .map(|_| &metrics.blocked),
+            None => block(),
         },
-        GateAction::Allow => Err(BackendError::Cdp(String::new())), // continue below
+    }
+}
+
+/// Outcome counters and round trip, once the coordinator answered a request we judged.
+fn count_answer(shared: &Shared, req: &PausedRequest, answered: &Answered<'_>) {
+    let m = &shared.metrics;
+    let counter = if answered.by == CLIENT {
+        match (answered.error, answered.released) {
+            (None, _) if answered.method == "Fetch.fulfillRequest" => &m.fulfilled,
+            (None, _) => &m.blocked,
+            // The block failed, but the fallback continue went through.
+            (Some(_), true) => &m.continued,
+            // The request is gone (navigation, tab closed): nothing left to resolve.
+            (Some(_), false) => &m.errors,
+        }
+    } else if answered.released {
+        &m.continued // we let it pass; somebody else answered it
+    } else {
+        &m.errors
     };
-    let counter = match first {
-        Ok(counter) => Some(counter),
-        Err(_) => shared
-            .cdp("Fetch.continueRequest", json!({ "requestId": request_id }))
-            .await
-            .ok()
-            .map(|_| &metrics.continued),
-    };
-    match counter {
-        Some(counter) => counter.fetch_add(1, Ordering::Relaxed),
-        // The request is gone (navigation, tab closed): nothing left to resolve.
-        None => metrics.errors.fetch_add(1, Ordering::Relaxed),
-    };
+    counter.fetch_add(1, Ordering::Relaxed);
+    // A request held at a breakpoint would only measure the agent's think time.
+    if !answered.held {
+        let us = req.received.elapsed().as_micros() as u64;
+        m.roundtrip_us.fetch_add(us, Ordering::Relaxed);
+        m.roundtrip_us_max.fetch_max(us, Ordering::Relaxed);
+    }
 }
 
 /// `Fetch.fulfillRequest` parameters for a `data:<mime>;base64,<body>` redirect.

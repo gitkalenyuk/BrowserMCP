@@ -4,22 +4,33 @@
 //! * [`stealth`] — apply an identity to a tab through CDP Emulation + a minimal patch script,
 //!   remove it, and probe the page like a fingerprinting script would (`stealth.*`,
 //!   `device.*`);
-//! * [`proxy`] — proxy URLs, pools with rotation and health checks, a local forwarder that
-//!   adds SOCKS5/HTTP authentication for Chromium, and IP → geo lookup (`proxy.*`, `geo.*`).
+//! * [`proxy`] — proxy URLs, pools with rotation, leases and health checks, a local forwarder
+//!   that adds SOCKS5/HTTP authentication for Chromium, split routing as a PAC script, and
+//!   IP → geo lookup (`proxy.*`, `geo.*`);
+//! * [`fit`] + [`country`] — fit an identity's timezone/languages/position to a proxy's exit
+//!   IP, with an offline country table (`identity.fit_to_proxy`);
+//! * [`worker`] — the CDP commands that give worker targets the identity;
+//! * [`routing`] + [`cef_prefs`] — what the `cef` crate calls per profile (proxy preference,
+//!   WebRTC/language prefs, the assigned identity) and the leases the `jobs` crate uses.
 //!
 //! All commands are in [`Toolset::Stealth`](bmcp_core::Toolset::Stealth). State that lives
 //! between calls is one [`Services`] value in the registry's extensions. The CEF-side wiring
-//! (per-profile proxy preference, WebRTC policy, auto-apply on new tabs) is described in this
-//! crate's README.
+//! (per-profile proxy preference, WebRTC policy, auto-apply on new tabs and workers) is
+//! described in this crate's README.
 
+pub mod cef_prefs;
 pub mod commands;
+pub mod country;
+pub mod fit;
 pub mod identity;
 pub mod proxy;
 mod rng;
+pub mod routing;
 pub mod stealth;
 pub mod store;
 #[cfg(test)]
 mod tests;
+pub mod worker;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,7 +40,9 @@ use std::sync::{Arc, Mutex};
 use bmcp_core::{CmdError, Ctx, Registry};
 
 pub use identity::{Identity, Os, PRESETS, generate};
-pub use proxy::{Forwarder, ProxyConfig};
+pub use proxy::{Forwarder, ProxyConfig, ProxyRef};
+pub use routing::{ProfileProxy, ROUTES_CHANGED};
+pub use worker::{WorkerCommand, worker_commands};
 
 use proxy::ProxiesFile;
 use stealth::TabIdentities;
@@ -111,5 +124,10 @@ pub fn register(registry: &mut Registry) {
         .add::<commands::ForwardStart>()
         .add::<commands::ForwardStop>()
         .add::<commands::ForwardList>()
-        .add::<commands::GeoLookup>();
+        .add::<commands::GeoLookup>()
+        .add::<commands::RulesSet>()
+        .add::<commands::RulesTest>()
+        .add::<commands::FitToProxy>()
+        .add::<commands::Lease>()
+        .add::<commands::Release>();
 }

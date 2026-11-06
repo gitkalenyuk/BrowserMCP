@@ -5,6 +5,11 @@
 //! box and be enabled → hit-test its centre (is something else on top, like a cookie dialog?)
 //! → `Input.dispatchMouseEvent` moved/pressed/released. Failures come back as
 //! `NOT_INTERACTABLE` with a hint that names what is in the way.
+//!
+//! Elements inside an out-of-process iframe are checked in the frame's CDP session; mouse
+//! input still goes to the page, at coordinates moved by the frame's position
+//! ([`crate::frames`]). Shadow DOM needs no special path: hit tests and checks walk up
+//! through shadow roots to their hosts.
 
 use std::time::Duration;
 
@@ -13,7 +18,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::cdp::{self, BoxRect, perception_error};
+use crate::cdp::{self, BoxRect};
+use crate::frames::{self, Frames};
 use crate::human;
 use crate::keys;
 use crate::page;
@@ -134,22 +140,36 @@ const PROBE_JS: &str = r#"function() {
   return { connected: true, tag, type, disabled, readonly, hidden, editable, checked };
 }"#;
 
-/// `this` = target element, argument = the node the hit test found. True when a click there
+/// `this` = target node, argument = the node the hit test found. True when a click there
 /// reaches the target: the hit node is the target, inside it (also across shadow roots), or
 /// inside one of its `<label>`s.
+///
+/// A text node (a `page.find` text match) stands for its parent element: the hit test never
+/// returns text nodes, it reports the element around them, which is where the click goes.
 const HIT_OK_JS: &str = r#"function(hit) {
-  for (let n = hit; n; n = n.parentNode || n.host) { if (n === this) return true; }
-  if (this.labels) { for (const l of this.labels) { if (l === hit || l.contains(hit)) return true; } }
+  const self = this.nodeType === 1 ? this : this.parentElement;
+  if (!self) return false;
+  // Is `n` the element `el` or inside it? Walks up through shadow roots to their hosts.
+  const within = (n, el) => { for (; n; n = n.parentNode || n.host) { if (n === el) return true; } return false; };
+  if (within(hit, self)) return true;
+  if (self.labels) { for (const l of self.labels) { if (within(hit, l)) return true; } }
   return false;
 }"#;
 
-/// `this` = the node on top. Returns the element worth naming: the dialog it belongs to, or
-/// the dialog inside it (a dimmed backdrop around a cookie banner), else the element itself.
+/// `this` = the node on top. Returns the element worth naming: the dialog it belongs to (also
+/// when the node sits in the dialog's shadow DOM), or the dialog inside it (a dimmed backdrop
+/// around a cookie banner), else the element itself.
 const COVER_JS: &str = r#"function() {
   const el = this.nodeType === 1 ? this : this.parentElement;
   if (!el) return null;
   const dialog = 'dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
-  return el.closest(dialog) || el.querySelector(dialog) || el;
+  // Like el.closest(dialog), but continuing from a shadow root to its host.
+  for (let n = el; n; ) {
+    if (n.matches(dialog)) return n;
+    const root = n.getRootNode();
+    n = n.parentElement || (root instanceof ShadowRoot ? root.host : null);
+  }
+  return el.querySelector(dialog) || el;
 }"#;
 
 /// `this` = an element. A short CSS-like description: `div#cookie-banner` or `div.overlay.dark`.
@@ -243,19 +263,65 @@ const SCROLL_JS: &str = r#"function(dir) {
 }"#;
 
 /// `this` = an element. Its visible text (or value for form fields).
+///
+/// `innerText` leaves out text inside shadow roots (web components), so when the element has
+/// shadow hosts inside, the text is collected from the flat tree instead: shadow roots
+/// instead of their hosts' children, slots with what is assigned to them, hidden elements
+/// and password values left out, a line break around block elements. Closed shadow roots
+/// cannot be read from page scripts; their controls are still in snapshots (the AX tree
+/// includes them) and can be acted on.
 pub const READ_JS: &str = r#"function() {
   const el = this.nodeType === 1 ? this : this.parentElement;
   if (!el) return this.textContent || '';
   if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'password') return el.value;
-  return el.innerText !== undefined ? el.innerText : (el.textContent || '');
+  const hasShadow = el.shadowRoot || [...el.querySelectorAll('*')].some(e => e.shadowRoot);
+  if (!hasShadow) return el.innerText !== undefined ? el.innerText : (el.textContent || '');
+  const out = [];
+  const walk = n => {
+    if (n.nodeType === 3) { out.push(n.data.replace(/\s+/g, ' ')); return; }
+    if (n.nodeType !== 1 && n.nodeType !== 11) return;
+    let block = false;
+    if (n.nodeType === 1) {
+      if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(n.tagName)) return;
+      const s = getComputedStyle(n);
+      if (s.display === 'none' || s.visibility === 'hidden') return;
+      if (n.tagName === 'BR') { out.push('\n'); return; }
+      if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA') {
+        if (n.type !== 'password' && n.value) out.push(' ' + n.value + ' ');
+        return;
+      }
+      block = !s.display.startsWith('inline');
+    }
+    let kids = n.shadowRoot ? n.shadowRoot.childNodes : n.childNodes;
+    if (n.tagName === 'SLOT') {
+      const assigned = n.assignedNodes({ flatten: true });
+      if (assigned.length) kids = assigned;
+    }
+    if (block) out.push('\n');
+    for (const k of kids) walk(k);
+    if (block) out.push('\n');
+  };
+  walk(el);
+  return out.join('').replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{2,}/g, '\n').replace(/ {2,}/g, ' ').trim();
 }"#;
 
 /// A resolved target element.
 struct Target {
+    /// The node's id in its own session (see [`crate::frames`]).
     backend_node_id: i64,
+    /// Its child session when it is inside an out-of-process iframe (`None` = the page).
+    session: Option<String>,
+    /// Its frame slot (0 = the page or a same-process iframe).
+    slot: usize,
     object_id: String,
     /// For messages: `@4:e3 button "Sign in"`.
     label: String,
+}
+
+impl Target {
+    fn session(&self) -> Option<&str> {
+        self.session.as_deref()
+    }
 }
 
 /// Why an element cannot be used right now.
@@ -269,10 +335,13 @@ enum Blocker {
     NoBox,
     /// With details (box position or failed hit test).
     OutsideViewport(String),
+    /// Something else is at the click point (`x`, `y` in the page's viewport): node `hit`
+    /// of frame `slot`.
     Covered {
         x: f64,
         y: f64,
         hit: i64,
+        slot: usize,
     },
 }
 
@@ -328,9 +397,9 @@ pub async fn perform(
                 .await?
                 .ok_or_else(|| CmdError::internal("the page has no document element"))?;
                 let pos = if state.human.is_some() && matches!(dir, "up" | "down") {
-                    wheel_scroll(ctx, tab, state, &page, None, dir).await?
+                    wheel_scroll(ctx, tab, state, Scroller::Page(&page), dir).await?
                 } else {
-                    cdp::call_function(ctx, tab, &page, SCROLL_JS, &[json!(dir)]).await?
+                    cdp::call_function(ctx, tab, None, &page, SCROLL_JS, &[json!(dir)]).await?
                 };
                 Ok(format!("scrolled page {dir} {}", scroll_position(&pos)))
             }
@@ -342,10 +411,55 @@ pub async fn perform(
     };
 
     let target = resolve_target(ctx, tab, state, target_ref).await?;
+    perform_on(ctx, tab, state, &target, step).await
+}
+
+/// [`perform`] on a DOM node found some other way than a ref (e.g. Vim-style link hints:
+/// the page script points at the element, `DOM.describeNode` gives its `backendNodeId`).
+/// Same actionability checks and trusted input as `page.act`; `label` names the element in
+/// messages. `step.target` is ignored. The node belongs to the page's own CDP session (not
+/// an out-of-process iframe); the hit-test rules (click-through overlays, text nodes, shadow
+/// DOM) are the same as for refs.
+pub async fn perform_on_node(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    backend_node_id: i64,
+    label: &str,
+    step: &Step,
+) -> Result<String, CmdError> {
+    if step.action.sends_input() {
+        ensure_page_visible(ctx, tab).await?;
+    }
+    let object_id = cdp::resolve_object(ctx, tab, None, backend_node_id, label).await?;
+    let target = Target {
+        backend_node_id,
+        session: None,
+        slot: 0,
+        object_id,
+        label: label.to_string(),
+    };
+    perform_on(ctx, tab, state, &target, step).await
+}
+
+/// The element half of [`perform`]: `target` is already resolved.
+async fn perform_on(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    target: &Target,
+    step: &Step,
+) -> Result<String, CmdError> {
+    let value = step.value.as_deref();
+    let need_value = |what: &str| {
+        value.ok_or_else(|| {
+            CmdError::invalid_params(format!("action {:?} needs a value ({what})", step.action))
+        })
+    };
     let done = format!("{} {}", step.action.past_tense(), target.label);
     match step.action {
         Action::Click | Action::Dblclick | Action::Hover => {
-            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (_, point) = wait_actionable(ctx, tab, state, target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
             match step.action {
                 Action::Hover => mouse_move(ctx, tab, state, x, y).await?,
@@ -356,7 +470,7 @@ pub async fn perform(
         }
         Action::Check | Action::Uncheck => {
             let want = step.action == Action::Check;
-            let probe = probe_element(ctx, tab, &target).await?;
+            let probe = probe_element(ctx, tab, target).await?;
             let Some(current) = probe.checked else {
                 return Err(not_interactable(
                     format!("{} has no checked state", target.label),
@@ -374,10 +488,10 @@ pub async fn perform(
                 ))
                 .with_hint("Check another option of the same group instead."));
             }
-            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (_, point) = wait_actionable(ctx, tab, state, target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
             mouse_click(ctx, tab, state, x, y, 1).await?;
-            let after = probe_element(ctx, tab, &target).await?;
+            let after = probe_element(ctx, tab, target).await?;
             if after.checked != Some(want) {
                 return Err(not_interactable(
                     format!("clicking {} did not make it {}", target.label, on_off(want)),
@@ -389,15 +503,15 @@ pub async fn perform(
         }
         Action::Fill | Action::Type => {
             let text = need_value("the text to type")?;
-            let (probe, _) = wait_actionable(ctx, tab, state, &target, Need::Editable).await?;
-            focus(ctx, tab, &target).await?;
+            let (probe, _) = wait_actionable(ctx, tab, state, target, Need::Editable).await?;
+            focus(ctx, tab, target).await?;
+            let (session, object) = (target.session(), target.object_id.as_str());
             if probe.tag == "input" && SET_BY_VALUE_TYPES.contains(&probe.input_type.as_str()) {
-                cdp::call_function(ctx, tab, &target.object_id, SET_VALUE_JS, &[json!(text)])
-                    .await?;
+                cdp::call_function(ctx, tab, session, object, SET_VALUE_JS, &[json!(text)]).await?;
                 return Ok(done);
             }
             if step.action == Action::Fill {
-                cdp::call_function(ctx, tab, &target.object_id, SELECT_ALL_JS, &[]).await?;
+                cdp::call_function(ctx, tab, session, object, SELECT_ALL_JS, &[]).await?;
                 if text.is_empty() {
                     // Typing "" would leave the selection; delete it instead.
                     keys::press(ctx, tab, &[keys::parse_chord("Delete")?]).await?;
@@ -407,16 +521,22 @@ pub async fn perform(
                 type_text(ctx, tab, state, text).await?;
             }
             if step.action == Action::Fill {
-                cdp::call_function(ctx, tab, &target.object_id, CHANGE_JS, &[]).await?;
+                cdp::call_function(ctx, tab, session, object, CHANGE_JS, &[]).await?;
             }
             Ok(done)
         }
         Action::Select => {
             let wanted = need_value("the option's value or label")?;
-            wait_actionable(ctx, tab, state, &target, Need::Enabled).await?;
-            let reply =
-                cdp::call_function(ctx, tab, &target.object_id, SELECT_JS, &[json!(wanted)])
-                    .await?;
+            wait_actionable(ctx, tab, state, target, Need::Enabled).await?;
+            let reply = cdp::call_function(
+                ctx,
+                tab,
+                target.session(),
+                &target.object_id,
+                SELECT_JS,
+                &[json!(wanted)],
+            )
+            .await?;
             match reply["error"].as_str() {
                 None => Ok(format!(
                     "selected \"{}\" in {}",
@@ -445,7 +565,7 @@ pub async fn perform(
         }
         Action::Press => {
             let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
-            focus(ctx, tab, &target).await?;
+            focus(ctx, tab, target).await?;
             press_keys(ctx, tab, state, &chords).await?;
             Ok(format!(
                 "pressed {} on {}",
@@ -456,15 +576,14 @@ pub async fn perform(
         Action::Scroll => {
             let dir = scroll_direction(value)?;
             if dir == "into_view" {
-                scroll_into_view(ctx, tab, target.backend_node_id).await;
+                scroll_into_view(ctx, tab, target).await;
                 return Ok(format!("scrolled {} into view", target.label));
             }
             let pos = if state.human.is_some() && matches!(dir, "up" | "down") {
-                let object_id = target.object_id.clone();
-                let backend = Some(target.backend_node_id);
-                wheel_scroll(ctx, tab, state, &object_id, backend, dir).await?
+                wheel_scroll(ctx, tab, state, Scroller::Element(target), dir).await?
             } else {
-                cdp::call_function(ctx, tab, &target.object_id, SCROLL_JS, &[json!(dir)]).await?
+                let (session, object) = (target.session(), target.object_id.as_str());
+                cdp::call_function(ctx, tab, session, object, SCROLL_JS, &[json!(dir)]).await?
             };
             Ok(format!(
                 "scrolled {dir} at {} {}",
@@ -473,7 +592,7 @@ pub async fn perform(
             ))
         }
         Action::Focus => {
-            focus(ctx, tab, &target).await?;
+            focus(ctx, tab, target).await?;
             Ok(done)
         }
     }
@@ -531,24 +650,27 @@ async fn resolve_target(
     state: &TabState,
     target_ref: &str,
 ) -> Result<Target, CmdError> {
-    let backend_node_id = state
-        .registry
-        .resolve(target_ref)
-        .map_err(perception_error)?;
-    let label = match state.describe(backend_node_id) {
+    // The id in the merged tree (snapshot refs), then where the node really lives.
+    let merged = page::resolve_ref(ctx, tab, state, target_ref)?;
+    let at = state.frames.locate(merged);
+    let label = match state.describe(merged) {
         Some(desc) => format!("{} {desc}", target_ref.trim()),
         None => target_ref.trim().to_string(),
     };
-    let object_id = cdp::resolve_object(ctx, tab, backend_node_id, &label).await?;
+    let object_id =
+        cdp::resolve_object(ctx, tab, at.session.as_deref(), at.backend, &label).await?;
     Ok(Target {
-        backend_node_id,
+        backend_node_id: at.backend,
+        session: at.session,
+        slot: at.slot,
         object_id,
         label,
     })
 }
 
 async fn probe_element(ctx: &Ctx, tab: TabId, target: &Target) -> Result<Probe, CmdError> {
-    let value = cdp::call_function(ctx, tab, &target.object_id, PROBE_JS, &[]).await?;
+    let value =
+        cdp::call_function(ctx, tab, target.session(), &target.object_id, PROBE_JS, &[]).await?;
     let probe: Probe = serde_json::from_value(value).unwrap_or_default();
     if !probe.connected {
         return Err(cdp::node_gone(&target.label));
@@ -559,8 +681,9 @@ async fn probe_element(ctx: &Ctx, tab: TabId, target: &Target) -> Result<Probe, 
 async fn focus(ctx: &Ctx, tab: TabId, target: &Target) -> Result<(), CmdError> {
     let reply = ctx
         .backend
-        .cdp(
+        .cdp_session(
             tab,
+            target.session.clone(),
             "DOM.focus".into(),
             json!({ "backendNodeId": target.backend_node_id }),
         )
@@ -577,13 +700,15 @@ async fn focus(ctx: &Ctx, tab: TabId, target: &Target) -> Result<(), CmdError> {
 
 /// `DOM.scrollIntoViewIfNeeded`. Failure (no layout box) is not an error here: the box check
 /// that follows reports it better.
-async fn scroll_into_view(ctx: &Ctx, tab: TabId, backend_node_id: i64) {
+/// In an out-of-process iframe Chromium also scrolls the frames around it.
+async fn scroll_into_view(ctx: &Ctx, tab: TabId, target: &Target) {
     let _ = ctx
         .backend
-        .cdp(
+        .cdp_session(
             tab,
+            target.session.clone(),
             "DOM.scrollIntoViewIfNeeded".into(),
-            json!({ "backendNodeId": backend_node_id }),
+            json!({ "backendNodeId": target.backend_node_id }),
         )
         .await;
 }
@@ -599,7 +724,7 @@ async fn wait_actionable(
 ) -> Result<(Probe, Option<(f64, f64)>), CmdError> {
     let started = tokio::time::Instant::now();
     loop {
-        let blocker = match check_once(ctx, tab, target, need).await? {
+        let blocker = match check_once(ctx, tab, &state.frames, target, need).await? {
             Ok(found) => return Ok(found),
             Err(blocker) => blocker,
         };
@@ -615,14 +740,17 @@ async fn wait_actionable(
     }
 }
 
-/// One round of actionability checks.
+/// One round of actionability checks. For an element inside an out-of-process iframe they run
+/// in the frame's session; the returned point is always in the page's viewport.
 async fn check_once(
     ctx: &Ctx,
     tab: TabId,
+    frames: &Frames,
     target: &Target,
     need: Need,
 ) -> Result<Result<(Probe, Option<(f64, f64)>), Blocker>, CmdError> {
-    let value = cdp::call_function(ctx, tab, &target.object_id, PROBE_JS, &[]).await?;
+    let session = target.session();
+    let value = cdp::call_function(ctx, tab, session, &target.object_id, PROBE_JS, &[]).await?;
     let probe: Probe = serde_json::from_value(value).unwrap_or_default();
     if !probe.connected {
         return Ok(Err(Blocker::Gone));
@@ -642,16 +770,17 @@ async fn check_once(
         }
     }
 
-    scroll_into_view(ctx, tab, target.backend_node_id).await;
-    let Some(rect) = cdp::content_box(ctx, tab, target.backend_node_id).await? else {
+    scroll_into_view(ctx, tab, target).await;
+    let Some(rect) = cdp::content_box(ctx, tab, session, target.backend_node_id).await? else {
         return Ok(Err(Blocker::NoBox));
     };
     if need != Need::Pointer {
         return Ok(Ok((probe, None)));
     }
 
-    // Click the middle of the part that is inside the viewport.
-    let layout = cdp::layout(ctx, tab).await?;
+    // Click the middle of the part that is inside the viewport (the frame's own viewport for
+    // an out-of-process iframe; `rect` is in the same coordinates).
+    let layout = cdp::layout(ctx, tab, session).await?;
     let Some(visible) = clip_to_viewport(rect, layout.viewport_width, layout.viewport_height)
     else {
         return Ok(Err(Blocker::OutsideViewport(format!(
@@ -664,26 +793,7 @@ async fn check_once(
     // Hit test: which node would receive a click at (x, y)? Unlike the quads and mouse events
     // (viewport coordinates), `DOM.getNodeForLocation` takes document coordinates, so add the
     // scroll offset (verified live on a scrolled page).
-    let hit = ctx
-        .backend
-        .cdp(
-            tab,
-            "DOM.getNodeForLocation".into(),
-            json!({
-                "x": (x + layout.page_x).floor() as i64,
-                "y": (y + layout.page_y).floor() as i64,
-                "includeUserAgentShadowDOM": false,
-                "ignorePointerEventsNone": true,
-            }),
-        )
-        .await;
-    let hit = match hit {
-        Ok(reply) => reply["backendNodeId"].as_i64().ok_or_else(String::new),
-        // "No node found at given location"
-        Err(bmcp_core::BackendError::Cdp(msg)) => Err(msg),
-        Err(other) => return Err(other.into()),
-    };
-    let hit = match hit {
+    let hit = match hit_test(ctx, tab, session, x + layout.page_x, y + layout.page_y).await? {
         Ok(hit) => hit,
         Err(msg) => {
             return Ok(Err(Blocker::OutsideViewport(format!(
@@ -691,22 +801,99 @@ async fn check_once(
             ))));
         }
     };
-    if hit != target.backend_node_id {
-        let hit_object = cdp::resolve_object(ctx, tab, hit, "the element on top").await?;
-        let reaches = cdp::call_on(
-            ctx,
-            tab,
-            &target.object_id,
-            HIT_OK_JS,
-            vec![cdp::arg_object(&hit_object)],
-            true,
-        )
-        .await?;
-        if reaches["value"].as_bool() != Some(true) {
-            return Ok(Err(Blocker::Covered { x, y, hit }));
+    // Mouse events go to the page, so the point to click is in the page's viewport.
+    let (dx, dy) = frames::frame_offset(ctx, tab, frames, target.slot).await?;
+    let (px, py) = (x + dx, y + dy);
+    if hit != target.backend_node_id && !reaches(ctx, tab, session, &target.object_id, hit).await? {
+        return Ok(Err(Blocker::Covered {
+            x: px,
+            y: py,
+            hit,
+            slot: target.slot,
+        }));
+    }
+    // Inside an out-of-process iframe: the page itself must not cover the frame there.
+    if let Some(owner) = frames.outermost_owner(target.slot) {
+        let page = cdp::layout(ctx, tab, None).await?;
+        let top = match hit_test(ctx, tab, None, px + page.page_x, py + page.page_y).await? {
+            Ok(top) => top,
+            Err(msg) => {
+                return Ok(Err(Blocker::OutsideViewport(format!(
+                    "nothing is hit at ({px:.0}, {py:.0}) {msg}"
+                ))));
+            }
+        };
+        if top != owner {
+            let iframe = cdp::resolve_object(ctx, tab, None, owner, "the iframe").await?;
+            if !reaches(ctx, tab, None, &iframe, top).await? {
+                return Ok(Err(Blocker::Covered {
+                    x: px,
+                    y: py,
+                    hit: top,
+                    slot: 0,
+                }));
+            }
         }
     }
-    Ok(Ok((probe, Some((x, y)))))
+    Ok(Ok((probe, Some((px, py)))))
+}
+
+/// `DOM.getNodeForLocation` at document coordinates of a session (`None` = the page). The
+/// inner `Err` holds Chromium's message when nothing is there.
+///
+/// `ignorePointerEventsNone: false` makes the hit test skip `pointer-events: none` elements,
+/// exactly like a real mouse event does: a decorative overlay or fade that clicks pass
+/// through does not count as covering the target. Nodes in (open or closed) shadow roots are
+/// returned as they are; [`HIT_OK_JS`] walks up through their hosts.
+async fn hit_test(
+    ctx: &Ctx,
+    tab: TabId,
+    session: Option<&str>,
+    x: f64,
+    y: f64,
+) -> Result<Result<i64, String>, CmdError> {
+    let reply = ctx
+        .backend
+        .cdp_session(
+            tab,
+            session.map(str::to_string),
+            "DOM.getNodeForLocation".into(),
+            json!({
+                "x": x.floor() as i64,
+                "y": y.floor() as i64,
+                "includeUserAgentShadowDOM": false,
+                "ignorePointerEventsNone": false,
+            }),
+        )
+        .await;
+    match reply {
+        Ok(reply) => Ok(reply["backendNodeId"].as_i64().ok_or_else(String::new)),
+        // "No node found at given location"
+        Err(bmcp_core::BackendError::Cdp(msg)) => Ok(Err(msg)),
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// Does a click that lands on node `hit` reach the element `object` (see [`HIT_OK_JS`])?
+async fn reaches(
+    ctx: &Ctx,
+    tab: TabId,
+    session: Option<&str>,
+    object: &str,
+    hit: i64,
+) -> Result<bool, CmdError> {
+    let hit_object = cdp::resolve_object(ctx, tab, session, hit, "the element on top").await?;
+    let reply = cdp::call_on(
+        ctx,
+        tab,
+        session,
+        object,
+        HIT_OK_JS,
+        vec![cdp::arg_object(&hit_object)],
+        true,
+    )
+    .await?;
+    Ok(reply["value"].as_bool() == Some(true))
 }
 
 /// The part of `rect` inside a `width`×`height` viewport, if any.
@@ -766,49 +953,58 @@ async fn blocker_error(
             format!("{label} could not be scrolled into the visible area: {detail}"),
             "Try page_act with action scroll, then retry.",
         ),
-        Blocker::Covered { x, y, hit } => covered_error(ctx, tab, state, target, x, y, hit)
-            .await
-            .unwrap_or_else(|err| {
-                // Describing the cover failed; still report the main fact.
-                not_interactable(
-                    format!("{label} is covered by another element at ({x:.0}, {y:.0})"),
-                    &format!(
-                        "Close what is on top first (details failed: {})",
-                        err.message
-                    ),
-                )
-            }),
+        Blocker::Covered { x, y, hit, slot } => {
+            covered_error(ctx, tab, state, target, (x, y), (hit, slot))
+                .await
+                .unwrap_or_else(|err| {
+                    // Describing the cover failed; still report the main fact.
+                    not_interactable(
+                        format!("{label} is covered by another element at ({x:.0}, {y:.0})"),
+                        &format!(
+                            "Close what is on top first (details failed: {})",
+                            err.message
+                        ),
+                    )
+                })
+        }
     }
 }
 
 /// `NOT_INTERACTABLE` that names what covers the target and offers refs to deal with it, e.g.
 /// `covered by dialog "Cookies" (div#cookie-banner)` + `button "Accept all" @5:e9`.
+///
+/// `(x, y)` is the click point in the page's viewport; `hit` is the node found there, in
+/// frame `slot` (see [`crate::frames`]).
 async fn covered_error(
     ctx: &Ctx,
     tab: TabId,
     state: &mut TabState,
     target: &Target,
-    x: f64,
-    y: f64,
-    hit: i64,
+    (x, y): (f64, f64),
+    (hit, slot): (i64, usize),
 ) -> Result<CmdError, CmdError> {
-    let hit_object = cdp::resolve_object(ctx, tab, hit, "the element on top").await?;
-    let cover_object = cdp::call_function_object(ctx, tab, &hit_object, COVER_JS)
+    let session = state.frames.session_of(slot);
+    let session = session.as_deref();
+    let hit_object = cdp::resolve_object(ctx, tab, session, hit, "the element on top").await?;
+    let cover_object = cdp::call_function_object(ctx, tab, session, &hit_object, COVER_JS)
         .await?
         .unwrap_or(hit_object);
-    let css = cdp::call_function(ctx, tab, &cover_object, CSS_NAME_JS, &[])
+    let css = cdp::call_function(ctx, tab, session, &cover_object, CSS_NAME_JS, &[])
         .await?
         .as_str()
         .unwrap_or("element")
         .to_string();
-    let described = cdp::call(
+    let described = cdp::call_in(
         ctx,
         tab,
+        session,
         "DOM.describeNode",
-        json!({ "objectId": cover_object }),
+        json!({ "objectId": cover_object, "pierce": true }),
     )
     .await?;
+    // The cover's id in the merged tree the snapshot below is built from.
     let cover = described["node"]["backendNodeId"].as_i64().unwrap_or(hit);
+    let cover = Frames::merged_id(slot, cover);
 
     // A fresh snapshot gives the agent refs for the controls inside the cover.
     let (snap, tree) =
@@ -908,7 +1104,7 @@ async fn mouse_move(
         Some(point) => point,
         None => {
             // First move in this tab: come from somewhere plausible in the viewport.
-            let layout = cdp::layout(ctx, tab).await?;
+            let layout = cdp::layout(ctx, tab, None).await?;
             let viewport = (layout.viewport_width, layout.viewport_height);
             human::entry_point((x, y), viewport, &mut h.rng)
         }
@@ -1019,29 +1215,48 @@ async fn press_keys(
     Ok(())
 }
 
+/// What a human-like scroll turns the wheel over.
+enum Scroller<'a> {
+    /// The page's scrolling element (an object id in the page).
+    Page(&'a str),
+    /// An element (perhaps inside an out-of-process iframe).
+    Element(&'a Target),
+}
+
 /// Human-like scroll up/down: move the mouse over the element (or keep it over the page) and
-/// turn the wheel in notches. `object_id` is the element (or the page's scrolling element)
-/// used to read the scroll position, like [`SCROLL_JS`] does.
+/// turn the wheel in notches. The scroll position is read like [`SCROLL_JS`] does.
 async fn wheel_scroll(
     ctx: &Ctx,
     tab: TabId,
     state: &mut TabState,
-    object_id: &str,
-    backend_node_id: Option<i64>,
+    scroller: Scroller<'_>,
     dir: &str,
 ) -> Result<Value, CmdError> {
-    let before = cdp::call_function(ctx, tab, object_id, SCROLL_JS, &[json!("none")]).await?;
+    let (session, object_id) = match &scroller {
+        Scroller::Page(object) => (None, *object),
+        Scroller::Element(target) => (target.session(), target.object_id.as_str()),
+    };
+    let before =
+        cdp::call_function(ctx, tab, session, object_id, SCROLL_JS, &[json!("none")]).await?;
     let view = before["view"].as_f64().unwrap_or(600.0).max(50.0);
-    let layout = cdp::layout(ctx, tab).await?;
+    let layout = cdp::layout(ctx, tab, None).await?;
     let vw = layout.viewport_width.max(1.0);
     let vh = layout.viewport_height.max(1.0);
     // Where the wheel turns: over the element, else where the mouse is (or the middle).
-    let element = match backend_node_id {
-        Some(id) => cdp::content_box(ctx, tab, id)
-            .await?
-            .and_then(|r| clip_to_viewport(r, vw, vh))
-            .map(|r| r.center()),
-        None => None,
+    let element = match &scroller {
+        Scroller::Element(target) => {
+            let (dx, dy) = frames::frame_offset(ctx, tab, &state.frames, target.slot).await?;
+            cdp::content_box(ctx, tab, session, target.backend_node_id)
+                .await?
+                .map(|r| BoxRect {
+                    x: r.x + dx,
+                    y: r.y + dy,
+                    ..r
+                })
+                .and_then(|r| clip_to_viewport(r, vw, vh))
+                .map(|r| r.center())
+        }
+        Scroller::Page(_) => None,
     };
     let (x, y) = element.or(state.mouse).unwrap_or((vw / 2.0, vh / 2.0));
     mouse_move(ctx, tab, state, x, y).await?;
@@ -1062,7 +1277,7 @@ async fn wheel_scroll(
     }
     // Smooth scrolling needs a moment before the position is final.
     tokio::time::sleep(Duration::from_millis(150)).await;
-    cdp::call_function(ctx, tab, object_id, SCROLL_JS, &[json!("none")]).await
+    cdp::call_function(ctx, tab, session, object_id, SCROLL_JS, &[json!("none")]).await
 }
 
 #[cfg(test)]

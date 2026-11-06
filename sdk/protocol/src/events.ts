@@ -12,7 +12,8 @@ export type Caller =
   | { kind: "script"; id: string }
   | { kind: "agent"; id: string }
   | { kind: "job"; run: string; step: number }
-  | { kind: "keymap" };
+  | { kind: "keymap" }
+  | { kind: "plugin"; name: string };
 
 /** Every event payload carries the bus sequence number (grows by one per event). */
 export interface EventBase {
@@ -47,6 +48,19 @@ export interface Events {
     error: string;
     message: string;
   };
+  /** A JavaScript dialog opened (crates/pagetools). `handling: "ask"` = left open: answer it with `page.dialog`. */
+  "page.dialog_opened": EventBase & {
+    tab: number;
+    type: "alert" | "confirm" | "prompt" | "beforeunload";
+    message: string;
+    default_prompt: string;
+    url: string;
+    handling: "accept" | "dismiss" | "ask";
+  };
+  /** A JavaScript dialog closed (answered by anyone: policy, agent or human). */
+  "page.dialog_closed": EventBase & { tab: number; accepted: boolean; user_input: string };
+  /** The dialog policy said accept/dismiss but answering failed; the dialog stays open. */
+  "page.dialog_error": EventBase & { tab: number; error: string };
   /** This connection fell behind and missed `missed` events: re-read state (WS only, no seq). */
   "bus.lagged": { missed: number };
 }

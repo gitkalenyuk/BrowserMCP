@@ -85,7 +85,7 @@ fn every_command_is_in_the_stealth_toolset() {
     crate::register(&mut registry);
     crate::install(&registry, dir.path());
     let all = registry.list(None);
-    assert_eq!(all.len(), 20);
+    assert_eq!(all.len(), 25);
     assert!(all.iter().all(|c| c.toolset == bmcp_core::Toolset::Stealth));
 }
 
@@ -612,4 +612,333 @@ async fn pool_check_and_forwarder_commands_work_end_to_end() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);
+}
+
+impl Harness {
+    /// Call with a context whose event bus the test can watch.
+    async fn ok_on(&self, bus: &bmcp_core::EventBus, name: &str, args: Value) -> Value {
+        let ctx = bmcp_core::Ctx::new(Caller::Rest, self.fake.clone(), bus.clone());
+        self.registry
+            .call(ctx, name, args)
+            .await
+            .unwrap_or_else(|e| panic!("{name} failed: {e:?}"))
+    }
+
+    fn services(&self) -> Arc<crate::Services> {
+        self.registry.extensions().get::<crate::Services>().unwrap()
+    }
+}
+
+#[tokio::test]
+async fn rules_set_builds_a_pac_script_and_rules_test_explains_routes() {
+    let h = Harness::new();
+    h.ok(
+        "proxy.pool_add",
+        json!({ "pool": "de", "proxies": ["socks5://u:secret@127.0.0.1:1081", "socks5://u:secret@127.0.0.1:1082"] }),
+    )
+    .await;
+    let bus = bmcp_core::EventBus::new();
+    let mut events = bus.subscribe();
+    let rules = json!({
+        "profile": "work",
+        "rules": [
+            { "match": "*.example.com", "via": "pool:de" },
+            { "match": "re:\\.ru/", "via": "direct" },
+        ],
+        "default": "http://bob:pw@127.0.0.1:3128",
+    });
+    let out = h.ok_on(&bus, "proxy.rules_set", rules.clone()).await;
+    let text = out.to_string();
+    assert!(!text.contains("secret") && !text.contains(":pw@"), "{text}");
+    assert_eq!(out["pref"]["mode"], "pac_script");
+    assert_eq!(out["pref"]["pac_mandatory"], true);
+    assert_eq!(out["forwarders"].as_array().unwrap().len(), 2, "{out}");
+    let script = out["pac_script"].as_str().unwrap();
+    assert!(script.contains("return \"DIRECT\""), "{script}");
+    assert_eq!(script.matches("SOCKS5 127.0.0.1:").count(), 2, "{script}");
+    assert_eq!(out["default"], "http://bob:***@127.0.0.1:3128");
+
+    // The browser hears about it.
+    let event = std::iter::from_fn(|| events.try_recv().ok())
+        .find(|e| e.topic == crate::ROUTES_CHANGED)
+        .expect("proxy.routes_changed event");
+    assert_eq!(event.data["profile"], "work");
+    assert_eq!(event.data["pref"], out["pref"]);
+
+    // Setting the same rules again reuses the forwarders and the profile's pool lease.
+    let again = h.ok("proxy.rules_set", rules.clone()).await;
+    assert_eq!(again["pref"], out["pref"]);
+    assert_eq!(h.services().forwarders().len(), 2);
+    // ... and the cef crate gets the same pref from the stored rules.
+    let pref = h.services().profile_proxy_pref("work").await.unwrap();
+    assert_eq!(pref.pref, out["pref"]);
+    assert!(
+        h.services().profile_proxy_pref("other").await.unwrap().pref == json!({ "mode": "direct" })
+    );
+
+    let test = |url: &str| h.ok("proxy.rules_test", json!({ "profile": "work", "url": url }));
+    let r = test("https://www.example.com/secret/path").await;
+    assert_eq!(r["rule"], 1);
+    assert_eq!(r["via"], "pool:de");
+    assert_eq!(r["pac_url"], "https://www.example.com/");
+    assert!(
+        r["upstream"]
+            .as_str()
+            .unwrap()
+            .starts_with("socks5://u:***@127.0.0.1:108"),
+        "{r}"
+    );
+    let r = test("https://yandex.ru/search?q=x").await;
+    assert_eq!(
+        (r["rule"].clone(), r["via"].clone()),
+        (json!(2), json!("direct"))
+    );
+    assert_eq!(r["upstream"], Value::Null);
+    let r = test("http://other.org/").await;
+    assert_eq!(r["rule"], Value::Null);
+    assert_eq!(r["upstream"], "http://bob:***@127.0.0.1:3128");
+    let err = h
+        .call(
+            "proxy.rules_test",
+            json!({ "profile": "work", "url": "nope" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+
+    // Bad rules and unusable routes store nothing.
+    let err = h
+        .call(
+            "proxy.rules_set",
+            json!({ "profile": "work", "rules": [{ "match": "*", "via": "nowhere" }] }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    let err = h
+        .call(
+            "proxy.rules_set",
+            json!({ "profile": "work", "default": "pool:missing" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert_eq!(test("https://a.example.com/").await["rule"], 1);
+
+    // No rules + direct removes the routing and gives the pool lease back.
+    let cleared = h.ok("proxy.rules_set", json!({ "profile": "work" })).await;
+    assert_eq!(cleared["pref"], json!({ "mode": "direct" }));
+    let file = h.services().proxies.read().unwrap();
+    assert!(file.routes.is_empty());
+    assert!(file.pools["de"].leases.is_empty());
+
+    // Only a default proxy: fixed_servers, no PAC.
+    let fixed = h
+        .ok(
+            "proxy.rules_set",
+            json!({ "profile": "work", "default": "pool:de" }),
+        )
+        .await;
+    assert_eq!(fixed["pref"]["mode"], "fixed_servers");
+    assert_eq!(fixed["pac_script"], Value::Null);
+}
+
+#[tokio::test]
+async fn leases_stick_per_row_rotate_and_release() {
+    let h = Harness::new();
+    h.ok(
+        "proxy.pool_add",
+        json!({ "pool": "runs", "proxies": ["http://u:pw@10.0.0.1:8080", "http://u:pw@10.0.0.2:8080"] }),
+    )
+    .await;
+    let lease = |row: u64, rotate: bool| {
+        h.ok(
+            "proxy.lease",
+            json!({ "pool": "runs", "run_id": "run-1", "row": row, "rotate": rotate }),
+        )
+    };
+    let a = lease(0, false).await;
+    assert_eq!(a["proxy_id"], "lease:runs/run-1/0");
+    assert_eq!(a["reused"], false);
+    assert!(!a.to_string().contains(":pw@"));
+    let again = lease(0, false).await;
+    assert_eq!(
+        (again["proxy"].clone(), again["reused"].clone()),
+        (a["proxy"].clone(), json!(true))
+    );
+    let b = lease(1, false).await;
+    assert_ne!(b["proxy"], a["proxy"], "rows spread over the pool");
+    let rotated = lease(0, true).await;
+    assert_ne!(rotated["proxy"], a["proxy"]);
+    assert_eq!(rotated["load"], 2);
+
+    // The lease reference works where proxies are referenced.
+    let fwd = h
+        .ok(
+            "proxy.forward_start",
+            json!({ "proxy_id": "lease:runs/run-1/0" }),
+        )
+        .await;
+    assert_eq!(fwd["upstream"], rotated["proxy"]);
+    let routed = h
+        .ok(
+            "proxy.rules_set",
+            json!({ "profile": "row-0", "default": "lease:runs/run-1/0" }),
+        )
+        .await;
+    assert_eq!(
+        routed["pref"]["server"], fwd["socks5"],
+        "the running forwarder for that upstream is reused"
+    );
+
+    assert_eq!(
+        h.ok(
+            "proxy.release",
+            json!({ "pool": "runs", "run_id": "run-1", "row": 0 })
+        )
+        .await["released"],
+        1
+    );
+    assert_eq!(
+        h.ok(
+            "proxy.release",
+            json!({ "pool": "runs", "run_id": "run-1" })
+        )
+        .await["released"],
+        1
+    );
+    let err = h
+        .call(
+            "proxy.forward_start",
+            json!({ "proxy_id": "lease:runs/run-1/0" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    let err = h
+        .call(
+            "proxy.lease",
+            json!({ "pool": "runs", "run_id": "a/b", "row": 0 }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    let err = h
+        .call(
+            "proxy.lease",
+            json!({ "pool": "none", "run_id": "r", "row": 0 }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn fit_to_proxy_moves_the_identity_to_the_exit_ip() {
+    use crate::proxy::forward::tests::fake_socks5;
+    use crate::proxy::geo::tests::fake_ip_api;
+
+    let h = Harness::new();
+    let generated = h
+        .ok(
+            "identity.generate",
+            json!({ "seed": 9, "id": "fit", "save": true, "country": "US" }),
+        )
+        .await;
+    let api = fake_ip_api(false).await;
+    let url = format!("http://127.0.0.1:{}/json/", api.port());
+    let socks = fake_socks5("u", "p").await;
+    let out = h
+        .ok(
+            "identity.fit_to_proxy",
+            json!({ "identity_id": "fit", "proxy_id": format!("socks5://u:p@{socks}"), "url": url }),
+        )
+        .await;
+    assert_eq!(out["via"], format!("socks5://u:***@{socks}"));
+    assert_eq!(out["geo"]["country_code"], "DE");
+    assert_eq!(out["saved"], true);
+    let fields: Vec<&str> = out["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["field"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        fields,
+        ["timezone", "locale", "accept_language", "geolocation"]
+    );
+    let saved = h.ok("identity.get", json!({ "id": "fit" })).await["identity"].clone();
+    assert_eq!(saved["timezone"], "Europe/Berlin");
+    assert_eq!(saved["locale"], "de-DE");
+    assert_eq!(saved["accept_language"], "de-DE,de,en-US,en");
+    assert_eq!(saved["user_agent"], generated["identity"]["user_agent"]);
+    let lat = saved["geolocation"]["latitude"].as_f64().unwrap();
+    assert!((lat - 50.1109).abs() < 0.05, "{lat}");
+
+    // Already fitting: nothing changes, nothing is written.
+    let again = h
+        .ok(
+            "identity.fit_to_proxy",
+            json!({ "identity_id": "fit", "proxy_id": "direct", "url": url }),
+        )
+        .await;
+    assert_eq!(again["changes"], json!([]));
+    assert_eq!(
+        (again["saved"].clone(), again["via"].clone()),
+        (json!(false), Value::Null)
+    );
+
+    let err = h
+        .call(
+            "identity.fit_to_proxy",
+            json!({ "identity_id": "fit", "proxy_id": "de" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    let err = h
+        .call(
+            "identity.fit_to_proxy",
+            json!({ "identity_id": "nope", "proxy_id": "direct" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn patch_and_probe_cover_the_available_screen() {
+    let h = Harness::new();
+    // windows-1080p as-is: Windows 10 (platformVersion 10.0.0) → 40 px taskbar.
+    h.ok(
+        "stealth.fingerprint_set",
+        json!({ "preset": "windows-1080p" }),
+    )
+    .await;
+    let source = h.params("Page.addScriptToEvaluateOnNewDocument")[0]["source"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(source.contains("\"availHeight\":1040"), "{source}");
+    assert!(source.contains("\"availWidth\":1920"));
+    assert!(
+        source.contains("\"userAgent\":null"),
+        "pages get the UA from CDP"
+    );
+    h.ok("stealth.check", json!({})).await;
+    let probe = h
+        .params("Runtime.evaluate")
+        .into_iter()
+        .find(|p| p["expression"].as_str().unwrap().contains("checks"))
+        .unwrap();
+    let expr = probe["expression"].as_str().unwrap();
+    assert!(expr.contains("\"screen_avail\":{"), "{expr}");
+    assert!(expr.contains("UA-CH high entropy vs identity"));
+    assert!(expr.contains("media devices") && expr.contains("fonts vs OS"));
+
+    // Phones report the full screen: no avail patch.
+    let android = crate::identity::preset("android-pixel-8").unwrap();
+    let id = crate::identity::from_preset(android, "a");
+    assert_eq!(crate::stealth::available_screen(&id), None);
+    assert!(crate::stealth::patch_script(&id, false).contains("\"availHeight\":null"));
 }

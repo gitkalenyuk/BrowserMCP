@@ -1,8 +1,9 @@
 //! The Rust functions ("ops") that JavaScript can call, bundled with the JS
 //! prelude into one deno_core `Extension` named `bmcp`.
 //!
-//! Only FOUR ops exist on purpose. Every browser command goes through the one
+//! Only a handful of ops exist on purpose. Every browser command goes through the one
 //! generic `op_bmcp_call`, so adding a browser command never touches this file.
+//! `op_bmcp_next_event` feeds `browser.on(topic, handler)` (plugins, long-lived scripts).
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -75,6 +76,18 @@ pub fn with_tab_defaults(
     args
 }
 
+/// Next browser event as `{topic, data}`, or `null` when no more events will come (the
+/// prelude's dispatch loop then stops, so the script can finish).
+#[op2]
+#[serde]
+async fn op_bmcp_next_event(state: Rc<RefCell<OpState>>) -> serde_json::Value {
+    let sink = state.borrow().borrow::<SinkHandle>().0.clone();
+    match sink.next_event().await {
+        Some((topic, data)) => serde_json::json!({ "topic": topic, "data": data }),
+        None => Value::Null,
+    }
+}
+
 /// Returns the inputs object; the prelude freezes it into `globalThis.inputs`.
 #[op2]
 #[serde]
@@ -107,7 +120,7 @@ async fn op_bmcp_sleep(ms: f64) {
 // already read `inputs` (putting state in afterwards would be too late).
 deno_core::extension!(
     bmcp,
-    ops = [op_bmcp_call, op_bmcp_inputs, op_bmcp_log, op_bmcp_sleep],
+    ops = [op_bmcp_call, op_bmcp_inputs, op_bmcp_log, op_bmcp_sleep, op_bmcp_next_event],
     esm_entry_point = "ext:bmcp/prelude.js",
     esm = [dir "src/js", "prelude.js"],
     options = { sink: SinkHandle, inputs: Inputs },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TabInfo } from '../api/types';
-import { activeTab, cycleTab, emptyTabs, groupRuns, reduceTabs, tabByNumber, type TabsState } from './tabs';
+import { activeTab, cycleTab, emptyTabs, groupRuns, groupsWithAgents, lockState, reduceTabs, tabByNumber, type TabsState } from './tabs';
 
 const tab = (id: number, extra: Partial<TabInfo> = {}): TabInfo => ({
   id,
@@ -89,5 +89,42 @@ describe('groupRuns', () => {
       [null, [4]],
       ['b', [5]],
     ]);
+  });
+});
+
+describe('agent groups and locks', () => {
+  it('rebuilds agent groups from agents.updated and keeps human groups', () => {
+    const groups = [
+      { id: 'g-research', name: 'Research', color: 'blue' as const, agentId: null },
+      { id: 'agent:old', name: 'old', color: 'red' as const, agentId: 'old' },
+    ];
+    const next = groupsWithAgents(groups, [
+      { id: 'bench', name: 'bench', color: 'orange', status: 'running', task: null, groupId: 'agent:bench' },
+      { id: 'x', name: 'X', color: 'green', status: 'idle', task: null },
+    ]);
+    expect(next).toEqual([
+      { id: 'g-research', name: 'Research', color: 'blue', agentId: null },
+      { id: 'agent:bench', name: 'bench', color: 'orange', agentId: 'bench' },
+      { id: 'agent:x', name: 'X', color: 'green', agentId: 'x' },
+    ]);
+  });
+
+  it('merges lock fields from tab.updated and reads the lock state', () => {
+    const s0: TabsState = { tabs: [tab(1)], groups: [], activeId: 1 };
+    expect(lockState(s0.tabs[0])).toBeNull();
+    const lock = { owner: 'bench', state: 'active' as const, reason: null, sinceMs: 1 };
+    const s1 = reduceTabs(s0, {
+      type: 'updated',
+      payload: { id: 1, groupId: 'agent:bench', lockedBy: 'bench', lock },
+    });
+    expect(s1.tabs[0]).toMatchObject({ groupId: 'agent:bench', lockedBy: 'bench', title: 'Tab 1' });
+    expect(lockState(s1.tabs[0])).toBe('active');
+    const s2 = reduceTabs(s1, {
+      type: 'updated',
+      payload: { id: 1, lockedBy: null, lock: { ...lock, state: 'paused' } },
+    });
+    expect(lockState(s2.tabs[0])).toBe('paused');
+    // Old-style tabs without `lock` (mock data): lockedBy alone means active.
+    expect(lockState(tab(2, { lockedBy: 'claude' }))).toBe('active');
   });
 });

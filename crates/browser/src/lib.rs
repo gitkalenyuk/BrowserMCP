@@ -16,6 +16,7 @@
 mod act;
 mod cdp;
 pub mod commands;
+mod frames;
 pub mod human;
 mod keys;
 mod page;
@@ -25,7 +26,7 @@ mod tests;
 
 use bmcp_core::Registry;
 
-pub use act::{Action, Step};
+pub use act::{Action, Step, perform_on_node};
 pub use state::{PerceptionState, TabState};
 
 /// Register this crate's commands and its shared state.

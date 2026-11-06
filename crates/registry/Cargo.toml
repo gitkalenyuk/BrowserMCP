@@ -18,3 +18,9 @@ bmcp-record = { path = "../record" }
 bmcp-adblock = { path = "../adblock" }
 bmcp-jobs = { path = "../jobs" }
 bmcp-profiles = { path = "../profiles" }
+bmcp-plugins = { path = "../plugins" }
+bmcp-governor.workspace = true
+bmcp-pagetools = { path = "../pagetools" }
+bmcp-heal = { path = "../heal" }
+bmcp-notify = { path = "../notify" }
+bmcp-hints = { path = "../hints" }

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 bmcp-core.workspace = true
+# Shared CDP session: domain refcount + the per-tab Fetch coordinator.
+bmcp-cdpshare = { path = "../cdpshare" }
 base64 = "0.22"
 regex = "1"
 schemars.workspace = true

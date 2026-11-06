@@ -101,6 +101,15 @@ with `ERR_ABORTED`, so its `blocked` column stays 0 — use `adblock.stats` for 
 
 ## Known gaps
 
+* Identity tabs share `Target.setAutoAttach` (one setting per session) with the OOPIF support
+  of `crates/browser/src/frames.rs` (`waitForDebuggerOnStart: false`, `flatten: true`): after a
+  snapshot has switched it, new workers of that tab are still patched on attach, but no longer
+  paused first, so a worker's very first lines may see the real values. Both use flattened
+  sessions; our watcher resumes every target it paused (iframes included).
+* The newer identity APIs from main (`profile_proxy_pref` / `proxy.rules_set` routes,
+  `cef_prefs::profile_prefs`, `worker_commands`) are not wired; bmcp-profiles has its own
+  proxy setting, prefs and worker patch.
+
 * `getUserMedia` in an *off-screen* tab never settles (no permission callback arrives).
 * `webrtc.multiple_routes_enabled` / `webrtc.nonproxied_udp_enabled` are not registered in
   this CEF build; only `webrtc.ip_handling_policy` is set.

@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use bmcp_core::{
-    BrowserBackend, Caller, CommandInfo, Ctx, EventBus, Registry, Sensitivity, Toolset,
+    Agents, BrowserBackend, Caller, CommandInfo, Ctx, EventBus, Registry, Sensitivity, Toolset,
 };
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, model::*, service::RequestContext};
 use serde_json::Value;
@@ -35,6 +35,20 @@ impl BrowserMcp {
             backend,
             events,
         }
+    }
+}
+
+impl BrowserMcp {
+    /// Who is calling: `?agent=<id>` from the URL, else the MCP client's own name
+    /// (`clientInfo.name` from `initialize`, e.g. `claude-code`), made unique per session by
+    /// the agent registry. Every MCP client is an agent: it gets a color, a tab group, locks.
+    fn agent_id(&self, session: &str, cx: &RequestContext<RoleServer>) -> Option<String> {
+        if let Some(agent) = requested_agent(cx) {
+            return Some(agent);
+        }
+        let client = cx.peer.peer_info()?.client_info.name.clone();
+        let agents = self.registry.extensions().get::<Agents>()?;
+        Some(agents.identify_mcp(session, &client))
     }
 }
 
@@ -121,7 +135,9 @@ impl ServerHandler for BrowserMcp {
                 "BrowserMCP controls a real Chromium browser. Use page_snapshot (refs @N:eM), \
                  page_find, then page_act with a ref; actions return a diff; take \
                  page_screenshot only if the snapshot is insufficient. Tabs are addressed by \
-                 the ids from tabs_list. Errors come back as JSON {code, message, retry, hint}."
+                 the ids from tabs_list. Tabs you open or act on become yours (locked to \
+                 you); TAB_LOCKED means another agent or the user has that tab — open your \
+                 own with tabs_open. Errors come back as JSON {code, message, retry, hint}."
                     .to_string(),
             )
     }
@@ -146,10 +162,9 @@ impl ServerHandler for BrowserMcp {
         request: CallToolRequestParams,
         cx: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let caller = Caller::Mcp {
-            session: session_id(&cx),
-            agent: requested_agent(&cx),
-        };
+        let session = session_id(&cx);
+        let agent = self.agent_id(&session, &cx);
+        let caller = Caller::Mcp { session, agent };
         let ctx = Ctx::new(caller, self.backend.clone(), self.events.clone());
         let args = request.arguments.map(Value::Object).unwrap_or(Value::Null);
         let result = match self.registry.call(ctx, &request.name, args).await {

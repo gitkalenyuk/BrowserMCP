@@ -3,8 +3,11 @@
   import Icon, { type IconName } from './Icon.svelte';
   import ResizeHandle from './ResizeHandle.svelte';
   import AiPanel from './panels/AiPanel.svelte';
-  import EmptyPanel from './panels/EmptyPanel.svelte';
+  import RecordingPanel from './panels/RecordingPanel.svelte';
+  import RunsPanel from './panels/RunsPanel.svelte';
+  import ScriptsPanel from './panels/ScriptsPanel.svelte';
   import TerminalPanel from './panels/TerminalPanel.svelte';
+  import TrafficPanel from './panels/TrafficPanel.svelte';
 
   let { panel }: { panel: PanelId } = $props();
 
@@ -40,37 +43,13 @@
     {:else if panel === 'terminal'}
       <TerminalPanel />
     {:else if panel === 'traffic'}
-      <EmptyPanel
-        icon="traffic"
-        title="No requests captured"
-        text="Start a capture to see requests, response bodies and WebSocket frames for the current tab. Rules, breakpoints and HAR export land in phase 6."
-        action="Start capture"
-      >
-        <div class="cols" aria-hidden="true">
-          <span>Method</span><span>URL</span><span>Status</span><span>Size</span>
-        </div>
-      </EmptyPanel>
+      <TrafficPanel />
     {:else if panel === 'recording'}
-      <EmptyPanel
-        icon="record"
-        title="Not recording"
-        text="Record clicks, typing and traffic in this tab, optionally with video. A recording turns into a TypeScript script you can replay with different data."
-        action="Start recording"
-      />
+      <RecordingPanel />
     {:else if panel === 'scripts'}
-      <EmptyPanel
-        icon="code"
-        title="No scripts in this workspace"
-        text="Scripts are TypeScript that drive the browser through the same API agents use. Record one, or write it in the editor."
-        action="New script"
-      />
+      <ScriptsPanel />
     {:else if panel === 'runs'}
-      <EmptyPanel
-        icon="runs"
-        title="No runs yet"
-        text="Run a script over a CSV or JSON file across several profiles. Progress, failures and patches waiting for your approval show up here."
-        action="New run"
-      />
+      <RunsPanel />
     {/if}
   </div>
 </aside>
@@ -111,17 +90,5 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
-  }
-  .cols {
-    display: grid;
-    grid-template-columns: 52px 1fr 46px 44px;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-    color: var(--fg-subtle);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    text-align: left;
   }
 </style>

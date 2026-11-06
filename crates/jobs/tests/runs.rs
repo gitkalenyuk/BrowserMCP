@@ -51,6 +51,18 @@ async fn script_run_passes_inputs_and_reads_results() {
     assert_eq!(out["result"]["x"], 1);
     assert_eq!(out["stdout"], "hello Ada\n");
 
+    // Regression: a value far past the Windows 32K command-line limit, with a NUL byte, still
+    // reaches the host (inputs travel in a temp JSON file, not as `--input` arguments).
+    let long = format!("{}{}tail", "y".repeat(40_000), char::from(0));
+    let out = env
+        .ok(
+            "script.run",
+            json!({"name": "hello", "inputs": {"name": "Ada", "body": long}}),
+        )
+        .await;
+    assert_eq!(out["ok"], true, "{out:#}");
+    assert_eq!(out["result"]["inputs"]["body"], long.as_str());
+
     // Inline code; temp file is removed afterwards and not listed.
     let out = env
         .ok("script.run", json!({"code": "result {\"inline\": true}"}))
@@ -392,6 +404,50 @@ async fn heal_can_be_turned_off() {
     let id = run["id"].as_str().unwrap();
     let status = env.wait_status(id, &["finished"]).await;
     assert_eq!(status["counts"]["failed"], 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn heal_modes_and_the_snapshot_hook() {
+    let env = Env::new();
+    env.save("s", "fail NOT_FOUND page.find nothing matches")
+        .await;
+    // "off" as a string works like `false`.
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "s", "data": {"rows": id_rows(1)}, "retries": 0, "heal": "off"}),
+        )
+        .await;
+    assert_eq!(run["options"]["heal"], false);
+    env.wait_status(run["id"].as_str().unwrap(), &["finished"])
+        .await;
+
+    // The hook runs before run.heal_needed; its text is stored for the row.
+    let hooked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = hooked.clone();
+    env.jobs.set_heal_hook(std::sync::Arc::new(move |t| {
+        seen.lock().unwrap().push((t.row, t.mode));
+        Box::pin(async { Some("- button \"Log in\" @1:e2".to_string()) })
+    }));
+    let mut rx = env.events.subscribe();
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "s", "data": {"rows": id_rows(1)}, "retries": 0, "heal": "auto"}),
+        )
+        .await;
+    let id = run["id"].as_str().unwrap().to_string();
+    assert_eq!(run["options"]["heal_mode"], "auto");
+    let heal = wait_event(&mut rx, topics::RUN_HEAL_NEEDED, |d| d["id"] == id.as_str()).await;
+    assert_eq!(heal.data["mode"], "auto");
+    assert_eq!(
+        *hooked.lock().unwrap(),
+        vec![(0, bmcp_jobs::HealMode::Auto)]
+    );
+    let snapshot = env.jobs.heal_snapshot(&id, Some(0)).unwrap();
+    assert_eq!(snapshot.as_deref(), Some("- button \"Log in\" @1:e2"));
+    assert_eq!(env.jobs.heal_snapshot(&id, None).unwrap(), snapshot);
+    assert_eq!(env.jobs.heal_snapshot(&id, Some(5)).unwrap(), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

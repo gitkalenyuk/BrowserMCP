@@ -3,6 +3,7 @@
 //! Adding a command: write a unit struct + `impl Command` in the right file, then add one line
 //! to [`register_builtin`]. Every API surface picks it up from the registry automatically.
 
+pub mod agents;
 pub mod nav;
 pub mod page;
 pub mod system;
@@ -11,8 +12,18 @@ pub mod ui;
 
 use crate::command::Registry;
 
-/// Register every built-in command.
+/// Register every built-in command, and install [`crate::agents::Agents`] as the registry's
+/// lock policy (agent identity, tab groups, locks, human takeover).
 pub fn register_builtin(registry: &mut Registry) {
+    let agents = registry.extensions().insert(crate::agents::Agents::new());
+    registry.set_lock_policy(agents);
+    registry
+        .add::<agents::List>()
+        .add::<agents::Forget>()
+        .add::<agents::Lock>()
+        .add::<agents::Unlock>()
+        .add::<agents::Groups>()
+        .add::<agents::Handoff>();
     registry
         .add::<system::Ping>()
         .add::<tabs::List>()
@@ -61,7 +72,7 @@ mod tests {
         json!({
             "id": id, "title": url, "url": url, "loading": false, "favicon": null,
             "canGoBack": false, "canGoForward": false, "active": active,
-            "groupId": null, "lockedBy": null,
+            "groupId": null, "lockedBy": null, "lock": null,
         })
     }
 
@@ -72,6 +83,7 @@ mod tests {
         // Old shape `{tab}` plus the whole TabInfo.
         let mut expected = tab_json(2, "https://b.test/", true);
         expected["tab"] = json!(2);
+        expected.as_object_mut().unwrap().remove("lock");
         assert_eq!(out, expected);
 
         let out = call(&fake, "tabs.list", Value::Null).await;

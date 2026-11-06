@@ -75,6 +75,8 @@ const STRUCTURE: &[&str] = &[
     "article",
     "feed",
     "MenuListPopup",
+    // An <iframe> whose document was attached (`AxTree::attach_frame`).
+    "Iframe",
 ];
 
 /// Containers kept only when they have a name (`<form aria-label>`, `<fieldset>` with
@@ -118,6 +120,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("LabelText", "label"),
     ("MenuListPopup", "listbox"),
     ("DisclosureTriangle", "summary"),
+    ("Iframe", "iframe"),
 ];
 
 pub fn is_skipped(role: &str) -> bool {
@@ -220,10 +223,30 @@ pub fn is_password(tree: &AxTree, node: &AxNode) -> bool {
     PASSWORD_WORDS.iter().any(|w| name.contains(w))
 }
 
+/// The host part of a URL (`https://ads.example.com:8080/x` → `ads.example.com:8080`), or
+/// the start of the URL when it has none (`about:blank`, `data:...`).
+fn url_host(url: &str) -> String {
+    match url.split_once("://") {
+        Some((_, rest)) => {
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            // Drop `user:password@`.
+            let host = authority.rsplit('@').next().unwrap_or_default();
+            truncate(host, MAX_VALUE_CHARS)
+        }
+        None if url.is_empty() => "no src".to_string(),
+        None => truncate(url, 20),
+    }
+}
+
 /// Printed states for a node, in a fixed order, e.g. `["=\"jane\"", "req", "focused"]`.
 pub fn states(tree: &AxTree, node: &AxNode, interactive: bool) -> Vec<String> {
     let role = node.role();
     let mut out = Vec::new();
+
+    // Iframes: where the document inside comes from, `(ads.example.com)`.
+    if let Some(url) = &node.frame_url {
+        out.push(format!("({})", url_host(url)));
+    }
 
     // Heading level: h1..h6.
     if role == "heading" {

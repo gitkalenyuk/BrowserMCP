@@ -34,19 +34,25 @@
 //! New connections start subscribed to [`DEFAULT_TOPICS`] (the browser-state events the UI
 //! renders); `command.*` must be asked for. If this connection falls too far behind the bus it
 //! gets `{"method":"bus.lagged","params":{"missed":N}}` and should re-read state (e.g. `tabs.list`).
+//!
+//! Plugin connections (`/v1/ws?plugin=<name>&token=<token>`, see [`crate::access`]) are
+//! restricted: only the commands and events their grant allows, no default subscriptions.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, header};
 use axum::response::Response;
 use axum::routing::get;
-use bmcp_core::events::Event;
-use bmcp_core::{Caller, CmdError, ErrorCode};
+use bmcp_core::events::{Event, topics};
+use bmcp_core::{Agents, Caller, CmdError, ErrorCode, TabId};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::access::{PluginAuthHandle, PluginGrant};
 use crate::state::ApiState;
 
 /// Topics every new connection is subscribed to (what the UI needs without asking).
@@ -84,38 +90,84 @@ pub fn router() -> axum::Router<ApiState> {
     axum::Router::new().route("/v1/ws", get(upgrade))
 }
 
-async fn upgrade(
-    State(state): State<ApiState>,
-    headers: axum::http::HeaderMap,
-    ws: WebSocketUpgrade,
-) -> Response {
-    let conn = state.next_conn_id();
-    // The guard only lets an `Origin` through when it is our own UI (`bmcp://ui`, or the Vite
-    // dev server in dev mode): such a connection acts for the person using the browser.
-    let caller = caller_for(conn, headers.contains_key(axum::http::header::ORIGIN));
-    ws.on_upgrade(move |socket| run_connection(state, conn, caller, socket))
+/// `?plugin=<name>&token=<token>` of a plugin connection; other query parameters are ignored.
+#[derive(Debug, Default, Deserialize)]
+struct WsQuery {
+    plugin: Option<String>,
+    token: Option<String>,
 }
 
-/// `Caller::Ui` for the browser's own UI pages, `Caller::Ws` for every other client.
-pub fn caller_for(conn: u64, has_origin: bool) -> Caller {
-    if has_origin {
-        Caller::Ui
-    } else {
-        Caller::Ws { conn }
-    }
+async fn upgrade(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Query(query): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    // A plugin connection must prove who it is; a bad token is refused, never "downgraded" to
+    // an unrestricted connection.
+    let grant = match query.plugin.as_deref() {
+        None => None,
+        Some(plugin) => {
+            let auth = state.registry.extensions().get::<PluginAuthHandle>();
+            let token = query.token.as_deref().unwrap_or_default();
+            match auth.and_then(|auth| auth.0.authenticate(plugin, token)) {
+                Some(grant) => Some(Arc::new(grant)),
+                None => {
+                    tracing::warn!(plugin, "plugin WebSocket refused: bad token");
+                    return crate::rest::error_response(
+                        CmdError::new(
+                            ErrorCode::NeedsApproval,
+                            format!("plugin '{plugin}': unknown plugin or wrong token"),
+                        )
+                        .with_retry(bmcp_core::Retry::No),
+                    );
+                }
+            }
+        }
+    };
+    let conn = state.next_conn_id();
+    // The guard in front of this route lets an `Origin` header through only for the browser's
+    // own UI pages (`bmcp://ui`, the dev server). So "has an Origin" = a person clicking in
+    // the browser UI: such calls are `Caller::Ui` and win over agent tab locks.
+    // A plugin is always the plugin, whatever headers it sends.
+    let caller = match &grant {
+        Some(grant) => Caller::Plugin {
+            name: grant.name.clone(),
+        },
+        None if headers.contains_key(header::ORIGIN) => Caller::Ui,
+        None => Caller::Ws { conn },
+    };
+    ws.on_upgrade(move |socket| run_connection(state, conn, caller, grant, socket))
 }
 
 /// One connection. This task owns the socket: it reads requests and writes everything that
 /// arrives on the outbox (responses from call tasks, notifications from the event forwarder).
-async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: WebSocket) {
-    tracing::debug!(conn, "WebSocket connected");
-    let subs = Arc::new(Mutex::new(Subscriptions::with_defaults()));
+/// `grant` is set for a plugin connection.
+async fn run_connection(
+    state: ApiState,
+    conn: u64,
+    caller: Caller,
+    grant: Option<Arc<PluginGrant>>,
+    mut socket: WebSocket,
+) {
+    tracing::debug!(
+        conn,
+        plugin = grant.as_ref().map(|g| g.name.as_str()),
+        "WebSocket connected"
+    );
+    // Plugins start with no subscriptions: they get only what they ask for (and may see).
+    let subs = Arc::new(Mutex::new(match grant {
+        Some(_) => Subscriptions::default(),
+        None => Subscriptions::with_defaults(),
+    }));
     let (outbox, mut outgoing) = mpsc::channel::<String>(OUTBOX);
     // Subscribe to the bus right away so no event is missed between connect and subscribe.
     let forwarder = tokio::spawn(forward_events(
         state.events.subscribe(),
         subs.clone(),
+        grant.clone(),
         outbox.clone(),
+        state.registry.extensions().get::<Agents>(),
     ));
 
     loop {
@@ -129,7 +181,7 @@ async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: 
                     // Close frame, end of stream or a broken connection.
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
-                handle_message(&state, &caller, &subs, &outbox, &text);
+                handle_message(&state, &caller, grant.as_deref(), &subs, &outbox, &text);
             }
             Some(message) = outgoing.recv() => {
                 if socket.send(Message::Text(message.into())).await.is_err() {
@@ -151,6 +203,7 @@ async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: 
 fn handle_message(
     state: &ApiState,
     caller: &Caller,
+    grant: Option<&PluginGrant>,
     subs: &Arc<Mutex<Subscriptions>>,
     outbox: &mpsc::Sender<String>,
     text: &str,
@@ -172,13 +225,40 @@ fn handle_message(
                 send_later(outbox, message);
             }
         }
-        _ => spawn_call(state, caller, outbox, request),
+        _ => spawn_call(state, caller, grant, outbox, request),
     }
 }
 
 /// Run a registry command in its own task and send the response when it is done.
-fn spawn_call(state: &ApiState, caller: &Caller, outbox: &mpsc::Sender<String>, request: Request) {
-    let unknown_method = state.registry.get(&request.method).is_none();
+fn spawn_call(
+    state: &ApiState,
+    caller: &Caller,
+    grant: Option<&PluginGrant>,
+    outbox: &mpsc::Sender<String>,
+    request: Request,
+) {
+    let info = state.registry.get(&request.method);
+    let unknown_method = info.is_none();
+    // Plugins may only call the commands their plugin.json grants.
+    if let Some(grant) = grant {
+        // Check the dotted name, so `page_find` cannot dodge a `page.*` rule.
+        let name = info.map_or(request.method.as_str(), |i| i.name);
+        if !unknown_method && !grant.allows_command(name) {
+            let err = CmdError::new(
+                ErrorCode::NeedsApproval,
+                format!("plugin '{}' may not call {name}", grant.name),
+            )
+            .with_retry(bmcp_core::Retry::No)
+            .with_hint(format!(
+                "Add \"{name}\" (or a glob like \"{}.*\") to \"permissions\" in the                  plugin's plugin.json and reload it.",
+                name.split('.').next().unwrap_or(name)
+            ));
+            if let Some(id) = request.id {
+                send_later(outbox, error_response(id, COMMAND_FAILED, &err));
+            }
+            return;
+        }
+    }
     let ctx = state.ctx(caller.clone());
     let call = state.registry.call(ctx, &request.method, request.params);
     let outbox = outbox.clone();
@@ -221,7 +301,9 @@ fn send_later(outbox: &mpsc::Sender<String>, message: String) {
 async fn forward_events(
     mut events: broadcast::Receiver<Event>,
     subs: Arc<Mutex<Subscriptions>>,
+    grant: Option<Arc<PluginGrant>>,
     outbox: mpsc::Sender<String>,
+    agents: Option<Arc<Agents>>,
 ) {
     loop {
         let message = match events.recv().await {
@@ -229,7 +311,17 @@ async fn forward_events(
                 if !lock(&subs).matches(&event.topic) {
                     continue;
                 }
-                notification(&event.topic, with_seq(event.data, event.seq))
+                // A plugin sees only the topics its plugin.json lists.
+                if let Some(grant) = &grant
+                    && !grant.allows_event(&event.topic, &event.data)
+                {
+                    continue;
+                }
+                let data = match &agents {
+                    Some(agents) => with_tab_lock(agents, &event.topic, event.data),
+                    None => event.data,
+                };
+                notification(&event.topic, with_seq(data, event.seq))
             }
             Err(broadcast::error::RecvError::Lagged(missed)) => {
                 if lock(&subs).is_empty() {
@@ -243,6 +335,33 @@ async fn forward_events(
             break; // connection gone
         }
     }
+}
+
+/// `tab.created` / `tab.updated` from the CEF layer don't know about agents: add the tab's
+/// `groupId`, `lockedBy` and `lock` from the agent registry, so the UI always gets them.
+/// (Events the agent registry sends itself already carry `lock`.)
+fn with_tab_lock(agents: &Agents, topic: &str, mut data: Value) -> Value {
+    let tab_field = match topic {
+        topics::TAB_UPDATED if data.get("lock").is_none() => None,
+        topics::TAB_CREATED => Some("tab"),
+        _ => return data,
+    };
+    let target = match tab_field {
+        Some(field) => &mut data[field],
+        None => &mut data,
+    };
+    let Some(id) = target.get("id").and_then(Value::as_i64) else {
+        return data;
+    };
+    let lock = agents.tab_event(TabId(id as i32));
+    if let (Some(target), Some(lock)) = (target.as_object_mut(), lock.as_object()) {
+        for (key, value) in lock {
+            if key != "id" {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    data
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -356,13 +475,13 @@ struct Request {
     params: Value,
 }
 
-/// Parse a frame; on failure return `(id to answer with, JSON-RPC code, error)`.
-fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
+/// Parse a frame; on failure return `(id to answer with, JSON-RPC code, error)` (boxed: small `Err`).
+fn parse_request(text: &str) -> Result<Request, (Value, i64, Box<CmdError>)> {
     let value: Value = serde_json::from_str(text).map_err(|e| {
         (
             Value::Null,
             PARSE_ERROR,
-            CmdError::invalid_params(format!("not valid JSON: {e}")),
+            Box::new(CmdError::invalid_params(format!("not valid JSON: {e}"))),
         )
     })?;
     let Value::Object(mut obj) = value else {
@@ -371,7 +490,11 @@ fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
         } else {
             "a JSON-RPC request must be a JSON object"
         };
-        return Err((Value::Null, INVALID_REQUEST, CmdError::invalid_params(what)));
+        return Err((
+            Value::Null,
+            INVALID_REQUEST,
+            Box::new(CmdError::invalid_params(what)),
+        ));
     };
     let id = obj.remove("id");
     let reply_id = id.clone().unwrap_or(Value::Null);
@@ -379,7 +502,7 @@ fn parse_request(text: &str) -> Result<Request, (Value, i64, CmdError)> {
         Err((
             reply_id.clone(),
             INVALID_REQUEST,
-            CmdError::invalid_params(msg),
+            Box::new(CmdError::invalid_params(msg)),
         ))
     };
     if obj.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
@@ -423,12 +546,6 @@ fn with_seq(data: Value, seq: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ui_connections_act_for_the_person() {
-        assert_eq!(caller_for(3, true), Caller::Ui);
-        assert_eq!(caller_for(3, false), Caller::Ws { conn: 3 });
-    }
 
     #[test]
     fn topic_patterns() {
@@ -480,6 +597,39 @@ mod tests {
         assert_eq!(code, INVALID_REQUEST);
         let (id, code, _) = parse_request(r#"{"id":5,"method":"tabs.list"}"#).unwrap_err();
         assert_eq!((id, code), (json!(5), INVALID_REQUEST));
+    }
+
+    #[test]
+    fn tab_events_get_the_lock_fields() {
+        let agents = Agents::new();
+        // Nothing owned: null fields are added.
+        let created = with_tab_lock(
+            &agents,
+            topics::TAB_CREATED,
+            json!({ "index": 0, "tab": { "id": 3, "url": "x" } }),
+        );
+        assert_eq!(created["tab"]["groupId"], Value::Null);
+        assert_eq!(created["tab"]["lock"], Value::Null);
+        assert_eq!(created["tab"]["url"], "x");
+        let updated = with_tab_lock(
+            &agents,
+            topics::TAB_UPDATED,
+            json!({ "id": 3, "title": "T" }),
+        );
+        assert_eq!(
+            updated,
+            json!({ "id": 3, "title": "T", "groupId": null, "lockedBy": null, "lock": null })
+        );
+        // Events that already carry `lock`, and other topics, pass unchanged.
+        let own = json!({ "id": 3, "lock": { "owner": "a" } });
+        assert_eq!(
+            with_tab_lock(&agents, topics::TAB_UPDATED, own.clone()),
+            own
+        );
+        assert_eq!(
+            with_tab_lock(&agents, "tab.closed", json!({ "id": 3 })),
+            json!({ "id": 3 })
+        );
     }
 
     #[test]

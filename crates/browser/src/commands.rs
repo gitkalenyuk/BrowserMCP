@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::act::{self, Action, Step};
 use crate::cdp::{self, perception_error};
+use crate::frames;
 use crate::human::{self, Human, HumanProfile};
 use crate::keys;
 use crate::page;
@@ -27,7 +28,14 @@ const SNAPSHOT_LOAD_WAIT: Duration = Duration::from_secs(5);
 
 /// Lock the tab's perception state (see the module docs).
 async fn lock_tab(ctx: &Ctx, tab: TabId) -> tokio::sync::OwnedMutexGuard<TabState> {
-    PerceptionState::from_ctx(ctx).tab(tab).lock_owned().await
+    let perception = PerceptionState::from_ctx(ctx);
+    // Forget the state of tabs that were closed (or crashed) since the last call, so their
+    // refs and snapshot history do not pile up. Not fatal when the list is unavailable.
+    if let Ok(open) = ctx.backend.list_tabs().await {
+        let open: Vec<TabId> = open.iter().map(|t| t.id).collect();
+        perception.retain(&open);
+    }
+    perception.tab(tab).lock_owned().await
 }
 
 // ------------------------------------------------------------------ page.snapshot
@@ -170,7 +178,7 @@ impl Command for Find {
         };
         let mut state = lock_tab(&ctx, tab).await;
         page::sync_document(&ctx, tab, &mut state).await?;
-        let tree = page::ax_tree(&ctx, tab).await?;
+        let tree = page::ax_tree(&ctx, tab, &mut state).await?;
         let found = find(
             &tree,
             &mut state.registry,
@@ -303,7 +311,7 @@ async fn run_steps(
     let document = state.registry.document();
     // Resolve the first ref now, so a bad ref fails before we spend time on a snapshot.
     if let Some(first) = steps.first().and_then(|s| s.target.as_deref()) {
-        state.registry.resolve(first).map_err(perception_error)?;
+        page::resolve_ref(ctx, tab, state, first)?;
     }
     // "Before" picture for the diff, with everything in it (text too) so no change is missed.
     let before = if returns == Returns::Diff {
@@ -571,12 +579,18 @@ impl Command for Read {
             Some(target) => {
                 let mut state = lock_tab(&ctx, tab).await;
                 page::sync_document(&ctx, tab, &mut state).await?;
-                let backend = state.registry.resolve(target).map_err(perception_error)?;
-                let object = cdp::resolve_object(&ctx, tab, backend, target).await?;
-                cdp::call_function(&ctx, tab, &object, act::READ_JS, &[]).await?
+                let node = page::resolve_node(&ctx, tab, &state, target)?;
+                let session = node.session.as_deref();
+                let object = cdp::resolve_object(&ctx, tab, session, node.backend, target).await?;
+                cdp::call_function(&ctx, tab, session, &object, act::READ_JS, &[]).await?
             }
             None => {
-                cdp::evaluate(&ctx, tab, "document.body ? document.body.innerText : ''").await?
+                // The same text rules as for one element (shadow DOM included).
+                let expression = format!(
+                    "document.body ? ({}).call(document.body) : ''",
+                    act::READ_JS
+                );
+                cdp::evaluate(&ctx, tab, &expression).await?
             }
         };
         let full = value.as_str().unwrap_or_default();
@@ -643,34 +657,37 @@ impl Command for Screenshot {
             return Err(CmdError::invalid_params("scale must be between 0.1 and 2"));
         }
         let quality = args.quality.unwrap_or(70).clamp(1, 100);
-        let layout = cdp::layout(&ctx, tab).await?;
+        let layout = cdp::layout(&ctx, tab, None).await?;
 
         // The clip is in CSS pixels of the document (not the viewport), so add the scroll.
         let (x, y, width, height) = if let Some(target) = &args.target {
-            let backend = {
-                let mut state = lock_tab(&ctx, tab).await;
-                page::sync_document(&ctx, tab, &mut state).await?;
-                state.registry.resolve(target).map_err(perception_error)?
-            };
-            let _ = ctx
-                .backend
-                .cdp(
-                    tab,
-                    "DOM.scrollIntoViewIfNeeded".into(),
-                    json!({ "backendNodeId": backend }),
-                )
-                .await;
-            let rect = cdp::content_box(&ctx, tab, backend).await?.ok_or_else(|| {
-                act::not_interactable(
-                    format!("{target} is not visible (no box on the page)"),
-                    "Take a page_snapshot; it may be hidden or collapsed.",
-                )
-            })?;
+            let mut state = lock_tab(&ctx, tab).await;
+            page::sync_document(&ctx, tab, &mut state).await?;
+            let node = page::resolve_node(&ctx, tab, &state, target)?;
+            let session = node.session.as_deref();
+            let _ = cdp::call_in(
+                &ctx,
+                tab,
+                session,
+                "DOM.scrollIntoViewIfNeeded",
+                json!({ "backendNodeId": node.backend }),
+            )
+            .await;
+            let rect = cdp::content_box(&ctx, tab, session, node.backend)
+                .await?
+                .ok_or_else(|| {
+                    act::not_interactable(
+                        format!("{target} is not visible (no box on the page)"),
+                        "Take a page_snapshot; it may be hidden or collapsed.",
+                    )
+                })?;
+            // Inside an out-of-process iframe the box is in the frame's viewport.
+            let (dx, dy) = frames::frame_offset(&ctx, tab, &state.frames, node.slot).await?;
             // Scrolling into view changed the scroll offset: read it again.
-            let layout = cdp::layout(&ctx, tab).await?;
+            let layout = cdp::layout(&ctx, tab, None).await?;
             (
-                rect.x + layout.page_x,
-                rect.y + layout.page_y,
+                rect.x + dx + layout.page_x,
+                rect.y + dy + layout.page_y,
                 rect.width,
                 rect.height,
             )
@@ -972,8 +989,10 @@ async fn wait_condition_met(
         WaitFor::Ref => {
             let mut state = lock_tab(ctx, tab).await;
             page::sync_document(ctx, tab, &mut state).await?;
-            let backend = state.registry.resolve(value).map_err(perception_error)?;
-            cdp::content_box(ctx, tab, backend).await?.is_some()
+            let node = page::resolve_node(ctx, tab, &state, value)?;
+            cdp::content_box(ctx, tab, node.session.as_deref(), node.backend)
+                .await?
+                .is_some()
         }
     })
 }

@@ -7,6 +7,12 @@
 //!   new runs are spread round-robin.
 //!
 //! Proxies whose last health check failed are skipped; never-checked ones count as healthy.
+//!
+//! **Leases** (`proxy.lease`) are for mass runs where every row gets its own isolated profile:
+//! one proxy per (run id, row). A lease is sticky (the row keeps its proxy across retries
+//! and restarts; leases are stored in the file) until it is released or rotated. New leases
+//! go to the proxy with the fewest active leases, so a run spreads over the whole pool
+//! whatever the pool's strategy is.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +23,8 @@ use crate::rng::Rng;
 
 /// How many run → proxy assignments a sticky pool remembers (oldest are dropped).
 const MAX_STICKY: usize = 1000;
+/// How many leases a pool keeps (oldest are dropped; runs should release theirs).
+const MAX_LEASES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -72,6 +80,30 @@ pub struct Pool {
     /// Sticky assignments: run id → proxy URL, in insertion order.
     #[serde(default)]
     pub sticky: Vec<(String, String)>,
+    /// Active leases, oldest first.
+    #[serde(default)]
+    pub leases: Vec<Lease>,
+}
+
+/// One proxy handed to one row of a run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lease {
+    pub run: String,
+    pub row: u64,
+    /// Full proxy URL.
+    pub url: String,
+    /// Unix seconds when it was leased.
+    pub since: u64,
+}
+
+/// Result of [`Pool::lease`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Leased {
+    pub url: String,
+    /// True when the row already had this proxy.
+    pub reused: bool,
+    /// Leases on this proxy now (including this one).
+    pub load: usize,
 }
 
 /// Contents of `proxies.json`.
@@ -79,6 +111,9 @@ pub struct Pool {
 pub struct ProxiesFile {
     #[serde(default)]
     pub pools: BTreeMap<String, Pool>,
+    /// Profile id → split routing rules (`proxy.rules_set`, see [`super::route`]).
+    #[serde(default)]
+    pub routes: BTreeMap<String, super::route::RuleSet>,
 }
 
 impl Pool {
@@ -99,7 +134,93 @@ impl Pool {
         let before = self.proxies.len();
         self.proxies.retain(|p| p.url != url);
         self.sticky.retain(|(_, u)| u != url);
+        self.leases.retain(|l| l.url != url);
         self.proxies.len() != before
+    }
+
+    /// The proxy leased to (run, row), if any.
+    pub fn leased(&self, run: &str, row: u64) -> Option<&str> {
+        self.leases
+            .iter()
+            .find(|l| l.run == run && l.row == row)
+            .map(|l| l.url.as_str())
+    }
+
+    /// Lease a proxy to (run, row). Sticky: an existing lease on a usable proxy is returned
+    /// as-is. `rotate`: the row gets a different proxy (when the pool has another usable one),
+    /// e.g. after a site blocked its IP. `None` when no proxy is usable.
+    pub fn lease(&mut self, run: &str, row: u64, rotate: bool, now: u64) -> Option<Leased> {
+        let current = self.leased(run, row).map(str::to_string);
+        let current_usable = current
+            .as_deref()
+            .is_some_and(|u| self.proxies.iter().any(|p| p.url == u && p.usable()));
+        if !rotate
+            && current_usable
+            && let Some(url) = current
+        {
+            let load = self.load(&url);
+            return Some(Leased {
+                url,
+                reused: true,
+                load,
+            });
+        }
+        self.leases.retain(|l| !(l.run == run && l.row == row));
+        let len = self.proxies.len();
+        if len == 0 {
+            return None;
+        }
+        // Usable proxies starting at the cursor, so equally loaded proxies take turns.
+        let usable: Vec<usize> = (0..len)
+            .map(|step| (self.cursor + step) % len)
+            .filter(|&i| self.proxies[i].usable())
+            .collect();
+        // Rotating avoids the current proxy when there is another one.
+        let others: Vec<usize> = usable
+            .iter()
+            .copied()
+            .filter(|&i| Some(&self.proxies[i].url) != current.as_ref())
+            .collect();
+        let choices = if rotate && !others.is_empty() {
+            others
+        } else {
+            usable
+        };
+        // Least-loaded first (min_by_key keeps the first of equal ones).
+        let index = *choices
+            .iter()
+            .min_by_key(|&&i| self.load(&self.proxies[i].url))?;
+        self.cursor = (index + 1) % len;
+        let url = self.proxies[index].url.clone();
+        self.leases.push(Lease {
+            run: run.to_string(),
+            row,
+            url: url.clone(),
+            since: now,
+        });
+        if self.leases.len() > MAX_LEASES {
+            self.leases.remove(0);
+        }
+        let load = self.load(&url);
+        Some(Leased {
+            url,
+            reused: false,
+            load,
+        })
+    }
+
+    /// Release the lease of (run, row), or every lease of the run when `row` is `None`.
+    /// Returns how many were released.
+    pub fn release(&mut self, run: &str, row: Option<u64>) -> usize {
+        let before = self.leases.len();
+        self.leases
+            .retain(|l| !(l.run == run && row.is_none_or(|r| r == l.row)));
+        before - self.leases.len()
+    }
+
+    /// Active leases on one proxy.
+    pub fn load(&self, url: &str) -> usize {
+        self.leases.iter().filter(|l| l.url == url).count()
     }
 
     /// Pick the proxy URL for the next connection (see the module docs). `None` when no proxy
@@ -215,6 +336,54 @@ mod tests {
         // Removing a proxy forgets its runs.
         assert!(p.remove(&moved));
         assert!(!p.sticky.iter().any(|(_, u)| *u == moved));
+    }
+
+    #[test]
+    fn leases_are_sticky_spread_and_rotatable() {
+        let mut p = pool(Strategy::RoundRobin, 3);
+        // Three rows spread over three proxies.
+        let a = p.lease("run", 0, false, 1).unwrap();
+        let b = p.lease("run", 1, false, 1).unwrap();
+        let c = p.lease("run", 2, false, 1).unwrap();
+        let mut urls = vec![a.url.clone(), b.url.clone(), c.url.clone()];
+        urls.sort();
+        urls.dedup();
+        assert_eq!(urls.len(), 3, "least-loaded proxy first");
+        assert!(!a.reused && a.load == 1);
+        // Sticky: the same row keeps its proxy.
+        let again = p.lease("run", 0, false, 2).unwrap();
+        assert_eq!((again.url.as_str(), again.reused), (a.url.as_str(), true));
+        assert_eq!(p.leased("run", 0), Some(a.url.as_str()));
+        // A fourth row shares a proxy (load 2).
+        assert_eq!(p.lease("run", 3, false, 1).unwrap().load, 2);
+        // Rotate: a different proxy.
+        let rotated = p.lease("run", 0, true, 3).unwrap();
+        assert_ne!(rotated.url, a.url);
+        assert_eq!(p.leased("run", 0), Some(rotated.url.as_str()));
+        // Its proxy goes bad: the row moves on the next (sticky) lease.
+        let bad = rotated.url.clone();
+        p.proxies.iter_mut().find(|e| e.url == bad).unwrap().healthy = Some(false);
+        let moved = p.lease("run", 0, false, 4).unwrap();
+        assert!(moved.url != bad && !moved.reused);
+        // Release one row, then the whole run.
+        assert_eq!(p.release("run", Some(0)), 1);
+        assert_eq!(p.leased("run", 0), None);
+        assert_eq!(p.release("other", None), 0);
+        assert_eq!(p.release("run", None), 3);
+        assert!(p.leases.is_empty());
+        // Removing a proxy drops its leases; no usable proxy gives None.
+        let l = p.lease("r2", 0, false, 5).unwrap();
+        assert!(p.remove(&l.url));
+        assert_eq!(p.leased("r2", 0), None);
+        for e in &mut p.proxies {
+            e.healthy = Some(false);
+        }
+        assert_eq!(p.lease("r2", 0, false, 6), None);
+        // Rotating in a one-proxy pool keeps the only proxy.
+        let mut one = pool(Strategy::Sticky, 1);
+        let first = one.lease("r", 0, false, 1).unwrap();
+        assert_eq!(one.lease("r", 0, true, 2).unwrap().url, first.url);
+        assert_eq!(Pool::default().lease("r", 0, false, 1), None);
     }
 
     #[test]

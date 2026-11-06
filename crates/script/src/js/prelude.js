@@ -1,11 +1,13 @@
 // Prelude: runs once in every isolate before the user's script.
-// Defines the globals scripts use: `browser` (incl. `browser.output`), `inputs`, `console`, `sleep`.
+// Defines the globals scripts use: `browser` (incl. `browser.output` and `browser.on`), `inputs`,
+// `console`, `sleep`.
 // Types for editors live in crates/script/types/browser.d.ts.
 
 import {
   op_bmcp_call,
   op_bmcp_inputs,
   op_bmcp_log,
+  op_bmcp_next_event,
   op_bmcp_sleep,
 } from "ext:core/ops";
 
@@ -42,9 +44,75 @@ function output(value) {
   op_bmcp_log("##bmcp:result " + JSON.stringify(value === undefined ? null : value), false);
 }
 
-const browser = new Proxy(Object.freeze({ call, output }), {
+// ---- Events: `browser.on(pattern, handler)` --------------------------------------------------
+// Same meaning as in the TS SDK (sdk/ts/src/ws.ts): `pattern` is an exact topic
+// ("tab.updated"), a prefix ("tab.*") or "*"; `handler(data, topic)` runs for every matching
+// event; the return value is a function that removes the handler. The first `on()` starts a
+// dispatch loop that awaits events from the sink. While that loop waits the script stays alive
+// (this is how a plugin keeps running); it ends when the browser connection closes, or after
+// the next event once every handler was removed.
+const handlers = new Map(); // pattern -> Set of handlers
+let dispatching = false;
+
+function topicMatches(pattern, topic) {
+  if (pattern === "*") return true;
+  if (pattern.endsWith(".*")) return topic.startsWith(pattern.slice(0, -1)); // keeps the dot
+  return pattern === topic;
+}
+
+function reportHandlerError(pattern, err) {
+  op_bmcp_log(`browser.on("${pattern}") handler failed: ${format(err)}`, true);
+}
+
+async function dispatchLoop() {
+  while (handlers.size > 0) {
+    const event = await op_bmcp_next_event();
+    if (event === null) break; // connection closed (or a sink without events)
+    for (const [pattern, set] of handlers) {
+      if (!topicMatches(pattern, event.topic)) continue;
+      for (const handler of [...set]) {
+        try {
+          const result = handler(event.data, event.topic);
+          // An async handler's rejection is reported, never fatal for the script.
+          if (result && typeof result.then === "function") {
+            result.then(undefined, (err) => reportHandlerError(pattern, err));
+          }
+        } catch (err) {
+          reportHandlerError(pattern, err);
+        }
+      }
+    }
+  }
+  dispatching = false;
+}
+
+function on(pattern, handler) {
+  if (typeof pattern !== "string" || typeof handler !== "function") {
+    throw new TypeError("usage: browser.on(pattern: string, handler: (data, topic) => void)");
+  }
+  let set = handlers.get(pattern);
+  const isNewPattern = !set;
+  if (!set) handlers.set(pattern, (set = new Set()));
+  set.add(handler);
+  // Start listening BEFORE subscribing, so no event of the new subscription is dropped.
+  if (!dispatching) {
+    dispatching = true;
+    dispatchLoop();
+  }
+  if (isNewPattern) {
+    call("events.subscribe", { topics: [pattern] }).catch((err) => reportHandlerError(pattern, err));
+  }
+  return () => {
+    set.delete(handler);
+    if (set.size > 0 || handlers.get(pattern) !== set) return;
+    handlers.delete(pattern);
+    call("events.unsubscribe", { topics: [pattern] }).catch(() => {});
+  };
+}
+
+const browser = new Proxy(Object.freeze({ call, output, on }), {
   get(target, ns) {
-    if (ns === "call" || ns === "output") return target[ns];
+    if (ns === "call" || ns === "output" || ns === "on") return target[ns];
     if (typeof ns !== "string" || ns === "then") return undefined;
     return namespace(ns);
   },

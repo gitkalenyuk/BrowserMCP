@@ -2,6 +2,11 @@
 //!
 //! Stealth rule: we never call `Runtime.enable` (pages can detect it). `Runtime.evaluate`
 //! and `Runtime.callFunctionOn` work without it.
+//!
+//! Helpers that deal with DOM nodes or page objects take a `session`: `None` for the page
+//! itself, `Some(id)` for the child session of an out-of-process iframe (see
+//! [`crate::frames`]). Node ids, object ids and coordinates only mean something in the
+//! session they came from.
 
 use bmcp_core::{CmdError, Ctx, ErrorCode, TabId};
 use bmcp_perception::PerceptionError;
@@ -10,6 +15,21 @@ use serde_json::{Value, json};
 /// One raw CDP call; backend failures become `CmdError`s (`TAB_NOT_FOUND`, `TIMEOUT`, …).
 pub async fn call(ctx: &Ctx, tab: TabId, method: &str, params: Value) -> Result<Value, CmdError> {
     Ok(ctx.backend.cdp(tab, method.to_string(), params).await?)
+}
+
+/// [`call`] in a session (`None` = the page).
+pub async fn call_in(
+    ctx: &Ctx,
+    tab: TabId,
+    session: Option<&str>,
+    method: &str,
+    params: Value,
+) -> Result<Value, CmdError> {
+    let session = session.map(str::to_string);
+    Ok(ctx
+        .backend
+        .cdp_session(tab, session, method.to_string(), params)
+        .await?)
 }
 
 /// Perception errors (bad/stale ref, bad filter, …) → command errors with advice.
@@ -49,13 +69,15 @@ pub async fn main_loader_id(ctx: &Ctx, tab: TabId) -> Result<String, CmdError> {
 pub async fn resolve_object(
     ctx: &Ctx,
     tab: TabId,
+    session: Option<&str>,
     backend_node_id: i64,
     what: &str,
 ) -> Result<String, CmdError> {
     let reply = ctx
         .backend
-        .cdp(
+        .cdp_session(
             tab,
+            session.map(str::to_string),
             "DOM.resolveNode".into(),
             json!({ "backendNodeId": backend_node_id }),
         )
@@ -88,14 +110,16 @@ pub fn arg_object(object_id: &str) -> Value {
 pub async fn call_on(
     ctx: &Ctx,
     tab: TabId,
+    session: Option<&str>,
     object_id: &str,
     function: &str,
     arguments: Vec<Value>,
     by_value: bool,
 ) -> Result<Value, CmdError> {
-    let reply = call(
+    let reply = call_in(
         ctx,
         tab,
+        session,
         "Runtime.callFunctionOn",
         json!({
             "objectId": object_id,
@@ -114,12 +138,13 @@ pub async fn call_on(
 pub async fn call_function(
     ctx: &Ctx,
     tab: TabId,
+    session: Option<&str>,
     object_id: &str,
     function: &str,
     args: &[Value],
 ) -> Result<Value, CmdError> {
     let arguments = args.iter().cloned().map(arg_value).collect();
-    let result = call_on(ctx, tab, object_id, function, arguments, true).await?;
+    let result = call_on(ctx, tab, session, object_id, function, arguments, true).await?;
     Ok(result["value"].clone())
 }
 
@@ -127,10 +152,11 @@ pub async fn call_function(
 pub async fn call_function_object(
     ctx: &Ctx,
     tab: TabId,
+    session: Option<&str>,
     object_id: &str,
     function: &str,
 ) -> Result<Option<String>, CmdError> {
-    let result = call_on(ctx, tab, object_id, function, Vec::new(), false).await?;
+    let result = call_on(ctx, tab, session, object_id, function, Vec::new(), false).await?;
     Ok(result["objectId"].as_str().map(str::to_string))
 }
 
@@ -194,16 +220,18 @@ impl BoxRect {
 }
 
 /// The first visible box of a node (`DOM.getContentQuads`), or `None` when it has no layout
-/// box (display:none, detached, zero size).
+/// box (display:none, detached, zero size). In the viewport of the node's session.
 pub async fn content_box(
     ctx: &Ctx,
     tab: TabId,
+    session: Option<&str>,
     backend_node_id: i64,
 ) -> Result<Option<BoxRect>, CmdError> {
     let reply = ctx
         .backend
-        .cdp(
+        .cdp_session(
             tab,
+            session.map(str::to_string),
             "DOM.getContentQuads".into(),
             json!({ "backendNodeId": backend_node_id }),
         )
@@ -259,8 +287,9 @@ pub struct Layout {
     pub content_height: f64,
 }
 
-pub async fn layout(ctx: &Ctx, tab: TabId) -> Result<Layout, CmdError> {
-    let m = call(ctx, tab, "Page.getLayoutMetrics", json!({})).await?;
+/// Layout of the page (`session = None`) or of an out-of-process frame's own viewport.
+pub async fn layout(ctx: &Ctx, tab: TabId, session: Option<&str>) -> Result<Layout, CmdError> {
+    let m = call_in(ctx, tab, session, "Page.getLayoutMetrics", json!({})).await?;
     let num = |v: &Value| v.as_f64().unwrap_or(0.0);
     let viewport = &m["cssLayoutViewport"];
     let content = &m["cssContentSize"];
