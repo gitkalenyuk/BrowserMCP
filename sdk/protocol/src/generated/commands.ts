@@ -2779,25 +2779,28 @@ export interface NetResumeArgs {
    */
   action?: "continue" | "drop" | null;
   /**
-   * Changes before continuing: url, method, headers, body (request stage); status,
-   * headers, response_body (response stage; at the request stage they answer without
-   * sending).
+   * Changes before continuing. Request stage: url, method, headers, body; or status,
+   * headers, response_body to answer without sending. Response stage: response_body
+   * (the browser keeps the server's status and headers, so changing them is refused,
+   * except for a failed response).
    */
   edits?: {
     /** Request stage: new request body. */
     body?: string | null;
     /**
-     * Headers to set; a null value removes the header. Request headers at the request
-     * stage, response headers at the response stage.
+     * Headers to set; a null value removes the header. Request stage: request headers, or
+     * the answer's headers together with status/response_body. Response stage: only for a
+     * failed response (the browser keeps the server's headers otherwise).
      */
     headers?: Record<string, string | null> | null;
     /** Request stage: use this HTTP method. */
     method?: string | null;
-    /** Answer with this body instead of the real one. */
+    /** Answer with this body instead of the real one (works at both stages). */
     response_body?: string | null;
     /**
-     * Answer with this status (response stage: replaces the real one; request stage: the
-     * request is not sent and this is returned instead, default 200).
+     * Request stage: the request is not sent and this status is returned instead (default
+     * 200). Response stage: only for a failed response, with response_body (the browser
+     * keeps the server's status otherwise; use a request-stage breakpoint to change it).
      */
     status?: number | null;
     /** Request stage: send to this URL instead. */

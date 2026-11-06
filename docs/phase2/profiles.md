@@ -181,5 +181,14 @@ Pitfalls found:
   dialog. Off-screen browsers now have a `JSDialogHandler` that holds the dialog; the backend
   answers `Page.handleJavaScriptDialog` for such a tab through the held CEF callback.
 * A `net.resume` at the *response* stage with a new `status` reported `fulfilled`, but the page
-  still received the original 200 (seen in an off-screen tab; windowed not checked). The e2e
-  suite checks request-stage breakpoints only.
+  still received the original 200. Cause (CEF, not our code): CEF's URL loader proxy sits
+  between the page and DevTools' Fetch interceptor, gets the network's raw headers through the
+  trusted header client, and puts them back over whatever DevTools answers
+  (`InterceptedRequest::OnReceiveResponse`). So at the response stage the status line and
+  headers of `Fetch.fulfillRequest` / `continueResponse` never reach the page, while a
+  fulfill's body does (a failed response has no raw headers and arrives whole). Same in
+  headless and windowed tabs, over the in-process session and `--cdp-port`. `net.resume` now
+  refuses a new status or header change there (`INVALID_PARAMS`, the request stays paused;
+  `response_body` alone works), `net.rule_add` refuses response-stage `set_headers`,
+  `remove_headers` and `mock`; request-stage answers are unaffected. Checked by
+  `tests/e2e/tests/net.test.ts`; details in `crates/net/src/intercept.rs`.

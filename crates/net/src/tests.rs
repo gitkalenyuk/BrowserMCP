@@ -835,22 +835,46 @@ async fn bad_rules_are_rejected() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);
-    assert!(s.calls("Fetch.enable").is_empty());
+    // At the response stage CEF gives the page the server's status and headers: rules that
+    // would change them are refused instead of silently doing nothing.
+    for action in [
+        json!({ "set_headers": { "x-a": "1" } }),
+        json!({ "remove_headers": ["content-type"] }),
+        json!({ "mock": { "status": 404, "body": "gone" } }),
+    ] {
+        let err = s
+            .call(
+                "net.rule_add",
+                json!({ "match": { "stage": "response" }, "action": action }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams, "{action}");
+        assert!(err.message.contains("CEF"), "{}", err.message);
+    }
+    // The same actions are fine at the request stage.
+    s.ok(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*/x" }, "action": { "set_headers": { "x-a": "1" } } }),
+    )
+    .await;
+    assert_eq!(s.ok("net.rule_list", json!({})).await["count"], 1);
 }
 
 #[tokio::test]
 async fn a_failing_answer_falls_back_to_continue() {
     let s = Setup::new(HashMap::new());
-    // Response-stage header change, but continueResponse is "not supported" by this browser.
+    // Response-stage body rewrite, but fulfillRequest is "not supported" by this browser.
     s.fake.on_cdp(|_, method, _| match method {
         "Fetch.enable" | "Fetch.continueRequest" => Some(Ok(json!({}))),
-        "Fetch.continueResponse" => Some(Err(bmcp_core::BackendError::Cdp("not supported".into()))),
+        "Fetch.getResponseBody" => Some(Ok(json!({ "body": "price 10", "base64Encoded": false }))),
+        "Fetch.fulfillRequest" => Some(Err(bmcp_core::BackendError::Cdp("not supported".into()))),
         _ => None,
     });
     let mut events = s.ctx.events.subscribe();
     s.ok(
         "net.rule_add",
-        json!({ "match": { "stage": "response" }, "action": { "remove_headers": ["content-length"] } }),
+        json!({ "match": { "stage": "response" }, "action": { "rewrite_body": { "find": "10", "replace": "99" } } }),
     )
     .await;
     s.emit(
@@ -858,7 +882,7 @@ async fn a_failing_answer_falls_back_to_continue() {
         response_paused("f1", "https://a.test/x", 200),
     );
     settle().await;
-    assert_eq!(s.calls("Fetch.continueResponse").len(), 1);
+    assert_eq!(s.calls("Fetch.fulfillRequest").len(), 1);
     assert_eq!(
         s.calls("Fetch.continueRequest"),
         vec![json!({ "requestId": "f1" })]
@@ -969,19 +993,26 @@ async fn response_breakpoint_can_replace_the_answer_or_drop() {
         "url is already sent at the response stage"
     );
 
-    // New status, original body kept.
+    // A new body: fulfilled with the server's status and headers (all CEF lets through).
     let out = s
         .ok(
             "net.resume",
-            json!({ "pause_id": "p2", "edits": { "status": 500 } }),
+            json!({ "pause_id": "p2", "edits": { "response_body": "{\"ok\":false}" } }),
         )
         .await;
     assert_eq!(out["done"], "fulfilled");
     let f = s.calls("Fetch.fulfillRequest").pop().unwrap();
-    assert_eq!(f["responseCode"], 500);
+    assert_eq!(f["requestId"], "f1");
+    assert_eq!(f["responseCode"], 200);
+    assert_eq!(f["responsePhrase"], "OK");
+    assert_eq!(
+        f["responseHeaders"],
+        json!([{ "name": "Content-Type", "value": "application/json" }]),
+        "the old content-length is dropped"
+    );
     assert_eq!(
         B64.decode(f["body"].as_str().unwrap()).unwrap(),
-        b"{\"ok\":true}"
+        b"{\"ok\":false}"
     );
 
     let out = s
@@ -1183,11 +1214,12 @@ async fn rules_and_breakpoints_apply_in_the_order_they_were_added() {
     assert_eq!(s.answers_for("f3"), ["Fetch.failRequest"]);
 }
 
-/// Review item: `net.resume` returned early (no answer at all) when the original response
-/// body could not be read, so the request hung.
+/// Under CEF the page gets the server's status and headers after a response-stage answer
+/// (only the body of a fulfill gets through), except for a failed response, which has none.
+/// `net.resume` refuses what would not happen, before taking the pause.
 #[tokio::test]
-async fn resume_always_answers_even_when_the_body_cannot_be_read() {
-    // No bodies: every Fetch.getResponseBody fails.
+async fn response_stage_status_and_header_edits_are_refused_unless_the_response_failed() {
+    // No bodies: a Fetch.getResponseBody would fail (and must not be needed).
     let s = Setup::new(HashMap::new());
     s.ok("net.breakpoint", json!({ "stage": "response" })).await;
     let mut failed = paused_event("f2", "GET", "https://a.test/broken");
@@ -1210,38 +1242,85 @@ async fn resume_always_answers_even_when_the_body_cannot_be_read() {
         line.split(' ').next().unwrap().to_string()
     };
 
-    // A failed response and a redirect have no body to keep: refused up front, still paused.
-    for url in ["/broken", "/moved"] {
+    let refused = async |url: &str, edits: Value| -> CmdError {
         let err = s
             .call(
                 "net.resume",
-                json!({ "pause_id": pause_of(url), "edits": { "status": 200 } }),
+                json!({ "pause_id": pause_of(url), "edits": edits }),
             )
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams, "{url}: {err:?}");
-    }
+        err
+    };
+
+    // A server response: a new status or a header change cannot reach the page.
+    let err = refused("/api", json!({ "status": 500, "response_body": "boom" })).await;
+    assert!(
+        err.message.contains("status 200 → 500") && err.message.contains("CEF"),
+        "{}",
+        err.message
+    );
+    assert!(matches!(err.retry, bmcp_core::Retry::No), "{err:?}");
+    assert!(
+        err.hint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("request stage"),
+        "{err:?}"
+    );
+    let err = refused("/api", json!({ "headers": { "X-New": "1" } })).await;
+    assert!(err.message.contains("the headers"), "{}", err.message);
+    refused("/api", json!({ "headers": { "content-type": null } })).await;
+    refused("/moved", json!({ "status": 200, "response_body": "here" })).await;
+    // A failed response has no body to keep.
+    refused("/broken", json!({ "status": 200 })).await;
+    refused("/broken", json!({ "headers": { "x-a": "1" } })).await;
+    // Nothing was answered: all three are still paused for a corrected resume.
     assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 3);
-    // With a body it works.
+    assert!(s.answers_for("f4").is_empty());
+
+    // Edits that change nothing are fine (the same status, a header with its own value in
+    // another spelling): the request just continues.
     let out = s
         .ok(
             "net.resume",
-            json!({ "pause_id": pause_of("/broken"), "edits": { "status": 200, "response_body": "ok" } }),
+            json!({ "pause_id": pause_of("/api"),
+                    "edits": { "status": 200, "headers": { "content-type": "application/json" } } }),
+        )
+        .await;
+    assert_eq!(out["done"], "continued");
+    assert_eq!(s.answers_for("f4"), ["Fetch.continueRequest"]);
+
+    // A new body alone keeps the redirect's status.
+    let out = s
+        .ok(
+            "net.resume",
+            json!({ "pause_id": pause_of("/moved"), "edits": { "response_body": "here" } }),
         )
         .await;
     assert_eq!(out["done"], "fulfilled");
+    let f = s.calls("Fetch.fulfillRequest").pop().unwrap();
+    assert_eq!(f["requestId"], "f3");
+    assert_eq!(f["responseCode"], 302);
 
-    // The body read fails at resume time: an error, but the request is still released.
-    let err = s
-        .call(
+    // A failed response takes status, headers and body: nothing of the server's is left.
+    let out = s
+        .ok(
             "net.resume",
-            json!({ "pause_id": pause_of("/api"), "edits": { "status": 500 } }),
+            json!({ "pause_id": pause_of("/broken"),
+                    "edits": { "status": 203, "headers": { "x-a": "1" }, "response_body": "ok" } }),
         )
-        .await
-        .unwrap_err();
-    assert_ne!(err.code, ErrorCode::InvalidParams);
-    assert_eq!(s.answers_for("f4"), ["Fetch.continueRequest"]);
-    assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 1);
+        .await;
+    assert_eq!(out["done"], "fulfilled");
+    let f = s.calls("Fetch.fulfillRequest").pop().unwrap();
+    assert_eq!(
+        f,
+        json!({ "requestId": "f2", "responseCode": 203,
+                "responseHeaders": [{ "name": "x-a", "value": "1" }], "body": B64.encode("ok") })
+    );
+    assert!(s.calls("Fetch.getResponseBody").is_empty());
+    assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 0);
 }
 
 /// Review item: when the capture listener fell behind, lost `Fetch.requestPaused` events
