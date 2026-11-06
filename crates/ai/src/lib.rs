@@ -5,7 +5,8 @@
 //! * [`agent`] — the agent loop for API providers; tools are the registry's commands;
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
 //! * [`session`] — agent id, color, status, transcript, touched tabs, `ai.*` events;
-//! * [`term`] — PTY terminals (`term.*`).
+//! * [`term`] — PTY terminals (`term.*`);
+//! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects).
 //!
 //! Wiring (in `crates/app`):
 //!
@@ -21,6 +22,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod model;
+pub mod proc_tree;
 pub mod session;
 pub mod term;
 

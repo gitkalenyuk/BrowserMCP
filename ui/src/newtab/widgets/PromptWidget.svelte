@@ -1,19 +1,34 @@
 <script lang="ts">
   import type { BrowserApi } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
-  import { PROVIDERS } from '../../lib/providers';
+  import type { AiProvider } from '../../lib/api';
+  import { PROVIDERS, TASK_AGENTS } from '../../lib/providers';
   import { load, save } from '../../lib/storage';
 
   let { api }: { api: BrowserApi } = $props();
 
-  // Agents that can take a task end-to-end (they open their own tab group).
-  const AGENTS = PROVIDERS.filter((p) => p.id === 'claude-code' || p.id === 'codex' || p.id === 'anthropic');
+  // Agents that can take a task end-to-end (they open their own tab group). The live list
+  // (`ai.providers`) says which are configured; until it arrives the static names are shown.
+  let live = $state<AiProvider[] | null>(null);
+  const AGENTS = $derived(
+    TASK_AGENTS.map((id) => {
+      const p = live?.find((x) => x.id === id);
+      return { id, name: p?.name ?? PROVIDERS.find((x) => x.id === id)?.name ?? id, configured: p?.configured ?? true };
+    }),
+  );
   let provider = $state(load('newtab.provider', 'claude-code'));
   let text = $state('');
   let sending = $state(false);
   let status = $state<{ ok: boolean; text: string } | null>(null);
   let field: HTMLTextAreaElement;
-  const name = $derived(PROVIDERS.find((p) => p.id === provider)?.name ?? 'AI');
+  const name = $derived(AGENTS.find((p) => p.id === provider)?.name ?? 'AI');
+
+  $effect(() => {
+    api
+      .call('ai.providers')
+      .then((r) => (live = r.providers))
+      .catch(() => {});
+  });
 
   const EXAMPLES = [
     'Compare prices for a ThinkPad X1 across 4 stores',
@@ -27,8 +42,11 @@
     sending = true;
     status = null;
     try {
-      await api.call('ai.prompt', { text: t, provider });
-      status = { ok: true, text: `Sent to ${name}. Its tabs will appear in a ${name} group, locked until you take over.` };
+      const session = await api.call('ai.session_start', { provider, prompt: t });
+      status = {
+        ok: true,
+        text: `${name} started (${session.id}). Its tabs appear in its own group, locked until you take over; follow it in the AI panel.`,
+      };
       text = '';
     } catch (err) {
       status = { ok: false, text: `${name} did not accept the task: ${(err as Error).message}` };
@@ -71,7 +89,7 @@
         <span class="sr-only">Agent</span>
         <select bind:value={provider} onchange={() => save('newtab.provider', provider)}>
           {#each AGENTS as p (p.id)}
-            <option value={p.id}>{p.name}</option>
+            <option value={p.id}>{p.name}{p.configured ? '' : ' (not set up)'}</option>
           {/each}
         </select>
         <Icon name="chevron-down" size={12} stroke={2.25} />

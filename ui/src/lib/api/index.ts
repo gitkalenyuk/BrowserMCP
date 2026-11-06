@@ -7,18 +7,21 @@ export { RpcError } from './client';
 export * from './types';
 
 /**
- * Picks the API implementation at startup. Mock is the default.
- *   window.__BMCP__.ws  injected by the browser into every bmcp://ui/ page: the real core
- *   ?api=ws             use the real core at ws://127.0.0.1:47800/v1/ws
- *   ?api=ws&ws=<url>    ... at another URL
- *   VITE_BMCP_API=ws    same, at build time
+ * Picks the API implementation at startup.
+ *   window.__BMCP__.ws  injected by the browser into every bmcp://ui/ page: ALWAYS wins.
+ *                       SECURITY: a privileged bmcp://ui page must never take its API endpoint
+ *                       from the URL, or a web page could navigate a tab to
+ *                       bmcp://ui/newtab.html?api=ws&ws=wss://evil/ and feed it hostile data.
+ *   ?api=ws[&ws=<url>]  dev builds only (Vite / pnpm dev without the browser)
+ *   VITE_BMCP_API=ws    build-time default; mock otherwise
  */
 export function createApi(
   location: { search: string } = window.location,
   injected: { ws?: string | null } | undefined = typeof window === 'undefined' ? undefined : window.__BMCP__,
+  dev: boolean = import.meta.env.DEV,
 ): BrowserApi {
-  const params = new URLSearchParams(location.search);
-  if (!params.get('api') && injected?.ws) return new WsApi({ url: injected.ws });
+  if (injected?.ws) return new WsApi({ url: injected.ws });
+  const params = dev ? new URLSearchParams(location.search) : new URLSearchParams();
   const kind = params.get('api') ?? import.meta.env.VITE_BMCP_API ?? 'mock';
   if (kind === 'ws') {
     return new WsApi({ url: params.get('ws') ?? import.meta.env.VITE_BMCP_WS_URL ?? DEFAULT_WS_URL });
