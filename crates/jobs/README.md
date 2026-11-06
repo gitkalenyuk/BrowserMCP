@@ -60,6 +60,14 @@ run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
   first live test with `parallel: 3` (7 of 10 rows failed). Off-screen tabs are always visible
   and each has its own focus, so 3 rows typing at once each reach their own page (live:
   10/10 rows correct with `parallel: 3`, see `docs/phase2/profiles.md`).
+* **Proxies per row:** `run.start {profile: "isolated", proxy_pool: "res", fit_identity?}`.
+  Before each attempt the [`RowProfileHook`] (installed by the app, implemented by
+  `bmcp_profiles::RowProfiles`) leases a proxy of the pool to the row (`proxy.lease`, sticky
+  per row; retries pass `rotate: true`), routes the attempt's profile through it and, with
+  `fit_identity`, gives it an identity fitted to the proxy's exit IP. After the attempt the
+  profile is forgotten; at the row's end the lease is released; at the run's end all of them.
+  A failed setup (dead proxy, failed geo lookup) fails the attempt like a script error, so the
+  retry gets another proxy. Without the hook, `proxy_pool` is refused (`NOT_IMPLEMENTED`).
 
 **Self-healing.** When a row fails (after its retries) with `NOT_FOUND`, `NOT_INTERACTABLE`,
 `STALE_REF`, `TIMEOUT` or `AMBIGUOUS_TARGET` from a `page.*` call, the row becomes `needs_heal`,

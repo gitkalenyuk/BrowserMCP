@@ -8,8 +8,10 @@ publish.workspace = true
 
 [dependencies]
 bmcp-core.workspace = true
-# Proxy forwarder, identities.json (profile → identity).
+# Proxy routing + forwarders, WebRTC/language prefs, identities, worker patch commands.
 bmcp-identity = { path = "../identity" }
+# Target.setAutoAttach shared with bmcp-browser's OOPIF support (worker pausing).
+bmcp-cdpshare = { path = "../cdpshare" }
 # pending_cookies from import.chrome.
 bmcp-data = { path = "../data" }
 schemars.workspace = true

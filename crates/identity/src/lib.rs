@@ -41,7 +41,7 @@ use bmcp_core::{CmdError, Ctx, Registry};
 
 pub use identity::{Identity, Os, PRESETS, generate};
 pub use proxy::{Forwarder, ProxyConfig, ProxyRef};
-pub use routing::{ProfileProxy, ROUTES_CHANGED};
+pub use routing::{IDENTITY_ASSIGNED, ProfileProxy, ROUTES_CHANGED};
 pub use worker::{WorkerCommand, worker_commands};
 
 use proxy::ProxiesFile;

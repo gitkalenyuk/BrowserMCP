@@ -1,62 +1,92 @@
 //! Chromium preferences of one profile (pure: turned into `CefRequestContext::SetPreference`
-//! calls by the CEF crate).
+//! calls by the CEF crate). The values come from `bmcp-identity`, the one source for them:
 //!
-//! | Preference | Value | Why |
+//! | Preference | From | Value |
 //! |---|---|---|
-//! | `proxy` | `{"mode": "fixed_servers", "server": "socks5://127.0.0.1:<port>"}` or `{"mode": "direct"}` | per-profile proxy (through our local forwarder) |
-//! | `webrtc.ip_handling_policy` | `disable_non_proxied_udp` with a proxy, else `default` | WebRTC must not reveal the real/local IP |
-//! | `webrtc.multiple_routes_enabled` | `false` with a proxy | same |
-//! | `webrtc.nonproxied_udp_enabled` | `false` with a proxy | same |
-//! | `intl.accept_languages` | `de-DE,de,en-US,en` | Accept-Language for requests outside a tab's DevTools session (service workers) |
+//! | `proxy` | [`Services::profile_proxy_pref`](bmcp_identity::Services::profile_proxy_pref) (the profile's `proxy.rules_set` routes / `profile.create {proxy}`) | `{"mode": "direct"}`, `fixed_servers` to a local forwarder (+ `bypass_list` from `profile.create {proxy_bypass}`), or `pac_script` |
+//! | `webrtc.ip_handling_policy`, `webrtc.multiple_routes_enabled`, `webrtc.nonproxied_udp_enabled` | [`cef_prefs::profile_prefs`](bmcp_identity::cef_prefs::profile_prefs) | limited to the proxy when proxied, Chromium's defaults otherwise |
+//! | `intl.accept_languages` | `profile.create {accept_language}`, else the assigned identity's | `de-DE,de,en-US,en` |
 
+use bmcp_identity::Identity;
+use bmcp_identity::cef_prefs::{is_proxied, profile_prefs};
 use serde_json::{Value, json};
 
+const ACCEPT_LANGUAGES: &str = "intl.accept_languages";
+
 /// What one profile's request context should look like.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prefs {
-    /// Proxy server for Chromium, e.g. `socks5://127.0.0.1:51234`. `None` = direct.
-    pub proxy_server: Option<String>,
-    /// Hosts that skip the proxy (`;`-separated, Chromium syntax). Only with a proxy.
-    pub proxy_bypass: Option<String>,
-    /// Accept-Language list, e.g. `de-DE,de,en-US,en`. `None` = leave Chromium's default.
+    /// The `proxy` preference (contains only local addresses: passwords stay in the local
+    /// forwarders of bmcp-identity).
+    pub proxy: Value,
+    /// Accept-Language list without q-values, e.g. `de-DE,de,en-US,en` (also handed to
+    /// `RequestContextSettings.accept_language_list` when the context is created). `None` =
+    /// Chromium's default.
     pub accept_language: Option<String>,
+    /// The other preferences, in order (WebRTC policy, `intl.accept_languages`).
+    pub other: Vec<(&'static str, Value)>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs::build(json!({ "mode": "direct" }), None, None, None)
+    }
 }
 
 impl Prefs {
-    /// The preferences to set, in order. Every key is always present (except the language)
-    /// so that removing a proxy also resets the WebRTC policy.
-    pub fn to_preferences(&self) -> Vec<(&'static str, Value)> {
-        let mut prefs = Vec::new();
-        let proxied = self.proxy_server.is_some();
-        let proxy = match &self.proxy_server {
-            Some(server) => {
-                let mut p = json!({ "mode": "fixed_servers", "server": server });
-                if let Some(bypass) = self.proxy_bypass.as_deref().filter(|b| !b.is_empty()) {
-                    p["bypass_list"] = json!(bypass);
-                }
-                p
-            }
-            None => json!({ "mode": "direct" }),
-        };
-        prefs.push(("proxy", proxy));
-        prefs.push((
-            "webrtc.ip_handling_policy",
-            json!(if proxied {
-                "disable_non_proxied_udp"
-            } else {
-                "default"
-            }),
-        ));
-        prefs.push(("webrtc.multiple_routes_enabled", json!(!proxied)));
-        prefs.push(("webrtc.nonproxied_udp_enabled", json!(!proxied)));
-        if let Some(lang) = self
-            .accept_language
-            .as_deref()
-            .map(strip_q_values)
-            .filter(|l| !l.is_empty())
+    /// Put together a profile's preferences: `proxy` from
+    /// `Services::profile_proxy_pref(profile).pref`, `bypass` = hosts that skip a fixed proxy
+    /// (Chromium syntax, ignored for PAC routing, where `direct` rules do that),
+    /// `identity` = the one assigned to the profile, `accept_language` = an explicit list that
+    /// wins over the identity's.
+    pub fn build(
+        mut proxy: Value,
+        bypass: Option<&str>,
+        identity: Option<&Identity>,
+        accept_language: Option<&str>,
+    ) -> Prefs {
+        if proxy["mode"] == "fixed_servers"
+            && let Some(bypass) = bypass.map(str::trim).filter(|b| !b.is_empty())
         {
-            prefs.push(("intl.accept_languages", json!(lang)));
+            proxy["bypass_list"] = json!(bypass);
         }
+        let mut other = profile_prefs(identity, is_proxied(&proxy));
+        let explicit = accept_language
+            .map(strip_q_values)
+            .filter(|l| !l.is_empty());
+        if let Some(lang) = &explicit {
+            other.retain(|(name, _)| *name != ACCEPT_LANGUAGES);
+            other.push((ACCEPT_LANGUAGES, json!(lang)));
+        }
+        let accept_language =
+            explicit.or_else(|| identity.map(|i| strip_q_values(&i.accept_language)));
+        Prefs {
+            proxy,
+            accept_language,
+            other,
+        }
+    }
+
+    /// Does the profile's traffic go through a proxy?
+    pub fn proxied(&self) -> bool {
+        is_proxied(&self.proxy)
+    }
+
+    /// `direct`, `fixed_servers` or `pac_script`.
+    pub fn proxy_mode(&self) -> &str {
+        self.proxy["mode"].as_str().unwrap_or("direct")
+    }
+
+    /// The server of a `fixed_servers` proxy (the local forwarder, `socks5://127.0.0.1:p`).
+    pub fn proxy_server(&self) -> Option<&str> {
+        self.proxy["server"].as_str()
+    }
+
+    /// The preferences to set, in order. The proxy and WebRTC keys are always present, so
+    /// removing a proxy also resets the WebRTC policy.
+    pub fn to_preferences(&self) -> Vec<(&'static str, Value)> {
+        let mut prefs = vec![("proxy", self.proxy.clone())];
+        prefs.extend(self.other.iter().cloned());
         prefs
     }
 }
@@ -79,43 +109,86 @@ mod tests {
         prefs.iter().find(|(n, _)| *n == name).map(|(_, v)| v)
     }
 
+    fn identity(country: &str) -> Identity {
+        bmcp_identity::generate(
+            None,
+            7,
+            &bmcp_identity::identity::Overrides {
+                country: Some(country.into()),
+                ..Default::default()
+            },
+        )
+    }
+
     #[test]
     fn proxy_turns_on_webrtc_protection() {
-        let prefs = Prefs {
-            proxy_server: Some("socks5://127.0.0.1:5000".into()),
-            proxy_bypass: Some("<local>".into()),
-            accept_language: Some("de-DE,de;q=0.9,en;q=0.8".into()),
-        }
-        .to_preferences();
+        let prefs = Prefs::build(
+            json!({"mode": "fixed_servers", "server": "socks5://127.0.0.1:5000"}),
+            Some("<local>"),
+            None,
+            Some("de-DE,de;q=0.9,en;q=0.8"),
+        );
+        let list = prefs.to_preferences();
+        assert_eq!(list[0].0, "proxy");
         assert_eq!(
-            get(&prefs, "proxy").unwrap(),
+            get(&list, "proxy").unwrap(),
             &json!({"mode": "fixed_servers", "server": "socks5://127.0.0.1:5000", "bypass_list": "<local>"})
         );
         assert_eq!(
-            get(&prefs, "webrtc.ip_handling_policy").unwrap(),
+            get(&list, "webrtc.ip_handling_policy").unwrap(),
             "disable_non_proxied_udp"
         );
         assert_eq!(
-            get(&prefs, "webrtc.multiple_routes_enabled").unwrap(),
+            get(&list, "webrtc.multiple_routes_enabled").unwrap(),
             &json!(false)
         );
         assert_eq!(
-            get(&prefs, "webrtc.nonproxied_udp_enabled").unwrap(),
+            get(&list, "webrtc.nonproxied_udp_enabled").unwrap(),
             &json!(false)
         );
-        assert_eq!(get(&prefs, "intl.accept_languages").unwrap(), "de-DE,de,en");
+        assert_eq!(get(&list, ACCEPT_LANGUAGES).unwrap(), "de-DE,de,en");
+        assert_eq!(prefs.accept_language.as_deref(), Some("de-DE,de,en"));
+        assert_eq!(prefs.proxy_server(), Some("socks5://127.0.0.1:5000"));
+        assert!(prefs.proxied());
     }
 
     #[test]
     fn no_proxy_resets_everything() {
-        let prefs = Prefs::default().to_preferences();
-        assert_eq!(get(&prefs, "proxy").unwrap(), &json!({"mode": "direct"}));
-        assert_eq!(get(&prefs, "webrtc.ip_handling_policy").unwrap(), "default");
+        let prefs = Prefs::default();
+        let list = prefs.to_preferences();
+        assert_eq!(get(&list, "proxy").unwrap(), &json!({"mode": "direct"}));
+        assert_eq!(get(&list, "webrtc.ip_handling_policy").unwrap(), "default");
         assert_eq!(
-            get(&prefs, "webrtc.multiple_routes_enabled").unwrap(),
+            get(&list, "webrtc.multiple_routes_enabled").unwrap(),
             &json!(true)
         );
-        assert!(get(&prefs, "intl.accept_languages").is_none());
+        assert!(get(&list, ACCEPT_LANGUAGES).is_none());
+        assert!(!prefs.proxied());
+        assert_eq!(prefs.proxy_mode(), "direct");
+    }
+
+    #[test]
+    fn identity_language_unless_explicit_and_no_bypass_for_pac() {
+        let fr = identity("FR");
+        let pac = json!({"mode": "pac_script", "pac_url": "data:,x", "pac_mandatory": true});
+        let prefs = Prefs::build(pac.clone(), Some("<local>"), Some(&fr), None);
+        assert_eq!(prefs.proxy, pac, "bypass lists are for fixed proxies only");
+        assert!(prefs.proxied());
+        let lang = get(&prefs.other, ACCEPT_LANGUAGES)
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(lang.starts_with("fr-FR"), "{lang}");
+        assert_eq!(prefs.accept_language.as_deref(), Some(lang));
+        // An explicit list wins and appears once.
+        let prefs = Prefs::build(pac, None, Some(&fr), Some("uk"));
+        let langs: Vec<_> = prefs
+            .other
+            .iter()
+            .filter(|(n, _)| *n == ACCEPT_LANGUAGES)
+            .collect();
+        assert_eq!(langs, [&(ACCEPT_LANGUAGES, json!("uk"))]);
+        assert_eq!(prefs.accept_language.as_deref(), Some("uk"));
     }
 
     #[test]
