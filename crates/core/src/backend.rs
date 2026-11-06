@@ -95,6 +95,12 @@ pub enum BackendError {
     ShuttingDown,
     #[error("CDP: {0}")]
     Cdp(String),
+    /// This backend cannot do that (e.g. profiles in the test backend).
+    #[error("not supported: {0}")]
+    Unsupported(String),
+    /// The request itself is wrong (unknown profile, bad combination of options).
+    #[error("{0}")]
+    Invalid(String),
 }
 
 pub type BackendResult<T> = Result<T, BackendError>;
@@ -111,6 +117,45 @@ pub struct CdpEvent {
 /// Receiver of a tab's CDP events. Lagging receivers get `RecvError::Lagged(n)`.
 pub type CdpEvents = tokio::sync::broadcast::Receiver<CdpEvent>;
 
+/// Where [`BrowserBackend::open_tab_with`] puts a new tab.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowTarget {
+    /// A tab in the window used last (the normal case).
+    #[default]
+    Current,
+    /// A new browser window of its own (visible, laid out, with the browser UI).
+    New,
+    /// No window at all: an off-screen (windowless) page with its own size and focus.
+    /// For automation: parallel runs, typing into several pages at once.
+    Offscreen,
+}
+
+/// Everything about a new tab besides its URL. `Default` = the classic `open_tab`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenTabOptions {
+    /// Open without switching to it.
+    pub background: bool,
+    /// Profile (cookies, cache, proxy, identity). `None` = the profile the browser started with.
+    pub profile: Option<String>,
+    /// Keep everything in memory (nothing written to disk). With `profile`: the in-memory
+    /// profile of that name; without: the shared incognito profile.
+    pub incognito: bool,
+    pub window: WindowTarget,
+    /// Mass run this tab belongs to (its downloads go to `data/runs/<run>/downloads`).
+    pub run: Option<String>,
+}
+
+impl OpenTabOptions {
+    /// True when only `background` is set (what plain `open_tab` can do).
+    pub fn is_plain(&self) -> bool {
+        self.profile.is_none()
+            && !self.incognito
+            && self.window == WindowTarget::Current
+            && self.run.is_none()
+    }
+}
+
 pub trait BrowserBackend: Send + Sync + 'static {
     /// All open tabs, window by window, each window in tab-strip order.
     fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>>;
@@ -118,6 +163,23 @@ pub trait BrowserBackend: Send + Sync + 'static {
     /// Open a new tab in the current window and return its id once the browser exists.
     /// `background = false` also makes it the active tab.
     fn open_tab(&self, url: String, background: bool) -> BoxFuture<'_, BackendResult<TabId>>;
+
+    /// Open a tab with options (profile, incognito, own window). The default implementation
+    /// only handles plain options; the CEF backend does all of them.
+    fn open_tab_with(
+        &self,
+        url: String,
+        options: OpenTabOptions,
+    ) -> BoxFuture<'_, BackendResult<TabId>> {
+        if options.is_plain() {
+            return self.open_tab(url, options.background);
+        }
+        Box::pin(async {
+            Err(BackendError::Unsupported(
+                "profiles and own windows need the real browser".into(),
+            ))
+        })
+    }
 
     /// Close a tab (its page may still run `beforeunload`). Closing the last tab of a
     /// window closes the window; closing the last window quits.

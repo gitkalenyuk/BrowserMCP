@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{NEW_TAB_URL, TabId, TabInfo};
+use crate::backend::{NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
 use crate::command::{CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `tabs.list`: all open tabs.
@@ -68,6 +68,17 @@ pub struct OpenArgs {
     pub url: Option<String>,
     /// Open without switching to it (default false: the new tab becomes active).
     pub background: Option<bool>,
+    /// Profile to open it in (profile_list / profile_create): own cookies, cache, proxy and
+    /// identity. Default: the profile the browser started with.
+    pub profile: Option<String>,
+    /// In-memory profile, nothing is written to disk (default false). With `profile`: the
+    /// in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+    pub incognito: Option<bool>,
+    /// "current" (default): a tab in the current window; "new": a window of its own;
+    /// "offscreen": no visible window (automation; input and screenshots still work).
+    pub window: Option<WindowTarget>,
+    /// Mass run id this tab belongs to (set by run_start; downloads go to the run's folder).
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -87,8 +98,10 @@ impl Command for Open {
     fn meta() -> Meta {
         // Not `mutates_tab`: it creates a tab instead of changing an existing one.
         Meta::new(
-            "Open a URL in a new tab (background: true keeps the current tab shown). Returns \
-             the new tab; its id is in `tab` and `id`.",
+            "Open a URL in a new tab (background: true keeps the current tab shown). Optional: \
+             profile (own cookies/proxy/identity), incognito (in memory), window: \"new\" | \
+             \"offscreen\" (own window / no window, for parallel automation). Returns the new \
+             tab; its id is in `tab` and `id`.",
             Toolset::Core,
         )
         .act()
@@ -97,8 +110,14 @@ impl Command for Open {
 
     async fn run(ctx: Ctx, args: OpenArgs) -> Result<OpenOutput, CmdError> {
         let url = args.url.unwrap_or_else(|| NEW_TAB_URL.to_owned());
-        let background = args.background.unwrap_or(false);
-        let tab = ctx.backend.open_tab(url.clone(), background).await?;
+        let options = OpenTabOptions {
+            background: args.background.unwrap_or(false),
+            profile: args.profile.filter(|p| !p.is_empty()),
+            incognito: args.incognito.unwrap_or(false),
+            window: args.window.unwrap_or_default(),
+            run: args.run.filter(|r| !r.is_empty()),
+        };
+        let tab = ctx.backend.open_tab_with(url.clone(), options).await?;
         // The browser exists now but may not have reported anything yet: fall back to
         // the requested URL.
         let info = ctx

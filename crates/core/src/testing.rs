@@ -10,7 +10,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::backend::{
-    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, TabId, TabInfo,
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, OpenTabOptions,
+    TabId, TabInfo,
 };
 use crate::command::{Caller, Ctx};
 use crate::events::EventBus;
@@ -195,6 +196,20 @@ impl BrowserBackend for FakeBackend {
             format!("open_tab {url}")
         };
         self.with_state(call, |s| Ok(s.add_tab(url, background)))
+    }
+
+    /// Plain options behave like `open_tab`; others are logged as
+    /// `open_tab_with <url> <options:?>` (one fake window holds every tab).
+    fn open_tab_with(
+        &self,
+        url: String,
+        options: OpenTabOptions,
+    ) -> BoxFuture<'_, BackendResult<TabId>> {
+        if options.is_plain() {
+            return self.open_tab(url, options.background);
+        }
+        let call = format!("open_tab_with {url} {options:?}");
+        self.with_state(call, move |s| Ok(s.add_tab(url, options.background)))
     }
 
     fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
