@@ -6,6 +6,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import NotificationHost from '../lib/components/NotificationHost.svelte';
   import PageSlot from '../lib/components/PageSlot.svelte';
+  import PermissionBar from '../lib/components/PermissionBar.svelte';
   import SidePanel from '../lib/components/SidePanel.svelte';
   import TabSidebar from '../lib/components/TabSidebar.svelte';
   import TabStrip from '../lib/components/TabStrip.svelte';
@@ -49,6 +50,7 @@
     <div class="progress" aria-hidden="true"></div>
   {/if}
   <AgentBanner />
+  <PermissionBar />
   <FindBar />
   <NotificationHost />
   <div class="body">

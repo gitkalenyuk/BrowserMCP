@@ -39,6 +39,12 @@ export const COMMANDS: CommandMeta[] = [
   { id: 'library.import', title: 'Import bookmarks, history and passwords from Chrome' },
   { id: 'bookmark.toggle', title: 'Bookmark this page / remove bookmark' },
   { id: 'ui.toggleBookmarksBar', title: 'Show / hide bookmarks bar' },
+  { id: 'tab.split', title: 'Split view with the next tab / end split view' },
+  { id: 'split.focusLeft', title: 'Focus left half of the split view', hidden: true },
+  { id: 'split.focusRight', title: 'Focus right half of the split view', hidden: true },
+  { id: 'zoom.in', title: 'Zoom in' },
+  { id: 'zoom.out', title: 'Zoom out' },
+  { id: 'zoom.reset', title: 'Reset zoom' },
   { id: 'palette.open', title: 'Command palette', hidden: true },
   ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => ({
     id: `tab.select${n}` as CommandId,

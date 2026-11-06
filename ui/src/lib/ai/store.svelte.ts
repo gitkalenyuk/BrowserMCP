@@ -16,6 +16,8 @@ export class AiStore {
   threads = $state<Record<string, ChatItem[]>>({});
   /** Session shown in the panel; null = a new chat. */
   activeId = $state<string | null>(null);
+  /** Text in the panel's input (kept here so "Ask AI about this" can fill it). */
+  draft = $state('');
   /** Provider used for the next new chat. */
   provider = $state(load('ai.provider', 'claude-code'));
   #unsubs: Array<() => void> = [];

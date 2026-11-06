@@ -12,6 +12,7 @@ import type {
   Method,
   Params,
   Patch,
+  ProfileEntry,
   Result,
   Run,
   Script,
@@ -19,7 +20,6 @@ import type {
   TabId,
   TabInfo,
   TabsSnapshot,
-  Workspace,
   WorkspaceId,
 } from './types';
 import { NEWTAB_URL, fallbackTitle, hostOf, isNewTab } from '../urls';
@@ -29,6 +29,8 @@ interface History {
   index: number;
 }
 
+/** The tabs of one profile (= workspace). The core has one strip per window; the mock keeps
+ *  one per profile and reports them all (each tab carries its `profile`). */
 interface WorkspaceState {
   tabs: TabInfo[];
   groups: TabGroup[];
@@ -88,8 +90,10 @@ export class MockApi implements BrowserApi {
   #events = new Emitter();
   #nextTab = 1;
   #history = new Map<TabId, History>();
-  #workspaces: Workspace[];
+  #profiles: ProfileEntry[];
+  /** Profile of the tab shown last. */
   #activeWorkspace: WorkspaceId;
+  #closedTabs: { url: string; profile: string }[] = [];
   #state = new Map<WorkspaceId, WorkspaceState>();
   #agents: Agent[];
   #runs: Run[];
@@ -101,12 +105,27 @@ export class MockApi implements BrowserApi {
 
   constructor(opts: { latency?: number; simulate?: boolean } = {}) {
     this.#latency = opts.latency ?? 0;
-    this.#workspaces = [
-      { id: 'personal', name: 'Personal', profile: 'default', proxy: 'Direct', color: 'blue' },
-      { id: 'work', name: 'Work', profile: 'work', proxy: 'http · corp-proxy:3128', color: 'purple' },
-      { id: 'scrape', name: 'Scraping', profile: 'stealth-de', proxy: 'socks5 · DE pool (8)', color: 'green' },
+    const profile = (id: string, label: string, extra: Partial<ProfileEntry> = {}): ProfileEntry => ({
+      id,
+      label,
+      color: null,
+      proxy: null,
+      proxy_server: null,
+      accept_language: null,
+      identity: null,
+      stored: true,
+      open: true,
+      incognito: false,
+      tabs: [],
+      launch: false,
+      ...extra,
+    });
+    this.#profiles = [
+      profile('default', 'Personal', { color: 'blue', launch: true }),
+      profile('work', 'Work', { color: 'purple', proxy: 'http://corp-proxy:3128' }),
+      profile('stealth-de', 'Scraping', { color: 'green', proxy: 'socks5://u:***@de.pool:1080', identity: 'de-desktop' }),
     ];
-    this.#activeWorkspace = 'personal';
+    this.#activeWorkspace = 'default';
     this.#agents = [
       {
         id: 'claude',
@@ -138,13 +157,13 @@ export class MockApi implements BrowserApi {
       { id: 's-clean', name: 'Clear site data', description: 'Cookies + storage for the current site', lastRun: null },
     ];
 
-    this.#state.set('personal', this.#seedPersonal());
-    this.#state.set('work', this.#seed([
+    this.#state.set('default', this.#seedPersonal());
+    this.#state.set('work', this.#seed('work', [
       'https://github.com/browsermcp/browsermcp/pulls',
       'https://docs.rs/cef/latest/cef/',
       NEWTAB_URL,
     ]));
-    this.#state.set('scrape', this.#seed(['https://example.com/', NEWTAB_URL]));
+    this.#state.set('stealth-de', this.#seed('stealth-de', ['https://example.com/', NEWTAB_URL]));
 
     if (opts.simulate ?? true) this.#startSimulation();
   }
@@ -183,30 +202,106 @@ export class MockApi implements BrowserApi {
 
   #handlers: Handlers = {
     'tabs.list': () => this.#snapshot(),
-    'tabs.open': ({ url, background }) => {
-      const tab = this.#createTab(url ?? NEWTAB_URL, null);
-      const ws = this.#ws;
-      const index = ws.activeId === null ? ws.tabs.length : this.#indexOf(ws.activeId) + 1;
-      ws.tabs.splice(index, 0, tab);
-      this.#emit('tab.created', { tab: { ...tab }, index });
+    'tabs.open': ({ url, background, profile }) => {
+      const id = profile ?? 'default';
+      if (!this.#profiles.some((p) => p.id === id)) throw new RpcError('INVALID_PARAMS', `No profile ${id}`);
+      if (!this.#state.has(id)) this.#state.set(id, { tabs: [], groups: [], activeId: null });
+      const ws = this.#state.get(id)!;
+      const tab = this.#createTab(url ?? NEWTAB_URL, null, null, id);
+      const at = ws.activeId === null ? ws.tabs.length : ws.tabs.findIndex((t) => t.id === ws.activeId) + 1;
+      ws.tabs.splice(at, 0, tab);
+      this.#emit('tab.created', { tab: { ...tab }, index: this.#snapshot().tabs.findIndex((t) => t.id === tab.id) });
       if (!background) this.#activate(tab.id);
       if (!isNewTab(tab.url)) this.#load(tab.id);
       return tab;
     },
     'tabs.close': ({ tab }) => {
-      const ws = this.#ws;
-      const i = this.#indexOf(tab);
-      if (i < 0) throw new RpcError('NOT_FOUND', `No tab ${tab}`);
-      ws.tabs.splice(i, 1);
+      const key = this.#workspaceOf(tab);
+      if (key === null) throw new RpcError('NOT_FOUND', `No tab ${tab}`);
+      const ws = this.#state.get(key)!;
+      const i = ws.tabs.findIndex((t) => t.id === tab);
+      const [closed] = ws.tabs.splice(i, 1);
+      this.#closedTabs.push({ url: closed.url, profile: key });
       this.#history.delete(tab);
       this.#emit('tab.closed', { id: tab });
+      if (closed.split) this.#update(closed.split.other, { split: null });
       if (ws.tabs.length === 0) {
         ws.activeId = null;
-        void this.#handlers['tabs.open']({});
+        void this.#handlers['tabs.open']({ profile: key });
       } else if (ws.activeId === tab) {
         this.#activate(ws.tabs[Math.min(i, ws.tabs.length - 1)].id);
       }
     },
+    'tabs.restore_closed': () => {
+      const last = this.#closedTabs.pop();
+      if (!last) return { tab: null };
+      const tab = this.#handlers['tabs.open']({ url: last.url, profile: last.profile }) as TabInfo;
+      return { tab: tab.id };
+    },
+    'tabs.split': ({ left, right, ratio }) => {
+      this.#require(left);
+      this.#require(right);
+      const r = Math.min(0.85, Math.max(0.15, ratio ?? 0.5));
+      this.#update(left, { split: { side: 'left', other: right, ratio: r } });
+      this.#update(right, { split: { side: 'right', other: left, ratio: r } });
+      this.#activate(left);
+      return { left, right, ratio: r };
+    },
+    'tabs.unsplit': ({ tab }) => {
+      const t = tab === undefined ? this.#snapshot().tabs.find((x) => x.split) : this.#require(tab);
+      if (!t?.split) return { tabs: [] };
+      const other = t.split.other;
+      this.#update(t.id, { split: null });
+      this.#update(other, { split: null });
+      return { tabs: [t.id, other] };
+    },
+    'page.zoom': ({ tab, level, delta }) => {
+      const id = tab ?? this.#ws.activeId ?? 0;
+      const t = this.#require(id);
+      const steps = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+      const now = t.zoom ?? 100;
+      let next = now;
+      if (level !== undefined) next = level;
+      else if (delta === 0) next = 100;
+      else if (delta !== undefined && delta > 0) next = steps.find((s) => s > now) ?? 500;
+      else if (delta !== undefined && delta < 0) next = [...steps].reverse().find((s) => s < now) ?? 25;
+      this.#update(id, { zoom: next === 100 ? null : next });
+      return { tab: id, level: next };
+    },
+    'profile.list': () => ({
+      profiles: this.#profiles.map((p) => ({
+        ...p,
+        tabs: (this.#state.get(p.id)?.tabs ?? []).map((t) => t.id),
+      })),
+    }),
+    'profile.create': ({ id }) => {
+      const created = !this.#profiles.some((p) => p.id === id);
+      if (created) {
+        this.#profiles.push({
+          id, label: id, color: null, proxy: null, proxy_server: null, accept_language: null,
+          identity: null, stored: true, open: false, incognito: false, tabs: [], launch: false,
+        });
+      }
+      return { id, created };
+    },
+    'profile.update': ({ id, label, color }) => {
+      const p = this.#profiles.find((x) => x.id === id);
+      if (!p) throw new RpcError('NOT_FOUND', `No profile ${id}`);
+      if (label !== undefined) p.label = label.trim() || id;
+      if (color !== undefined) p.color = (color || null) as ProfileEntry['color'];
+      return { id, label: p.label, color: p.color };
+    },
+    'profile.delete': ({ id }) => {
+      const p = this.#profiles.find((x) => x.id === id);
+      if (!p) return { id, removed: false };
+      if (p.launch) throw new RpcError('INVALID_PARAMS', 'the launch profile cannot be deleted');
+      if ((this.#state.get(id)?.tabs.length ?? 0) > 0) throw new RpcError('INVALID_PARAMS', `profile "${id}" still has open tabs`);
+      this.#profiles = this.#profiles.filter((x) => x.id !== id);
+      this.#state.delete(id);
+      return { id, removed: true };
+    },
+    'permissions.pending': () => ({ prompts: [] }),
+    'permissions.answer': ({ id }) => ({ id, answered: false }),
     'tabs.activate': ({ tab }) => {
       this.#require(tab);
       this.#activate(tab);
@@ -279,13 +374,6 @@ export class MockApi implements BrowserApi {
     },
     'hints.show': () => ({ count: 0 }), // the mock has no page to label
     'agents.list': () => ({ agents: this.#agents }),
-    'workspaces.list': () => ({ workspaces: this.#workspaces, activeId: this.#activeWorkspace }),
-    'workspaces.activate': ({ id }) => {
-      if (!this.#state.has(id)) throw new RpcError('NOT_FOUND', `No workspace ${id}`);
-      this.#activeWorkspace = id;
-      this.#emit('workspace.activated', { id });
-      this.#emit('tabs.reset', this.#snapshot());
-    },
     'runs.list': () => ({ runs: this.#runs, patches: this.#patches }),
     'runs.patch.approve': ({ id }) => {
       const patch = this.#patches.find((p) => p.id === id);
@@ -342,13 +430,19 @@ export class MockApi implements BrowserApi {
     this.#emit('runs.updated', structuredClone({ runs: this.#runs, patches: this.#patches }));
   }
 
+  /** Every workspace's tabs (the chrome filters them by profile), the shown one active. */
   #snapshot(): TabsSnapshot {
-    const ws = this.#ws;
-    return { tabs: ws.tabs, groups: ws.groups, activeId: ws.activeId };
+    const all = [...this.#state.values()];
+    return {
+      tabs: all.flatMap((s) => s.tabs),
+      groups: all.flatMap((s) => s.groups),
+      activeId: this.#ws?.activeId ?? null,
+    };
   }
 
-  #indexOf(tab: TabId): number {
-    return this.#ws.tabs.findIndex((t) => t.id === tab);
+  #workspaceOf(tab: TabId): string | null {
+    for (const [key, s] of this.#state) if (s.tabs.some((t) => t.id === tab)) return key;
+    return null;
   }
 
   #find(tab: TabId): TabInfo | undefined {
@@ -365,7 +459,7 @@ export class MockApi implements BrowserApi {
     return t;
   }
 
-  #createTab(url: string, groupId: string | null, lockedBy: string | null = null): TabInfo {
+  #createTab(url: string, groupId: string | null, lockedBy: string | null = null, profile = 'default'): TabInfo {
     const id = this.#nextTab++;
     this.#history.set(id, { entries: [url], index: 0 });
     return {
@@ -378,11 +472,12 @@ export class MockApi implements BrowserApi {
       canGoForward: false,
       groupId,
       lockedBy,
+      profile,
     };
   }
 
-  #seed(urls: string[]): WorkspaceState {
-    const tabs = urls.map((u) => this.#createTab(u, null));
+  #seed(profile: string, urls: string[]): WorkspaceState {
+    const tabs = urls.map((u) => this.#createTab(u, null, null, profile));
     return { tabs, groups: [], activeId: tabs[0]?.id ?? null };
   }
 
@@ -413,9 +508,12 @@ export class MockApi implements BrowserApi {
   }
 
   #activate(tab: TabId): void {
-    const ws = this.#ws;
-    if (ws.activeId === tab) return;
+    const key = this.#workspaceOf(tab);
+    if (key === null) return;
+    const ws = this.#state.get(key)!;
+    if (ws.activeId === tab && this.#activeWorkspace === key) return;
     ws.activeId = tab;
+    this.#activeWorkspace = key;
     this.#emit('tab.activated', { id: tab });
   }
 

@@ -41,6 +41,12 @@ export const COMMAND_IDS = [
   'library.import',
   'bookmark.toggle',
   'ui.toggleBookmarksBar',
+  'tab.split',
+  'split.focusLeft',
+  'split.focusRight',
+  'zoom.in',
+  'zoom.out',
+  'zoom.reset',
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];
@@ -86,6 +92,13 @@ export const DEFAULT_KEYMAP: Keymap = {
   'library.import': [],
   'bookmark.toggle': ['Ctrl+D'],
   'ui.toggleBookmarksBar': ['Ctrl+Shift+B'],
+  'tab.split': [],
+  // Native too (crates/cef/src/chrome/protocol.rs), so they work while a page has focus.
+  'split.focusLeft': ['Ctrl+Alt+Left'],
+  'split.focusRight': ['Ctrl+Alt+Right'],
+  'zoom.in': ['Ctrl+=', 'Ctrl+Shift+=', 'Ctrl++'],
+  'zoom.out': ['Ctrl+-'],
+  'zoom.reset': ['Ctrl+0'],
 };
 
 export interface Chord {

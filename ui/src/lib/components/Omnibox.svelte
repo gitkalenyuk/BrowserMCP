@@ -84,6 +84,12 @@
       {intent === 'search' ? 'Search Google' : 'Open'} <kbd>Enter</kbd>
     </span>
   {:else}
+    {#if chrome.active?.zoom}
+      <!-- Like Chrome: the zoom shows only when it is not 100 %; a click resets it. -->
+      <button class="zoom" title="Zoom {chrome.active.zoom}% — click to reset (Ctrl+0)" onclick={() => chrome.zoom(0)}>
+        {chrome.active.zoom}%
+      </button>
+    {/if}
     <BookmarkStar />
   {/if}
 </div>
@@ -134,6 +140,20 @@
   }
   input::placeholder {
     color: var(--fg-subtle);
+  }
+  .zoom {
+    flex: none;
+    height: 20px;
+    padding: 0 7px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--fg);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .zoom:hover {
+    background: var(--hover);
   }
   .hint {
     display: inline-flex;

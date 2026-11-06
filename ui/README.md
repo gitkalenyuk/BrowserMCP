@@ -86,10 +86,26 @@ ui/
   placeholder, and the new tab page in an iframe.
 - **Overlap.** Anything the chrome draws over the page slot (menus, the toast) is hidden under the
   page in the real browser. So the palette is its own page (`palette.html`) in a native overlay
-  view, and the toast moves to the top of the window there. Dropdown menus that reach into the
-  page area are still clipped (follow-up).
+  view, and the toast moves to the top of the window there. Dropdowns (workspace menu, settings
+  menu) call `chrome.dropdown(true|false)`; while any is open the browser hides the page view
+  (`bmcp://cmd/cover?on=1`), so the dropdown is visible over the (then empty) page area.
+- **Workspaces = profiles.** `WorkspaceSwitcher` lists `profile.list` (label, color, proxy,
+  identity), creates (`profile.create` + `profile.update {label, color}`), renames and deletes
+  (closes the workspace's tabs, then `profile.delete`). The core reports every tab with its
+  `profile`, `window` and `offscreen` flag; `ChromeController.tabs` is the filtered view
+  (`state/workspaces.ts`): this window (`?window=<key>` in the chrome URL), this workspace, no
+  off-screen tabs. New tabs open with `tabs.open {profile}`; activating a tab of another
+  workspace (agent, palette, restore) switches the window's workspace.
+- **Split view.** A tab with `split` shows both halves; `PageSlot` draws the divider in the gap
+  between the two page views and drags it with `bmcp://cmd/split?ratio=` (`tabs.split` in mock).
+  `tab.split` (palette) splits the active tab with its neighbour or ends the split; Ctrl+Alt+←/→
+  focus a half.
+- **Permission bar.** `permission.prompt` events (no stored rule decided) show `PermissionBar` for
+  the tab on screen; Allow / Block answer with `permissions.answer {remember}`.
+- **Zoom.** `zoom.in/out/reset` (Ctrl+= / Ctrl+- / Ctrl+0) call `page.zoom {delta}`; the omnibox
+  shows `tab.zoom` when it is not 100 %.
 - **State.** The core is the source of truth. `ChromeController` folds events
-  (`tab.created/updated/closed/activated`, `tabs.reset`, `agents.updated`, `workspace.activated`)
+  (`tab.created/updated/closed/activated`, `tabs.reset`, `agents.updated`, `permission.prompt`)
   through the pure `reduceTabs`, and every user action is an RPC call. Tab activation is optimistic.
 - **Agents.** A tab with `lockedBy` belongs to an agent: its group label is filled with the agent's
   color and shows a lock, the tab shows a lock, and a banner offers **Take over** (`tabs.unlock`).
@@ -119,8 +135,9 @@ interface BrowserApi {
 }
 ```
 
-Methods: `tabs.list | open | close | activate | unlock`, `nav.goto | back | forward | reload | stop`,
-`agents.list`, `workspaces.list | activate`, `runs.list | patch.approve | patch.reject`,
+Methods: `tabs.list | open | close | activate | unlock | split | unsplit | restore_closed`,
+`profile.list | create | update | delete`, `permissions.pending | answer`, `page.zoom`, `nav.goto | back | forward | reload | stop`,
+`agents.list`, `runs.list | patch.approve | patch.reject`,
 `scripts.list | run`, `data.bookmarks | top_sites`, `bookmarks.add | add_folder | remove | move | search`,
 `history.search | delete`, `downloads.list`, `passwords.list | get | save | delete`,
 `import.chrome_detect | chrome` (`types-data.ts`, mocked statefully in `mock-data.ts`), `ui.layout`, and for the side panels
@@ -133,7 +150,7 @@ intercept_error | lagged`. Full params and results are in `src/lib/api/types.ts`
 structs; will be replaced by the generated `@browsermcp/protocol`). `mock-panels.ts` fakes the
 panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic without a backend.
 
-`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*","record.*","run.*","trigger.*","ui.*","script.*"]}` (a notification) after every
+`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*","record.*","run.*","trigger.*","ui.*","script.*","permission.*"]}` (a notification) after every
 (re)connect, on top of the server's default topics.
 
 ### Library (bookmarks, history, downloads, passwords, import)

@@ -31,6 +31,7 @@
   class:active
   class:grouped={!!group}
   class:locked={!!agent}
+  class:split={!!tab.split}
   style:--group={group ? `var(--g-${group.color})` : null}
   role="tab"
   tabindex={active ? 0 : -1}
@@ -44,6 +45,11 @@
 >
   <Favicon url={tab.url} src={tab.favicon} loading={tab.loading} />
   <span class="title">{title}</span>
+  {#if tab.split}
+    <span class="split-badge" title="Split view ({tab.split.side} half)" aria-label="Split view, {tab.split.side} half">
+      {tab.split.side === 'left' ? '◧' : '◨'}
+    </span>
+  {/if}
   {#if agent}
     <span class="lock" title="Locked by {agent.name}" style:--agent="var(--g-{agent.color})">
       <Icon name="lock" size={12} stroke={2} />
@@ -63,6 +69,15 @@
 </div>
 
 <style>
+  .split-badge {
+    flex: none;
+    color: var(--accent);
+    font-size: 12px;
+    line-height: 1;
+  }
+  .tab.split {
+    box-shadow: inset 0 -2px 0 var(--accent-line);
+  }
   .tab {
     position: relative;
     display: flex;

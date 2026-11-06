@@ -4,6 +4,7 @@
   import { useChrome } from '../state/chrome.svelte';
   import { isLibraryUrl } from '../data/library';
   import { fallbackTitle, isNewTab } from '../urls';
+  import { SPLIT_GAP, splitLeftWidth, splitRatioAt } from '../state/workspaces';
   import Favicon from './Favicon.svelte';
 
   // The page area. The chrome never draws web content: the core places the CEF
@@ -13,6 +14,40 @@
   const tab = $derived(chrome.active);
   let slot: HTMLDivElement;
   let rect = $state<Rect>({ x: 0, y: 0, w: 0, h: 0 });
+
+  // Split view: the two page views leave a SPLIT_GAP wide gap; this page draws the divider
+  // there and drags it (bmcp://cmd/split while dragging, announced when released).
+  const split = $derived(tab?.split ?? null);
+  let dragRatio = $state<number | null>(null);
+  const ratio = $derived(dragRatio ?? split?.ratio ?? 0.5);
+  const dividerX = $derived(splitLeftWidth(rect.w, ratio));
+  let dragFrame = 0;
+
+  function onDividerDown(e: PointerEvent) {
+    if (!split) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRatio = split.ratio;
+  }
+  function onDividerMove(e: PointerEvent) {
+    if (dragRatio === null) return;
+    const r = slot.getBoundingClientRect();
+    dragRatio = splitRatioAt(e.clientX - r.left, r.width);
+    cancelAnimationFrame(dragFrame);
+    const value = dragRatio;
+    dragFrame = requestAnimationFrame(() => chrome.host?.splitRatio(value, false));
+  }
+  function onDividerUp() {
+    if (dragRatio === null || !split || !tab) return;
+    const value = dragRatio;
+    dragRatio = null;
+    cancelAnimationFrame(dragFrame);
+    if (chrome.host) chrome.host.splitRatio(value, true);
+    else {
+      const [left, right] = split.side === 'left' ? [tab.id, split.other] : [split.other, tab.id];
+      void chrome.api.call('tabs.split', { left, right, ratio: value }).catch(() => {});
+    }
+  }
 
   $effect(() => {
     let frame = 0;
@@ -60,6 +95,23 @@
 </script>
 
 <div class="page-slot" class:mock bind:this={slot}>
+  {#if split}
+    <!-- Over the gap between the two page views (they cover the rest of the slot). -->
+    <div
+      class="divider"
+      class:dragging={dragRatio !== null}
+      style:left="{dividerX}px"
+      style:width="{SPLIT_GAP}px"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Split view divider"
+      aria-valuenow={Math.round(ratio * 100)}
+      onpointerdown={onDividerDown}
+      onpointermove={onDividerMove}
+      onpointerup={onDividerUp}
+      onpointercancel={onDividerUp}
+    ></div>
+  {/if}
   {#if mock && tab}
     {#if isNewTab(tab.url)}
       <iframe class="newtab" src="./newtab.html" title="New tab"></iframe>
@@ -90,6 +142,18 @@
   }
   .page-slot.mock {
     background: var(--surface);
+  }
+  .divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    cursor: col-resize;
+    background: var(--border);
+  }
+  .divider:hover,
+  .divider.dragging {
+    background: var(--accent);
   }
   .newtab {
     position: absolute;
