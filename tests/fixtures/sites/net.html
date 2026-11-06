@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Traffic – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  pre { background: #f4f4f4; padding: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Traffic fixture</h1>
+  <p>Served by <code>net_server.py</code>: fetch + XHR to its JSON API and a WebSocket.</p>
+  <button id="more">Load more</button>
+  <button id="save">Save item</button>
+  <button id="price-btn">Get price</button>
+  <p>Price: <span id="price">?</span></p>
+  <p>Status: <span id="status">idle</span></p>
+  <pre id="log"></pre>
+</main>
+<script>
+  const log = (line) => { document.getElementById('log').textContent += line + '\n'; };
+  const status = (text) => { document.getElementById('status').textContent = text; };
+
+  async function getJson(url) {
+    const r = await fetch(url, { headers: { 'Accept': 'application/json', 'X-Fixture': 'net' } });
+    log(`fetch ${url} -> ${r.status}`);
+    return r.json();
+  }
+
+  function xhr(url) {
+    return new Promise((resolve) => {
+      const x = new XMLHttpRequest();
+      x.open('GET', url);
+      x.onload = () => { log(`xhr ${url} -> ${x.status}`); resolve(x.responseText); };
+      x.onerror = () => { log(`xhr ${url} -> error`); resolve(null); };
+      x.send();
+    });
+  }
+
+  async function save() {
+    const r = await fetch('/api/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Widget', price: 9.5 }),
+    });
+    status(`saved ${r.status} ${await r.text()}`);
+  }
+
+  async function price() {
+    try {
+      const data = await getJson('/api/price');
+      document.getElementById('price').textContent = data.price;
+    } catch (e) {
+      document.getElementById('price').textContent = 'error ' + e;
+    }
+  }
+
+  let page = 1;
+  document.getElementById('more').onclick = () => getJson(`/api/items?page=${++page}`);
+  document.getElementById('save').onclick = save;
+  document.getElementById('price-btn').onclick = price;
+
+  // On load: a few API calls (fetch, XHR, POST) and a WebSocket conversation.
+  (async () => {
+    await getJson('/api/items?page=1');
+    await xhr('/api/items/42');
+    await xhr('/api/items/7');
+    await save();
+    await price();
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => { ws.send('hello'); ws.send(JSON.stringify({ type: 'sub', topic: 'prices' })); };
+    ws.onmessage = (e) => log('ws <- ' + e.data);
+  })();
+</script>
+</body>
+</html>

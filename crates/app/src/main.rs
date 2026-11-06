@@ -119,6 +119,7 @@ async fn start_api(
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
+    bmcp_net::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
     let events = bmcp_core::EventBus::new();
     match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {

@@ -396,6 +396,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-net"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bmcp-core",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "bmcp-perception"
 version = "0.1.0"
 dependencies = [
@@ -437,6 +451,7 @@ dependencies = [
  "bmcp-browser",
  "bmcp-cef",
  "bmcp-core",
+ "bmcp-net",
  "serde_json",
  "tokio",
  "tokio-util",
