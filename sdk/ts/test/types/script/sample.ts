@@ -9,6 +9,8 @@ const found = await browser.page.find({ role: "link" });
 const viaCall = await browser.call("page.text", { limit: 100 });
 await sleep(10);
 console.log(first?.title, page.url, found.text, viaCall.truncated);
+// Structured result for script.run / run rows (a runtime global, not a command).
+browser.output({ title: first?.title, links: found.total });
 
 // @ts-expect-error -- `url` is required.
 await browser.nav.goto({});

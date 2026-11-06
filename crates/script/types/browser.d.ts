@@ -5773,6 +5773,12 @@ declare namespace BrowserMCP {
   export interface Browser {
     /** Low level: `browser.call("tabs.list", {})`. Also accepts wire names (`tabs_list`). */
     call<N extends keyof Commands>(name: N, args?: Commands[N]["args"]): Promise<Commands[N]["output"]>;
+    /**
+     * Report a structured result to whoever started the script (`script.run`, a `run.start`
+     * row): prints `##bmcp:result <json>`. Several calls merge (object keys combine, later
+     * values win; any other value replaces).
+     */
+    output(value: unknown): void;
     /** Commands `adblock.*`. */
     adblock: {
       /**
