@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   accent: '#3b82f6',
   verticalTabs: false,
   sidebarWidth: 240,
-  panel: null,
+  panel: import.meta.env.VITE_BMCP_PANEL ?? null,
   panelWidth: 380,
   widgets: { prompt: true, agents: true, scripts: true, sites: true },
 };

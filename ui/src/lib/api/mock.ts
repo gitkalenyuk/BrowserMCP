@@ -1,4 +1,5 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
+import { createPanelMocks } from './mock-panels';
 import type {
   Agent,
   ApiEvents,
@@ -281,10 +282,10 @@ export class MockApi implements BrowserApi {
       { title: 'OpenAI', url: 'https://chatgpt.com/' },
       { title: 'Linear', url: 'https://linear.app/' },
     ] }),
-    'ai.prompt': ({ text, provider }) => {
-      console.info('[mock] ai.prompt', { provider, text });
-      return { sessionId: `ai-${Date.now().toString(36)}` };
-    },
+    ...createPanelMocks(
+      (event, payload) => this.#emit(event, payload),
+      () => this.#ws.activeId,
+    ),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },
