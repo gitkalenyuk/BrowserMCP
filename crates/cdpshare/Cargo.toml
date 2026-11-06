@@ -1,0 +1,18 @@
+[package]
+name = "bmcp-cdpshare"
+description = "BrowserMCP: shared use of one tab's CDP session (domain refcount, one Fetch coordinator per tab; no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+# `test-util` lets tests run with a paused clock (hold limit, lag sweep grace period).
+tokio = { workspace = true, features = ["test-util"] }

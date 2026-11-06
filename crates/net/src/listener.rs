@@ -1,11 +1,13 @@
-//! The background task that reads one tab's CDP events.
+//! The background task that reads one tab's `Network.*` events into its
+//! [`crate::store::TrafficStore`] while capture is on.
 //!
-//! * `Network.*` → the tab's [`crate::store::TrafficStore`] (only while capture is on);
-//! * `Fetch.requestPaused` → [`crate::intercept::on_paused`], in its own task so a slow CDP
-//!   answer never holds up the event stream.
+//! Paused requests (`Fetch.requestPaused`) do **not** come through here: the tab's Fetch
+//! coordinator (`bmcp-cdpshare`) reads them from its own subscription and hands them to
+//! [`crate::intercept::NetFetch`]. So when this listener falls behind on a busy page and loses
+//! events, only traffic entries are incomplete — no request is left paused.
 //!
-//! It runs while capture is on or rules/breakpoints exist, and ends by itself when the tab
-//! closes (the event channel closes).
+//! It runs while capture is on, and ends by itself when the tab closes (the event channel
+//! closes).
 
 use bmcp_core::CdpEvents;
 use serde_json::json;
@@ -28,8 +30,8 @@ pub fn spawn(env: Env, mut events: CdpEvents) -> JoinHandle<()> {
                     handle(&env, &event.method, event.params);
                 }
                 Err(RecvError::Lagged(missed)) => {
-                    // We were too slow and lost events. Requests stay incomplete; a lost
-                    // `Fetch.requestPaused` is released by Chromium when Fetch is disabled.
+                    // We were too slow and lost events: some captured requests stay
+                    // incomplete. (Paused requests are not affected, see the module docs.)
                     env.events.emit(
                         "net.lagged",
                         json!({ "tab": env.tab, "missed": missed,
@@ -45,10 +47,6 @@ pub fn spawn(env: Env, mut events: CdpEvents) -> JoinHandle<()> {
 }
 
 fn handle(env: &Env, method: &str, params: serde_json::Value) {
-    if method == "Fetch.requestPaused" {
-        tokio::spawn(crate::intercept::on_paused(env.clone(), params));
-        return;
-    }
     if !method.starts_with("Network.") {
         return;
     }

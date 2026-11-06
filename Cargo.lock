@@ -399,7 +399,9 @@ name = "bmcp-adblock"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "bmcp-cdpshare",
  "bmcp-core",
+ "bmcp-net",
  "schemars",
  "serde",
  "serde_json",
@@ -468,6 +470,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "bmcp-cdpshare"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -558,6 +570,7 @@ name = "bmcp-net"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bmcp-cdpshare",
  "bmcp-core",
  "regex",
  "schemars",
@@ -584,6 +597,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bmcp-browser",
+ "bmcp-cdpshare",
  "bmcp-core",
  "bmcp-perception",
  "schemars",
