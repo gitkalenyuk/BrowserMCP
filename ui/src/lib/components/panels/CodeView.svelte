@@ -54,6 +54,7 @@
   }
   .scroll {
     display: flex;
+    align-items: flex-start;
     flex: 1;
     min-width: 0;
     overflow: auto;

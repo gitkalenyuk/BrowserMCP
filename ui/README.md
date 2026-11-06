@@ -147,6 +147,18 @@ panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic wit
   export to `data/har/`, rules (block / redirect / mock / rewrite body) and breakpoints with an
   editor that resumes with only the changed fields (`net.resume`). The net commands return compact
   text for agents; `net/parse.ts` reads it.
+* **Recording** and **Runs** (`RecordingPanel`, `RecordingDetail`, `StepList`, `CodeView`,
+  `RunsPanel`, `NewRunForm`, `RunDetail`, `TriggersView`; logic in `record/` and `runs/`): types
+  come from the generated protocol (`api/types-record-runs.ts` adds them to `RpcMethods` /
+  `ApiEvents` by declaration merging), fakes in `api/mock-record-runs.ts`. Record / stop the active
+  tab (video, traffic), live steps from `record.step`, saved recordings, `record.codegen` (with
+  parametrize) shown with Prism (lazy chunk), an inputs form inferred from `inputs.<name>` /
+  `need("name")` and *Save & run* (`script.save` + `script.run`); runs with progress bars from
+  `run.progress`, a paged results table (`run.results` cursors, status filter), pause / resume /
+  cancel, export, the heal flow (`run.heal_needed` → patch editor → `run.heal_apply`) and cron
+  triggers with a local preview of the next firings (`runs/cron.ts` follows the Rust `cron` crate:
+  weekdays 1 = Sunday, day-of-month AND weekday). `WsApi` also subscribes `record.*`, `run.*`,
+  `trigger.*`.
 
 `VITE_BMCP_PANEL=traffic pnpm build` opens that panel on a profile without saved settings
 (screenshots of a fresh profile).
