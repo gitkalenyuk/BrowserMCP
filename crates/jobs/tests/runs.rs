@@ -407,6 +407,50 @@ async fn heal_can_be_turned_off() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn heal_modes_and_the_snapshot_hook() {
+    let env = Env::new();
+    env.save("s", "fail NOT_FOUND page.find nothing matches")
+        .await;
+    // "off" as a string works like `false`.
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "s", "data": {"rows": id_rows(1)}, "retries": 0, "heal": "off"}),
+        )
+        .await;
+    assert_eq!(run["options"]["heal"], false);
+    env.wait_status(run["id"].as_str().unwrap(), &["finished"])
+        .await;
+
+    // The hook runs before run.heal_needed; its text is stored for the row.
+    let hooked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = hooked.clone();
+    env.jobs.set_heal_hook(std::sync::Arc::new(move |t| {
+        seen.lock().unwrap().push((t.row, t.mode));
+        Box::pin(async { Some("- button \"Log in\" @1:e2".to_string()) })
+    }));
+    let mut rx = env.events.subscribe();
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "s", "data": {"rows": id_rows(1)}, "retries": 0, "heal": "auto"}),
+        )
+        .await;
+    let id = run["id"].as_str().unwrap().to_string();
+    assert_eq!(run["options"]["heal_mode"], "auto");
+    let heal = wait_event(&mut rx, topics::RUN_HEAL_NEEDED, |d| d["id"] == id.as_str()).await;
+    assert_eq!(heal.data["mode"], "auto");
+    assert_eq!(
+        *hooked.lock().unwrap(),
+        vec![(0, bmcp_jobs::HealMode::Auto)]
+    );
+    let snapshot = env.jobs.heal_snapshot(&id, Some(0)).unwrap();
+    assert_eq!(snapshot.as_deref(), Some("- button \"Log in\" @1:e2"));
+    assert_eq!(env.jobs.heal_snapshot(&id, None).unwrap(), snapshot);
+    assert_eq!(env.jobs.heal_snapshot(&id, Some(5)).unwrap(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn results_are_paged_by_cursor() {
     let env = Env::new();
     env.save("s", "when id=3 throw nope\nresult {\"n\": \"{{id}}\"}")

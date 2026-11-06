@@ -21,6 +21,7 @@ bmcp-data = { path = "../data" }
 bmcp-identity = { path = "../identity" }
 bmcp-record = { path = "../record" }
 bmcp-jobs = { path = "../jobs" }
+bmcp-heal = { path = "../heal" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

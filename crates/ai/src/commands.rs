@@ -62,9 +62,11 @@ pub struct ProviderInfo {
     pub models: Vec<String>,
     /// CLI providers: the binary that will run.
     pub path: Option<String>,
+    /// Used by background AI features (self-healing, page.extract) when they name no provider.
+    pub is_default: bool,
 }
 
-fn provider_info(r: &Resolved) -> ProviderInfo {
+fn provider_info(r: &Resolved, default: Option<&str>) -> ProviderInfo {
     let (kind, protocol) = match r.preset.kind {
         Kind::Api(Api::Anthropic) => ("api", "anthropic"),
         Kind::Api(Api::OpenAi) => ("api", "openai"),
@@ -84,6 +86,7 @@ fn provider_info(r: &Resolved) -> ProviderInfo {
         model: r.model.clone(),
         models: r.models.clone(),
         path: r.binary.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        is_default: default == Some(r.preset.id),
     }
 }
 
@@ -110,9 +113,13 @@ impl Command for Providers {
 
     async fn run(ctx: Ctx, _args: Empty) -> Result<ProvidersOutput, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
+        let default = ai.default_provider();
         let providers = PRESETS
             .iter()
-            .map(|p| ai.resolve(p.id).map(|r| provider_info(&r)))
+            .map(|p| {
+                ai.resolve(p.id)
+                    .map(|r| provider_info(&r, default.as_deref()))
+            })
             .collect::<Result<_, _>>()?;
         Ok(ProvidersOutput { providers })
     }
@@ -138,6 +145,10 @@ pub struct ProviderSetArgs {
     /// CLI providers: path of the claude / codex binary; "" = search PATH.
     #[serde(default)]
     pub path: Option<String>,
+    /// true: make this the default provider of background AI features (self-healing,
+    /// page.extract); false: stop it being the default.
+    #[serde(default)]
+    pub default: Option<bool>,
 }
 
 impl Command for ProviderSet {
@@ -169,8 +180,16 @@ impl Command for ProviderSet {
             apply(&mut settings.base_url, args.base_url);
             apply(&mut settings.model, args.model);
             apply(&mut settings.path, args.path);
+            match args.default {
+                Some(true) => config.default_provider = Some(args.id.clone()),
+                Some(false) if config.default_provider.as_deref() == Some(args.id.as_str()) => {
+                    config.default_provider = None
+                }
+                _ => {}
+            }
         })?;
-        Ok(provider_info(&ai.resolve(&args.id)?))
+        let default = ai.default_provider();
+        Ok(provider_info(&ai.resolve(&args.id)?, default.as_deref()))
     }
 }
 

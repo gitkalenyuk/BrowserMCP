@@ -32,10 +32,38 @@ pub struct RunOptions {
     pub stop_on_error: bool,
     /// Pause and ask for a patch when a row breaks on a page.* selector error.
     pub heal: bool,
+    /// How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+    /// (confident patches are applied after a dry run). Absent in runs from older versions
+    /// (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heal_mode: Option<HealMode>,
     /// Browser profile the rows run in. Today always the default profile (shared by all
     /// rows); isolated per-row profiles come later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+}
+
+/// `run.start {heal}`: what happens when a row breaks on a page.* selector error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HealMode {
+    /// The row just fails.
+    Off,
+    /// Pause; an AI proposes a patch and a person accepts or rejects it (default).
+    Ask,
+    /// Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is
+    /// applied without asking (otherwise like `ask`).
+    Auto,
+}
+
+impl HealMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HealMode::Off => "off",
+            HealMode::Ask => "ask",
+            HealMode::Auto => "auto",
+        }
+    }
 }
 
 /// Run status: `running` → `finished` / `failed` (stop_on_error) / `cancelled`; `paused` in
@@ -225,6 +253,14 @@ CREATE TABLE IF NOT EXISTS rows (
     PRIMARY KEY (run_id, idx)
 );
 CREATE INDEX IF NOT EXISTS rows_by_status ON rows (run_id, status, idx);
+-- Page snapshot taken when a row asked for healing (context for the AI that writes the patch).
+CREATE TABLE IF NOT EXISTS heal_snapshots (
+    run_id     TEXT NOT NULL,
+    idx        INTEGER NOT NULL,
+    snapshot   TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, idx)
+);
 CREATE TABLE IF NOT EXISTS triggers (
     id            TEXT PRIMARY KEY,
     kind          TEXT NOT NULL,
@@ -529,6 +565,39 @@ impl Store {
         .map_err(db)?
         .collect::<Result<_, _>>()
         .map_err(db)
+    }
+
+    // ------------------------------------------------------------------ heal snapshots
+
+    /// Store (or replace) the page snapshot of a row that needs healing.
+    pub fn save_heal_snapshot(&self, id: &str, idx: u64, snapshot: &str) -> Result<(), CmdError> {
+        self.conn()
+            .execute(
+                "INSERT OR REPLACE INTO heal_snapshots (run_id, idx, snapshot, created_ms) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![id, idx, snapshot, now_ms()],
+            )
+            .map(drop)
+            .map_err(db)
+    }
+
+    /// The snapshot stored for row `idx`, or (with `None`) the newest one of the run.
+    pub fn heal_snapshot(&self, id: &str, idx: Option<u64>) -> Result<Option<String>, CmdError> {
+        let conn = self.conn();
+        let found = match idx {
+            Some(idx) => conn.query_row(
+                "SELECT snapshot FROM heal_snapshots WHERE run_id = ?1 AND idx = ?2",
+                params![id, idx],
+                |r| r.get(0),
+            ),
+            None => conn.query_row(
+                "SELECT snapshot FROM heal_snapshots WHERE run_id = ?1 \
+                 ORDER BY created_ms DESC LIMIT 1",
+                params![id],
+                |r| r.get(0),
+            ),
+        };
+        found.optional().map_err(db)
     }
 
     // ------------------------------------------------------------------ triggers

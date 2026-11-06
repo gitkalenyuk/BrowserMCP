@@ -191,9 +191,17 @@ async fn start_api(
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
     }
+    // Self-healing of runs and page.extract (data/extract-cache).
+    registry
+        .extensions()
+        .insert(bmcp_heal::HealService::new(bmcp_heal::HealConfig::new(
+            &data,
+        )));
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    // Watches run.heal_needed (proposes patches) and takes the page snapshot of broken rows.
+    bmcp_heal::attach(&registry, backend.clone(), events.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));

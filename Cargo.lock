@@ -518,6 +518,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-heal"
+version = "0.1.0"
+dependencies = [
+ "bmcp-ai",
+ "bmcp-core",
+ "bmcp-jobs",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "bmcp-identity"
 version = "0.1.0"
 dependencies = [
@@ -605,6 +623,7 @@ dependencies = [
  "bmcp-browser",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-heal",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
@@ -652,6 +671,7 @@ dependencies = [
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-heal",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-record",

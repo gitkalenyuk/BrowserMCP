@@ -43,7 +43,9 @@ use bmcp_core::{CmdError, DataDir, EventBus, Registry};
 use tokio_util::sync::CancellationToken;
 
 use crate::runner::RunCtl;
+pub use crate::runner::{HealHook, HealTrigger};
 use crate::scripts::ScriptLib;
+pub use crate::store::HealMode;
 use crate::store::Store;
 
 /// Event topics emitted on the [`EventBus`]. WS clients get them with
@@ -55,8 +57,8 @@ pub mod topics {
     pub const RUN_PROGRESS: &str = "run.progress";
     /// `{id, row, error: {code, command?, message, line?}, attempts}` when a row failed for good.
     pub const RUN_ROW_FAILED: &str = "run.row_failed";
-    /// `{id, row, script, error, step, line}`: a row broke on a page.* selector error and the
-    /// run paused; answer with `run.heal_apply`.
+    /// `{id, row, script, error, step, line, mode}`: a row broke on a page.* selector error
+    /// and the run paused; answer with `run.heal_apply`. `mode` is `ask` or `auto`.
     pub const RUN_HEAL_NEEDED: &str = "run.heal_needed";
     /// `{id, status, total, ok, failed, cancelled, needs_heal, duration_ms}`
     pub const RUN_FINISHED: &str = "run.finished";
@@ -123,6 +125,8 @@ pub(crate) struct Inner {
     /// Cancelled on browser shutdown: kills script processes but keeps rows `running` in the
     /// database, so the next start resumes them as `pending`.
     pub shutdown: CancellationToken,
+    /// Takes a page snapshot when a heal request opens (installed by `crates/heal`).
+    pub heal_hook: RwLock<Option<HealHook>>,
 }
 
 impl JobsService {
@@ -147,6 +151,7 @@ impl JobsService {
                 runs: Mutex::new(HashMap::new()),
                 firing: Mutex::new(HashSet::new()),
                 shutdown: CancellationToken::new(),
+                heal_hook: RwLock::new(None),
                 config,
             }),
         })
@@ -163,6 +168,22 @@ impl JobsService {
     /// Point scripts at the actual API endpoint (e.g. after the server picked its port).
     pub fn set_ws_url(&self, url: impl Into<String>) {
         *self.inner.ws_url.write().unwrap_or_else(|e| e.into_inner()) = url.into();
+    }
+
+    /// Install the hook that snapshots the page of a row that needs healing (see
+    /// [`HealHook`]). Its text is stored in the runs database before `run.heal_needed` goes
+    /// out; read it back with [`heal_snapshot`](Self::heal_snapshot).
+    pub fn set_heal_hook(&self, hook: HealHook) {
+        *self
+            .inner
+            .heal_hook
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+    }
+
+    /// The page snapshot stored for a heal request: of row `row`, or the newest of the run.
+    pub fn heal_snapshot(&self, run: &str, row: Option<u64>) -> Result<Option<String>, CmdError> {
+        self.inner.store.heal_snapshot(run, row)
     }
 
     /// Stop the scheduler and all run drivers and kill their script processes. Rows that

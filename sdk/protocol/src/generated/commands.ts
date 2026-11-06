@@ -349,6 +349,12 @@ export interface AiProviderSetArgs {
    * @default null
    */
   base_url?: string | null;
+  /**
+   * true: make this the default provider of background AI features (self-healing,
+   * page.extract); false: stop it being the default.
+   * @default null
+   */
+  default?: boolean | null;
   /** Provider id from ai.providers. */
   id: string;
   /**
@@ -375,6 +381,8 @@ export interface AiProviderSetOutput {
   has_key: boolean;
   /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
   id: string;
+  /** Used by background AI features (self-healing, page.extract) when they name no provider. */
+  is_default: boolean;
   /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
   kind: string;
   /** Model used when `ai.session_start` gives none. */
@@ -426,6 +434,8 @@ export interface AiProvidersOutput {
     has_key: boolean;
     /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
     id: string;
+    /** Used by background AI features (self-healing, page.extract) when they name no provider. */
+    is_default: boolean;
     /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
     kind: string;
     /** Model used when `ai.session_start` gives none. */
@@ -2309,6 +2319,49 @@ export interface PageDiffOutput {
   text: string;
 }
 
+// ---- page.extract ----
+
+/**
+ * Arguments of `page.extract`.
+ * `page.extract` arguments.
+ */
+export interface PageExtractArgs {
+  /**
+   * Name of the cached plan (data/extract-cache/<key>.json); default: the page's host plus
+   * a hash of the schema.
+   */
+  cache_key?: string | null;
+  /** Tells the AI what to look for, e.g. "the main product, not the recommendations". */
+  hint?: string | null;
+  model?: string | null;
+  /** AI provider for building the plan (default: the configured default provider). */
+  provider?: string | null;
+  /** Ignore the cache and build a new plan. */
+  rebuild?: boolean | null;
+  /** JSON Schema of the result: an object with `properties` (and `required`). */
+  schema: unknown;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `page.extract`.
+ * `page.extract` result.
+ */
+export interface PageExtractOutput {
+  cache_key: string;
+  /** The extracted object. */
+  data: unknown;
+  /** True when the cached plan worked (no AI call). */
+  from_cache: boolean;
+  /** Required fields still empty (the plan was then not cached). */
+  missing?: string[];
+  /** Id of the plan that produced `data`. */
+  plan_id: string;
+  /** True when the AI built a second plan because the first one missed required fields. */
+  rebuilt: boolean;
+}
+
 // ---- page.find ----
 
 /** Arguments of `page.find`. */
@@ -2964,6 +3017,16 @@ export interface RunCancelOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -3037,6 +3100,26 @@ export interface RunExportOutput {
   to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
 }
 
+// ---- run.heal_accept ----
+
+/** Arguments of `run.heal_accept`. */
+export interface RunHealAcceptArgs {
+  proposal_id: string;
+}
+
+/**
+ * Result of `run.heal_accept`.
+ * What `run.heal_accept` returns.
+ */
+export interface RunHealAcceptOutput {
+  id: string;
+  proposal_id: string;
+  /** Rows put back into the queue. */
+  requeued: number;
+  /** The new script version the run continues with. */
+  script: string;
+}
+
 // ---- run.heal_apply ----
 
 /** Arguments of `run.heal_apply`. */
@@ -3053,6 +3136,142 @@ export interface RunHealApplyOutput {
   requeued: number;
   /** The new script version the run continues with. */
   script: string;
+}
+
+// ---- run.heal_proposals ----
+
+/** Arguments of `run.heal_proposals`. */
+export interface RunHealProposalsArgs {
+  /** Only proposals of this run. */
+  id?: string | null;
+}
+
+/** Result of `run.heal_proposals`. */
+export interface RunHealProposalsOutput {
+  /** Newest first. */
+  proposals: {
+    /** 1-based attempt of this heal request. */
+    attempt: number;
+    /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+    checks: string[];
+    /** The model's own estimate, 0..1. */
+    confidence: number;
+    created_ms: number;
+    /** Unified diff of the change. */
+    diff: string;
+    explanation: string;
+    /** The run. */
+    id: string;
+    max_attempts: number;
+    model?: string | null;
+    patched_code: string;
+    proposal_id: string;
+    /** AI provider and model that wrote it. */
+    provider: string;
+    /** The row that broke. */
+    row: number;
+    /** The script version the row ran (the patch becomes the next version). */
+    script: string;
+    /**
+     * Where a proposal stands.
+     *
+     * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+     * - `"superseded"`: A newer proposal for the same run replaced it.
+     */
+    status: "accepted" | "rejected" | "pending" | "superseded";
+  }[];
+}
+
+// ---- run.heal_propose ----
+
+/** Arguments of `run.heal_propose`. */
+export interface RunHealProposeArgs {
+  /** Extra instructions for the AI, e.g. "the button is now called Log in". */
+  feedback?: string | null;
+  /** Run id of a run paused by run.heal_needed. */
+  id: string;
+  model?: string | null;
+  /** AI provider from ai_providers (default: the configured default provider). */
+  provider?: string | null;
+}
+
+/**
+ * Result of `run.heal_propose`.
+ * A validated patch for a paused run.
+ */
+export interface RunHealProposeOutput {
+  /** 1-based attempt of this heal request. */
+  attempt: number;
+  /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+  checks: string[];
+  /** The model's own estimate, 0..1. */
+  confidence: number;
+  created_ms: number;
+  /** Unified diff of the change. */
+  diff: string;
+  explanation: string;
+  /** The run. */
+  id: string;
+  max_attempts: number;
+  model?: string | null;
+  proposal_id: string;
+  /** AI provider and model that wrote it. */
+  provider: string;
+  /** The row that broke. */
+  row: number;
+  /** The script version the row ran (the patch becomes the next version). */
+  script: string;
+  /**
+   * Where a proposal stands.
+   *
+   * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+   * - `"superseded"`: A newer proposal for the same run replaced it.
+   */
+  status: "accepted" | "rejected" | "pending" | "superseded";
+}
+
+// ---- run.heal_reject ----
+
+/** Arguments of `run.heal_reject`. */
+export interface RunHealRejectArgs {
+  /** What is wrong with it; the AI gets this for the next attempt. */
+  feedback?: string | null;
+  proposal_id: string;
+}
+
+/**
+ * Result of `run.heal_reject`.
+ * A validated patch for a paused run.
+ */
+export interface RunHealRejectOutput {
+  /** 1-based attempt of this heal request. */
+  attempt: number;
+  /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+  checks: string[];
+  /** The model's own estimate, 0..1. */
+  confidence: number;
+  created_ms: number;
+  /** Unified diff of the change. */
+  diff: string;
+  explanation: string;
+  /** The run. */
+  id: string;
+  max_attempts: number;
+  model?: string | null;
+  proposal_id: string;
+  /** AI provider and model that wrote it. */
+  provider: string;
+  /** The row that broke. */
+  row: number;
+  /** The script version the row ran (the patch becomes the next version). */
+  script: string;
+  /**
+   * Where a proposal stands.
+   *
+   * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+   * - `"superseded"`: A newer proposal for the same run replaced it.
+   */
+  status: "accepted" | "rejected" | "pending" | "superseded";
 }
 
 // ---- run.list ----
@@ -3088,6 +3307,16 @@ export interface RunListOutput {
     options: {
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
+      /**
+       * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+       * (confident patches are applied after a dry run). Absent in runs from older versions
+       * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+       *
+       * - `"off"`: The row just fails.
+       * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+       * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+       */
+      heal_mode?: "off" | "ask" | "auto" | null;
       /** Worker slots actually used (after the CPU/RAM auto-limit). */
       parallel: number;
       /** What the caller asked for. */
@@ -3150,6 +3379,16 @@ export interface RunPauseOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -3261,6 +3500,16 @@ export interface RunResumeOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -3303,10 +3552,16 @@ export interface RunStartArgs {
     xlsx_path?: string | null;
   };
   /**
-   * Pause and emit run.heal_needed when a row breaks on a page.* selector error
-   * (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
+   * Self-healing when a row breaks on a page.* selector error (NOT_FOUND,
+   * NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET): "ask" (default: pause, an AI
+   * proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
+   * are applied) or "off". `true` = "ask", `false` = "off".
+   *
+   * - `"off"`: The row just fails.
+   * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+   * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
    */
-  heal?: boolean | null;
+  heal?: boolean | "off" | "ask" | "auto" | null;
   /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
   parallel?: number | null;
   /**
@@ -3351,6 +3606,16 @@ export interface RunStartOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -3412,6 +3677,16 @@ export interface RunStatusOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4465,6 +4740,8 @@ export interface Commands {
   "page.ax_tree": { args: PageAxTreeArgs; output: PageAxTreeOutput };
   /** What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists). */
   "page.diff": { args: PageDiffArgs; output: PageDiffOutput };
+  /** Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}. */
+  "page.extract": { args: PageExtractArgs; output: PageExtractOutput };
   /** Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need. */
   "page.find": { args: PageFindArgs; output: PageFindOutput };
   /** Visible text of the page or of one element (ref), cut to max_chars. Use it to read articles, messages or table contents a snapshot only names. */
@@ -4517,8 +4794,16 @@ export interface Commands {
   "run.cancel": { args: RunCancelArgs; output: RunCancelOutput };
   /** Export a run's rows to csv, xlsx, json or sqlite (default data/runs/<id>/results.<ext>) or POST them to a webhook in JSON batches. Columns: row, status, inputs, result keys, error, attempts, duration. */
   "run.export": { args: RunExportArgs; output: RunExportOutput };
+  /** Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it. */
+  "run.heal_accept": { args: RunHealAcceptArgs; output: RunHealAcceptOutput };
   /** Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version. */
   "run.heal_apply": { args: RunHealApplyArgs; output: RunHealApplyOutput };
+  /** List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. */
+  "run.heal_proposals": { args: RunHealProposalsArgs; output: RunHealProposalsOutput };
+  /** Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject. */
+  "run.heal_propose": { args: RunHealProposeArgs; output: RunHealProposeOutput };
+  /** Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused). */
+  "run.heal_reject": { args: RunHealRejectArgs; output: RunHealRejectOutput };
   /** List runs (also from before a browser restart), newest first, with row counts. */
   "run.list": { args: RunListArgs; output: RunListOutput };
   /** Pause a run: rows already running finish, no new rows start. */
@@ -5148,6 +5433,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "page.extract": {
+    wireName: "page_extract",
+    description: "Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}.",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "page.find": {
     wireName: "page_find",
     description: "Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need.",
@@ -5382,9 +5676,45 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "run.heal_accept": {
+    wireName: "run_heal_accept",
+    description: "Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "run.heal_apply": {
     wireName: "run_heal_apply",
     description: "Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_proposals": {
+    wireName: "run_heal_proposals",
+    description: "List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_propose": {
+    wireName: "run_heal_propose",
+    description: "Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_reject": {
+    wireName: "run_heal_reject",
+    description: "Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused).",
     toolset: "run",
     sensitivity: "act",
     mutatesTab: false,
@@ -6102,6 +6432,12 @@ export interface Browser {
      */
     diff(args?: PageDiffArgs, options?: CallOptions): Promise<PageDiffOutput>;
     /**
+     * Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}.
+     *
+     * `page.extract` (MCP: `page_extract`): toolset `script`, read.
+     */
+    extract(args: PageExtractArgs, options?: CallOptions): Promise<PageExtractOutput>;
+    /**
      * Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need.
      *
      * `page.find` (MCP: `page_find`): toolset `core`, read.
@@ -6270,11 +6606,35 @@ export interface Browser {
      */
     export(args: RunExportArgs, options?: CallOptions): Promise<RunExportOutput>;
     /**
+     * Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it.
+     *
+     * `run.heal_accept` (MCP: `run_heal_accept`): toolset `run`, act.
+     */
+    heal_accept(args: RunHealAcceptArgs, options?: CallOptions): Promise<RunHealAcceptOutput>;
+    /**
      * Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.
      *
      * `run.heal_apply` (MCP: `run_heal_apply`): toolset `run`, act.
      */
     heal_apply(args: RunHealApplyArgs, options?: CallOptions): Promise<RunHealApplyOutput>;
+    /**
+     * List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.
+     *
+     * `run.heal_proposals` (MCP: `run_heal_proposals`): toolset `run`, read.
+     */
+    heal_proposals(args?: RunHealProposalsArgs, options?: CallOptions): Promise<RunHealProposalsOutput>;
+    /**
+     * Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject.
+     *
+     * `run.heal_propose` (MCP: `run_heal_propose`): toolset `run`, act.
+     */
+    heal_propose(args: RunHealProposeArgs, options?: CallOptions): Promise<RunHealProposeOutput>;
+    /**
+     * Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused).
+     *
+     * `run.heal_reject` (MCP: `run_heal_reject`): toolset `run`, act.
+     */
+    heal_reject(args: RunHealRejectArgs, options?: CallOptions): Promise<RunHealRejectOutput>;
     /**
      * List runs (also from before a browser restart), newest first, with row counts.
      *
@@ -6595,6 +6955,7 @@ export function createBrowser(transport: Transport): Browser {
       act_batch: (args, options) => call<PageActBatchOutput>("page.act_batch", args, options),
       ax_tree: (args, options) => call<PageAxTreeOutput>("page.ax_tree", args, options),
       diff: (args, options) => call<PageDiffOutput>("page.diff", args, options),
+      extract: (args, options) => call<PageExtractOutput>("page.extract", args, options),
       find: (args, options) => call<PageFindOutput>("page.find", args, options),
       read: (args, options) => call<PageReadOutput>("page.read", args, options),
       screenshot: (args, options) => call<PageScreenshotOutput>("page.screenshot", args, options),
@@ -6629,7 +6990,11 @@ export function createBrowser(transport: Transport): Browser {
     run: {
       cancel: (args, options) => call<RunCancelOutput>("run.cancel", args, options),
       export: (args, options) => call<RunExportOutput>("run.export", args, options),
+      heal_accept: (args, options) => call<RunHealAcceptOutput>("run.heal_accept", args, options),
       heal_apply: (args, options) => call<RunHealApplyOutput>("run.heal_apply", args, options),
+      heal_proposals: (args, options) => call<RunHealProposalsOutput>("run.heal_proposals", args, options),
+      heal_propose: (args, options) => call<RunHealProposeOutput>("run.heal_propose", args, options),
+      heal_reject: (args, options) => call<RunHealRejectOutput>("run.heal_reject", args, options),
       list: (args, options) => call<RunListOutput>("run.list", args, options),
       pause: (args, options) => call<RunPauseOutput>("run.pause", args, options),
       results: (args, options) => call<RunResultsOutput>("run.results", args, options),
