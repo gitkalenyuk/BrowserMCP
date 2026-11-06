@@ -1,12 +1,13 @@
 //! [`WsSink`]: send browser commands as JSON-RPC 2.0 over a WebSocket.
 //!
-//! STATUS: compiles, NOT TESTED. The browser endpoint
-//! `ws://127.0.0.1:47800/v1/ws` does not exist yet (phase 3). Assumed protocol:
+//! Talks to the browser's `ws://127.0.0.1:47800/v1/ws` (see `crates/api/README.md`);
+//! checked against the real browser with `scripts/examples/hello.ts`. Protocol:
 //!
 //! ```text
 //! -> {"jsonrpc":"2.0","id":1,"method":"tabs.list","params":null}
-//! <- {"jsonrpc":"2.0","id":1,"result":[...]}
-//! <- {"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"..."}}
+//! <- {"jsonrpc":"2.0","id":1,"result":{"tabs":[...]}}
+//! <- {"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"...","data":{"code":"TAB_NOT_FOUND",...}}}
+//! <- {"jsonrpc":"2.0","method":"tab.created","params":{...}}   (event; ignored for now)
 //! ```
 //!
 //! Design: one background task owns the socket. `call` sends the request to
@@ -24,7 +25,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::sink::{CallFuture, CommandSink, SinkError};
 
-/// Default address of the browser's WebSocket API (planned, not built yet).
+/// Default address of the browser's WebSocket API.
 pub const DEFAULT_WS_URL: &str = "ws://127.0.0.1:47800/v1/ws";
 
 type Reply = oneshot::Sender<Result<Value, SinkError>>;
@@ -102,13 +103,18 @@ fn handle_response(text: &str, waiting: &mut HashMap<u64, Reply>) {
         return;
     };
     let result = if let Some(err) = msg.get("error") {
+        let message = err
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown browser error");
+        // The browser puts its own error code ("TAB_NOT_FOUND", …) in `data.code`.
+        let message = match err.pointer("/data/code").and_then(Value::as_str) {
+            Some(code) => format!("{code}: {message}"),
+            None => message.to_string(),
+        };
         Err(SinkError {
             code: err.get("code").and_then(Value::as_i64),
-            message: err
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown browser error")
-                .to_string(),
+            message,
         })
     } else {
         Ok(msg.get("result").cloned().unwrap_or(Value::Null))

@@ -121,6 +121,8 @@ async fn start_api(
             let endpoint = serde_json::json!({
                 "pid": std::process::id(),
                 "mcp": server.mcp_url(),
+                "rest": server.rest_url(),
+                "ws": server.ws_url(),
             });
             if let Err(err) =
                 std::fs::write(runtime_dir.join("endpoint.json"), endpoint.to_string())

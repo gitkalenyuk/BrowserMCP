@@ -23,7 +23,7 @@ options:
   --input key=value   expose `inputs.key = \"value\"` to the script (repeatable)
   --mock              answer browser.* calls with canned data (default)
   --ws <url>          send browser.* calls as JSON-RPC to a WebSocket
-                      (e.g. ws://127.0.0.1:47800/v1/ws; UNTESTED, endpoint not built yet)
+                      of the running browser (e.g. ws://127.0.0.1:47800/v1/ws)
   --timeout-secs N    terminate the script after N seconds (exit code 124)
   --timings           print startup/run timings to stderr";
 

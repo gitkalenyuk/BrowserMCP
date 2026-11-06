@@ -17,7 +17,7 @@
 //! - [`loader`]: read + transpile TS (deno_ast) with source maps;
 //! - [`ops`]: the four Rust functions JS can call + the JS prelude;
 //! - [`sink`]: the `CommandSink` trait and `MockSink`;
-//! - [`ws_sink`]: `WsSink` (untested sketch; endpoint not built yet).
+//! - [`ws_sink`]: `WsSink`, JSON-RPC to the browser's `/v1/ws`.
 
 pub mod host;
 pub mod loader;

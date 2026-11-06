@@ -1,6 +1,6 @@
 [package]
 name = "bmcp-api"
-description = "BrowserMCP API servers: MCP (Streamable HTTP) now, REST + WebSocket later"
+description = "BrowserMCP API servers: MCP (Streamable HTTP), REST + OpenAPI, WebSocket JSON-RPC"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,8 @@ publish.workspace = true
 
 [dependencies]
 bmcp-core.workspace = true
-axum.workspace = true
+# `ws` = WebSocket upgrade support for /v1/ws.
+axum = { workspace = true, features = ["ws"] }
 rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -17,3 +18,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# FakeBackend for the router tests.
+bmcp-core = { path = "../core", features = ["testing"] }
+# `ServiceExt::oneshot`: send one request through the router without a socket.
+tower = { version = "0.5", features = ["util"] }
+# WebSocket client for the /v1/ws test (the version axum uses, so it is built only once).
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", features = ["sink"] }
