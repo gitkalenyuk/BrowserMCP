@@ -1,9 +1,0 @@
----
-source: crates/perception/tests/fixtures.rs
-assertion_line: 102
-expression: snap.text
----
-snap 1 tab=1 "Example Domain" https://example.com/ mode=full
-- heading "Example Domain" h1
-- paragraph "This domain is for use in illustrative examples in documents. You may use this …"
-- link "More information..." @1:e1
