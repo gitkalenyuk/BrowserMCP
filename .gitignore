@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
+
+# Agent worktrees and local Claude Code state
+/.claude/worktrees/
