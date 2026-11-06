@@ -153,10 +153,20 @@ export function buildMatch(pattern: string, regex: boolean, method: string, stag
   return match;
 }
 
+/**
+ * Can this kind of rule run at the response stage? Redirects cannot (the response already came
+ * from the original URL), and neither can mocks or header edits: CEF gives the page the
+ * server's status and headers whatever a response-stage answer says, so `net.rule_add` refuses
+ * them there. Block and rewrite_body work at both stages. The form shows the stage choice only
+ * where this is true; other kinds always run at the request stage.
+ */
+export function responseStageAllowed(kind: RuleKindId): boolean {
+  return kind === 'block' || kind === 'rewrite_body';
+}
+
 /** `net.rule_add` params from the form, or an error message for the user. */
 export function buildRule(form: RuleForm): { match: NetMatch; action: NetAction } | { error: string } {
-  // Redirects only exist at the request stage; mocks answer before sending anyway.
-  const stage: NetStage = form.kind === 'redirect' || form.kind === 'mock' ? 'request' : form.stage;
+  const stage: NetStage = responseStageAllowed(form.kind) ? form.stage : 'request';
   const match = buildMatch(form.pattern, form.regex, form.method, stage === 'request' ? undefined : stage);
   switch (form.kind) {
     case 'block':
@@ -229,6 +239,21 @@ function pausedHeaders(p: NetPaused): HeaderList {
   return Object.entries(p.headers ?? {});
 }
 
+/** Shown next to the read-only status and headers of a server response. */
+export const BODY_ONLY_NOTE =
+  "CEF can't change the status or headers of a server response here; edit the body, or use a request-stage breakpoint or a mock rule";
+
+/**
+ * Paused at the response stage of a response that came from the server (not a failed one)?
+ * CEF puts the server's status and headers back over whatever `net.resume` answers there, so
+ * only the body can change and `net.resume` refuses a new status or header edits. A failed
+ * response has no server headers: its status, headers and body can all be set. A pause known
+ * only from `net.paused_list` has no `error`, but a failed one has no status there either.
+ */
+export function bodyOnly(p: NetPaused): boolean {
+  return p.stage === 'response' && !p.error && p.status !== undefined && p.status !== null;
+}
+
 export function draftFromPaused(p: NetPaused): ResumeDraft {
   return {
     url: p.url,
@@ -245,7 +270,9 @@ export function draftFromPaused(p: NetPaused): ResumeDraft {
 export function buildResume(p: NetPaused, draft: ResumeDraft, action: 'continue' | 'drop'): NetResume {
   if (action === 'drop') return { pause_id: p.pause_id, action: 'drop' };
   const edits: NetEdits = {};
-  const headers = diffHeaders(pausedHeaders(p), parseHeaderText(draft.headers));
+  // A server response keeps its status and headers: never send edits the core refuses.
+  const fixed = bodyOnly(p);
+  const headers = fixed ? undefined : diffHeaders(pausedHeaders(p), parseHeaderText(draft.headers));
   if (headers) edits.headers = headers;
   if (p.stage === 'request') {
     const url = draft.url.trim();
@@ -255,7 +282,7 @@ export function buildResume(p: NetPaused, draft: ResumeDraft, action: 'continue'
     if (draft.body !== (p.post_data ?? '')) edits.body = draft.body;
   } else {
     const status = Number(draft.status);
-    if (draft.status.trim() && Number.isInteger(status) && status !== p.status) edits.status = status;
+    if (!fixed && draft.status.trim() && Number.isInteger(status) && status !== p.status) edits.status = status;
     if (draft.replaceBody) edits.response_body = draft.responseBody;
   }
   const out: NetResume = { pause_id: p.pause_id, action: 'continue' };

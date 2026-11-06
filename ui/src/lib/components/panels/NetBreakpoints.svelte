@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { NetStage } from '../../api';
-  import { buildMatch, buildResume, draftFromPaused, type ResumeDraft } from '../../net/logic';
+  import { BODY_ONLY_NOTE, bodyOnly, buildMatch, buildResume, draftFromPaused, type ResumeDraft } from '../../net/logic';
   import { parseRuleLines, type RuleRow } from '../../net/parse';
   import type { PausedItem } from '../../net/store.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -158,6 +158,7 @@
         </button>
         {#if isOpen && drafts[p.info.pause_id]}
           {@const id = p.info.pause_id}
+          {@const fixed = bodyOnly(p.info)}
           <div class="editor">
             {#if p.partial}
               <p class="hint">Paused before this panel opened: headers and body are not known here; edits replace or add fields.</p>
@@ -170,11 +171,19 @@
                 <input bind:value={drafts[id].url} spellcheck="false" aria-label="URL" />
               </div>
             {:else}
-              <label class="line"><span>Status</span><input class="num" bind:value={drafts[id].status} inputmode="numeric" /></label>
+              <label class="line"><span>Status</span><input class="num" bind:value={drafts[id].status} inputmode="numeric" readonly={fixed} /></label>
+              {#if fixed}
+                <p class="hint">{BODY_ONLY_NOTE}.</p>
+              {:else}
+                <p class="hint">The response failed{p.info.error ? ` (${p.info.error})` : ''}: a new status or headers also need a replacement body.</p>
+              {/if}
             {/if}
             <label>
-              <span>{p.info.stage === 'request' ? 'Request' : 'Response'} headers <em>Name: value per line; delete a line to remove</em></span>
-              <textarea bind:value={drafts[id].headers} rows="5" spellcheck="false"></textarea>
+              <span>
+                {p.info.stage === 'request' ? 'Request' : 'Response'} headers
+                {#if fixed}<em>read-only</em>{:else}<em>Name: value per line; delete a line to remove</em>{/if}
+              </span>
+              <textarea bind:value={drafts[id].headers} rows="5" spellcheck="false" readonly={fixed}></textarea>
             </label>
             {#if p.info.stage === 'request'}
               <label>
@@ -233,6 +242,11 @@
   select {
     font-family: var(--font);
     padding: 0 4px;
+  }
+  input[readonly],
+  textarea[readonly] {
+    background: var(--sunken);
+    color: var(--fg-muted);
   }
   textarea {
     width: 100%;

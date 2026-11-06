@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { buildRule, EMPTY_RULE, type RuleForm } from '../../net/logic';
+  import { buildRule, EMPTY_RULE, responseStageAllowed, type RuleForm } from '../../net/logic';
   import { parseRuleLines, type RuleRow } from '../../net/parse';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
@@ -101,7 +101,7 @@
             {#each METHODS as m (m)}<option value={m}>{m || 'Any'}</option>{/each}
           </select>
         </label>
-        {#if form.kind === 'block' || form.kind === 'rewrite_body'}
+        {#if responseStageAllowed(form.kind)}
           <label class="inline">
             <span>Stage</span>
             <select bind:value={form.stage}>
@@ -119,6 +119,7 @@
           <label class="inline grow"><span>Content-Type</span><input bind:value={form.mockContentType} spellcheck="false" placeholder="guessed from the body" /></label>
         </div>
         <label class="wide"><span>Body</span><textarea bind:value={form.mockBody} rows="4" spellcheck="false" placeholder={'{"ok": true}'}></textarea></label>
+        <p class="hint">Mocks answer at the request stage: the request is never sent.</p>
       {:else if form.kind === 'rewrite_body'}
         <label class="wide"><span>Find</span><input bind:value={form.find} spellcheck="false" /></label>
         <label class="wide"><span>Replace with</span><input bind:value={form.replace} spellcheck="false" /></label>
@@ -255,6 +256,11 @@
   }
   .num {
     width: 56px;
+  }
+  .hint {
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: var(--fs-xs);
   }
   .actions {
     display: flex;
