@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use bmcp_core::{Ctx, TabId};
 use bmcp_perception::{RefRegistry, Snapshot, SnapshotOptions};
 
+use crate::human::Human;
+
 /// How many recent snapshots per tab `page.diff since=` can compare against.
 pub const KEEP_HISTORY: usize = 16;
 
@@ -54,6 +56,10 @@ pub struct TabState {
     /// Recent snapshots (oldest first) with the options they were taken with. Diffs only make
     /// sense between snapshots taken with the same options.
     pub history: VecDeque<(Snapshot, SnapshotOptions)>,
+    /// Human-like input settings (`input.humanlike`); `None` = the fast path.
+    pub human: Option<Human>,
+    /// Where we last moved the mouse (viewport CSS pixels); human-like moves start here.
+    pub mouse: Option<(f64, f64)>,
 }
 
 impl TabState {

@@ -156,6 +156,7 @@ async fn start_api(
     bmcp_browser::register(&mut registry);
     bmcp_adblock::register(&mut registry);
     bmcp_net::register(&mut registry);
+    bmcp_identity::register(&mut registry, data.config());
     // Bookmarks, history, passwords… in data/db/browsermcp.sqlite.
     let store = match bmcp_data::DataStore::open_in(&data) {
         Ok(store) => {
