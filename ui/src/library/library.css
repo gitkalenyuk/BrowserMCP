@@ -1,0 +1,170 @@
+/* Library page: a scrolling document (the chrome itself never scrolls), selectable text. */
+body {
+  background: var(--toolbar);
+  overflow: hidden;
+  user-select: text;
+}
+
+.lib-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+}
+.lib-input {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--field-focus);
+  color: var(--fg);
+  font-size: var(--fs);
+  font-weight: 400;
+  outline: none;
+}
+.lib-input:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.lib-input.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.lib-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(360px, 100%);
+}
+.lib-search > svg {
+  position: absolute;
+  left: 9px;
+  color: var(--fg-subtle);
+  pointer-events: none;
+}
+.lib-search .lib-input {
+  width: 100%;
+  padding-left: 30px;
+  border-radius: 15px;
+  background: var(--field);
+  border-color: transparent;
+}
+.lib-search .lib-input:focus {
+  background: var(--field-focus);
+}
+
+.btn.danger {
+  color: var(--danger);
+}
+.btn.danger.primary {
+  background: var(--danger);
+  color: #fff;
+}
+
+.lib-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 56px 24px;
+  color: var(--fg-subtle);
+  text-align: center;
+}
+.lib-empty h3 {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.lib-empty p {
+  margin: 0;
+  max-width: 46ch;
+}
+
+/* One row of a list: icon, text, trailing actions that show on hover / focus. */
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--r);
+}
+.lib-row:hover,
+.lib-row:focus-within {
+  background: var(--hover);
+}
+.lib-row .grow {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.lib-row .title {
+  overflow: hidden;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-row a.title {
+  text-decoration: none;
+}
+.lib-row a.title:hover {
+  text-decoration: underline;
+}
+.lib-row .sub {
+  overflow: hidden;
+  color: var(--fg-subtle);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-row .actions {
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+}
+.lib-row:hover .actions,
+.lib-row:focus-within .actions {
+  opacity: 1;
+}
+.lib-row .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.lib-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--sunken);
+  color: var(--fg-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lib-chip.ok {
+  color: var(--ok);
+}
+.lib-chip.warn {
+  color: var(--warn);
+}
+.lib-chip.bad {
+  color: var(--danger);
+}
+
+.lib-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+
+@media (hover: none) {
+  .lib-row .actions {
+    opacity: 1;
+  }
+}

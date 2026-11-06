@@ -11,7 +11,7 @@
   const links = (items: Bookmark[]): Link[] => items.filter((b): b is Link => isSafeLinkUrl(b.url));
 
   $effect(() => {
-    Promise.all([api.call('data.top_sites'), api.call('data.bookmarks')])
+    Promise.all([api.call('data.top_sites', {}), api.call('data.bookmarks', {})])
       .then(([t, b]) => {
         top = links(t.sites);
         marks = links(b.bookmarks);
