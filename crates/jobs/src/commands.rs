@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `script.list/get/save/delete` | the library in `data/scripts/*.ts` |
 //! | `script.run` | run a saved script or inline code once, wait, return output + result |
+//! | `script.debug_start/debug_cmd` | step debugger (breakpoints, steps, variables; see [`crate::debug`]) |
 //! | `run.start` | run a script once per data row (CSV/JSON/Excel/inline), N in parallel |
 //! | `run.status/list/results` | progress, run list, paged row results |
 //! | `run.pause/resume/cancel` | control a run |
@@ -21,6 +22,7 @@ use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::data::{DataArgs, load_rows, object_to_row};
+use crate::debug::{DebugCmdArgs, DebugCmdOutput, DebugStartArgs, DebugStartOutput};
 use crate::export::{ExportArgs, ExportOutput};
 use crate::host::HostOutcome;
 use crate::runner::{DEFAULT_TIMEOUT_SECS, ScriptSource, StartRequest};
@@ -199,6 +201,56 @@ impl Command for ScriptRun {
         // A shutdown of the browser also stops a script started by a call.
         let cancel: CancellationToken = inner.shutdown.child_token();
         inner.run_script(source, &inputs, timeout, &cancel).await
+    }
+}
+
+// ------------------------------------------------------------------ script.debug_*
+
+pub struct ScriptDebugStart;
+
+impl Command for ScriptDebugStart {
+    const NAME: &'static str = "script.debug_start";
+    type Args = DebugStartArgs;
+    type Output = DebugStartOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Start a saved script (name) or inline TypeScript (code) under the step debugger, \
+             stopping at the given TypeScript lines. Returns a session id; then use \
+             script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). \
+             Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, \
+             script.debug_output, script.debug_ended.",
+            Toolset::Script,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: DebugStartArgs) -> Result<DebugStartOutput, CmdError> {
+        let inner = service(&ctx)?;
+        let inputs = object_to_row(args.inputs.clone().unwrap_or_default())?;
+        inner.debug_start(args, inputs).await
+    }
+}
+
+pub struct ScriptDebugCmd;
+
+impl Command for ScriptDebugCmd {
+    const NAME: &'static str = "script.debug_cmd";
+    type Args = DebugCmdArgs;
+    type Output = DebugCmdOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Control a debug session from script_debug_start: continue, step_over, step_into, \
+             step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. \
+             Pauses arrive as script.debug_paused events.",
+            Toolset::Script,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: DebugCmdArgs) -> Result<DebugCmdOutput, CmdError> {
+        service(&ctx)?.debug_cmd(args).await
     }
 }
 

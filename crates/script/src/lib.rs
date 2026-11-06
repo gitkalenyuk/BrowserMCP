@@ -17,14 +17,17 @@
 //! - [`loader`]: read + transpile TS (deno_ast) with source maps;
 //! - [`ops`]: the four Rust functions JS can call + the JS prelude;
 //! - [`sink`]: the `CommandSink` trait and `MockSink`;
-//! - [`ws_sink`]: `WsSink`, JSON-RPC to the browser's `/v1/ws`.
+//! - [`ws_sink`]: `WsSink`, JSON-RPC to the browser's `/v1/ws`;
+//! - [`debugger`]: the step debugger behind `--inspect` (V8 inspector, TS line numbers).
 
+pub mod debugger;
 pub mod host;
 pub mod loader;
 pub mod ops;
 pub mod sink;
 pub mod ws_sink;
 
-pub use host::{RunOptions, RunOutcome, Timings, run_script};
+pub use debugger::{DEBUG_PREFIX, DebugChannel};
+pub use host::{RunOptions, RunOutcome, Timings, run_script, run_script_debug};
 pub use sink::{CallFuture, CommandSink, MockSink, SinkError};
 pub use ws_sink::{DEFAULT_WS_URL, WsSink};

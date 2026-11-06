@@ -3,9 +3,9 @@
   import Icon, { type IconName } from './Icon.svelte';
   import ResizeHandle from './ResizeHandle.svelte';
   import AiPanel from './panels/AiPanel.svelte';
-  import EmptyPanel from './panels/EmptyPanel.svelte';
   import RecordingPanel from './panels/RecordingPanel.svelte';
   import RunsPanel from './panels/RunsPanel.svelte';
+  import ScriptsPanel from './panels/ScriptsPanel.svelte';
   import TerminalPanel from './panels/TerminalPanel.svelte';
   import TrafficPanel from './panels/TrafficPanel.svelte';
 
@@ -47,12 +47,7 @@
     {:else if panel === 'recording'}
       <RecordingPanel />
     {:else if panel === 'scripts'}
-      <EmptyPanel
-        icon="code"
-        title="No scripts in this workspace"
-        text="Scripts are TypeScript that drive the browser through the same API agents use. Record one, or write it in the editor."
-        action="New script"
-      />
+      <ScriptsPanel />
     {:else if panel === 'runs'}
       <RunsPanel />
     {/if}

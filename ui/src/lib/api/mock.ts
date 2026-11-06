@@ -2,6 +2,7 @@ import { Emitter, RpcError, type BrowserApi } from './client';
 import { createDataMocks } from './mock-data';
 import { createPanelMocks } from './mock-panels';
 import { createRecordRunsMocks } from './mock-record-runs';
+import { createScriptMocks } from './mock-scripts';
 import type {
   Agent,
   ApiEvents,
@@ -310,6 +311,9 @@ export class MockApi implements BrowserApi {
       return { runId };
     },
     ...createDataMocks({ empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1' }),
+    ...createScriptMocks((event, payload) => this.#emit(event, payload), {
+      getCode: async (name) => (await this.#handlers['script.get']({ name })).code,
+    }),
     ...createPanelMocks(
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,

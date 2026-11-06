@@ -464,3 +464,5 @@ export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 export type * from './types-record-runs';
+// Scripts panel debugger (script.debug_* methods and events are merged into RpcMethods / ApiEvents there).
+export type * from './types-scripts';

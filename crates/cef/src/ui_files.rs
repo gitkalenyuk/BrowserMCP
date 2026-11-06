@@ -86,6 +86,8 @@ pub fn mime_for(path: &str) -> &'static str {
         "webp" => "image/webp",
         "woff2" => "font/woff2",
         "woff" => "font/woff",
+        // Monaco's codicon font (Scripts panel).
+        "ttf" => "font/ttf",
         "txt" => "text/plain",
         _ => "application/octet-stream",
     }
