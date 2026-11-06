@@ -194,11 +194,14 @@ async fn start_api(
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    // Tab freezing/discarding and automatic limits from RAM (data/config/governor.json).
+    bmcp_governor::start(registry.extensions(), backend.clone(), events.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
-    match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
+    // Serve on the socket bound before CEF started (binding the port again would fail).
+    match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
             if let Some(jobs) = &jobs {

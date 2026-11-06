@@ -909,6 +909,231 @@ export interface GeoLookupOutput {
   via: string | null;
 }
 
+// ---- governor.config ----
+
+/**
+ * Arguments of `governor.config`.
+ * Every field is optional; only the given ones change. 0 for a time or max_live_tabs = off.
+ */
+export interface GovernorConfigArgs {
+  /** A tab that got a command this recently is never touched. */
+  busy_secs?: number | null;
+  /** Discard after this many seconds in the background. */
+  discard_after_secs?: number | null;
+  /** Turn the automatic policy on/off (manual tabs.freeze always works). */
+  enabled?: boolean | null;
+  /** Freeze after this many seconds in the background. */
+  freeze_after_secs?: number | null;
+  /** Discard the most idle tabs above this many live (not discarded) tabs. */
+  max_live_tabs?: number | null;
+  /** Memory pressure below this percentage of free RAM. */
+  pressure_free_pct?: number | null;
+  /**
+   * low | normal | high; default chosen from RAM.
+   *
+   * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+   * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+   * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+   */
+  profile?: "low" | "normal" | "high" | null;
+  /** Clear all overrides first (back to the profile's defaults). */
+  reset?: boolean | null;
+  /** Policy interval. */
+  tick_secs?: number | null;
+}
+
+/** Result of `governor.config`. */
+export interface GovernorConfigOutput {
+  /** The limits in force now. */
+  limits: {
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
+    enabled: boolean;
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /**
+     * Hardware class. Chosen automatically from total RAM, overridable in the config.
+     *
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile: "low" | "normal" | "high";
+    /** How often the policy looks at the tabs. */
+    tick_secs: number;
+  };
+  /** What is stored in data/config/governor.json. */
+  overrides: {
+    busy_secs?: number | null;
+    discard_after_secs?: number | null;
+    enabled?: boolean | null;
+    freeze_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    /**
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile?: "low" | "normal" | "high" | null;
+    tick_secs?: number | null;
+  };
+}
+
+// ---- governor.recommend_parallel ----
+
+/** Arguments of `governor.recommend_parallel`. */
+export interface GovernorRecommendParallelArgs {
+  /** Memory one parallel slot needs (default 400 MB: a script host plus its tabs). */
+  per_slot_mb?: number | null;
+}
+
+/**
+ * Result of `governor.recommend_parallel`.
+ * How many parallel slots (script hosts + their tabs) this machine can carry.
+ */
+export interface GovernorRecommendParallelOutput {
+  /** Available RAM in MB (0 when unknown). */
+  available_mb: number;
+  /** Half the CPUs (the browser needs the rest), at least 1. */
+  by_cpu: number;
+  /** Available RAM / per-slot memory; null when RAM could not be read. */
+  by_ram: number | null;
+  /** Logical CPUs. */
+  cpus: number;
+  /** `min(by_cpu, by_ram)`, at least 1. */
+  parallel: number;
+}
+
+// ---- governor.status ----
+
+/**
+ * Arguments of `governor.status`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type GovernorStatusArgs = Record<string, never>;
+
+/**
+ * Result of `governor.status`.
+ * `governor.status` output.
+ */
+export interface GovernorStatusOutput {
+  /** Recent freeze/discard/thaw decisions, oldest first (manual and automatic). */
+  decisions: {
+    /**
+     * freeze | discard | thaw
+     *
+     * - `"freeze"`: Pause the page (keeps memory, stops CPU).
+     * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
+     * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
+     */
+    action: "freeze" | "discard" | "thaw";
+    /** False when nothing had to be done (already in that state). */
+    changed: boolean;
+    error?: string | null;
+    reason: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    ts_ms: number;
+  }[];
+  /** The limits in force (profile defaults with the overrides applied). */
+  limits: {
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
+    enabled: boolean;
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /**
+     * Hardware class. Chosen automatically from total RAM, overridable in the config.
+     *
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile: "low" | "normal" | "high";
+    /** How often the policy looks at the tabs. */
+    tick_secs: number;
+  };
+  memory: {
+    available_mb: number;
+    /** Working set of the browser and all its helper processes. */
+    browser_mb: number;
+    free_pct: number;
+    /** Available RAM is below `limits.pressure_free_pct`. */
+    pressure: boolean;
+    processes: {
+      /** `browser` (us), or Chromium's `--type=` value: `renderer`, `gpu-process`, `utility`, … */
+      kind: string;
+      /** Working set (resident memory) in MB. */
+      mb: number;
+      pid: number;
+    }[];
+    /** Number of renderer processes. */
+    renderers: number;
+    total_mb: number;
+  };
+  /** What `governor.config` changed (the rest are profile defaults). */
+  overrides: {
+    busy_secs?: number | null;
+    discard_after_secs?: number | null;
+    enabled?: boolean | null;
+    freeze_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    /**
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile?: "low" | "normal" | "high" | null;
+    tick_secs?: number | null;
+  };
+  tabs: {
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    id: number;
+    /** Seconds in the background without commands (0 for the active tab). */
+    idle_secs: number;
+    /**
+     * JS heap of the page (`Runtime.getHeapUsage`); null when frozen/discarded. Renderer
+     * processes cannot be mapped to tabs from here, so this is the per-tab estimate.
+     */
+    js_heap_mb: number | null;
+    /** Why the policy leaves it alone (null = it may be frozen/discarded). */
+    protected: string | null;
+    /** What a discarded tab will restore. */
+    saved?: {
+      scroll_x: number;
+      scroll_y: number;
+      title: string;
+      url: string;
+    } | null;
+    /** A tab's state as reported on the wire. */
+    state: "live" | "frozen" | "discarded";
+    title: string;
+    url: string;
+  }[];
+}
+
 // ---- history.delete ----
 
 /** Arguments of `history.delete`. */
@@ -4003,6 +4228,46 @@ export interface TabsCloseArgs {
  */
 export type TabsCloseOutput = Record<string, never>;
 
+// ---- tabs.freeze ----
+
+/** Arguments of `tabs.freeze`. */
+export interface TabsFreezeArgs {
+  /**
+   * freeze = pause the page (keeps memory, no CPU); discard = unload it and keep URL,
+   * title and scroll to restore (frees memory); thaw = undo either.
+   *
+   * - `"freeze"`: Pause the page (keeps memory, stops CPU).
+   * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
+   * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
+   */
+  mode: "freeze" | "discard" | "thaw";
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.freeze`.
+ * Result of one freeze/discard/thaw.
+ */
+export interface TabsFreezeOutput {
+  /** False when the tab already was in that state. */
+  changed: boolean;
+  /** What a discarded tab remembers (URL, title, scroll). */
+  saved?: {
+    scroll_x: number;
+    scroll_y: number;
+    title: string;
+    url: string;
+  } | null;
+  /** The tab's state afterwards. */
+  state: "live" | "frozen" | "discarded";
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
 // ---- tabs.list ----
 
 /**
@@ -4387,6 +4652,12 @@ export interface Commands {
   "downloads.list": { args: DownloadsListArgs; output: DownloadsListOutput };
   /** Find where an IP is (country, city, timezone, coordinates) — directly or through a proxy — and suggest the locale/Accept-Language. Feed timezone/country into identity_generate to fit a fingerprint to the proxy's IP. */
   "geo.lookup": { args: GeoLookupArgs; output: GeoLookupOutput };
+  /** Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force. */
+  "governor.config": { args: GovernorConfigArgs; output: GovernorConfigOutput };
+  /** How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule. */
+  "governor.recommend_parallel": { args: GovernorRecommendParallelArgs; output: GovernorRecommendParallelOutput };
+  /** Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions. */
+  "governor.status": { args: GovernorStatusArgs; output: GovernorStatusOutput };
   /** Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed. */
   "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
   /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
@@ -4557,6 +4828,8 @@ export interface Commands {
   "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
   /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
   "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
+  /** Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state. */
+  "tabs.freeze": { args: TabsFreezeArgs; output: TabsFreezeOutput };
   /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
   "tabs.list": { args: TabsListArgs; output: TabsListOutput };
   /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
@@ -4816,6 +5089,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
+    defaultKeys: [],
+  },
+  "governor.config": {
+    wireName: "governor_config",
+    description: "Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "governor.recommend_parallel": {
+    wireName: "governor_recommend_parallel",
+    description: "How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "governor.status": {
+    wireName: "governor_status",
+    description: "Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: "Governor: memory and tab states",
     defaultKeys: [],
   },
   "history.delete": {
@@ -5583,6 +5883,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: "Close tab",
     defaultKeys: [],
   },
+  "tabs.freeze": {
+    wireName: "tabs_freeze",
+    description: "Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
   "tabs.list": {
     wireName: "tabs_list",
     description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.",
@@ -5857,6 +6166,27 @@ export interface Browser {
      * `geo.lookup` (MCP: `geo_lookup`): toolset `stealth`, act.
      */
     lookup(args?: GeoLookupArgs, options?: CallOptions): Promise<GeoLookupOutput>;
+  };
+  /** Commands `governor.*`. */
+  governor: {
+    /**
+     * Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force.
+     *
+     * `governor.config` (MCP: `governor_config`): toolset `system`, act.
+     */
+    config(args?: GovernorConfigArgs, options?: CallOptions): Promise<GovernorConfigOutput>;
+    /**
+     * How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule.
+     *
+     * `governor.recommend_parallel` (MCP: `governor_recommend_parallel`): toolset `system`, read.
+     */
+    recommend_parallel(args?: GovernorRecommendParallelArgs, options?: CallOptions): Promise<GovernorRecommendParallelOutput>;
+    /**
+     * Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions.
+     *
+     * `governor.status` (MCP: `governor_status`): toolset `system`, read.
+     */
+    status(args?: GovernorStatusArgs, options?: CallOptions): Promise<GovernorStatusOutput>;
   };
   /** Commands `history.*`. */
   history: {
@@ -6417,6 +6747,12 @@ export interface Browser {
      */
     close(args: TabsCloseArgs, options?: CallOptions): Promise<TabsCloseOutput>;
     /**
+     * Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state.
+     *
+     * `tabs.freeze` (MCP: `tabs_freeze`): toolset `core`, act, mutates the tab.
+     */
+    freeze(args: TabsFreezeArgs, options?: CallOptions): Promise<TabsFreezeOutput>;
+    /**
      * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.
      *
      * `tabs.list` (MCP: `tabs_list`): toolset `core`, read.
@@ -6540,6 +6876,11 @@ export function createBrowser(transport: Transport): Browser {
     geo: {
       lookup: (args, options) => call<GeoLookupOutput>("geo.lookup", args, options),
     },
+    governor: {
+      config: (args, options) => call<GovernorConfigOutput>("governor.config", args, options),
+      recommend_parallel: (args, options) => call<GovernorRecommendParallelOutput>("governor.recommend_parallel", args, options),
+      status: (args, options) => call<GovernorStatusOutput>("governor.status", args, options),
+    },
     history: {
       delete: (args, options) => call<HistoryDeleteOutput>("history.delete", args, options),
       search: (args, options) => call<HistorySearchOutput>("history.search", args, options),
@@ -6656,6 +6997,7 @@ export function createBrowser(transport: Transport): Browser {
     tabs: {
       activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),
       close: (args, options) => call<TabsCloseOutput>("tabs.close", args, options),
+      freeze: (args, options) => call<TabsFreezeOutput>("tabs.freeze", args, options),
       list: (args, options) => call<TabsListOutput>("tabs.list", args, options),
       open: (args, options) => call<TabsOpenOutput>("tabs.open", args, options),
     },
