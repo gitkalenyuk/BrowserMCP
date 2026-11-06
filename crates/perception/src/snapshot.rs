@@ -203,7 +203,8 @@ impl<'a> Builder<'a> {
         if roles::is_skipped(role) {
             return Vec::new();
         }
-        if node.ignored {
+        // The document of an iframe (attached under its `- iframe` line) is just a wrapper.
+        if node.ignored || role == "RootWebArea" {
             return self.build_children(index, context_name, depth);
         }
         if role == "StaticText" {
@@ -916,6 +917,49 @@ mod tests {
         .unwrap();
         assert!(!snap.cut && !snap.text.contains("! "), "{}", snap.text);
         assert!(snap.text.contains("link \"Deep down\""), "{}", snap.text);
+    }
+
+    #[test]
+    fn iframes_show_their_document_with_the_frame_host() {
+        let mut page = tree(&[
+            ("1", "", "RootWebArea", "Shop", "", 1),
+            ("2", "1", "button", "Buy", "", 2),
+            ("3", "1", "Iframe", "Payment", "", 3),
+            ("4", "1", "Iframe", "Empty ad", "", 4),
+        ]);
+        let frame = tree(&[
+            ("1", "", "RootWebArea", "Pay", "", 1),
+            ("2", "1", "textbox", "Card number", "", 2),
+        ]);
+        page.attach_frame(2, frame, "F1:", "https://pay.example.com/form", |b| {
+            (1 << 32) | b
+        });
+        for mode in [Mode::Interactive, Mode::Full] {
+            let options = SnapshotOptions {
+                mode,
+                ..SnapshotOptions::default()
+            };
+            let snap = snapshot(
+                &page,
+                &mut RefRegistry::new(),
+                &options,
+                PageHeader::default(),
+            )
+            .unwrap();
+            let body: Vec<&str> = snap.text.lines().skip(1).collect();
+            let mut expected = vec![
+                "- button \"Buy\" @1:e1",
+                "- iframe \"Payment\" (pay.example.com)",
+                "  - textbox \"Card number\" @1:e2",
+            ];
+            // Full mode also shows named nodes without content.
+            if mode == Mode::Full {
+                expected.push("- iframe \"Empty ad\"");
+            }
+            assert_eq!(body, expected, "{mode:?}");
+            // The ref leads to the (caller-mapped) DOM node inside the frame.
+            assert_eq!(snap.refs[1].backend_node_id, (1 << 32) | 2);
+        }
     }
 
     #[test]

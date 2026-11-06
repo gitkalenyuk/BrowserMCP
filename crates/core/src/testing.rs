@@ -29,6 +29,13 @@ pub struct FakeBackend {
 
 /// Scripted CDP answers: `(tab, method, params)` → `Some(result)` to answer, `None` to fall back
 /// to the built-in behaviour.
+///
+/// * Calls in a child session ([`BrowserBackend::cdp_session`]) reach the handler (and the
+///   [`FakeBackend::cdp_calls`] log) with the session in `params["sessionId"]`.
+/// * An `Ok` result may carry `"__events": [{"method", "params", "sessionId"?}, ...]`: those
+///   events are removed from the result and sent to the tab's event subscribers *before*
+///   the call returns, like Chromium does (e.g. `Target.attachedToTarget` during
+///   `Target.setAutoAttach`).
 pub type CdpHandler = Box<dyn Fn(TabId, &str, &Value) -> Option<BackendResult<Value>> + Send>;
 
 #[derive(Default)]
@@ -176,6 +183,27 @@ impl FakeState {
             .clone()
     }
 
+    /// Send the `"__events"` a scripted answer asked for (see [`CdpHandler`]) and return the
+    /// answer without them.
+    fn send_scripted_events(&mut self, tab: TabId, mut result: Value) -> Value {
+        let events = result
+            .as_object_mut()
+            .and_then(|o| o.remove("__events"))
+            .and_then(|e| e.as_array().cloned())
+            .unwrap_or_default();
+        if !events.is_empty() {
+            let sender = self.event_sender(tab);
+            for event in events {
+                let _ = sender.send(CdpEvent {
+                    method: event["method"].as_str().unwrap_or_default().to_string(),
+                    params: event["params"].clone(),
+                    session_id: event["sessionId"].as_str().map(str::to_string),
+                });
+            }
+        }
+        result
+    }
+
     fn tab_mut(&mut self, tab: TabId) -> BackendResult<&mut TabInfo> {
         self.tabs
             .get_mut(&tab)
@@ -250,7 +278,7 @@ impl BrowserBackend for FakeBackend {
                 .as_ref()
                 .and_then(|h| h(tab, &method, &params))
             {
-                return answer;
+                return answer.map(|result| s.send_scripted_events(tab, result));
             }
             match method.as_str() {
                 "Runtime.evaluate" => {
@@ -260,6 +288,24 @@ impl BrowserBackend for FakeBackend {
                 _ => Err(BackendError::Cdp(format!("{method} is not faked"))),
             }
         })
+    }
+
+    fn cdp_session(
+        &self,
+        tab: TabId,
+        session_id: Option<String>,
+        method: String,
+        mut params: Value,
+    ) -> BoxFuture<'_, BackendResult<Value>> {
+        let Some(session) = session_id else {
+            return self.cdp(tab, method, params);
+        };
+        // Same as `cdp`, with the session visible to the handler and in the log.
+        if !params.is_object() {
+            params = json!({});
+        }
+        params["sessionId"] = Value::String(session);
+        self.cdp(tab, method, params)
     }
 
     fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
@@ -298,5 +344,37 @@ mod tests {
         let ev = events.recv().await.unwrap();
         assert_eq!(ev.method, "Network.requestWillBeSent");
         assert!(fake.cdp_events(TabId(9)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fake_sessions_and_scripted_events() {
+        let fake = FakeBackend::with_tabs(&["https://a.test"]);
+        fake.on_cdp(|_tab, method, params| match method {
+            "Target.setAutoAttach" => Some(Ok(json!({ "__events": [{
+                "method": "Target.attachedToTarget",
+                "params": { "sessionId": "S1" },
+            }]}))),
+            "DOM.getDocument" => Some(Ok(json!({ "session": params["sessionId"] }))),
+            _ => None,
+        });
+        let mut events = fake.cdp_events(TabId(1)).await.unwrap();
+        let reply = fake
+            .cdp(TabId(1), "Target.setAutoAttach".into(), json!({}))
+            .await
+            .unwrap();
+        // The event arrived before the reply, and the reply no longer carries it.
+        assert_eq!(reply, json!({}));
+        assert_eq!(events.try_recv().unwrap().params["sessionId"], "S1");
+        let reply = fake
+            .cdp_session(
+                TabId(1),
+                Some("S1".into()),
+                "DOM.getDocument".into(),
+                json!({}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply["session"], "S1");
+        assert_eq!(fake.cdp_calls()[1].1["sessionId"], "S1");
     }
 }

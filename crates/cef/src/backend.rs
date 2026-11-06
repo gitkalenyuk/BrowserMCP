@@ -116,6 +116,22 @@ impl BrowserBackend for CefBackend {
         })
     }
 
+    fn cdp_session(
+        &self,
+        tab: TabId,
+        session_id: Option<String>,
+        method: String,
+        params: Value,
+    ) -> BoxFuture<'_, BackendResult<Value>> {
+        Box::pin(async move {
+            let client = self.tab_cdp(tab).await?;
+            client
+                .call_in_session(session_id.as_deref(), &method, params)
+                .await
+                .map_err(|e| BackendError::Cdp(e.to_string()))
+        })
+    }
+
     fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
         Box::pin(async move { Ok(self.tab_cdp(tab).await?.subscribe()) })
     }

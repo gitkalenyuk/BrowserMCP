@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Iframe child – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 12px; }
+  /* Push the controls down and right, so a click at untranslated coordinates misses. */
+  form { margin: 40px 0 0 120px; }
+</style>
+</head>
+<!-- Loaded by iframe.html as ?who=same (same origin) and ?who=cross (another site). -->
+<body>
+<form onsubmit="return false">
+  <label>Note <input id="note"></label>
+  <button id="go" type="button"></button>
+  <p id="status" role="status"></p>
+</form>
+<script>
+  const who = new URLSearchParams(location.search).get('who') || 'same';
+  const go = document.getElementById('go');
+  go.textContent = who === 'cross' ? 'Cross-origin button' : 'Same-origin button';
+  let clicks = 0;
+  go.onclick = () => {
+    clicks += 1;
+    const note = document.getElementById('note').value;
+    document.getElementById('status').textContent = who + ' clicked ' + clicks + (note ? ' note=' + note : '');
+  };
+</script>
+</body>
+</html>

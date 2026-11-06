@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use bmcp_core::{Ctx, TabId};
 use bmcp_perception::{RefRegistry, RefSpace, Snapshot, SnapshotOptions};
 
+use crate::frames::Frames;
 use crate::human::Human;
 
 /// How many recent snapshots per tab `page.diff since=` can compare against.
@@ -94,6 +95,8 @@ pub struct TabState {
     pub human: Option<Human>,
     /// Where we last moved the mouse (viewport CSS pixels); human-like moves start here.
     pub mouse: Option<(f64, f64)>,
+    /// The tab's out-of-process iframes and where their nodes live.
+    pub frames: Frames,
 }
 
 impl TabState {

@@ -43,7 +43,49 @@ struct Page {
     click_through_overlay: Option<i64>,
     /// Text nodes → their parent element. Like Chromium, the hit test reports the parent.
     text_parents: HashMap<i64, i64>,
+    /// Iframes (see [`Page::frames`]): the tree of the out-of-process frame `F1` (child
+    /// session `S1`, shown by `<iframe>` [`OOP_IFRAME`]) ...
+    oopif_tree: Option<Value>,
+    /// ... and of the same-process frame `F2` (shown by [`SAME_IFRAME`]).
+    same_frame_tree: Option<Value>,
     history: Value,
+}
+
+/// The page of [`Page::frames`]: a button, an out-of-process and a same-process iframe.
+const TOP_BUTTON: i64 = 2;
+const OOP_IFRAME: i64 = 3;
+const SAME_IFRAME: i64 = 4;
+/// In the out-of-process frame (its own DOM numbering: 2 again, like the top button).
+const CARD_FIELD: i64 = 2;
+const PAY_BUTTON: i64 = 5;
+/// In the same-process frame.
+const INNER_BUTTON: i64 = 41;
+/// Content box of the out-of-process iframe in the page's viewport: x, y, width, height.
+const OOP_BOX: (f64, f64, f64, f64) = (300.0, 600.0, 400.0, 100.0);
+
+/// A merged-tree id of a node in the out-of-process frame (slot 1, see `frames.rs`).
+fn in_oopif(backend: i64) -> i64 {
+    (1 << 32) | backend
+}
+
+/// An accessibility tree from `(id, parent, role, name, backend)` rows.
+fn ax_rows(rows: &[(&str, &str, &str, &str, i64)]) -> Value {
+    let nodes: Vec<Value> = rows
+        .iter()
+        .map(|(id, parent, role, name, backend)| {
+            let children: Vec<&str> = rows.iter().filter(|r| r.1 == *id).map(|r| r.0).collect();
+            let mut node = json!({
+                "nodeId": id, "role": { "type": "role", "value": role },
+                "name": { "type": "computedString", "value": name },
+                "childIds": children, "backendDOMNodeId": backend,
+            });
+            if !parent.is_empty() {
+                node["parentId"] = json!(parent);
+            }
+            node
+        })
+        .collect();
+    json!({ "nodes": nodes })
 }
 
 impl Page {
@@ -68,8 +110,39 @@ impl Page {
             hit_override: None,
             click_through_overlay: None,
             text_parents: HashMap::new(),
+            oopif_tree: None,
+            same_frame_tree: None,
             history: json!({ "currentIndex": 0, "entries": [{ "id": 1, "url": "https://acme.com/login" }] }),
         }
+    }
+
+    /// A page with a button, a cross-site (out-of-process) iframe holding a card field and a
+    /// Pay button, and a same-site iframe holding one button.
+    fn frames() -> Page {
+        let mut page = Page::login();
+        page.tree = ax_rows(&[
+            ("1", "", "RootWebArea", "Shop", 1),
+            ("2", "1", "button", "Top", TOP_BUTTON),
+            ("3", "1", "Iframe", "Payment", OOP_IFRAME),
+            ("4", "1", "Iframe", "Same", SAME_IFRAME),
+        ]);
+        page.tree_after_click = None;
+        page.oopif_tree = Some(ax_rows(&[
+            ("1", "", "RootWebArea", "Pay", 1),
+            ("2", "1", "textbox", "Card", CARD_FIELD),
+            ("5", "1", "button", "Pay", PAY_BUTTON),
+        ]));
+        page.same_frame_tree = Some(ax_rows(&[
+            ("1", "", "RootWebArea", "Inner", 40),
+            ("2", "1", "button", "Inner", INNER_BUTTON),
+        ]));
+        // The card field is a text input; the fake ignores sessions here, so the page's
+        // button 2 answers like one too (it is only clicked).
+        page.probes.insert(
+            CARD_FIELD,
+            json!({ "connected": true, "tag": "input", "type": "text", "editable": true }),
+        );
+        page
     }
 }
 
@@ -93,9 +166,47 @@ fn id_of(object: &Value) -> i64 {
 fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value, BackendError>> {
     let cdp_err = |m: &str| Err(BackendError::Cdp(format!("CDP error -32000: {m}")));
     let backend = params["backendNodeId"].as_i64().unwrap_or(0);
+    // Calls in the out-of-process frame's child session carry `sessionId` (FakeBackend).
+    let in_frame = params["sessionId"] == "S1";
     let result = match method {
         "Page.getFrameTree" => Ok(json!({ "frameTree": { "frame": { "loaderId": page.loader } } })),
+        // Following frames: announce the out-of-process frame while handling the call.
+        "Target.setAutoAttach" if page.oopif_tree.is_some() && !in_frame => Ok(json!({
+            "__events": [{ "method": "Target.attachedToTarget", "params": {
+                "sessionId": "S1",
+                "targetInfo": { "targetId": "F1", "type": "iframe", "url": "https://pay.test/card" },
+            }}],
+        })),
+        "Target.setAutoAttach" if page.oopif_tree.is_some() => Ok(json!({})),
+        "Accessibility.getFullAXTree" if in_frame => Ok(page.oopif_tree.clone().unwrap()),
+        "Accessibility.getFullAXTree" if params["frameId"] == "F2" => {
+            Ok(page.same_frame_tree.clone().unwrap())
+        }
         "Accessibility.getFullAXTree" => Ok(page.tree.clone()),
+        "DOM.describeNode" if backend == OOP_IFRAME && page.oopif_tree.is_some() => Ok(
+            json!({ "node": { "frameId": "F1", "attributes": ["src", "https://pay.test/card"] } }),
+        ),
+        "DOM.describeNode" if backend == SAME_IFRAME && page.same_frame_tree.is_some() => Ok(
+            json!({ "node": { "frameId": "F2", "attributes": ["src", "https://acme.com/inner"] } }),
+        ),
+        "DOM.getBoxModel" if backend == OOP_IFRAME => {
+            let (x, y, w, h) = OOP_BOX;
+            Ok(json!({ "model": { "content": [x, y, x + w, y, x + w, y + h, x, y + h] } }))
+        }
+        // Inside the frame: its own coordinates (same layout rule as the page).
+        "DOM.getNodeForLocation" if in_frame => {
+            Ok(json!({ "backendNodeId": params["y"].as_i64().unwrap_or(0) / 10 }))
+        }
+        "DOM.getNodeForLocation"
+            if page.oopif_tree.is_some() && page.hit_override.is_none() && {
+                let (x, y) = (params["x"].as_f64().unwrap(), params["y"].as_f64().unwrap());
+                let (bx, by, bw, bh) = OOP_BOX;
+                (bx..bx + bw).contains(&x) && (by..by + bh).contains(&y)
+            } =>
+        {
+            // The page's hit test over the frame finds the <iframe> element.
+            Ok(json!({ "backendNodeId": OOP_IFRAME }))
+        }
         "Page.getLayoutMetrics" => Ok(json!({
             "cssLayoutViewport": { "clientWidth": 1280, "clientHeight": 720, "pageX": 0, "pageY": 0 },
             "cssContentSize": { "width": 1280, "height": 1840 },
@@ -948,6 +1059,166 @@ async fn explicit_refs_stay_valid_over_many_acts_on_an_unchanged_page() {
             .unwrap_or_else(|e| panic!("act {i} failed: {e:?}"));
         assert!(out["text"].as_str().unwrap().contains("no changes"));
     }
+}
+
+// ------------------------------------------------------------------ iframes and shadow DOM
+
+/// The ref printed for `merged` (a node id of the merged tree) in the latest snapshot.
+async fn ref_of(h: &Harness, merged: i64) -> String {
+    let tab = h.perception().tab(TabId(1));
+    let st = tab.lock().await;
+    let (snap, _) = st.history.back().unwrap();
+    snap.refs
+        .iter()
+        .find(|r| r.backend_node_id == merged)
+        .map(|r| r.ref_str.clone())
+        .unwrap_or_else(|| panic!("no ref for {merged} in:\n{}", snap.text))
+}
+
+#[tokio::test(start_paused = true)]
+async fn snapshot_merges_same_and_out_of_process_iframes() {
+    let h = Harness::new(Page::frames());
+    let out = h.ok("page.snapshot", json!({})).await;
+    let text = out["text"].as_str().unwrap();
+    let body: Vec<&str> = text.lines().skip(1).collect();
+    assert_eq!(
+        body,
+        [
+            "- button \"Top\" @1:e1",
+            "- iframe \"Payment\" (pay.test)",
+            "  - textbox \"Card\" @1:e2",
+            "  - button \"Pay\" @1:e3",
+            "- iframe \"Same\" (acme.com)",
+            "  - button \"Inner\" @1:e4",
+        ],
+        "{text}"
+    );
+    // The out-of-process frame was read in its own session; auto-attach was switched on
+    // for the page and for that session (for frames inside it).
+    let trees = h.sent("Accessibility.getFullAXTree");
+    assert!(trees.iter().any(|p| p["sessionId"] == "S1"), "{trees:?}");
+    assert!(trees.iter().any(|p| p["frameId"] == "F2"), "{trees:?}");
+    let attach = h.sent("Target.setAutoAttach");
+    assert_eq!(attach[0]["flatten"], true);
+    assert_eq!(attach[0]["waitForDebuggerOnStart"], false);
+    assert!(attach.iter().any(|p| p["sessionId"] == "S1"));
+
+    // page.find sees inside frames too.
+    let found = h.ok("page.find", json!({ "name": "pay" })).await;
+    assert!(
+        found["text"]
+            .as_str()
+            .unwrap()
+            .contains("button \"Pay\" @2:e3"),
+        "{found}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn act_inside_an_out_of_process_iframe_uses_its_session_and_page_coordinates() {
+    let h = Harness::new(Page::frames());
+    h.ok("page.snapshot", json!({})).await;
+    let pay = ref_of(&h, in_oopif(PAY_BUTTON)).await;
+    let card = ref_of(&h, in_oopif(CARD_FIELD)).await;
+    let top = ref_of(&h, TOP_BUTTON).await;
+    // Same DOM node id 2 in two frames, two different refs.
+    assert_ne!(card, top);
+
+    h.ok(
+        "page.act",
+        json!({ "ref": pay, "action": "click", "returns": "none" }),
+    )
+    .await;
+    // Node calls went to the frame's session with the frame's own node id ...
+    let resolved = h.sent("DOM.resolveNode");
+    assert_eq!(resolved[0]["backendNodeId"], PAY_BUTTON);
+    assert_eq!(resolved[0]["sessionId"], "S1");
+    // ... the mouse went to the page: the button's centre in the frame (150, 54) plus the
+    // iframe's content box corner (300, 600).
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(
+        (mouse[1]["x"].as_f64(), mouse[1]["y"].as_f64()),
+        (Some(450.0), Some(654.0))
+    );
+    assert!(mouse.iter().all(|p| p.get("sessionId").is_none()));
+
+    h.ok(
+        "page.act",
+        json!({ "ref": card, "action": "fill", "value": "4242", "returns": "none" }),
+    )
+    .await;
+    let focus = h.sent("DOM.focus");
+    assert_eq!(focus[0]["backendNodeId"], CARD_FIELD);
+    assert_eq!(focus[0]["sessionId"], "S1");
+    assert_eq!(h.sent("Input.insertText")[0]["text"], "4242");
+
+    // The page's own node 2 is still the page's.
+    h.ok(
+        "page.act",
+        json!({ "ref": top, "action": "click", "returns": "none" }),
+    )
+    .await;
+    let last = h.sent("DOM.resolveNode").pop().unwrap();
+    assert_eq!(last, json!({ "backendNodeId": TOP_BUTTON }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn act_inside_a_same_process_iframe_uses_the_page_session() {
+    let h = Harness::new(Page::frames());
+    h.ok("page.snapshot", json!({})).await;
+    let inner = ref_of(&h, INNER_BUTTON).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": inner, "action": "click", "returns": "none" }),
+    )
+    .await;
+    assert_eq!(
+        h.sent("DOM.resolveNode")[0],
+        json!({ "backendNodeId": INNER_BUTTON })
+    );
+    // Same-process boxes are already in the page's coordinates.
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(
+        (mouse[1]["x"].as_f64(), mouse[1]["y"].as_f64()),
+        (Some(150.0), Some(414.0))
+    );
+    assert!(h.sent("DOM.getBoxModel").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn page_covering_an_iframe_blocks_clicks_inside_it() {
+    let mut page = Page::frames();
+    // Something in the page (the top button, say a sticky bar) lies over the frame.
+    page.hit_override = Some(TOP_BUTTON);
+    let h = Harness::new(page);
+    h.ok("page.snapshot", json!({})).await;
+    let pay = ref_of(&h, in_oopif(PAY_BUTTON)).await;
+    // The frame's own hit test is fine, but the page's finds the cover, not the iframe.
+    let err = h
+        .call("page.act", json!({ "ref": pay, "action": "click" }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotInteractable);
+    assert!(err.message.contains("is covered by"), "{}", err.message);
+    assert!(err.message.contains("(450, 654)"), "{}", err.message);
+    assert!(h.sent("Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn reading_the_page_walks_shadow_roots() {
+    let h = Harness::new(Page::login());
+    h.ok("page.read", json!({})).await;
+    let evaluated = h.sent("Runtime.evaluate");
+    let expression = evaluated
+        .iter()
+        .filter_map(|p| p["expression"].as_str())
+        .find(|e| e.contains("document.body"))
+        .unwrap();
+    // The page text goes through the same script as one element, which descends into
+    // shadow roots (innerText does not).
+    assert!(expression.contains(".call(document.body)"), "{expression}");
+    assert!(expression.contains("n.shadowRoot"), "{expression}");
+    assert!(expression.contains("assignedNodes"), "{expression}");
 }
 
 #[test]

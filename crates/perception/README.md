@@ -76,6 +76,32 @@ snap 7 tab=3 "Sign in – Acme" https://acme.com/login vp=1280x720 y=0/1840
   `Snapshot::cut` / `FindResult::too_deep` set), so a hostile page cannot overflow the
   stack.
 
+### Iframes and shadow DOM
+
+```
+- button "Buy" @7:e1
+- iframe "Payment" (pay.example.com)
+  - textbox "Card number" @7:e2
+```
+
+* `AxTree::attach_frame(owner, child, prefix, url, map_backend)` puts a frame's own AX tree
+  under its `Iframe` node; the iframe prints as `- iframe "<title>" (<src host>)` (role
+  `Iframe` is structure: kept when something inside is kept) and the frame's document
+  node is flattened. Child AX node ids get `prefix`; `map_backend` lets the caller give
+  the frame's DOM node ids a range of their own (an out-of-process frame numbers its
+  nodes independently), so refs stay unique.
+* The caller (`bmcp-browser`, `frames.rs`) fetches the trees: same-process frames with
+  `Accessibility.getFullAXTree {frameId}` in the page session, out-of-process frames
+  (other sites) in their child session from `Target.setAutoAttach {flatten: true}`. Their
+  merged ids are `slot << 32 | backendNodeId`; `page.act` turns them back into (session,
+  node), runs the checks in the frame's session and sends mouse input to the page at
+  coordinates moved by the iframe's content-box position (`DOM.getBoxModel`).
+* Shadow DOM needs nothing here: Chrome's AX tree already includes open and closed shadow
+  roots. The hit test (`HIT_OK_JS`) and `page.read` walk across shadow boundaries
+  (`page.read` cannot see inside *closed* shadow roots; their controls still work by ref).
+* Fixtures: `tests/fixtures/sites/iframe.html` (+ `iframe_child.html`, cross-origin from a
+  second server, `?xport=PORT`) and `shadow.html`.
+
 ### Diff
 
 ```
