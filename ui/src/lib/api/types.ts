@@ -1,4 +1,5 @@
 // Wire types shared by every BrowserApi implementation.
+export * from './types-data'; // data.* / bookmarks.* / history.* / … (merged into RpcMethods)
 // These mirror what the Rust core will expose over JSON-RPC (ws://127.0.0.1:47800/v1/ws).
 // Later they will be replaced by the generated @browsermcp/protocol package.
 
@@ -134,9 +135,6 @@ export interface RpcMethods {
   'runs.patch.reject': { params: { id: string }; result: void };
   'scripts.list': { params: void; result: Script[] };
   'scripts.run': { params: { id: string }; result: { runId: string } };
-  // Shapes follow the Rust commands (crates/data): object outputs, folders have no url.
-  'data.bookmarks': { params: void; result: { bookmarks: Bookmark[] } };
-  'data.top_sites': { params: void; result: { sites: Bookmark[] } };
   // ---- built-in AI (crates/ai/src/commands.rs) --------------------------------------------
   'ai.providers': { params: void; result: { providers: AiProvider[] } };
   /** Omitted fields stay unchanged; "" clears one. Returns the provider. */
@@ -408,3 +406,5 @@ export type EventName = keyof ApiEvents;
 export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: Params<M>];
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+
+export type * from './types-record-runs';

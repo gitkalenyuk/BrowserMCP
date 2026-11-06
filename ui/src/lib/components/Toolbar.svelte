@@ -64,6 +64,9 @@
     {/each}
   </div>
 
+  <button class="icon-btn" aria-label="Library" title={keyHint('Bookmarks, history and passwords', 'library.bookmarks')} onclick={() => chrome.run('library.bookmarks')}>
+    <Icon name="folder" size={16} />
+  </button>
   <span class="divider" aria-hidden="true"></span>
 
   <button

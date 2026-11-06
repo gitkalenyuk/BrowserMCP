@@ -4,6 +4,8 @@
   import ResizeHandle from './ResizeHandle.svelte';
   import AiPanel from './panels/AiPanel.svelte';
   import EmptyPanel from './panels/EmptyPanel.svelte';
+  import RecordingPanel from './panels/RecordingPanel.svelte';
+  import RunsPanel from './panels/RunsPanel.svelte';
   import TerminalPanel from './panels/TerminalPanel.svelte';
   import TrafficPanel from './panels/TrafficPanel.svelte';
 
@@ -43,12 +45,7 @@
     {:else if panel === 'traffic'}
       <TrafficPanel />
     {:else if panel === 'recording'}
-      <EmptyPanel
-        icon="record"
-        title="Not recording"
-        text="Record clicks, typing and traffic in this tab, optionally with video. A recording turns into a TypeScript script you can replay with different data."
-        action="Start recording"
-      />
+      <RecordingPanel />
     {:else if panel === 'scripts'}
       <EmptyPanel
         icon="code"
@@ -57,12 +54,7 @@
         action="New script"
       />
     {:else if panel === 'runs'}
-      <EmptyPanel
-        icon="runs"
-        title="No runs yet"
-        text="Run a script over a CSV or JSON file across several profiles. Progress, failures and patches waiting for your approval show up here."
-        action="New run"
-      />
+      <RunsPanel />
     {/if}
   </div>
 </aside>
