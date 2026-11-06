@@ -147,6 +147,8 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         resource_gate: Some(gate),
         permissions: Some(permissions),
         cdp_port,
+        // `--dump-ax` prints the start page, so it never restores a session.
+        restore_session: !cli.no_restore && !cli.dump_ax,
     })?;
 
     shutdown.cancel();
@@ -368,6 +370,8 @@ async fn apply_profiles_and_cookies(
     let mut ctx_with_ext = ctx();
     ctx_with_ext.extensions = registry.extensions().clone();
     bmcp_profiles::apply_stored(&ctx_with_ext).await;
+    // Restored tabs of those profiles may load now (their proxy/identity is in place).
+    bmcp_cef::profiles_applied();
     let mut finished = events.subscribe();
     let apply_pending = || async {
         match registry

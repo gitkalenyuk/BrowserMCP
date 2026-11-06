@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use bmcp_cdp::{BoxFuture, CdpClient, CdpError, Transport};
 use bmcp_core::events::{tab as tab_events, topics};
-use bmcp_core::{BackendError, EventBus, TabId, TabInfo};
+use bmcp_core::{BackendError, EventBus, SplitSide, TabId, TabInfo, TabSplit};
 use cef::*;
 use serde_json::Value;
 use tokio::sync::{oneshot, watch};
@@ -58,10 +58,13 @@ pub(crate) struct TabEntry {
     pub run: Option<String>,
     /// Windowless (off-screen rendering) tab.
     pub offscreen: bool,
+    /// Page zoom in percent (see `zoom.rs`).
+    pub zoom: f64,
 }
 
 impl TabEntry {
-    pub fn info(&self, id: TabId, active: bool) -> TabInfo {
+    /// The tab as the API sees it. `split` = its half of a split view, if any.
+    pub fn info(&self, id: TabId, active: bool, split: Option<TabSplit>) -> TabInfo {
         TabInfo {
             id,
             title: self.title.clone(),
@@ -73,6 +76,12 @@ impl TabEntry {
             active,
             group_id: None,
             locked_by: None,
+            profile: Some(self.profile.name()),
+            incognito: self.profile.incognito,
+            offscreen: self.offscreen,
+            window: self.window,
+            split,
+            zoom: crate::zoom::badge(self.zoom),
         }
     }
 }
@@ -94,6 +103,8 @@ pub(crate) struct PendingTab {
     /// The browser starts on `about:blank`; this URL is loaded once the tab was prepared
     /// (identity applied, see `hooks.rs`).
     pub then_load: Option<String>,
+    /// Session restore: (restore tag, saved index) — see `session.rs`.
+    pub restore: Option<(u32, usize)>,
 }
 
 impl PendingTab {
@@ -110,6 +121,7 @@ impl PendingTab {
             profile,
             run,
             then_load,
+            restore: None,
         }
     }
 
@@ -149,6 +161,12 @@ pub(crate) struct UiState {
     pub shell: Option<ShellContext>,
     /// Request contexts and settings of the profiles.
     pub profiles: crate::profiles::ProfilesState,
+    /// DevTools browsers (by browser id): neither tabs nor chrome views.
+    pub devtools: BTreeMap<i32, Browser>,
+    /// Permission requests waiting for the permission bar, by prompt id.
+    pub prompts: BTreeMap<u64, crate::prompts::Waiting>,
+    /// Closed-tabs stack and session restore progress.
+    pub session: crate::session::SessionState,
 }
 
 thread_local! {
@@ -181,6 +199,10 @@ pub(crate) fn emit(topic: &str, data: Value) {
     if let Some(bus) = EVENTS.get() {
         bus.emit(topic, data);
     }
+    // Every tab change goes through here: the session file follows (debounced).
+    if topic.starts_with("tab.") {
+        crate::session::changed();
+    }
 }
 
 /// Is `id` the shown tab of its window? (Single-layout tabs are always "active".)
@@ -191,11 +213,32 @@ fn is_active(ui: &UiState, id: TabId, window: Option<i32>) -> bool {
     }
 }
 
+/// Tab `id`'s half of its window's split view, if it is in one.
+fn split_of(ui: &UiState, id: TabId, window: Option<i32>) -> Option<TabSplit> {
+    let split = ui.windows.get(&window?)?.split?;
+    let (side, other) = if split.left == id {
+        (SplitSide::Left, split.right)
+    } else if split.right == id {
+        (SplitSide::Right, split.left)
+    } else {
+        return None;
+    };
+    Some(TabSplit {
+        side,
+        other,
+        ratio: split.ratio,
+    })
+}
+
 /// Current info of one tab. UI thread.
 pub(crate) fn tab_info(id: TabId) -> Option<TabInfo> {
     with_ui(|ui| {
         let tab = ui.tabs.get(&id)?;
-        Some(tab.info(id, is_active(ui, id, tab.window)))
+        Some(tab.info(
+            id,
+            is_active(ui, id, tab.window),
+            split_of(ui, id, tab.window),
+        ))
     })
 }
 
@@ -207,13 +250,14 @@ pub(crate) fn list_tabs() -> Vec<TabInfo> {
         for w in ui.windows.values() {
             for id in w.strip.tabs() {
                 if let Some(tab) = ui.tabs.get(id) {
-                    out.push(tab.info(*id, w.strip.active() == Some(*id)));
+                    let split = split_of(ui, *id, tab.window);
+                    out.push(tab.info(*id, w.strip.active() == Some(*id), split));
                 }
             }
         }
         for (id, tab) in &ui.tabs {
             if tab.window.is_none_or(|key| !ui.windows.contains_key(&key)) {
-                out.push(tab.info(*id, true));
+                out.push(tab.info(*id, true, None));
             }
         }
         out
@@ -255,6 +299,12 @@ wrap_task! {
 pub(crate) fn post_to_ui(job: Job) -> bool {
     let mut task = UiJob::new(Arc::new(Mutex::new(Some(job))));
     post_task(ThreadId::UI, Some(&mut task)) == 1
+}
+
+/// Post `job` to the CEF UI thread to run in `delay_ms` milliseconds. Any thread.
+pub(crate) fn post_to_ui_delayed(job: Job, delay_ms: i64) -> bool {
+    let mut task = UiJob::new(Arc::new(Mutex::new(Some(job))));
+    post_delayed_task(ThreadId::UI, Some(&mut task), delay_ms) == 1
 }
 
 /// Run `f` on the CEF UI thread and await its result. Callable from any thread.
@@ -352,6 +402,10 @@ pub(crate) fn register_tab(browser: &Browser, offscreen: bool, pending_key: i32)
             .map(|p| p.profile.clone())
             .unwrap_or_default();
         let run = pending.as_ref().and_then(|p| p.run.clone());
+        // A restored tab goes between its saved neighbours (tabs register in any order).
+        let restore = pending.as_ref().and_then(|p| p.restore);
+        let restore_index =
+            restore.map(|(tag, index)| crate::session::registered(ui, tag, index, id));
         ui.tabs.insert(
             id,
             TabEntry {
@@ -368,11 +422,13 @@ pub(crate) fn register_tab(browser: &Browser, offscreen: bool, pending_key: i32)
                 profile,
                 run,
                 offscreen,
+                zoom: 100.0,
             },
         );
+        let wanted = restore_index.or_else(|| pending.as_ref().and_then(|p| p.index));
         let index = window
             .and_then(|key| ui.windows.get_mut(&key))
-            .map(|w| w.strip.insert(id, pending.as_ref().and_then(|p| p.index)));
+            .map(|w| w.strip.insert(id, wanted));
         let reply = pending.as_mut().and_then(|p| p.reply.take());
         let prepare = pending
             .as_mut()
@@ -416,6 +472,12 @@ pub(crate) fn register_tab(browser: &Browser, offscreen: bool, pending_key: i32)
 /// Called from `LifeSpanHandler::on_before_close` for content browsers (UI thread).
 pub(crate) fn unregister_tab(browser: &Browser) {
     let id = TabId(browser.identifier());
+    // Its split view ends (usually done in `chrome::detach_tab` already).
+    let window = with_ui(|ui| ui.tabs.get(&id).and_then(|t| t.window));
+    if let Some(key) = window {
+        crate::chrome::end_split_with(key, id);
+    }
+    crate::prompts::drop_for_tab(id);
     let (removed, next) = with_ui(|ui| {
         let removed = ui.tabs.remove(&id);
         // Usually already gone from the strip (see `chrome::detach_tab`); otherwise the

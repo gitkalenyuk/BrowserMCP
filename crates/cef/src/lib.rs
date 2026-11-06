@@ -10,16 +10,22 @@
 mod backend;
 mod bridge;
 mod chrome;
+mod clipboard;
 mod cookies;
+mod devtools;
 mod downloads;
 mod hooks;
+mod menu;
 mod net;
 mod osr;
 mod profiles;
+mod prompts;
 mod scheme;
+mod session;
 mod shell;
 mod switches;
 mod ui_files;
+mod zoom;
 
 pub use backend::CefBackend;
 pub use hooks::set_tab_preparer;
@@ -97,6 +103,16 @@ pub struct LaunchOptions {
     /// Off by default; the caller must not combine it with stealth profiles (a debugging
     /// port is easy to detect).
     pub cdp_port: Option<u16>,
+    /// Re-open the tabs of the last session (`data/runtime/session.json`) instead of
+    /// `start_url` (off with `--no-restore`). Tabs of profiles other than the launch one
+    /// wait for [`profiles_applied`].
+    pub restore_session: bool,
+}
+
+/// The app applied the stored profile settings (proxies, identities): restored tabs of
+/// those profiles may load now (see `session.rs`). Any thread.
+pub fn profiles_applied() {
+    bridge::post_to_ui(Box::new(session::restore_deferred));
 }
 
 /// What [`start`] found out about the current process.
@@ -178,6 +194,7 @@ impl Browser {
 
         let mut app = shell::ShellApp::new(std::sync::Arc::new(shell::StartConfig {
             url: opts.start_url,
+            restore: opts.restore_session,
             style: opts.style,
             layout: opts.layout,
             on_ready: std::sync::Mutex::new(opts.on_ready),

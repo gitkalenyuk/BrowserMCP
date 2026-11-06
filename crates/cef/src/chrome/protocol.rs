@@ -9,7 +9,9 @@
 //!   `fetch("bmcp://cmd/<name>?<args>")`, because the scheme handler knows which browser
 //!   sent the request and therefore which window it belongs to:
 //!   `layout` (where the page area is), `palette?action=show|hide|toggle`,
-//!   `focus-content`, `focus-omnibox`. The handler (IO thread) parses the URL with
+//!   `focus-content`, `focus-omnibox`, `split?ratio=0.4[&done=1]` (divider drag),
+//!   `focus-pane?side=left|right`, `cover?on=1|0` (a chrome dropdown is open: hide the
+//!   page so the dropdown is not drawn under it). The handler (IO thread) parses the URL with
 //!   [`parse_command`], answers `204` at once and posts the command to the UI thread,
 //!   where it runs only if the sender is one of our own UI/palette views.
 //! * Browser → UI page: `execute_java_script("window.bmcp.run('tab.new')")` for shortcuts
@@ -26,6 +28,24 @@ pub enum Command {
     FocusContent,
     /// Give keyboard focus to the UI view and its omnibox (from the palette).
     FocusOmnibox,
+    /// The split divider was dragged: new width of the left half (0..1). `done` = the drag
+    /// ended (only then is the change announced with `tab.updated`).
+    SplitRatio {
+        ratio: f64,
+        done: bool,
+    },
+    /// Keyboard focus to the left / right half of the split view.
+    FocusPane(Pane),
+    /// A chrome dropdown opened (`true`) or closed: hide / show the page area so the
+    /// dropdown, drawn by the UI page under the native page view, can be seen.
+    Cover(bool),
+}
+
+/// A half of the split view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Left,
+    Right,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +85,16 @@ pub fn parse_command(url: &str) -> Option<Command> {
         }),
         "focus-content" => Command::FocusContent,
         "focus-omnibox" => Command::FocusOmnibox,
+        "split" => Command::SplitRatio {
+            ratio: number("ratio")?,
+            done: arg("done").as_deref() == Some("1"),
+        },
+        "focus-pane" => Command::FocusPane(match arg("side").as_deref() {
+            Some("left") => Pane::Left,
+            Some("right") => Pane::Right,
+            _ => return None,
+        }),
+        "cover" => Command::Cover(arg("on").as_deref() == Some("1")),
         "palette" => Command::Palette(match arg("action").as_deref() {
             Some("show") => PaletteAction::Show,
             Some("hide") => PaletteAction::Hide,
@@ -128,6 +158,8 @@ pub enum Shortcut {
     Escape,
     /// Ctrl+F: focus the UI view, then open its find bar (`find.open`).
     Find,
+    /// Ctrl+Alt+Left / Ctrl+Alt+Right: keyboard focus to that half of the split view.
+    FocusPane(Pane),
     /// Any other browser shortcut: run this UI command id (`ui/src/lib/keymap.ts`) in the
     /// window's UI page, exactly as if the key had been pressed there.
     Ui(&'static str),
@@ -141,14 +173,27 @@ const VK_NEXT: i32 = 0x22; // Page Down
 const VK_LEFT: i32 = 0x25;
 const VK_RIGHT: i32 = 0x27;
 const VK_0: i32 = 0x30;
+const VK_B: i32 = 0x42;
 const VK_D: i32 = 0x44;
 const VK_E: i32 = 0x45;
 const VK_F: i32 = 0x46;
+const VK_H: i32 = 0x48;
+const VK_J: i32 = 0x4A;
 const VK_K: i32 = 0x4B;
 const VK_L: i32 = 0x4C;
+const VK_O: i32 = 0x4F;
 const VK_R: i32 = 0x52;
 const VK_T: i32 = 0x54;
 const VK_W: i32 = 0x57;
+const VK_NUMPAD0: i32 = 0x60;
+const VK_ADD: i32 = 0x6B;
+const VK_SUBTRACT: i32 = 0x6D;
+/// `=` / `+` on a US layout.
+const VK_OEM_PLUS: i32 = 0xBB;
+const VK_OEM_COMMA: i32 = 0xBC;
+const VK_OEM_MINUS: i32 = 0xBD;
+/// The Ctrl key itself (its key-up ends a Ctrl+wheel zoom, see `zoom.rs`).
+pub const VK_CONTROL: i32 = 0x11;
 const VK_F4: i32 = 0x73;
 const VK_F5: i32 = 0x74;
 const VK_F6: i32 = 0x75;
@@ -173,6 +218,7 @@ pub fn shortcut(key_code: i32, m: Modifiers) -> Option<Shortcut> {
     let ctrl = m.ctrl && !m.alt && !m.shift;
     let ctrl_shift = m.ctrl && m.shift && !m.alt;
     let alt = m.alt && !m.ctrl && !m.shift;
+    let ctrl_alt = m.ctrl && m.alt && !m.shift;
     use Shortcut::Ui;
     Some(match key_code {
         VK_K if ctrl => Shortcut::TogglePalette,
@@ -196,6 +242,20 @@ pub fn shortcut(key_code: i32, m: Modifiers) -> Option<Shortcut> {
         VK_E if ctrl_shift => Ui("ui.toggleVerticalTabs"),
         0x31..=0x36 if ctrl_shift => Ui(PANELS[(key_code - VK_0 - 1) as usize]),
         VK_OEM_3 if ctrl => Ui("panel.terminal"),
+        // Library and bookmarks (docs/phase4/library.md).
+        VK_D if ctrl => Ui("bookmark.toggle"),
+        VK_H if ctrl => Ui("library.history"),
+        VK_J if ctrl => Ui("library.downloads"),
+        VK_O if ctrl_shift => Ui("library.bookmarks"),
+        VK_B if ctrl_shift => Ui("ui.toggleBookmarksBar"),
+        // Settings page (bmcp://ui/settings.html, opened by the chrome).
+        VK_OEM_COMMA if ctrl => Ui("settings.open"),
+        // Zoom: Ctrl+= (also Ctrl+Shift+= = Ctrl++), Ctrl+-, Ctrl+0, numpad keys.
+        VK_OEM_PLUS | VK_ADD if ctrl || ctrl_shift => Ui("zoom.in"),
+        VK_OEM_MINUS | VK_SUBTRACT if ctrl => Ui("zoom.out"),
+        VK_0 | VK_NUMPAD0 if ctrl => Ui("zoom.reset"),
+        VK_LEFT if ctrl_alt => Shortcut::FocusPane(Pane::Left),
+        VK_RIGHT if ctrl_alt => Shortcut::FocusPane(Pane::Right),
         _ => return None,
     })
 }
@@ -309,9 +369,136 @@ pub fn palette_bounds(page: Bounds) -> Bounds {
     }
 }
 
+/// Gap between the two halves of a split view (DIP). The UI view shows through it and
+/// draws the divider there (`PageSlot.svelte` uses the same numbers).
+pub const SPLIT_GAP: i32 = 6;
+
+/// Bounds of the left and right half of a split view inside a page area of
+/// `width x height` (0,0-based, i.e. relative to the pages panel). `ratio` = width of the
+/// left half as a share of the room left after the gap.
+pub fn split_bounds(width: i32, height: i32, ratio: f64) -> (Bounds, Bounds) {
+    let room = (width - SPLIT_GAP).max(0);
+    let ratio = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let left_w = ((f64::from(room) * ratio).round() as i32).clamp(0, room);
+    let left = Bounds {
+        x: 0,
+        y: 0,
+        width: left_w,
+        height,
+    };
+    let right = Bounds {
+        x: left_w + SPLIT_GAP,
+        y: 0,
+        width: room - left_w,
+        height,
+    };
+    (left, right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_halves_fill_the_page_area() {
+        let (l, r) = split_bounds(1206, 700, 0.5);
+        assert_eq!((l.x, l.width, l.height), (0, 600, 700));
+        assert_eq!((r.x, r.width), (606, 600));
+        let (l, r) = split_bounds(1006, 700, 0.3);
+        assert_eq!(l.width, 300);
+        assert_eq!(r.x + r.width, 1006);
+        // Degenerate sizes never go negative.
+        let (l, r) = split_bounds(3, 10, 0.5);
+        assert_eq!((l.width, r.width), (0, 0));
+        let (l, _) = split_bounds(106, 10, f64::NAN);
+        assert_eq!(l.width, 50);
+    }
+
+    #[test]
+    fn parses_split_cover_and_pane_commands() {
+        assert_eq!(
+            parse_command("bmcp://cmd/split?ratio=0.42"),
+            Some(Command::SplitRatio {
+                ratio: 0.42,
+                done: false
+            })
+        );
+        assert_eq!(
+            parse_command("bmcp://cmd/split?ratio=0.6&done=1"),
+            Some(Command::SplitRatio {
+                ratio: 0.6,
+                done: true
+            })
+        );
+        assert_eq!(parse_command("bmcp://cmd/split"), None);
+        assert_eq!(
+            parse_command("bmcp://cmd/cover?on=1"),
+            Some(Command::Cover(true))
+        );
+        assert_eq!(
+            parse_command("bmcp://cmd/cover?on=0"),
+            Some(Command::Cover(false))
+        );
+        assert_eq!(
+            parse_command("bmcp://cmd/focus-pane?side=right"),
+            Some(Command::FocusPane(Pane::Right))
+        );
+        assert_eq!(parse_command("bmcp://cmd/focus-pane?side=up"), None);
+    }
+
+    #[test]
+    fn maps_library_zoom_settings_and_pane_shortcuts() {
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        let ctrl_alt = Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(shortcut(0x44, ctrl), Some(Shortcut::Ui("bookmark.toggle")));
+        assert_eq!(shortcut(0x48, ctrl), Some(Shortcut::Ui("library.history")));
+        assert_eq!(
+            shortcut(0x4A, ctrl),
+            Some(Shortcut::Ui("library.downloads"))
+        );
+        assert_eq!(
+            shortcut(0x4F, ctrl_shift),
+            Some(Shortcut::Ui("library.bookmarks"))
+        );
+        assert_eq!(
+            shortcut(0x42, ctrl_shift),
+            Some(Shortcut::Ui("ui.toggleBookmarksBar"))
+        );
+        assert_eq!(shortcut(0xBC, ctrl), Some(Shortcut::Ui("settings.open")));
+        assert_eq!(shortcut(0xBB, ctrl), Some(Shortcut::Ui("zoom.in")));
+        assert_eq!(shortcut(0xBB, ctrl_shift), Some(Shortcut::Ui("zoom.in")));
+        assert_eq!(shortcut(0x6B, ctrl), Some(Shortcut::Ui("zoom.in")));
+        assert_eq!(shortcut(0xBD, ctrl), Some(Shortcut::Ui("zoom.out")));
+        assert_eq!(shortcut(0x30, ctrl), Some(Shortcut::Ui("zoom.reset")));
+        assert_eq!(shortcut(0x60, ctrl), Some(Shortcut::Ui("zoom.reset")));
+        assert_eq!(
+            shortcut(0x25, ctrl_alt),
+            Some(Shortcut::FocusPane(Pane::Left))
+        );
+        assert_eq!(
+            shortcut(0x27, ctrl_alt),
+            Some(Shortcut::FocusPane(Pane::Right))
+        );
+        // Plain letters still belong to the page; Ctrl+O / Ctrl+B are not ours.
+        assert_eq!(shortcut(0x48, Modifiers::default()), None);
+        assert_eq!(shortcut(0x4F, ctrl), None);
+    }
 
     #[test]
     fn parses_commands() {
