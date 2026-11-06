@@ -151,15 +151,15 @@ pub enum Action {
     Block,
     /// Send the request to another URL instead (the page does not notice). Request stage only.
     Redirect { url: String },
-    /// Add or replace headers, e.g. {"x-debug": "1"}. Request headers at the request stage,
-    /// response headers at the response stage.
+    /// Add or replace request headers, e.g. {"x-debug": "1"}. Request stage only (the
+    /// browser keeps the server's response headers).
     SetHeaders(BTreeMap<String, String>),
-    /// Remove headers by name (case-insensitive), e.g. ["cookie"].
+    /// Remove request headers by name (case-insensitive), e.g. ["cookie"]. Request stage only.
     RemoveHeaders(Vec<String>),
     /// Replace every occurrence of `find` in the body (request body at the request stage,
     /// response body at the response stage).
     RewriteBody { find: String, replace: String },
-    /// Answer from here without touching the network.
+    /// Answer from here without touching the network. Request stage only.
     Mock {
         /// HTTP status (default 200).
         status: Option<u16>,
@@ -237,6 +237,24 @@ pub fn validate(action: &Action, stage: Stage) -> Result<(), CmdError> {
         Action::Redirect { .. } if stage == Stage::Response => Err(CmdError::invalid_params(
             "redirect only works at the request stage (the response already came from the \
              original URL)",
+        )),
+        // CEF gives the page the server's status and headers after a response-stage answer
+        // (see `intercept`'s module docs): these would silently do nothing.
+        Action::SetHeaders(_) | Action::RemoveHeaders(_) if stage == Stage::Response => {
+            Err(CmdError::invalid_params(
+                "set_headers/remove_headers cannot change response headers: at the response \
+                 stage the browser (CEF) gives the page the server's headers whatever the \
+                 answer says",
+            )
+            .with_hint(
+                "Change request headers with a request-stage rule, or answer with your own \
+                 headers through a mock rule (request stage).",
+            ))
+        }
+        Action::Mock { .. } if stage == Stage::Response => Err(CmdError::invalid_params(
+            "mock only works at the request stage: at the response stage the browser (CEF) \
+             keeps the server's status and headers; a request-stage mock answers without \
+             sending the request",
         )),
         Action::RewriteBody { find, .. } if find.is_empty() => Err(CmdError::invalid_params(
             "rewrite_body.find must not be empty",

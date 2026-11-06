@@ -16,6 +16,23 @@
 //! before the first matching breakpoint answers the request and it never pauses. Otherwise
 //! the first matching breakpoint pauses it, and the matching action rules (up to the first
 //! block/mock) are kept with the pause: releasing it without edits applies them.
+//!
+//! **Response stage under CEF: only the body can change.** CEF runs every request of a CEF
+//! profile through its own URL loader proxy, which sits between the page and DevTools' Fetch
+//! interceptor and receives the network's raw response headers through the trusted header
+//! client. When the response then arrives from DevTools, CEF puts those raw headers back
+//! (`InterceptedRequest::OnReceiveResponse`, "use the headers we got from OnHeadersReceived"),
+//! so the status line and headers of a `Fetch.fulfillRequest` or `Fetch.continueResponse` at
+//! the response stage never reach the page; the body of a fulfill does. Checked live (CEF 156,
+//! headless and windowed, in-process session and `--cdp-port`): a fulfill with 203 and an
+//! extra header gave the page 200, the server's headers and the new body; a `continueResponse`
+//! changed nothing. A response that *failed* has no raw headers, so a fulfill there arrives
+//! whole. CEF offers no hook after that point (`OnResourceResponse` runs before DevTools
+//! pauses the response, and a response filter sees only the body). So [`resume_problem`]
+//! refuses a new status or header change for a response that came from the server, and
+//! `net.rule_add` refuses response-stage header rules and mocks (see `rules::validate`), instead
+//! of reporting changes that do not happen. A request-stage fulfill (mocks, `net.resume` with
+//! `status` at the request stage) is not affected: no network headers exist then.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -49,12 +66,6 @@ pub enum Outcome {
         method: Option<String>,
         headers: Option<Headers>,
         post_data: Option<String>,
-    },
-    /// Response stage: keep the body, change status/headers.
-    ContinueResponse {
-        status: u16,
-        phrase: String,
-        headers: Headers,
     },
     /// Answer with this response (mock, rewritten body, edited response).
     Fulfill {
@@ -99,20 +110,6 @@ impl Outcome {
                     p["postData"] = json!(B64.encode(post.as_bytes()));
                 }
                 ("Fetch.continueRequest", p)
-            }
-            Outcome::ContinueResponse {
-                status,
-                phrase,
-                headers,
-            } => {
-                let mut p = json!({
-                    "responseCode": status,
-                    "responseHeaders": headers_to_cdp(headers),
-                });
-                if !phrase.is_empty() {
-                    p["responsePhrase"] = json!(phrase);
-                }
-                ("Fetch.continueResponse", p)
             }
             Outcome::Fulfill {
                 status,
@@ -289,12 +286,12 @@ pub async fn on_paused(env: &Env, req: &PausedRequest) -> Verdict {
 }
 
 /// Turn the matching rules' actions into one answer. Block and mock end the list; header
-/// and body changes add up.
+/// and body changes add up. Header changes are request headers: `rules::validate` refuses
+/// them at the response stage, where CEF would drop them (see the module docs).
 pub async fn plan(env: &Env, params: &Value, stage: Stage, actions: &[Action]) -> Outcome {
     let request = &params["request"];
     let mut url = None;
     let mut req_headers = headers_from(&request["headers"]);
-    let mut res_headers = headers_from_cdp(&params["responseHeaders"]);
     let mut headers_changed = false;
     let mut rewrites = Vec::new();
 
@@ -315,22 +312,14 @@ pub async fn plan(env: &Env, params: &Value, stage: Stage, actions: &[Action]) -
             }
             Action::Redirect { url: to } => url = Some(to.clone()),
             Action::SetHeaders(set) => {
-                let target = match stage {
-                    Stage::Request => &mut req_headers,
-                    Stage::Response => &mut res_headers,
-                };
                 for (name, value) in set {
-                    set_header(target, name, value);
+                    set_header(&mut req_headers, name, value);
                 }
                 headers_changed = true;
             }
             Action::RemoveHeaders(names) => {
-                let target = match stage {
-                    Stage::Request => &mut req_headers,
-                    Stage::Response => &mut res_headers,
-                };
                 for name in names {
-                    target.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+                    req_headers.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
                 }
                 headers_changed = true;
             }
@@ -364,24 +353,17 @@ pub async fn plan(env: &Env, params: &Value, stage: Stage, actions: &[Action]) -
             if !rewrites.is_empty() && !failed {
                 // Only text bodies are rewritten; binary ones go through unchanged.
                 if let Ok(Some(text)) = response_text(env, params).await {
-                    strip_length_headers(&mut res_headers);
+                    let mut headers = headers_from_cdp(&params["responseHeaders"]);
+                    strip_length_headers(&mut headers);
                     return Outcome::Fulfill {
                         status,
                         phrase,
-                        headers: res_headers,
+                        headers,
                         body: apply_rewrites(&text, &rewrites).into_bytes(),
                     };
                 }
             }
-            if headers_changed && !failed {
-                Outcome::ContinueResponse {
-                    status,
-                    phrase,
-                    headers: res_headers,
-                }
-            } else {
-                Outcome::Continue
-            }
+            Outcome::Continue
         }
     }
 }
@@ -454,15 +436,17 @@ pub struct Edits {
     pub url: Option<String>,
     /// Request stage: use this HTTP method.
     pub method: Option<String>,
-    /// Headers to set; a null value removes the header. Request headers at the request
-    /// stage, response headers at the response stage.
+    /// Headers to set; a null value removes the header. Request stage: request headers, or
+    /// the answer's headers together with status/response_body. Response stage: only for a
+    /// failed response (the browser keeps the server's headers otherwise).
     pub headers: Option<BTreeMap<String, Option<String>>>,
     /// Request stage: new request body.
     pub body: Option<String>,
-    /// Answer with this status (response stage: replaces the real one; request stage: the
-    /// request is not sent and this is returned instead, default 200).
+    /// Request stage: the request is not sent and this status is returned instead (default
+    /// 200). Response stage: only for a failed response, with response_body (the browser
+    /// keeps the server's status otherwise; use a request-stage breakpoint to change it).
     pub status: Option<u16>,
-    /// Answer with this body instead of the real one.
+    /// Answer with this body instead of the real one (works at both stages).
     pub response_body: Option<String>,
 }
 
@@ -481,22 +465,16 @@ impl Edits {
     }
 }
 
-/// Answer a paused request for `net.resume`. Returns what was done. The request is always
-/// answered, also when this fails (then with a plain continue).
+/// Answer a paused request for `net.resume` (after [`resume_problem`] found nothing wrong).
+/// Returns what was done. The request is always answered, also when the answer fails (the
+/// coordinator then sends a plain continue).
 pub async fn resume(
     env: &Env,
     paused: &Paused,
     edits: &Edits,
     drop: bool,
 ) -> Result<&'static str, CmdError> {
-    let outcome = match resume_outcome(env, paused, edits, drop).await {
-        Ok(outcome) => outcome,
-        Err(err) => {
-            // E.g. the original body could not be read: never leave the request hanging.
-            let _ = finish(env, &paused.request_id, &Outcome::Continue).await;
-            return Err(err);
-        }
-    };
+    let outcome = resume_outcome(env, paused, edits, drop).await;
     finish(env, &paused.request_id, &outcome).await?;
     Ok(match outcome {
         Outcome::Fail(_) => "dropped",
@@ -505,35 +483,72 @@ pub async fn resume(
     })
 }
 
-/// Why these edits cannot work on this response-stage pause, if they cannot: a new `status`
-/// without `response_body` keeps the original body, and failed responses and redirects have
-/// none.
-pub fn body_problem(paused: &Paused, edits: &Edits) -> Option<String> {
-    if paused.stage != Stage::Response || edits.status.is_none() || edits.response_body.is_some() {
+/// Why these edits cannot reach the page from this response-stage pause, if they cannot
+/// (checked before the pause is taken, so it stays paused for a corrected `net.resume`):
+/// * a response that came from the server keeps its status and headers under CEF (module
+///   docs), so a different `status` or a header change is refused; `response_body` works;
+/// * a failed response has no body to keep: a new status or headers need `response_body`.
+pub fn resume_problem(paused: &Paused, edits: &Edits) -> Option<CmdError> {
+    if paused.stage != Stage::Response {
         return None;
     }
     let params = &paused.params;
+    let original = headers_from_cdp(&params["responseHeaders"]);
+    let mut edited = original.clone();
+    let headers_changed = edits.apply_headers(&mut edited) && !same_headers(&original, &edited);
     if let Some(reason) = params["responseErrorReason"].as_str() {
-        return Some(format!(
-            "the response failed ({reason}), so it has no body to keep"
-        ));
+        if (edits.status.is_some() || headers_changed) && edits.response_body.is_none() {
+            return Some(CmdError::invalid_params(format!(
+                "the response failed ({reason}), so it has no body to keep: give \
+                 response_body together with status or headers"
+            )));
+        }
+        return None;
     }
-    match params["responseStatusCode"].as_u64() {
-        Some(code @ 300..=399) => Some(format!("a {code} redirect has no body to keep")),
-        _ => None,
+    let code = params["responseStatusCode"].as_u64().unwrap_or(200);
+    let new_status = edits.status.filter(|s| u64::from(*s) != code);
+    if new_status.is_none() && !headers_changed {
+        return None;
     }
+    let what = match (new_status, headers_changed) {
+        (Some(s), true) => format!("status {code} → {s} and the headers"),
+        (Some(s), false) => format!("status {code} → {s}"),
+        _ => "the headers".to_string(),
+    };
+    Some(
+        CmdError::invalid_params(format!(
+            "cannot change {what} at the response stage: the server already answered and the \
+             browser (CEF) gives the page the server's status and headers whatever the edit \
+             says; only response_body can be replaced here"
+        ))
+        .with_retry(Retry::No)
+        .with_hint(
+            "Resume with only response_body (or no edits), or drop it. To answer with your own \
+             status and headers, pause at the request stage instead (net_breakpoint with stage \
+             \"request\") and resume with status, headers and response_body: that answers \
+             without sending the request. A mock rule does the same without pausing.",
+        ),
+    )
+}
+
+/// Same headers, ignoring name case and order.
+fn same_headers(a: &Headers, b: &Headers) -> bool {
+    let norm = |h: &Headers| {
+        let mut v: Vec<(String, String)> = h
+            .iter()
+            .map(|(n, val)| (n.to_ascii_lowercase(), val.clone()))
+            .collect();
+        v.sort();
+        v
+    };
+    norm(a) == norm(b)
 }
 
 /// What `net.resume` sends. Without edits: what the pending rules would have done.
-async fn resume_outcome(
-    env: &Env,
-    paused: &Paused,
-    edits: &Edits,
-    drop: bool,
-) -> Result<Outcome, CmdError> {
+async fn resume_outcome(env: &Env, paused: &Paused, edits: &Edits, drop: bool) -> Outcome {
     let params = &paused.params;
     let request = &params["request"];
-    Ok(if drop {
+    if drop {
         Outcome::Fail("Aborted")
     } else {
         match paused.stage {
@@ -569,59 +584,33 @@ async fn resume_outcome(
                     }
                 }
             }
-            Stage::Response => {
-                let status = params["responseStatusCode"].as_u64().unwrap_or(200) as u16;
-                let phrase = params["responseStatusText"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                let mut headers = headers_from_cdp(&params["responseHeaders"]);
-                let headers_changed = edits.apply_headers(&mut headers);
-                if edits.status.is_some() || edits.response_body.is_some() {
-                    let body = match &edits.response_body {
-                        Some(body) => body.clone().into_bytes(),
-                        None => original_body(env, params).await?,
-                    };
+            // `resume_problem` already refused what would not reach the page: a new status or
+            // headers only remain for a failed response, and then come with response_body.
+            Stage::Response => match &edits.response_body {
+                Some(body) => {
+                    let original = params["responseStatusCode"].as_u64().map(|s| s as u16);
+                    let status = edits.status.or(original).unwrap_or(200);
+                    let mut headers = headers_from_cdp(&params["responseHeaders"]);
+                    edits.apply_headers(&mut headers);
                     strip_length_headers(&mut headers);
                     Outcome::Fulfill {
-                        status: edits.status.unwrap_or(status),
-                        // The old phrase belongs to the old status.
-                        phrase: if edits.status.is_some() {
-                            String::new()
+                        status,
+                        // The phrase belongs to the original status.
+                        phrase: if Some(status) == original {
+                            params["responseStatusText"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string()
                         } else {
-                            phrase
+                            String::new()
                         },
                         headers,
-                        body,
+                        body: body.clone().into_bytes(),
                     }
-                } else if headers_changed {
-                    Outcome::ContinueResponse {
-                        status,
-                        phrase,
-                        headers,
-                    }
-                } else {
-                    plan(env, params, paused.stage, &paused.actions).await
                 }
-            }
+                None => plan(env, params, paused.stage, &paused.actions).await,
+            },
         }
-    })
-}
-
-/// The real response body of a response-stage pause, as bytes.
-async fn original_body(env: &Env, params: &Value) -> Result<Vec<u8>, CmdError> {
-    let reply = env
-        .cdp(
-            "Fetch.getResponseBody",
-            json!({ "requestId": params["requestId"] }),
-        )
-        .await?;
-    let body = reply["body"].as_str().unwrap_or_default();
-    if reply["base64Encoded"].as_bool() == Some(true) {
-        B64.decode(body)
-            .map_err(|e| CmdError::internal(format!("bad base64 body from CDP: {e}")))
-    } else {
-        Ok(body.as_bytes().to_vec())
     }
 }
 

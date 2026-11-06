@@ -337,9 +337,10 @@ pub enum ResumeAction {
 pub struct ResumeArgs {
     /// Pause id from the net.paused event or net_paused_list.
     pub pause_id: String,
-    /// Changes before continuing: url, method, headers, body (request stage); status,
-    /// headers, response_body (response stage; at the request stage they answer without
-    /// sending).
+    /// Changes before continuing. Request stage: url, method, headers, body; or status,
+    /// headers, response_body to answer without sending. Response stage: response_body
+    /// (the browser keeps the server's status and headers, so changing them is refused,
+    /// except for a failed response).
     pub edits: Option<Edits>,
     /// continue (default) or drop.
     pub action: Option<ResumeAction>,
@@ -395,10 +396,8 @@ impl Command for Resume {
             ));
         }
         // Checked before taking the pause, so it stays paused for a corrected resume.
-        if !drop && let Some(problem) = current.and_then(|p| intercept::body_problem(&p, &edits)) {
-            return Err(CmdError::invalid_params(format!(
-                "{problem}: give response_body together with status"
-            )));
+        if !drop && let Some(err) = current.and_then(|p| intercept::resume_problem(&p, &edits)) {
+            return Err(err);
         }
         // Take it out of the map first: whoever removes it answers it (not the timer).
         let paused = tn
