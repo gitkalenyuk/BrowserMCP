@@ -23,6 +23,8 @@ bmcp-record = { path = "../record" }
 bmcp-jobs = { path = "../jobs" }
 # Dialog watcher (Page.enable + auto-handling on every tab); commands are in bmcp-registry.
 bmcp-pagetools = { path = "../pagetools" }
+bmcp-notify = { path = "../notify" }
+bmcp-hints = { path = "../hints" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

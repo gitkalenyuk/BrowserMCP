@@ -23,6 +23,7 @@ export const COMMAND_IDS = [
   'nav.stop',
   'omnibox.focus',
   'find.open',
+  'hints.show',
   'palette.open',
   'ui.toggleVerticalTabs',
   'ui.toggleTheme',
@@ -33,6 +34,13 @@ export const COMMAND_IDS = [
   'panel.scripts',
   'panel.runs',
   'panel.close',
+  'library.bookmarks',
+  'library.history',
+  'library.downloads',
+  'library.passwords',
+  'library.import',
+  'bookmark.toggle',
+  'ui.toggleBookmarksBar',
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];
@@ -59,6 +67,8 @@ export const DEFAULT_KEYMAP: Keymap = {
   'nav.stop': [],
   'omnibox.focus': ['Ctrl+L', 'Alt+D', 'F6'],
   'find.open': ['Ctrl+F'],
+  // In pages `f` / `F` show hints (crates/hints, configurable with hints.config).
+  'hints.show': [],
   'palette.open': ['Ctrl+K'],
   'ui.toggleVerticalTabs': ['Ctrl+Shift+E'],
   'ui.toggleTheme': [],
@@ -69,6 +79,13 @@ export const DEFAULT_KEYMAP: Keymap = {
   'panel.scripts': ['Ctrl+Shift+5'],
   'panel.runs': ['Ctrl+Shift+6'],
   'panel.close': [],
+  'library.bookmarks': ['Ctrl+Shift+O'],
+  'library.history': ['Ctrl+H'],
+  'library.downloads': ['Ctrl+J'],
+  'library.passwords': [],
+  'library.import': [],
+  'bookmark.toggle': ['Ctrl+D'],
+  'ui.toggleBookmarksBar': ['Ctrl+Shift+B'],
 };
 
 export interface Chord {
