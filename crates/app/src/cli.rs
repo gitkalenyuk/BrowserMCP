@@ -7,14 +7,19 @@
 use std::path::PathBuf;
 
 pub const DEFAULT_URL: &str = "https://example.com/";
+pub const DEFAULT_API_PORT: u16 = 47800;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cli {
     pub url: String,
     pub data_dir: Option<PathBuf>,
     pub profile: String,
-    pub alloy: bool,
+    pub chrome_style: bool,
     pub help: bool,
+    /// Port of the local API (MCP at /mcp). 0 = pick a free port.
+    pub api_port: u16,
+    /// Spike S2: print the page's accessibility tree, then quit.
+    pub dump_ax: bool,
 }
 
 impl Default for Cli {
@@ -23,8 +28,10 @@ impl Default for Cli {
             url: DEFAULT_URL.to_owned(),
             data_dir: None,
             profile: "default".to_owned(),
-            alloy: false,
+            chrome_style: false,
             help: false,
+            api_port: DEFAULT_API_PORT,
+            dump_ax: false,
         }
     }
 }
@@ -36,7 +43,9 @@ Options:
   --url <URL>          Page to open (default: https://example.com/)
   --data-dir <PATH>    Data folder (default: ./data next to the executable)
   --profile <ID>       Profile to use (default: default)
-  --alloy              Use CEF Alloy runtime style instead of Chrome style
+  --chrome-style       Use CEF Chrome runtime style (experimental; default is Alloy)
+  --api-port <PORT>    Local API port, MCP at http://127.0.0.1:<PORT>/mcp (default: 47800)
+  --dump-ax            Print the page's accessibility tree and exit
   -h, --help           Show this help
 
 Any other --switch is passed through to Chromium.";
@@ -75,7 +84,13 @@ impl Cli {
                         cli.profile = v;
                     }
                 }
-                "--alloy" => cli.alloy = true,
+                "--chrome-style" => cli.chrome_style = true,
+                "--dump-ax" => cli.dump_ax = true,
+                "--api-port" => {
+                    if let Some(port) = value(&mut args).and_then(|v| v.parse().ok()) {
+                        cli.api_port = port;
+                    }
+                }
                 "-h" | "--help" => cli.help = true,
                 // Bare positional argument = URL.
                 other if !other.starts_with('-') => cli.url = other.to_owned(),
@@ -111,9 +126,9 @@ mod tests {
 
     #[test]
     fn positional_url_and_flags() {
-        let cli = Cli::parse(["https://b.test", "--alloy"]);
+        let cli = Cli::parse(["https://b.test", "--chrome-style"]);
         assert_eq!(cli.url, "https://b.test");
-        assert!(cli.alloy);
+        assert!(cli.chrome_style);
     }
 
     #[test]
@@ -129,9 +144,20 @@ mod tests {
     }
 
     #[test]
+    fn api_port_and_dump_ax() {
+        let cli = Cli::parse(["--api-port=0", "--dump-ax"]);
+        assert_eq!(cli.api_port, 0);
+        assert!(cli.dump_ax);
+        assert_eq!(
+            Cli::parse(["--api-port", "nope"]).api_port,
+            DEFAULT_API_PORT
+        );
+    }
+
+    #[test]
     fn value_flag_without_value_keeps_default() {
-        let cli = Cli::parse(["--url", "--alloy"]);
+        let cli = Cli::parse(["--url", "--chrome-style"]);
         assert_eq!(cli.url, DEFAULT_URL);
-        assert!(cli.alloy);
+        assert!(cli.chrome_style);
     }
 }

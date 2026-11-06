@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 bmcp-core.workspace = true
+bmcp-cdp.workspace = true
 cef.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

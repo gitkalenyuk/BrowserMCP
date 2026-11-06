@@ -3,16 +3,22 @@
 //! command bridge replace this in later phases.
 
 use std::cell::RefCell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
+use bmcp_core::BrowserBackend;
 use cef::*;
 
 use crate::Style;
+use crate::bridge::{self, LoadState, ShellContext};
+
+/// Called once on the UI thread when CEF is ready and the first window exists.
+pub type ReadyCallback = Box<dyn FnOnce(Arc<dyn BrowserBackend>) + Send>;
 
 pub struct StartConfig {
     pub url: String,
     pub style: Style,
+    pub on_ready: Mutex<Option<ReadyCallback>>,
 }
 
 fn runtime_style(style: Style) -> RuntimeStyle {
@@ -24,7 +30,7 @@ fn runtime_style(style: Style) -> RuntimeStyle {
 
 /// Number of live browsers; when it drops to zero the message loop quits.
 #[derive(Default)]
-struct Browsers {
+pub(crate) struct Browsers {
     open: AtomicUsize,
 }
 
@@ -50,13 +56,21 @@ wrap_browser_process_handler! {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             let style = runtime_style(self.config.style);
             let browsers = Arc::new(Browsers::default());
+            bridge::with_ui(|ui| {
+                ui.shell = Some(ShellContext { style, browsers: browsers.clone() });
+            });
             open_window(&self.config.url, style, browsers);
+
+            let ready = self.config.on_ready.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(ready) = ready {
+                ready(Arc::new(crate::backend::CefBackend));
+            }
         }
     }
 }
 
 /// Create a BrowserView for `url` and put it in a new top-level window.
-fn open_window(url: &str, style: RuntimeStyle, browsers: Arc<Browsers>) {
+pub(crate) fn open_window(url: &str, style: RuntimeStyle, browsers: Arc<Browsers>) {
     let mut client = ShellClient::new(browsers.clone());
     let mut view_delegate = ShellBrowserViewDelegate::new(style, browsers);
     let browser_view = browser_view_create(
@@ -157,6 +171,10 @@ wrap_client! {
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(ShellLifeSpanHandler::new(self.browsers.clone()))
         }
+
+        fn load_handler(&self) -> Option<LoadHandler> {
+            Some(ShellLoadHandler::new())
+        }
     }
 }
 
@@ -164,7 +182,24 @@ wrap_display_handler! {
     struct ShellDisplayHandler;
 
     impl DisplayHandler {
+        fn on_address_change(
+            &self,
+            browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            url: Option<&CefString>,
+        ) {
+            let (Some(browser), Some(frame)) = (browser, frame) else { return };
+            if frame.is_main() == 1 {
+                let url = url.map(CefString::to_string).unwrap_or_default();
+                bridge::update_tab(browser, |tab| tab.url = url);
+            }
+        }
+
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
+            if let Some(browser) = browser.as_deref() {
+                let title = title.map(CefString::to_string).unwrap_or_default();
+                bridge::update_tab(browser, |tab| tab.title = title);
+            }
             let mut browser = browser.cloned();
             let Some(window) =
                 browser_view_get_for_browser(browser.as_mut()).and_then(|view| view.window())
@@ -188,17 +223,48 @@ wrap_life_span_handler! {
     }
 
     impl LifeSpanHandler {
-        fn on_after_created(&self, _browser: Option<&mut Browser>) {
+        fn on_after_created(&self, browser: Option<&mut Browser>) {
+            if let Some(browser) = browser {
+                bridge::register_tab(browser);
+            }
             let open = self.browsers.open.fetch_add(1, Ordering::SeqCst) + 1;
             tracing::debug!(open, "browser created");
         }
 
-        fn on_before_close(&self, _browser: Option<&mut Browser>) {
+        fn on_before_close(&self, browser: Option<&mut Browser>) {
+            if let Some(browser) = browser {
+                bridge::unregister_tab(browser);
+            }
             let open = self.browsers.open.fetch_sub(1, Ordering::SeqCst) - 1;
             tracing::debug!(open, "browser closed");
             if open == 0 {
                 quit_message_loop();
             }
+        }
+    }
+}
+
+wrap_load_handler! {
+    struct ShellLoadHandler;
+
+    impl LoadHandler {
+        fn on_loading_state_change(
+            &self,
+            browser: Option<&mut Browser>,
+            is_loading: ::std::os::raw::c_int,
+            _can_go_back: ::std::os::raw::c_int,
+            _can_go_forward: ::std::os::raw::c_int,
+        ) {
+            let Some(browser) = browser else { return };
+            let loading = is_loading == 1;
+            bridge::update_tab(browser, |tab| {
+                tab.load.send_modify(|s: &mut LoadState| {
+                    if s.loading && !loading {
+                        s.seq += 1;
+                    }
+                    s.loading = loading;
+                });
+            });
         }
     }
 }

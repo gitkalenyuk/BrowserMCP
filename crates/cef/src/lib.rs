@@ -6,27 +6,37 @@
 //! 2. Otherwise it is the browser process: initialize CEF, open the shell window and run
 //!    the message loop on the main thread (the CEF UI thread) until every window closed.
 
+mod backend;
+mod bridge;
 mod shell;
+
+pub use backend::CefBackend;
+pub use shell::ReadyCallback;
 
 use bmcp_core::{DataDir, ProfileId};
 use cef::{CefString, Settings, api_hash, args::Args, execute_process, sys};
 
-/// Which CEF runtime style windows use. Decided for good in spike S1;
-/// Chrome style gives Chrome's own permission/download/print UI, Alloy gives full control.
+/// Which CEF runtime style windows use.
+///
+/// Alloy is the default (spike S1/S2 decision, see docs/spikes/S1-S2-S3.md): it gives us
+/// full control over our own UI, and closing the last window exits cleanly. In Chrome
+/// style `quit_message_loop()` did not end the loop with CEF 156, so the process hung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Style {
-    #[default]
     Chrome,
+    #[default]
     Alloy,
 }
 
 /// Options for the browser process.
-#[derive(Debug, Clone)]
 pub struct LaunchOptions {
     pub start_url: String,
     pub data: DataDir,
     pub profile: ProfileId,
     pub style: Style,
+    /// Runs on the UI thread once the first window exists. Hand the backend to async
+    /// code (API servers, scripts) from here; do not block.
+    pub on_ready: Option<ReadyCallback>,
 }
 
 /// What [`start`] found out about the current process.
@@ -83,6 +93,7 @@ impl Browser {
         let mut app = shell::ShellApp::new(std::sync::Arc::new(shell::StartConfig {
             url: opts.start_url,
             style: opts.style,
+            on_ready: std::sync::Mutex::new(opts.on_ready),
         }));
 
         let ok = cef::initialize(
@@ -97,6 +108,8 @@ impl Browser {
 
         tracing::info!(data = %opts.data.root().display(), "CEF initialized");
         cef::run_message_loop();
+        tracing::debug!("message loop exited, shutting CEF down");
+        bridge::clear_ui_state();
         cef::shutdown();
         tracing::info!("CEF shut down");
         Ok(())

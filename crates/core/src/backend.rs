@@ -1,0 +1,72 @@
+//! The boundary between "what the browser can do" and "how CEF does it".
+//!
+//! API servers, scripts and agents only ever see `Arc<dyn BrowserBackend>`; the CEF crate
+//! implements it. That keeps every API surface testable with a fake backend.
+
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Stable id of a tab for the lifetime of the process (CEF browser identifier).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TabId(pub i32);
+
+impl fmt::Display for TabId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabInfo {
+    pub id: TabId,
+    pub title: String,
+    pub url: String,
+    pub loading: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum BackendError {
+    #[error("tab {0} not found")]
+    TabNotFound(TabId),
+    #[error("no tab is open")]
+    NoTabs,
+    #[error("timed out after {0:?}")]
+    Timeout(Duration),
+    #[error("browser is shutting down")]
+    ShuttingDown,
+    #[error("CDP: {0}")]
+    Cdp(String),
+}
+
+pub type BackendResult<T> = Result<T, BackendError>;
+
+pub trait BrowserBackend: Send + Sync + 'static {
+    /// All open tabs, oldest first.
+    fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>>;
+
+    /// Open a new tab and return its id once the browser exists.
+    fn open_tab(&self, url: String) -> BoxFuture<'_, BackendResult<TabId>>;
+
+    /// Navigate and wait until the page finished loading (or `timeout`).
+    fn navigate(
+        &self,
+        tab: TabId,
+        url: String,
+        timeout: Duration,
+    ) -> BoxFuture<'_, BackendResult<TabInfo>>;
+
+    /// Raw Chrome DevTools Protocol call on the tab's page target.
+    fn cdp(&self, tab: TabId, method: String, params: Value)
+    -> BoxFuture<'_, BackendResult<Value>>;
+
+    /// Close every window and leave the message loop.
+    fn quit(&self) -> BoxFuture<'_, BackendResult<()>>;
+}
