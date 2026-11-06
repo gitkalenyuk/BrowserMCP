@@ -1,12 +1,20 @@
 <script lang="ts">
   import { ACCENTS, settings, type ThemePref } from '../settings.svelte';
   import { useChrome } from '../state/chrome.svelte';
+  import type { CommandId } from '../keymap';
   import Icon from './Icon.svelte';
 
   const chrome = useChrome();
   let open = $state(false);
   let root: HTMLDivElement;
 
+  const LIBRARY: { id: CommandId; label: string }[] = [
+    { id: 'library.bookmarks', label: 'Bookmarks' },
+    { id: 'library.history', label: 'History' },
+    { id: 'library.downloads', label: 'Downloads' },
+    { id: 'library.passwords', label: 'Passwords' },
+    { id: 'library.import', label: 'Import from Chrome…' },
+  ];
   const THEMES: { id: ThemePref; label: string }[] = [
     { id: 'system', label: 'System' },
     { id: 'light', label: 'Light' },
@@ -85,6 +93,21 @@
           </button>
           <button role="radio" aria-checked={settings.value.verticalTabs} onclick={() => settings.update({ verticalTabs: true })}>
             Vertical
+          </button>
+        </div>
+      </section>
+      <section>
+        <h3>Library</h3>
+        <div class="menu">
+          {#each LIBRARY as item (item.id)}
+            <button onclick={() => ((open = false), chrome.run(item.id))}>
+              <span>{item.label}</span>
+              {#if chrome.keymap[item.id][0]}<kbd>{chrome.keymap[item.id][0]}</kbd>{/if}
+            </button>
+          {/each}
+          <button role="menuitemcheckbox" aria-checked={settings.value.bookmarksBar} onclick={() => chrome.run('ui.toggleBookmarksBar')}>
+            <span>{settings.value.bookmarksBar ? 'Hide' : 'Show'} bookmarks bar</span>
+            <kbd>{chrome.keymap['ui.toggleBookmarksBar'][0]}</kbd>
           </button>
         </div>
       </section>
@@ -177,6 +200,27 @@
     width: 100%;
     height: 100%;
     cursor: pointer;
+  }
+  .menu {
+    display: flex;
+    flex-direction: column;
+    margin: 0 -6px;
+  }
+  .menu button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 28px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--fg);
+    font-size: var(--fs-sm);
+    text-align: left;
+  }
+  .menu button:hover {
+    background: var(--hover);
   }
   footer {
     display: flex;
