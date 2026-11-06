@@ -1,6 +1,7 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
 import { createDataMocks } from './mock-data';
 import { createPanelMocks } from './mock-panels';
+import { createRecordRunsMocks } from './mock-record-runs';
 import type {
   Agent,
   ApiEvents,
@@ -232,6 +233,7 @@ export class MockApi implements BrowserApi {
       this.#require(tab);
       this.#update(tab, { loading: false });
     },
+    'hints.show': () => ({ count: 0 }), // the mock has no page to label
     'agents.list': () => this.#agents,
     'workspaces.list': () => ({ workspaces: this.#workspaces, activeId: this.#activeWorkspace }),
     'workspaces.activate': ({ id }) => {
@@ -269,8 +271,13 @@ export class MockApi implements BrowserApi {
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,
     ),
+    ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
+    },
+    'ui.answer': ({ id, choice }) => {
+      this.#emit('ui.notification_closed', { id, choice, label: choice, via: 'ui' });
+      return { id, label: choice };
     },
   };
 
