@@ -32,8 +32,8 @@ pub struct RunOptions {
     pub stop_on_error: bool,
     /// Pause and ask for a patch when a row breaks on a page.* selector error.
     pub heal: bool,
-    /// Browser profile the rows run in. Today always the default profile (shared by all
-    /// rows); isolated per-row profiles come later.
+    /// Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+    /// profile + off-screen tabs per row attempt), or a profile id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
 }

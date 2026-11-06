@@ -13,7 +13,7 @@
 //! | `out <text>` / `err <text>` | print a line to stdout / stderr |
 //! | `result <json>` | print `##bmcp:result <json>` |
 //! | `time <name>` | `result {"<name>": <ms since epoch>}` |
-//! | `args` | `result {"ws": …, "inputs": {…}, "timeout_secs": …}` |
+//! | `args` | `result {"ws": …, "inputs": {…}, "timeout_secs": …, "tab_defaults": BMCP_TAB_DEFAULTS}` |
 //! | `sleep <ms>` | sleep; past `--timeout-secs` it exits 124 like the real host |
 //! | `fail <CODE> <command> <message>` | uncaught failed browser call, exit 1 |
 //! | `throw <message>` | uncaught plain error, exit 1 |
@@ -133,11 +133,15 @@ impl Host {
                     .iter()
                     .map(|(k, v)| format!("{k:?}: {v:?}"))
                     .collect();
+                // BMCP_TAB_DEFAULTS is JSON already (or absent → null).
+                let tab_defaults =
+                    std::env::var("BMCP_TAB_DEFAULTS").unwrap_or_else(|_| "null".into());
                 println!(
-                    "##bmcp:result {{\"ws\": {:?}, \"inputs\": {{{}}}, \"timeout_secs\": {}}}",
+                    "##bmcp:result {{\"ws\": {:?}, \"inputs\": {{{}}}, \"timeout_secs\": {}, \"tab_defaults\": {}}}",
                     self.ws,
                     inputs.join(", "),
-                    self.timeout.unwrap_or(0.0)
+                    self.timeout.unwrap_or(0.0),
+                    tab_defaults
                 );
                 None
             }

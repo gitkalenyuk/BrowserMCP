@@ -15,9 +15,11 @@
 //! processes. Everything is in the database, so after a browser restart a run shows up as
 //! `paused` and `run.resume` continues it (see `Store::recover_interrupted`).
 //!
-//! TODO(profiles): all rows share the browser's default profile today. Isolated per-row
-//! profiles (`profile: "isolated"` → a fresh incognito/temporary profile per row) come with
-//! the profile commands; `RunOptions::profile` is already stored for it.
+//! Profiles ([`tab_defaults`]): every row's script host gets `BMCP_TAB_DEFAULTS`, which the
+//! host merges into the script's `tabs.open` calls. `profile: "isolated"` gives each row
+//! attempt a fresh in-memory profile and off-screen (windowless) tabs, so parallel rows never
+//! share cookies, keyboard focus or visibility (a background tab of a window is hidden and
+//! ignores input). The run id is always passed, so downloads land in `data/runs/<run>/`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -73,6 +75,27 @@ pub struct StartRequest {
     pub profile: Option<String>,
 }
 
+/// `run.start {profile}` value for per-row isolation.
+pub const ISOLATED: &str = "isolated";
+
+/// Environment variable the script host reads: JSON merged into `tabs.open` arguments.
+pub const TAB_DEFAULTS_ENV: &str = "BMCP_TAB_DEFAULTS";
+
+/// The `tabs.open` defaults of one row attempt (see the module docs).
+pub fn tab_defaults(run: &str, row: u64, attempt: u32, profile: Option<&str>) -> Value {
+    match profile {
+        Some(ISOLATED) => json!({
+            // In-memory profile names: a-z 0-9 - _, at most 64 chars.
+            "profile": format!("{}-r{row}-a{attempt}", run.to_ascii_lowercase()),
+            "incognito": true,
+            "window": "offscreen",
+            "run": run,
+        }),
+        Some(p) if p != bmcp_core::ProfileId::DEFAULT => json!({ "profile": p, "run": run }),
+        _ => json!({ "run": run }),
+    }
+}
+
 /// How a worker finished its row.
 struct RowEnd {
     idx: u64,
@@ -88,6 +111,7 @@ impl Inner {
         &self,
         source: ScriptSource<'_>,
         inputs: &[(String, String)],
+        env: &[(String, String)],
         timeout: Duration,
         cancel: &CancellationToken,
     ) -> Result<HostOutcome, CmdError> {
@@ -103,6 +127,7 @@ impl Inner {
                 ws_url: &ws_url,
                 script: &path,
                 inputs,
+                env,
                 timeout,
             },
             cancel,
@@ -132,15 +157,14 @@ impl Inner {
     pub fn start_run(self: &Arc<Self>, req: StartRequest) -> Result<RunRecord, CmdError> {
         self.scripts.require(&req.script)?;
         if let Some(profile) = &req.profile
-            && profile != bmcp_core::ProfileId::DEFAULT
+            && profile != ISOLATED
+            && bmcp_core::ProfileId::new(profile.as_str()).is_err()
         {
             return Err(CmdError::new(
-                ErrorCode::NotImplemented,
-                format!("profile {profile:?}: runs use the default profile for now"),
+                ErrorCode::InvalidParams,
+                format!("profile {profile:?} is not a valid profile id"),
             )
-            .with_hint(
-                "Omit `profile` (or pass \"default\"); per-row isolated profiles come later.",
-            ));
+            .with_hint("Use \"default\", \"isolated\" (fresh profile per row) or a profile id."));
         }
         let requested = req.parallel.unwrap_or(4).max(1);
         let options = RunOptions {
@@ -453,10 +477,13 @@ async fn work_row(
         }
         attempts += 1;
         let _ = inner.store.set_attempts(id, row.idx, attempts);
+        let defaults = tab_defaults(id, row.idx, attempts, run.options.profile.as_deref());
+        let env = [(TAB_DEFAULTS_ENV.to_string(), defaults.to_string())];
         let outcome = inner
             .run_script(
                 ScriptSource::Name(&run.script),
                 &row.inputs,
+                &env,
                 timeout,
                 &cancel,
             )

@@ -170,6 +170,8 @@ pub struct HostRun<'a> {
     pub ws_url: &'a str,
     pub script: &'a Path,
     pub inputs: &'a [(String, String)],
+    /// Extra environment variables (e.g. `BMCP_TAB_DEFAULTS`, see `runner::tab_defaults`).
+    pub env: &'a [(String, String)],
     pub timeout: Duration,
 }
 
@@ -186,6 +188,9 @@ pub async fn run_host(run: HostRun<'_>, cancel: &CancellationToken) -> HostOutco
         .arg(run.timeout.as_secs_f64().max(0.001).to_string());
     for (key, value) in run.inputs {
         cmd.arg("--input").arg(format!("{key}={value}"));
+    }
+    for (key, value) in run.env {
+        cmd.env(key, value);
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

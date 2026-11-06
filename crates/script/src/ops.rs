@@ -36,9 +36,43 @@ async fn op_bmcp_call(
     // Clone the Rc and release the RefCell borrow BEFORE awaiting:
     // holding a borrow across `.await` would panic if another op ran meanwhile.
     let sink = state.borrow().borrow::<SinkHandle>().0.clone();
+    let args = with_tab_defaults(&name, args, tab_defaults());
     sink.call(name.clone(), args)
         .await
         .map_err(|e| JsErrorBox::generic(format!("browser.{name} failed: {e}")))
+}
+
+/// `BMCP_TAB_DEFAULTS` (set by mass runs, e.g. `{"profile": "run-1-r3-a1", "incognito":
+/// true, "window": "offscreen", "run": "run-1"}`), read once.
+fn tab_defaults() -> &'static serde_json::Value {
+    static DEFAULTS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        std::env::var("BMCP_TAB_DEFAULTS")
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null)
+    })
+}
+
+/// For `tabs.open`: add every default the script did not set itself (so each row of a
+/// mass run opens its tabs in its own profile/window without changing the script).
+pub fn with_tab_defaults(
+    name: &str,
+    mut args: serde_json::Value,
+    defaults: &serde_json::Value,
+) -> serde_json::Value {
+    let (Some(defaults), true) = (defaults.as_object(), name == "tabs.open") else {
+        return args;
+    };
+    if args.is_null() {
+        args = serde_json::json!({});
+    }
+    if let Some(object) = args.as_object_mut() {
+        for (key, value) in defaults {
+            object.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    args
 }
 
 /// Returns the inputs object; the prelude freezes it into `globalThis.inputs`.
@@ -82,3 +116,32 @@ deno_core::extension!(
         state.put(options.inputs);
     },
 );
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::with_tab_defaults;
+
+    #[test]
+    fn tab_defaults_fill_only_missing_tabs_open_args() {
+        let defaults = json!({"profile": "p1", "window": "offscreen", "run": "r"});
+        assert_eq!(
+            with_tab_defaults("tabs.open", json!({"url": "u", "window": "new"}), &defaults),
+            json!({"url": "u", "window": "new", "profile": "p1", "run": "r"})
+        );
+        assert_eq!(
+            with_tab_defaults("tabs.open", serde_json::Value::Null, &defaults),
+            defaults
+        );
+        // Other commands and missing defaults: untouched.
+        assert_eq!(
+            with_tab_defaults("nav.goto", json!({"url": "u"}), &defaults),
+            json!({"url": "u"})
+        );
+        assert_eq!(
+            with_tab_defaults("tabs.open", json!({"url": "u"}), &serde_json::Value::Null),
+            json!({"url": "u"})
+        );
+    }
+}
