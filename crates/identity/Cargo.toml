@@ -1,0 +1,21 @@
+[package]
+name = "bmcp-identity"
+description = "BrowserMCP hidden mode: fingerprint identities (CDP Emulation), stealth checks, device emulation, proxy pools and a local proxy forwarder (no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# `io-util` for the proxy forwarder (read/write halves, copy_bidirectional).
+tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "test-util"] }
