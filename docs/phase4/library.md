@@ -65,18 +65,37 @@ behaviour: `ui/README.md` ("Library").
 | ![done](img/mock-import-done.jpg) | ![reveal](img/mock-password-reveal.jpg) |
 | mock: per-part import results | mock: reveal dialog |
 
+## Core polish (same day, later)
+
+The first three core gaps listed originally are closed:
+
+* `bookmarks.update {id, title?, url?}` edits a bookmark or renames a folder **in place** (id
+  and position stay); `ui/src/lib/data/edit.ts` uses it instead of add + move + remove.
+  `bookmarks.add` and `bookmarks.update` accept only `http(s)://` and `file://` URLs
+  (`javascript:` / `data:` are refused when written; Chrome bookmarklets are skipped on import).
+* `history.delete {url?, since?, before?, day?}` deletes **visits** (in `[since, before)`, on the
+  local day `YYYY-MM-DD`, and/or of one URL) and drops URLs left without visits. "Last hour …
+  4 weeks" send `{since}`, "Remove day" sends `{day}`, so older visits of the same pages stay.
+* Data events: the data commands emit `bookmarks.changed {op, id}` and `history.changed {op}`
+  (also after `import.chrome`); both are in the WS server's default topics and the UI's
+  `EXTRA_TOPICS`. The bar, the star and the library re-read on them (debounced); the
+  localStorage tick and the window-focus refresh are gone.
+* `system.reveal_path {path}` / `system.open_path {path}` (new crate `crates/system`): Explorer
+  with the file selected / a folder opened, for paths inside the data folder or Downloads only
+  (canonicalized first, so `..` and junctions cannot leave them; `open_path` refuses files,
+  which Explorer would run). Downloads "Show in folder" and the recording's "Open folder"
+  (`RecordingDetail.svelte`) use `reveal_path`.
+
+Checked live (`browsermcp --api-port 47880 --data-dir target/live-data`, REST): `bookmarks.update`
+kept id 3 / position 0 and changed title and URL; `javascript:` / `data:` URLs were refused; a
+plain WS connection (default topics only) received `bookmarks.changed {op:"update", id:3}` and
+`history.changed {op:"delete"}`; `history.delete {day}` removed that day's visit;
+`system.reveal_path` opened Explorer on `live-data\videos` with `reveal check.txt` selected
+(checked through the Shell COM API, window closed again); `..` out of the data folder,
+`C:\Windows\System32\cmd.exe`, a UNC path and `open_path` on a file were refused.
+
 ## Gaps
 
-* The core has no `bookmarks.update` / rename: editing a bookmark or renaming a folder is
-  add + move + remove (`ui/src/lib/data/edit.ts`), so the node gets a new id; renaming a folder
-  moves its children one call at a time.
-* `history.delete` can only forget everything *before* a time or one URL. "Last hour / 24 h /
-  7 days / 4 weeks" therefore remove each page visited in the range **with all its visits**
-  (older ones too); "Remove day" does the same for that day's pages. A `history.delete {since}`
-  (visits after a time) would make it exact.
-* No data events: the bar and the star re-read after their own edits, on a localStorage tick
-  from the library page, on reconnect and on window focus. Bookmarks added by an agent over REST
-  show up on the next of those.
 * Shortcuts pressed while a web page has focus go through the native mirror of the keymap
   (`crates/cef/src/chrome/protocol.rs`, owned elsewhere): Ctrl+D, Ctrl+H, Ctrl+J, Ctrl+Shift+O,
   Ctrl+Shift+B are not in it yet, so they only work while the chrome (or the palette) has focus.
@@ -87,7 +106,10 @@ behaviour: `ui/README.md` ("Library").
   real browser (known chrome gap); the toolbar button and the palette work there.
 * Bookmarks-bar folders open the library at that folder instead of a dropdown (same reason).
   No drag and drop on the bar itself.
-* Downloads: `downloads.list` is filled by a later CEF hook, so the live list is empty; "Show in
-  folder" only shows the path.
+* Downloads: `downloads.list` is filled by a later CEF hook, so the live list is empty. The
+  allowed Downloads folder is `%USERPROFILE%\Downloads`; a Downloads folder moved elsewhere
+  (Windows known-folder redirect) is not followed, so files there cannot be revealed.
+* Visits recorded automatically (the history recorder) emit no `history.changed`; an open
+  History section shows new visits after its own actions, a search or a reconnect.
 * With `--ui-dev` the chrome comes from Vite (another origin) and does not share localStorage
   with `bmcp://ui/library.html`, so the section request does not reach the page there.

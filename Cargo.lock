@@ -524,6 +524,7 @@ name = "bmcp-data"
 version = "0.1.0"
 dependencies = [
  "bmcp-core",
+ "chrono",
  "csv",
  "rusqlite",
  "schemars",
@@ -753,6 +754,7 @@ dependencies = [
  "bmcp-plugins",
  "bmcp-profiles",
  "bmcp-record",
+ "bmcp-system",
 ]
 
 [[package]]
@@ -774,6 +776,19 @@ dependencies = [
  "deno_error",
  "tokio",
  "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "bmcp-system"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

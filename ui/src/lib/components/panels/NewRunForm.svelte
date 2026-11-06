@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { HealMode } from '../../api/types-settings';
   import { dataFromPath, parseRows, upsertRun, type RunData } from '../../runs/logic';
   import { runsStore } from '../../runs/store.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -15,7 +16,7 @@
   let parallel = $state(4);
   let retries = $state(1);
   let timeout = $state(300);
-  let heal = $state(true);
+  let heal = $state<HealMode>('ask');
   let stopOnError = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -116,7 +117,14 @@
     <label class="rr-field">Timeout, s <input type="number" min="1" max="86400" bind:value={timeout} /></label>
   </div>
   <div class="rr-row">
-    <label class="rr-check" title="Pause and ask for a patch when a row breaks on a selector error"><input type="checkbox" bind:checked={heal} /> Ask for a patch on selector errors</label>
+    <label class="rr-field heal-mode" title="What happens when a row breaks on a selector error (element not found, not clickable, …)">
+      On selector errors
+      <select bind:value={heal}>
+        <option value="ask">Pause, AI proposes a patch, I accept it</option>
+        <option value="auto">AI patches by itself when confident</option>
+        <option value="off">Just fail the row</option>
+      </select>
+    </label>
     <label class="rr-check"><input type="checkbox" bind:checked={stopOnError} /> Stop at the first failure</label>
   </div>
   {#if error}<p class="rr-hint bad" role="alert">{error}</p>{/if}

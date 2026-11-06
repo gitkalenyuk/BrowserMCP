@@ -1,10 +1,12 @@
 import { getContext, setContext } from 'svelte';
 import type { BrowserApi } from '../api/client';
 import type { Agent, ConnectionStatus, TabId, Workspace, WorkspaceId } from '../api/types';
-import { buildKeyIndex, commandForEvent, DEFAULT_KEYMAP, type CommandId, type Keymap, type KeyLike } from '../keymap';
+import { buildKeyIndex, commandForEvent, type CommandId, type Keymap, type KeyLike } from '../keymap';
 import { AiStore } from '../ai/store.svelte';
 import { chromeBookmarks } from '../data/chrome-bookmarks.svelte';
 import { openLibrary } from '../data/library';
+import { openSettings } from '../settings/open';
+import { effectiveKeymap, onOverrides } from '../settings/keys';
 import type { NativeHost } from '../native';
 import { NetStore } from '../net/store.svelte';
 import { TerminalStore } from '../term/store.svelte';
@@ -52,7 +54,8 @@ export class ChromeController {
   /** Incremented to open the Ctrl+F find bar (FindBar.svelte). */
   findTick = $state(0);
   lastError = $state<string | null>(null);
-  keymap = $state<Keymap>(DEFAULT_KEYMAP);
+  /** Defaults + the overrides saved on the settings page (Keyboard). */
+  keymap = $state<Keymap>(effectiveKeymap());
   #keyIndex = $derived(buildKeyIndex(this.keymap));
   #closed: string[] = [];
   #unsubs: Array<() => void> = [];
@@ -83,6 +86,7 @@ export class ChromeController {
       api.on('tabs.reset', (snapshot) => dispatch({ type: 'reset', snapshot })),
       api.on('agents.updated', ({ agents }) => this.#setAgents(agents)),
       api.on('workspace.activated', ({ id }) => (this.workspaceId = id)),
+      onOverrides(() => (this.keymap = effectiveKeymap())),
     );
     if (this.role === 'chrome') {
       this.ai.start();
@@ -282,6 +286,7 @@ export class ChromeController {
       case 'library.import': return openLibrary(this, 'import');
       case 'bookmark.toggle': return void chromeBookmarks(this.api).toggle(this.active?.url, this.active?.title);
       case 'ui.toggleBookmarksBar': return settings.update({ bookmarksBar: !settings.value.bookmarksBar });
+      case 'settings.open': return openSettings(this);
     }
   }
 

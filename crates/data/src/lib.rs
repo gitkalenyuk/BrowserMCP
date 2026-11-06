@@ -5,6 +5,11 @@
 //! * [`history`] — `history.search|delete`, `data.top_sites` (frecency); visits are recorded
 //!   automatically by [`recorder`] from `tab.updated` / `nav.goto` events;
 //! * [`downloads`] — `downloads.list` (filled from the CEF download events by [`downloads::spawn_download_recorder`]);
+//! * [`bookmarks`] — `data.bookmarks`, `bookmarks.add|add_folder|update|remove|move|search`;
+//! * [`history`] — `history.search|delete` (delete = visits in a window / of a day / of a URL),
+//!   `data.top_sites` (frecency); visits are recorded automatically by [`recorder`] from
+//!   `tab.updated` / `nav.goto` events;
+//! * [`downloads`] — `downloads.list` (filled by a later CEF hook);
 //! * [`passwords`] — `passwords.list|get|save|delete`. **Stored unencrypted** by the user's
 //!   choice (see the module docs);
 //! * [`import`] — `import.chrome`, `import.chrome_detect`.
@@ -22,10 +27,12 @@
 //! # Ok(()) }
 //! ```
 //!
-//! All commands are in [`bmcp_core::Toolset::Data`]. Times are Unix milliseconds.
+//! All commands are in [`bmcp_core::Toolset::Data`]. Times are Unix milliseconds. Edits emit
+//! `bookmarks.changed {op, id}` / `history.changed {op}` on the event bus ([`events`]).
 
 pub mod bookmarks;
 pub mod downloads;
+pub mod events;
 pub mod history;
 pub mod import;
 pub mod passwords;
@@ -47,6 +54,7 @@ pub fn register(registry: &mut Registry) {
         .add::<bookmarks::List>()
         .add::<bookmarks::Add>()
         .add::<bookmarks::AddFolder>()
+        .add::<bookmarks::Update>()
         .add::<bookmarks::Remove>()
         .add::<bookmarks::Move>()
         .add::<bookmarks::Search>()

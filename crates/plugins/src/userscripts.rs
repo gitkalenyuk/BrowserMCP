@@ -245,6 +245,18 @@ impl Inner {
             .ok_or_else(|| CmdError::internal("saved userscript not listed"))
     }
 
+    /// The source of a user script in `data/userscripts` (for the settings page's editor).
+    pub fn userscript_code(&self, name: &str) -> Result<String, CmdError> {
+        let path = self.userscript_path(name)?;
+        if !path.is_file() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("userscript {name} not found"),
+            ));
+        }
+        std::fs::read_to_string(&path).map_err(|e| io_err(&path, e))
+    }
+
     pub fn delete_userscript(&self, name: &str) -> Result<bool, CmdError> {
         let path = self.userscript_path(name)?;
         if !path.exists() {

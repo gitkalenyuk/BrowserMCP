@@ -39,6 +39,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: 'library.import', title: 'Import bookmarks, history and passwords from Chrome' },
   { id: 'bookmark.toggle', title: 'Bookmark this page / remove bookmark' },
   { id: 'ui.toggleBookmarksBar', title: 'Show / hide bookmarks bar' },
+  { id: 'settings.open', title: 'Settings' },
   { id: 'palette.open', title: 'Command palette', hidden: true },
   ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => ({
     id: `tab.select${n}` as CommandId,

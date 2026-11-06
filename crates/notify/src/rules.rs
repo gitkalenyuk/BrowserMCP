@@ -130,6 +130,38 @@ pub fn describe(topic: &str, data: &Value) -> Notification {
             n.actions = heal::actions(data);
             n
         }
+        "run.heal_proposed" => {
+            let mut n = Notification::new(
+                format!("Run {id}: patch proposed"),
+                heal::describe_proposal(data),
+                Level::Warning,
+            );
+            n.actions = heal::proposal_actions();
+            n
+        }
+        "run.heal_applied" => {
+            let auto = data.get("auto").and_then(Value::as_bool) == Some(true);
+            let requeued = num(data, "requeued");
+            Notification::new(
+                format!("Run {id} patched"),
+                format!(
+                    "Continues with {}{}, {requeued} row{} back in the queue",
+                    text(data, "script"),
+                    if auto { " (applied automatically)" } else { "" },
+                    if requeued == 1 { "" } else { "s" },
+                ),
+                Level::Success,
+            )
+        }
+        "run.heal_failed" => Notification::new(
+            format!("Run {id}: no usable patch"),
+            format!(
+                "{} attempts: {}. Fix it by hand (run.heal_apply) or skip the row (run.resume).",
+                num(data, "attempts"),
+                error_text(data.get("error").unwrap_or(&Value::Null)),
+            ),
+            Level::Error,
+        ),
         "run.row_failed" => {
             let mut n = Notification::new(
                 format!("Run {id}: row {} failed", text(data, "row")),
@@ -244,6 +276,11 @@ mod tests {
         let (_, ch) = route(&config, "run.finished", &json!({}), focused).unwrap();
         assert_eq!(ch, vec![Channel::Ui, Channel::Os, Channel::Telegram]); // webhook: no url
         assert!(route(&config, "run.heal_needed", &json!({}), focused).is_some());
+        let (_, ch) = route(&config, "run.heal_proposed", &json!({}), focused).unwrap();
+        assert_eq!(ch, vec![Channel::Ui, Channel::Os, Channel::Telegram]);
+        let (_, ch) = route(&config, "run.heal_applied", &json!({}), focused).unwrap();
+        assert_eq!(ch, vec![Channel::Ui, Channel::Telegram]);
+        assert!(route(&config, "run.heal_failed", &json!({}), focused).is_some());
         let (rule, ch) = route(&config, "run.row_failed", &json!({}), focused).unwrap();
         assert!(rule.aggregate);
         assert_eq!(ch, vec![Channel::Ui]);
@@ -321,6 +358,30 @@ mod tests {
         );
         assert_eq!(n.title, "Trigger t1 failed (s)");
         assert_eq!(n.level, Level::Error);
+
+        let n = describe(
+            "run.heal_proposed",
+            &json!({"id": "r1", "proposal_id": "hp1", "row": 0, "script": "s",
+                    "explanation": "x", "confidence": 0.5, "attempt": 2, "max_attempts": 3}),
+        );
+        assert_eq!(n.title, "Run r1: patch proposed");
+        assert_eq!(n.body, "Row 1 of s: x\nconfidence 50% · attempt 2/3");
+        assert_eq!(n.actions.len(), 4);
+        let n = describe(
+            "run.heal_applied",
+            &json!({"id": "r1", "proposal_id": "hp1", "script": "s.v2", "requeued": 1, "auto": true}),
+        );
+        assert_eq!(n.title, "Run r1 patched");
+        assert_eq!(
+            n.body,
+            "Continues with s.v2 (applied automatically), 1 row back in the queue"
+        );
+        let n = describe(
+            "run.heal_failed",
+            &json!({"id": "r1", "row": 0, "attempts": 3, "error": "no valid patch"}),
+        );
+        assert_eq!(n.level, Level::Error);
+        assert!(n.body.starts_with("3 attempts: no valid patch."));
 
         let n = describe("custom.thing", &json!({"a": 1}));
         assert_eq!(n.title, "custom.thing");
