@@ -2,6 +2,7 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 mod cli;
+mod stdio_proxy;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -12,6 +13,21 @@ use bmcp_core::{BrowserBackend, DataDir, ProfileId};
 use tokio_util::sync::CancellationToken;
 
 fn main() -> ExitCode {
+    // `browsermcp mcp-stdio`: a thin proxy that must never initialize CEF.
+    if std::env::args().nth(1).as_deref() == Some("mcp-stdio") {
+        let cli = cli::Cli::parse(std::env::args().skip(2));
+        let result = DataDir::resolve(cli.data_dir.as_deref())
+            .map_err(anyhow::Error::from)
+            .and_then(|data| stdio_proxy::run(&data, cli.api_port));
+        return match result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("browsermcp mcp-stdio: {err:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     // Chromium re-launches this same executable for renderer/GPU/utility processes.
     // That check must happen before anything else.
     let browser = match bmcp_cef::start() {

@@ -38,6 +38,8 @@ impl Default for Cli {
 
 pub const HELP: &str = "\
 browsermcp [OPTIONS] [URL]
+browsermcp mcp-stdio [--data-dir <PATH>] [--api-port <PORT>]
+    MCP over stdio; starts the browser in the background if needed.
 
 Options:
   --url <URL>          Page to open (default: https://example.com/)
