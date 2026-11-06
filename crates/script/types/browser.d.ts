@@ -68,6 +68,11 @@ declare namespace BrowserMCP {
       hidden_selectors: number;
       /** JavaScript was disabled by the site policy. */
       js_disabled: boolean;
+      /**
+       * Where requests are blocked: "cef" (the browser's network hook, every request incl.
+       * workers and iframes) or "cdp" (interim `Fetch` interception of this tab).
+       */
+      network: string;
       /** URL of the page shown when interception started. */
       page_url: string;
     } | null;
@@ -721,6 +726,124 @@ declare namespace BrowserMCP {
       title: string;
       url: string;
     }[];
+  }
+
+  // ---- cookies.apply_pending ----
+
+  /**
+   * Arguments of `cookies.apply_pending`.
+   * Which profile's cookie jar.
+   */
+  export interface CookiesApplyPendingArgs {
+    /** The in-memory (incognito) profile of that name. */
+    incognito?: boolean | null;
+    /** Profile id; default: the profile the browser started with. */
+    profile?: string | null;
+  }
+
+  /** Result of `cookies.apply_pending`. */
+  export interface CookiesApplyPendingOutput {
+    /** Cookies now in the cookie jar (and removed from pending_cookies). */
+    applied: number;
+    /** Cookies the jar refused (kept in pending_cookies). */
+    failed: number;
+  }
+
+  // ---- cookies.delete ----
+
+  /** Arguments of `cookies.delete`. */
+  export interface CookiesDeleteArgs {
+    /** Only this domain and its subdomains. Without domain and name: ALL cookies. */
+    domain?: string | null;
+    /** The in-memory (incognito) profile of that name. */
+    incognito?: boolean | null;
+    /** Only cookies with this name. */
+    name?: string | null;
+    /** Profile id; default: the profile the browser started with. */
+    profile?: string | null;
+  }
+
+  /** Result of `cookies.delete`. */
+  export interface CookiesDeleteOutput {
+    deleted: number;
+  }
+
+  // ---- cookies.get ----
+
+  /** Arguments of `cookies.get`. */
+  export interface CookiesGetArgs {
+    /** Only cookies of this domain and its subdomains, e.g. "example.com". */
+    domain?: string | null;
+    /** The in-memory (incognito) profile of that name. */
+    incognito?: boolean | null;
+    /** Profile id; default: the profile the browser started with. */
+    profile?: string | null;
+  }
+
+  /** Result of `cookies.get`. */
+  export interface CookiesGetOutput {
+    cookies: {
+      /** `example.com` (host-only) or `.example.com` (also subdomains). */
+      domain: string;
+      /**
+       * Unix ms; `null` = session cookie.
+       * @default null
+       */
+      expires: number | null;
+      /** @default false */
+      http_only: boolean;
+      name: string;
+      /** @default "/" */
+      path: string;
+      /**
+       * `unspecified`, `no_restriction`, `lax` or `strict`.
+       * @default "unspecified"
+       */
+      same_site: string;
+      /** @default false */
+      secure: boolean;
+      value: string;
+    }[];
+  }
+
+  // ---- cookies.set ----
+
+  /** Arguments of `cookies.set`. */
+  export interface CookiesSetArgs {
+    /** Cookies to set (same shape as cookies_get returns; path defaults to "/"). */
+    cookies: {
+      /** `example.com` (host-only) or `.example.com` (also subdomains). */
+      domain: string;
+      /**
+       * Unix ms; `null` = session cookie.
+       * @default null
+       */
+      expires?: number | null;
+      /** @default false */
+      http_only?: boolean;
+      name: string;
+      /** @default "/" */
+      path?: string;
+      /**
+       * `unspecified`, `no_restriction`, `lax` or `strict`.
+       * @default "unspecified"
+       */
+      same_site?: string;
+      /** @default false */
+      secure?: boolean;
+      value: string;
+    }[];
+    /** The in-memory (incognito) profile of that name. */
+    incognito?: boolean | null;
+    /** Profile id; default: the profile the browser started with. */
+    profile?: string | null;
+  }
+
+  /** Result of `cookies.set`. */
+  export interface CookiesSetOutput {
+    /** Names of cookies the store refused (bad domain, secure cookie on http, …). */
+    failed: string[];
+    set: number;
   }
 
   // ---- data.bookmarks ----
@@ -2547,6 +2670,166 @@ declare namespace BrowserMCP {
     origin: string;
   }
 
+  // ---- permissions.list ----
+
+  /**
+   * Arguments of `permissions.list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type PermissionsListArgs = Record<string, never>;
+
+  /** Result of `permissions.list`. */
+  export interface PermissionsListOutput {
+    /** All rules. Requests without a rule are denied. */
+    rules: {
+      allow: boolean;
+      /**
+       * One kind of permission a page can ask for.
+       *
+       * - `"screen_capture"`: Screen/tab/window capture (`getDisplayMedia`).
+       * - `"storage_access"`: Storage access (incl. top-level) for third-party frames.
+       * - `"multiple_downloads"`: Several downloads from one page.
+       * - `"local_network"`: Talk to devices on the local network / localhost.
+       * - `"sensors"`: Motion/orientation sensors.
+       * - `"other"`: Anything else (AR/VR, protocol handlers, app install, protected media id, …).
+       */
+      kind: "camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other";
+      /** `https://example.com`, or `*` for every site. */
+      origin: string;
+    }[];
+  }
+
+  // ---- permissions.set ----
+
+  /** Arguments of `permissions.set`. */
+  export interface PermissionsSetArgs {
+    /** true = allow, false = deny, null/omitted = remove the rule (back to: deny). */
+    allow?: boolean | null;
+    /**
+     * camera, microphone, screen_capture, geolocation, notifications, clipboard, midi,
+     * storage_access, local_fonts, idle_detection, window_management, file_system,
+     * multiple_downloads, pointer_lock, keyboard_lock, local_network, sensors, other.
+     *
+     * - `"screen_capture"`: Screen/tab/window capture (`getDisplayMedia`).
+     * - `"storage_access"`: Storage access (incl. top-level) for third-party frames.
+     * - `"multiple_downloads"`: Several downloads from one page.
+     * - `"local_network"`: Talk to devices on the local network / localhost.
+     * - `"sensors"`: Motion/orientation sensors.
+     * - `"other"`: Anything else (AR/VR, protocol handlers, app install, protected media id, …).
+     */
+    kind: "camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other";
+    /** Site origin, e.g. "https://meet.example.com", or "*" for every site. */
+    origin: string;
+  }
+
+  /** Result of `permissions.set`. */
+  export interface PermissionsSetOutput {
+    /** All rules. Requests without a rule are denied. */
+    rules: {
+      allow: boolean;
+      /**
+       * One kind of permission a page can ask for.
+       *
+       * - `"screen_capture"`: Screen/tab/window capture (`getDisplayMedia`).
+       * - `"storage_access"`: Storage access (incl. top-level) for third-party frames.
+       * - `"multiple_downloads"`: Several downloads from one page.
+       * - `"local_network"`: Talk to devices on the local network / localhost.
+       * - `"sensors"`: Motion/orientation sensors.
+       * - `"other"`: Anything else (AR/VR, protocol handlers, app install, protected media id, …).
+       */
+      kind: "camera" | "microphone" | "geolocation" | "notifications" | "clipboard" | "midi" | "local_fonts" | "idle_detection" | "window_management" | "file_system" | "pointer_lock" | "keyboard_lock" | "screen_capture" | "storage_access" | "multiple_downloads" | "local_network" | "sensors" | "other";
+      /** `https://example.com`, or `*` for every site. */
+      origin: string;
+    }[];
+  }
+
+  // ---- profile.create ----
+
+  /** Arguments of `profile.create`. */
+  export interface ProfileCreateArgs {
+    /** Accept-Language list, e.g. "de-DE,de,en". Default: the identity's. */
+    accept_language?: string | null;
+    /**
+     * Use the local forwarder for the proxy (default true; required when the proxy has a
+     * password). false: Chromium connects to a password-less proxy itself.
+     */
+    forward?: boolean | null;
+    /** Profile id: 1-64 chars of a-z, 0-9, '-', '_'. Creating an existing id updates it. */
+    id: string;
+    /** Saved identity id (identity_list) applied to every new tab of this profile. "" removes it. */
+    identity?: string | null;
+    /**
+     * Upstream proxy: socks5://user:pass@host:port, http://user:pass@host:port or
+     * host:port:user:pass. "" removes it.
+     */
+    proxy?: string | null;
+    /** Hosts that skip the proxy, e.g. "<local>;*.lan". */
+    proxy_bypass?: string | null;
+  }
+
+  /** Result of `profile.create`. */
+  export interface ProfileCreateOutput {
+    /** True when it did not exist before. */
+    created: boolean;
+    /** Folder of its cookies/cache. */
+    data_dir: string;
+    id: string;
+    identity: string | null;
+    proxy: string | null;
+    /** What Chromium uses for this profile (the local forwarder when there is a proxy). */
+    proxy_server: string | null;
+  }
+
+  // ---- profile.delete ----
+
+  /** Arguments of `profile.delete`. */
+  export interface ProfileDeleteArgs {
+    id: string;
+    /** Keep its folder (cookies, cache, history of the engine). Default false: deleted. */
+    keep_data?: boolean | null;
+  }
+
+  /** Result of `profile.delete`. */
+  export interface ProfileDeleteOutput {
+    /** Its data folder was deleted. */
+    data_deleted: boolean;
+    id: string;
+    /** Its settings were stored (and are now removed). */
+    removed: boolean;
+    warning?: string | null;
+  }
+
+  // ---- profile.list ----
+
+  /**
+   * Arguments of `profile.list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type ProfileListArgs = Record<string, never>;
+
+  /** Result of `profile.list`. */
+  export interface ProfileListOutput {
+    profiles: {
+      accept_language: string | null;
+      id: string;
+      /** Identity applied to its new tabs (identity_assign). */
+      identity: string | null;
+      /** In memory only. */
+      incognito: boolean;
+      /** The profile the browser started with. */
+      launch: boolean;
+      /** The browser has it loaded (it has, or had, tabs). */
+      open: boolean;
+      /** Upstream proxy with the password masked. */
+      proxy: string | null;
+      /** What Chromium is told to use (e.g. the local forwarder `socks5://127.0.0.1:51234`). */
+      proxy_server: string | null;
+      /** Settings stored in profiles.json. */
+      stored: boolean;
+      tabs: number[];
+    }[];
+  }
+
   // ---- proxy.forward_list ----
 
   /**
@@ -2975,8 +3258,8 @@ declare namespace BrowserMCP {
       /** What the caller asked for. */
       parallel_requested: number;
       /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
+       * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+       * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
       /** Extra attempts per row after a failure. */
@@ -3093,8 +3376,8 @@ declare namespace BrowserMCP {
         /** What the caller asked for. */
         parallel_requested: number;
         /**
-         * Browser profile the rows run in. Today always the default profile (shared by all
-         * rows); isolated per-row profiles come later.
+         * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+         * profile + off-screen tabs per row attempt), or a profile id.
          */
         profile?: string | null;
         /** Extra attempts per row after a failure. */
@@ -3155,8 +3438,8 @@ declare namespace BrowserMCP {
       /** What the caller asked for. */
       parallel_requested: number;
       /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
+       * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+       * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
       /** Extra attempts per row after a failure. */
@@ -3266,8 +3549,8 @@ declare namespace BrowserMCP {
       /** What the caller asked for. */
       parallel_requested: number;
       /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
+       * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+       * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
       /** Extra attempts per row after a failure. */
@@ -3310,8 +3593,9 @@ declare namespace BrowserMCP {
     /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
     parallel?: number | null;
     /**
-     * Browser profile for the rows. Only "default" for now (all rows share it); isolated
-     * per-row profiles come later.
+     * Browser profile of the rows: "default" (shared, tabs in the browser window), "isolated"
+     * (each row gets a fresh in-memory profile and off-screen tabs: parallel rows never
+     * share cookies, focus or keyboard), or a profile id (profile_create; shared by all rows).
      */
     profile?: string | null;
     /** Extra attempts for a failed row, with exponential backoff (default 1). */
@@ -3356,8 +3640,8 @@ declare namespace BrowserMCP {
       /** What the caller asked for. */
       parallel_requested: number;
       /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
+       * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+       * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
       /** Extra attempts per row after a failure. */
@@ -3417,8 +3701,8 @@ declare namespace BrowserMCP {
       /** What the caller asked for. */
       parallel_requested: number;
       /**
-       * Browser profile the rows run in. Today always the default profile (shared by all
-       * rows); isolated per-row profiles come later.
+       * Browser profile the rows run in: `None`/"default", "isolated" (a fresh in-memory
+       * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
       /** Extra attempts per row after a failure. */
@@ -4079,8 +4363,29 @@ declare namespace BrowserMCP {
   export interface TabsOpenArgs {
     /** Open without switching to it (default false: the new tab becomes active). */
     background?: boolean | null;
+    /**
+     * In-memory profile, nothing is written to disk (default false). With `profile`: the
+     * in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+     */
+    incognito?: boolean | null;
+    /**
+     * Profile to open it in (profile_list / profile_create): own cookies, cache, proxy and
+     * identity. Default: the profile the browser started with.
+     */
+    profile?: string | null;
+    /** Mass run id this tab belongs to (set by run_start; downloads go to the run's folder). */
+    run?: string | null;
     /** URL to open. Default: the new tab page. */
     url?: string | null;
+    /**
+     * "current" (default): a tab in the current window; "new": a window of its own;
+     * "offscreen": no visible window (automation; input and screenshots still work).
+     *
+     * - `"current"`: A tab in the window used last (the normal case).
+     * - `"new"`: A new browser window of its own (visible, laid out, with the browser UI).
+     * - `"offscreen"`: No window at all: an off-screen (windowless) page with its own size and focus. For automation: parallel runs, typing into several pages at once.
+     */
+    window?: "current" | "new" | "offscreen" | null;
   }
 
   /**
@@ -4345,7 +4650,7 @@ declare namespace BrowserMCP {
 
   /** Every command by dotted name, with its argument and result types. */
   export interface Commands {
-    /** Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect. */
+    /** Enforce adblock + site policies in a tab now: cosmetic CSS in an isolated world; requests are blocked by the browser's network hook for every tab (report.network = "cef"), or by CDP Fetch interception of this tab where that hook is missing ("cdp"). Downloads the filter lists on first use. Reload the page to see the full effect. */
     "adblock.apply": { args: AdblockApplyArgs; output: AdblockApplyOutput };
     /** Debug: would this request be blocked? Returns the decision (allow/block/redirect, reason, rule), the filter-list verdict and the page's site policy. Not counted in the stats. */
     "adblock.check": { args: AdblockCheckArgs; output: AdblockCheckOutput };
@@ -4381,6 +4686,14 @@ declare namespace BrowserMCP {
     "bookmarks.remove": { args: BookmarksRemoveArgs; output: BookmarksRemoveOutput };
     /** Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first. */
     "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
+    /** Move cookies waiting from import_chrome (cookies JSON) into a profile's cookie jar. Runs by itself at startup and after each import. */
+    "cookies.apply_pending": { args: CookiesApplyPendingArgs; output: CookiesApplyPendingOutput };
+    /** Delete cookies of a profile: of one domain and/or with one name, or all. */
+    "cookies.delete": { args: CookiesDeleteArgs; output: CookiesDeleteOutput };
+    /** Read a profile's cookies (values included), optionally of one domain. */
+    "cookies.get": { args: CookiesGetArgs; output: CookiesGetOutput };
+    /** Set cookies in a profile's cookie jar. */
+    "cookies.set": { args: CookiesSetArgs; output: CookiesSetOutput };
     /** List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}. */
     "data.bookmarks": { args: DataBookmarksArgs; output: DataBookmarksOutput };
     /** The most frequently and recently visited pages (frecency), as shown on the new-tab page. Returns {sites:[{title,url,visit_count,last_visit,score}]}. */
@@ -4397,7 +4710,7 @@ declare namespace BrowserMCP {
     "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
     /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
     "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
-    /** Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set). */
+    /** Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. */
     "identity.assign": { args: IdentityAssignArgs; output: IdentityAssignOutput };
     /** Generate a consistent random fingerprint identity (UA + client hints + platform + CPU/memory + screen + timezone/locale + GPU) from the presets; deterministic by seed. save=true stores it in identities.json for stealth_fingerprint_set. */
     "identity.generate": { args: IdentityGenerateArgs; output: IdentityGenerateOutput };
@@ -4483,6 +4796,16 @@ declare namespace BrowserMCP {
     "passwords.list": { args: PasswordsListArgs; output: PasswordsListOutput };
     /** Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}. */
     "passwords.save": { args: PasswordsSaveArgs; output: PasswordsSaveOutput };
+    /** List the stored site permission rules (everything else is denied). */
+    "permissions.list": { args: PermissionsListArgs; output: PermissionsListOutput };
+    /** Allow or deny a permission (camera, microphone, geolocation, notifications, …) for a site; without a rule every permission request of a web page is denied. */
+    "permissions.set": { args: PermissionsSetArgs; output: PermissionsSetOutput };
+    /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
+    "profile.create": { args: ProfileCreateArgs; output: ProfileCreateOutput };
+    /** Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first. */
+    "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
+    /** List browser profiles: stored settings (proxy, language), assigned identity, and which are open with which tabs (incl. in-memory/incognito ones). */
+    "profile.list": { args: ProfileListArgs; output: ProfileListOutput };
     /** List running local proxy forwarders. */
     "proxy.forward_list": { args: ProxyForwardListArgs; output: ProxyForwardListOutput };
     /** Start a local proxy on 127.0.0.1 (SOCKS5 and HTTP, no auth) that forwards through an authenticated upstream proxy — Chromium cannot do SOCKS5 auth itself. Returns the local address to configure as the browser proxy. */
@@ -4561,11 +4884,11 @@ declare namespace BrowserMCP {
     "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
     /** Switch the window to this tab (make it the active, visible tab). */
     "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
-    /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
+    /** Close a tab. If it is the last tab of its window, the new tab page takes its place and the window stays open (only a person closing the last tab closes the window). */
     "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
     /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
     "tabs.list": { args: TabsListArgs; output: TabsListOutput };
-    /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
+    /** Open a URL in a new tab (background: true keeps the current tab shown). Optional: profile (own cookies/proxy/identity), incognito (in memory), window: "new" | "offscreen" (own window / no window, for parallel automation). Returns the new tab; its id is in `tab` and `id`. */
     "tabs.open": { args: TabsOpenArgs; output: TabsOpenOutput };
     /** Close a terminal (kills its shell). */
     "term.close": { args: TermCloseArgs; output: TermCloseOutput };
@@ -4594,7 +4917,7 @@ declare namespace BrowserMCP {
     /** Commands `adblock.*`. */
     adblock: {
       /**
-       * Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect.
+       * Enforce adblock + site policies in a tab now: cosmetic CSS in an isolated world; requests are blocked by the browser's network hook for every tab (report.network = "cef"), or by CDP Fetch interception of this tab where that hook is missing ("cdp"). Downloads the filter lists on first use. Reload the page to see the full effect.
        *
        * `adblock.apply` (MCP: `adblock_apply`): toolset `data`, act, mutates the tab.
        */
@@ -4708,6 +5031,33 @@ declare namespace BrowserMCP {
        */
       search(args: BookmarksSearchArgs): Promise<BookmarksSearchOutput>;
     };
+    /** Commands `cookies.*`. */
+    cookies: {
+      /**
+       * Move cookies waiting from import_chrome (cookies JSON) into a profile's cookie jar. Runs by itself at startup and after each import.
+       *
+       * `cookies.apply_pending` (MCP: `cookies_apply_pending`): toolset `profile`, act.
+       */
+      apply_pending(args?: CookiesApplyPendingArgs): Promise<CookiesApplyPendingOutput>;
+      /**
+       * Delete cookies of a profile: of one domain and/or with one name, or all.
+       *
+       * `cookies.delete` (MCP: `cookies_delete`): toolset `profile`, act.
+       */
+      delete(args?: CookiesDeleteArgs): Promise<CookiesDeleteOutput>;
+      /**
+       * Read a profile's cookies (values included), optionally of one domain.
+       *
+       * `cookies.get` (MCP: `cookies_get`): toolset `profile`, secret.
+       */
+      get(args?: CookiesGetArgs): Promise<CookiesGetOutput>;
+      /**
+       * Set cookies in a profile's cookie jar.
+       *
+       * `cookies.set` (MCP: `cookies_set`): toolset `profile`, secret.
+       */
+      set(args: CookiesSetArgs): Promise<CookiesSetOutput>;
+    };
     /** Commands `data.*`. */
     data: {
       /**
@@ -4774,7 +5124,7 @@ declare namespace BrowserMCP {
     /** Commands `identity.*`. */
     identity: {
       /**
-       * Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set).
+       * Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included.
        *
        * `identity.assign` (MCP: `identity_assign`): toolset `stealth`, act.
        */
@@ -5051,6 +5401,42 @@ declare namespace BrowserMCP {
        */
       save(args: PasswordsSaveArgs): Promise<PasswordsSaveOutput>;
     };
+    /** Commands `permissions.*`. */
+    permissions: {
+      /**
+       * List the stored site permission rules (everything else is denied).
+       *
+       * `permissions.list` (MCP: `permissions_list`): toolset `profile`, read.
+       */
+      list(args?: PermissionsListArgs): Promise<PermissionsListOutput>;
+      /**
+       * Allow or deny a permission (camera, microphone, geolocation, notifications, …) for a site; without a rule every permission request of a web page is denied.
+       *
+       * `permissions.set` (MCP: `permissions_set`): toolset `profile`, act.
+       */
+      set(args: PermissionsSetArgs): Promise<PermissionsSetOutput>;
+    };
+    /** Commands `profile.*`. */
+    profile: {
+      /**
+       * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
+       *
+       * `profile.create` (MCP: `profile_create`): toolset `profile`, act.
+       */
+      create(args: ProfileCreateArgs): Promise<ProfileCreateOutput>;
+      /**
+       * Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first.
+       *
+       * `profile.delete` (MCP: `profile_delete`): toolset `profile`, act.
+       */
+      delete(args: ProfileDeleteArgs): Promise<ProfileDeleteOutput>;
+      /**
+       * List browser profiles: stored settings (proxy, language), assigned identity, and which are open with which tabs (incl. in-memory/incognito ones).
+       *
+       * `profile.list` (MCP: `profile_list`): toolset `profile`, read.
+       */
+      list(args?: ProfileListArgs): Promise<ProfileListOutput>;
+    };
     /** Commands `proxy.*`. */
     proxy: {
       /**
@@ -5309,7 +5695,7 @@ declare namespace BrowserMCP {
        */
       activate(args: TabsActivateArgs): Promise<TabsActivateOutput>;
       /**
-       * Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser).
+       * Close a tab. If it is the last tab of its window, the new tab page takes its place and the window stays open (only a person closing the last tab closes the window).
        *
        * `tabs.close` (MCP: `tabs_close`): toolset `core`, act, mutates the tab.
        */
@@ -5321,7 +5707,7 @@ declare namespace BrowserMCP {
        */
       list(args?: TabsListArgs): Promise<TabsListOutput>;
       /**
-       * Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`.
+       * Open a URL in a new tab (background: true keeps the current tab shown). Optional: profile (own cookies/proxy/identity), incognito (in memory), window: "new" | "offscreen" (own window / no window, for parallel automation). Returns the new tab; its id is in `tab` and `id`.
        *
        * `tabs.open` (MCP: `tabs_open`): toolset `core`, act.
        */
