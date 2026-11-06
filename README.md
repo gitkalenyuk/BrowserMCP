@@ -20,7 +20,14 @@ cargo xtask doctor          # check tools
 cargo xtask run             # build + open https://example.com
 cargo xtask run -- https://github.com --profile work
 cargo xtask test            # Rust tests (add --all to include the V8 script host)
+cargo xtask run -- --headless --window-size 1280x800   # no windows: automation host
+cargo xtask e2e             # build, then the end-to-end suite (tests/e2e) against --headless
 ```
+
+`--headless` opens no window at all: every tab is an off-screen page (screenshots, screencast
+video and CDP input work), popups become tabs, and the process keeps running after its last tab
+closes until `system.quit` (`--device-scale <f>` sets the pixel ratio; `browsermcp mcp-stdio
+--headless` starts the browser that way).
 
 The first build downloads CEF (~500 MB) and copies its runtime next to `target/debug/browsermcp.exe`.
 

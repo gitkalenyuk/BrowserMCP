@@ -18,7 +18,7 @@ fn main() -> ExitCode {
         let cli = cli::Cli::parse(std::env::args().skip(2));
         let result = DataDir::resolve(cli.data_dir.as_deref())
             .map_err(anyhow::Error::from)
-            .and_then(|data| stdio_proxy::run(&data, cli.api_port));
+            .and_then(|data| stdio_proxy::run(&data, cli.api_port, &cli.headless_args()));
         return match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -147,6 +147,16 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         resource_gate: Some(gate),
         permissions: Some(permissions),
         cdp_port,
+        headless: cli.headless.then(|| {
+            let mut headless = bmcp_cef::HeadlessOptions::default();
+            if let Some((width, height)) = cli.window_size {
+                (headless.width, headless.height) = (width, height);
+            }
+            if let Some(scale) = cli.device_scale {
+                headless.device_scale = scale;
+            }
+            headless
+        }),
     })?;
 
     shutdown.cancel();

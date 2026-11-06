@@ -135,7 +135,7 @@ CEF Views композиція і фокус між view · macOS helper-бан�
 
 ## Перевірка (наскрізно)
 - `cargo test --workspace` (core/perception/net — чисті unit + insta-golden на CDP-фікстурах).
-- `pnpm -C tests/e2e test` — vitest через SDK проти `browsermcp --headless` на локальних fixture-сайтах.
+- `cargo xtask e2e [--filter <name>] [--all]` — збірка, потім vitest через SDK проти `browsermcp --headless` на локальних fixture-сайтах (`pnpm -C tests/e2e run e2e`; `pnpm -r test` лише перевіряє типи).
 - Ручний MVP-тест: `claude mcp add browsermcp -- <path>\browsermcp.exe mcp-stdio` → «відкрий example.com і клікни посилання за ref» → «залогінься на fixtures/login.html».
 - Бенчмарк токенів на задачу після кожної фази; регресія >10% — провал.
 

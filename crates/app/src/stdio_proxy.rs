@@ -19,8 +19,9 @@ use anyhow::{Context, bail};
 use bmcp_core::DataDir;
 use serde_json::{Value, json};
 
-pub fn run(data: &DataDir, api_port: u16) -> anyhow::Result<()> {
-    let url = ensure_browser(data, api_port)?;
+/// `browser_args`: passed to the browser if it has to be started (`--headless` …).
+pub fn run(data: &DataDir, api_port: u16, browser_args: &[String]) -> anyhow::Result<()> {
+    let url = ensure_browser(data, api_port, browser_args)?;
     eprintln!("browsermcp mcp-stdio: forwarding to {url}");
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -150,7 +151,11 @@ fn error_reply(id: Option<Value>, message: String) -> Vec<String> {
 // ------------------------------------------------------------------ browser discovery
 
 /// Return the MCP URL of a running browser, starting one if needed.
-fn ensure_browser(data: &DataDir, api_port: u16) -> anyhow::Result<String> {
+fn ensure_browser(
+    data: &DataDir,
+    api_port: u16,
+    browser_args: &[String],
+) -> anyhow::Result<String> {
     let endpoint_file = data.runtime().join("endpoint.json");
     if let Some(url) = live_endpoint(&endpoint_file) {
         return Ok(url);
@@ -164,6 +169,7 @@ fn ensure_browser(data: &DataDir, api_port: u16) -> anyhow::Result<String> {
         .arg(data.root())
         .arg("--api-port")
         .arg(api_port.to_string())
+        .args(browser_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

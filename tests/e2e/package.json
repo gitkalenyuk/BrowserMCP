@@ -1,0 +1,17 @@
+{
+  "name": "@browsermcp/e2e",
+  "private": true,
+  "description": "End-to-end tests: vitest + @browsermcp/sdk against `browsermcp --headless` on local fixture sites",
+  "type": "module",
+  "scripts": {
+    "test": "tsc -p tsconfig.json",
+    "e2e": "vitest run"
+  },
+  "devDependencies": {
+    "@browsermcp/sdk": "workspace:*",
+    "@types/node": "^22.19.0",
+    "playwright-core": "^1.56.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

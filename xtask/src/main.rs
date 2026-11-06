@@ -9,11 +9,14 @@
 //!                       (--check: fail if the committed files are stale; see gen_sdk.rs)
 //!   bench --agent claude-code|codex --tasks all|<id,id>
 //!                       MVP benchmark: 10 tasks on local fixture sites (see bench.rs)
+//!   e2e [--filter <name>] [--all] [--no-build]
+//!                       build, then run tests/e2e against browsermcp --headless (see e2e.rs)
 //!
 //! The first build downloads CEF (~500 MB) into target/ and copies its runtime files
 //! next to browsermcp.exe automatically (done by the `cef-dll-sys` build script).
 
 mod bench;
+mod e2e;
 mod gen_sdk;
 
 use std::env;
@@ -38,9 +41,10 @@ fn main() -> ExitCode {
             .and_then(|env| cargo(&["test", "--workspace", "--exclude", "bmcp-script"], &env)),
         "gen-sdk" => gen_sdk::gen_sdk(has_flag(rest, "--check")),
         "bench" => bench::bench(rest),
+        "e2e" => e2e::e2e(rest),
         _ => {
             eprintln!(
-                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all>"
+                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all|e2e [--filter <name>] [--all]>"
             );
             Ok(())
         }

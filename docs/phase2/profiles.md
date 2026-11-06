@@ -122,3 +122,29 @@ with `ERR_ABORTED`, so its `blocked` column stays 0 — use `adblock.stats` for 
   settings (proxy forwarder) are re-applied.
 * `--cdp-port` exposes our own `bmcp://ui` pages (full API rights) to any local CDP client —
   that is why it is off by default.
+
+## Headless (`browsermcp --headless`)
+
+No window and no view at all (no chrome UI, no palette): the first tab and every `tabs.open`
+(whatever `window` says) are off-screen tabs of `--window-size WxH` (1280x800) at
+`--device-scale F` (1; `RenderHandler::GetScreenInfo`); the new tab page becomes `about:blank`.
+Popups of off-screen pages are re-opened as off-screen tabs. Closing the last tab keeps the
+process (the automation host) alive; `system.quit` (new command, also in windowed mode) closes
+everything and ends it. `browsermcp mcp-stdio --headless [--window-size …]` passes the flags on
+when it starts the browser. Code: `crates/cef/src/osr.rs` (+ one-line hooks in `shell.rs` /
+`backend.rs`), `crates/cef/src/cdp_port.rs`. Checked by `cargo xtask e2e` (tests/e2e).
+
+Pitfalls found:
+
+* **`--cdp-port` kept the process alive forever** (windowed too, after the last window): with a
+  remote debugging port and no startup window, Chrome holds a `REMOTE_DEBUGGING` keep-alive
+  until `Browser.close` arrives over DevTools, so `quit_message_loop()` never ended the loop.
+  `cdp_port::release_keep_alive` now sends `Browser.close` to the browser target over the port
+  right after `quit_message_loop()`.
+* **JavaScript dialogs in off-screen tabs were cancelled at once** (`confirm()` returned false),
+  while DevTools still reported `Page.javascriptDialogOpening` — `page.dialog` then found no
+  dialog. Off-screen browsers now have a `JSDialogHandler` that holds the dialog; the backend
+  answers `Page.handleJavaScriptDialog` for such a tab through the held CEF callback.
+* A `net.resume` at the *response* stage with a new `status` reported `fulfilled`, but the page
+  still received the original 200 (seen in an off-screen tab; windowed not checked). The e2e
+  suite checks request-stage breakpoints only.

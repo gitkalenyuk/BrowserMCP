@@ -6467,6 +6467,20 @@ export interface SystemPingOutput {
   version: string;
 }
 
+// ---- system.quit ----
+
+/**
+ * Arguments of `system.quit`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type SystemQuitArgs = Record<string, never>;
+
+/** Result of `system.quit`. */
+export interface SystemQuitOutput {
+  /** Always true: the browser is closing (shortly after this answer). */
+  quitting: boolean;
+}
+
 // ---- tabs.activate ----
 
 /**
@@ -7686,6 +7700,8 @@ export interface Commands {
   "stealth.fingerprint_set": { args: StealthFingerprintSetArgs; output: StealthFingerprintSetOutput };
   /** Check that BrowserMCP is running. Returns its name and version. */
   "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
+  /** Quit BrowserMCP: close every tab and window, stop the API and end the process (the way to stop a --headless browser, which outlives its last tab). Answers first, then quits. */
+  "system.quit": { args: SystemQuitArgs; output: SystemQuitOutput };
   /** Switch the window to this tab (make it the active, visible tab). */
   "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
   /** Close a tab. If it is the last tab of its window, the new tab page takes its place and the window stays open (only a person closing the last tab closes the window). */
@@ -9189,6 +9205,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "system.quit": {
+    wireName: "system_quit",
+    description: "Quit BrowserMCP: close every tab and window, stop the API and end the process (the way to stop a --headless browser, which outlives its last tab). Answers first, then quits.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "tabs.activate": {
     wireName: "tabs_activate",
     description: "Switch the window to this tab (make it the active, visible tab).",
@@ -10502,6 +10527,12 @@ export interface Browser {
      * `system.ping` (MCP: `system_ping`): toolset `core`, read.
      */
     ping(args?: SystemPingArgs, options?: CallOptions): Promise<SystemPingOutput>;
+    /**
+     * Quit BrowserMCP: close every tab and window, stop the API and end the process (the way to stop a --headless browser, which outlives its last tab). Answers first, then quits.
+     *
+     * `system.quit` (MCP: `system_quit`): toolset `system`, act.
+     */
+    quit(args?: SystemQuitArgs, options?: CallOptions): Promise<SystemQuitOutput>;
   };
   /** Commands `tabs.*`. */
   tabs: {
@@ -10923,6 +10954,7 @@ export function createBrowser(transport: Transport): Browser {
     },
     system: {
       ping: (args, options) => call<SystemPingOutput>("system.ping", args, options),
+      quit: (args, options) => call<SystemQuitOutput>("system.quit", args, options),
     },
     tabs: {
       activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),

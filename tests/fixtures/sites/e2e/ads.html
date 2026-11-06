@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ads – Fixture</title>
+</head>
+<!--
+  Used by tests/e2e (adblock gate). The e2e browser starts with data/filters/user.txt
+  containing "/e2e-ads/", so /e2e-ads/banner.js must never reach the server and
+  window.adLoaded stays undefined; /api/price (not an ad) still loads.
+-->
+<body>
+<main>
+  <h1>Article with ads</h1>
+  <p>Status: <span id="status">loading</span></p>
+</main>
+<script src="/e2e-ads/banner.js"></script>
+<script>
+  fetch('/api/price')
+    .then((r) => r.json())
+    .then((data) => {
+      document.getElementById('status').textContent =
+        'ad ' + (window.adLoaded ? 'loaded' : 'blocked') + ', price ' + data.price;
+    });
+</script>
+</body>
+</html>
