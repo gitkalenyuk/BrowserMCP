@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Iframes – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  iframe { display: block; width: 420px; height: 160px; border: 4px solid #888; margin: 24px 0 0 60px; }
+</style>
+</head>
+<!--
+  Serve this folder twice, on two ports:
+    python -m http.server 47920      (open http://localhost:47920/iframe.html)
+    python -m http.server 47921
+  The second iframe comes from 127.0.0.1, a different site than localhost, so Chromium runs
+  it out of process (OOPIF). Pass ?xport=N when the second server uses another port.
+-->
+<body>
+<main>
+  <h1>Frames</h1>
+  <p><button id="top">Top button</button> <span id="top-status"></span></p>
+  <iframe id="same" title="Same-origin frame" src="iframe_child.html?who=same"></iframe>
+  <iframe id="cross" title="Cross-origin frame"></iframe>
+</main>
+<script>
+  const port = new URLSearchParams(location.search).get('xport') || '47921';
+  document.getElementById('cross').src = 'http://127.0.0.1:' + port + '/iframe_child.html?who=cross';
+  document.getElementById('top').onclick = () => {
+    document.getElementById('top-status').textContent = 'top clicked';
+  };
+</script>
+</body>
+</html>

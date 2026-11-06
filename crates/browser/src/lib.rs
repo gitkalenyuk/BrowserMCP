@@ -16,6 +16,7 @@
 mod act;
 mod cdp;
 pub mod commands;
+mod frames;
 pub mod human;
 mod keys;
 mod page;

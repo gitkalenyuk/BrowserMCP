@@ -141,6 +141,27 @@ pub trait BrowserBackend: Send + Sync + 'static {
     fn cdp(&self, tab: TabId, method: String, params: Value)
     -> BoxFuture<'_, BackendResult<Value>>;
 
+    /// Raw CDP call inside a flattened child session of the tab: an out-of-process iframe
+    /// attached with `Target.setAutoAttach {flatten: true}` (its `sessionId` comes with the
+    /// `Target.attachedToTarget` event). `None` is the page itself, like [`Self::cdp`].
+    /// Backends without child sessions refuse `Some(..)`.
+    fn cdp_session(
+        &self,
+        tab: TabId,
+        session_id: Option<String>,
+        method: String,
+        params: Value,
+    ) -> BoxFuture<'_, BackendResult<Value>> {
+        match session_id {
+            None => self.cdp(tab, method, params),
+            Some(_) => Box::pin(async {
+                Err(BackendError::Cdp(
+                    "this backend has no CDP child sessions".into(),
+                ))
+            }),
+        }
+    }
+
     /// Subscribe to the tab's CDP events from now on (e.g. after `Network.enable`,
     /// `Network.requestWillBeSent` arrives here). Enable the CDP domain with [`Self::cdp`].
     /// The receiver ends (`RecvError::Closed`) when the tab closes.

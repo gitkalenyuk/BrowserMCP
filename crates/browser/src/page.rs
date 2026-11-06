@@ -2,14 +2,14 @@
 
 use std::time::Duration;
 
-use bmcp_core::{CmdError, Ctx, ErrorCode, TabId, TabInfo};
-use bmcp_perception::{
-    AxTree, Mode, PageHeader, Scroll, Snapshot, SnapshotOptions, Viewport, snapshot,
-};
-use serde_json::json;
-
 use crate::cdp::{self, perception_error};
-use crate::state::TabState;
+use crate::frames::{self, NodeAt};
+use crate::state::{PerceptionState, TabState};
+use bmcp_core::{CmdError, Ctx, ErrorCode, Retry, TabId, TabInfo};
+use bmcp_perception::{
+    AxTree, Mode, PageHeader, PerceptionError, Scroll, Snapshot, SnapshotOptions, Viewport,
+    snapshot,
+};
 
 /// Longest we wait for a page to finish loading after an action.
 pub const SETTLE_MAX: Duration = Duration::from_secs(10);
@@ -40,22 +40,23 @@ pub async fn sync_document(ctx: &Ctx, tab: TabId, state: &mut TabState) -> Resul
     };
     if changed {
         state.registry.new_document();
+        state.frames.new_document();
     }
     state.loader_id = Some(loader);
     Ok(changed)
 }
 
-/// Fetch and parse the accessibility tree of the main frame.
-pub async fn ax_tree(ctx: &Ctx, tab: TabId) -> Result<AxTree, CmdError> {
-    let raw = cdp::call(ctx, tab, "Accessibility.getFullAXTree", json!({})).await?;
-    AxTree::from_cdp(&raw).map_err(perception_error)
+/// The accessibility tree of the page with its iframes' documents attached (see
+/// [`frames::merged_tree`]).
+pub async fn ax_tree(ctx: &Ctx, tab: TabId, state: &mut TabState) -> Result<AxTree, CmdError> {
+    frames::merged_tree(ctx, tab, &mut state.frames).await
 }
 
 /// The snapshot header line: tab, title, url, viewport size and scroll position.
 pub async fn header(ctx: &Ctx, tab: TabId) -> Result<PageHeader, CmdError> {
     let info = tab_info(ctx, tab).await?;
     // Layout metrics are nice to have; a failure must not break the snapshot.
-    let layout = cdp::layout(ctx, tab).await.ok();
+    let layout = cdp::layout(ctx, tab, None).await.ok();
     Ok(PageHeader {
         tab: u32::try_from(info.id.0).unwrap_or_default(),
         title: info.title,
@@ -89,11 +90,68 @@ pub async fn take_snapshot_with_tree(
     options: SnapshotOptions,
 ) -> Result<(Snapshot, AxTree), CmdError> {
     sync_document(ctx, tab, state).await?;
-    let tree = ax_tree(ctx, tab).await?;
+    let tree = ax_tree(ctx, tab, state).await?;
     let header = header(ctx, tab).await?;
-    let snap = snapshot(&tree, &mut state.registry, &options, header).map_err(perception_error)?;
+    let snap = snapshot(&tree, &mut state.registry, &options, header).map_err(|err| {
+        // Only a bad drill-down root (`root=`) makes a snapshot fail with a ref error.
+        match &options.root {
+            Some(root) => ref_error(ctx, tab, root, err),
+            None => perception_error(err),
+        }
+    })?;
     state.remember(snap.clone(), options);
     Ok((snap, tree))
+}
+
+/// Resolve an element ref to the DOM node and the session it lives in (an iframe's node can
+/// live in a child session, see [`crate::frames`]).
+pub fn resolve_node(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &TabState,
+    input: &str,
+) -> Result<NodeAt, CmdError> {
+    let merged = resolve_ref(ctx, tab, state, input)?;
+    Ok(state.frames.locate(merged))
+}
+
+/// Resolve an element ref (`@4:e3`, `e3`) of `tab` to its node id in the merged tree (see
+/// [`resolve_node`] for the frame). If the ref came from another tab the error says which one.
+pub fn resolve_ref(ctx: &Ctx, tab: TabId, state: &TabState, input: &str) -> Result<i64, CmdError> {
+    state
+        .registry
+        .resolve(input)
+        .map_err(|err| ref_error(ctx, tab, input, err))
+}
+
+/// The command error for a ref that failed in `tab`. Snapshot ids and e-numbers are unique
+/// across tabs, so a ref from another tab never resolves here; when another tab handed it
+/// out, tell the agent to pass that tab instead of a plain "no such ref".
+pub fn ref_error(ctx: &Ctx, tab: TabId, input: &str, err: PerceptionError) -> CmdError {
+    let is_ref_error = matches!(
+        err,
+        PerceptionError::BadRef { .. } | PerceptionError::StaleRef { .. }
+    );
+    let owner = if is_ref_error {
+        PerceptionState::from_ctx(ctx).owner_of(tab, input)
+    } else {
+        None
+    };
+    match owner {
+        Some(owner) => CmdError::new(
+            ErrorCode::NotFound,
+            format!(
+                "ref {} belongs to tab {owner}, not to tab {tab}",
+                input.trim()
+            ),
+        )
+        .with_retry(Retry::No)
+        .with_hint(format!(
+            "Pass tab={owner}: a ref only works in the tab whose page_snapshot or page_find \
+             printed it."
+        )),
+        None => perception_error(err),
+    }
 }
 
 /// Options for the snapshots `page.act` compares to build its diff: everything (text too),
