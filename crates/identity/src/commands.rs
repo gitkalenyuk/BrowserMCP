@@ -25,7 +25,7 @@ use crate::identity::{self, Identity, Kind, Os, Overrides, PRESETS, Screen};
 use crate::proxy::route::{self, ProxyRef, Rule, RuleSet};
 use crate::proxy::{Forwarder, GeoInfo, ProxyConfig, Strategy, forward, geo};
 use crate::rng::Rng;
-use crate::routing::{self, ROUTES_CHANGED};
+use crate::routing::{self, IDENTITY_ASSIGNED, ROUTES_CHANGED};
 use crate::stealth::{self, ApplyReport, Scope};
 
 /// Names: 1-64 chars of a-z, 0-9, '-' and '_' (same rule as profile ids).
@@ -329,10 +329,20 @@ impl Command for Remove {
     }
 
     async fn run(ctx: Ctx, args: IdArgs) -> Result<RemoveOutput, CmdError> {
-        let removed = Services::from_ctx(&ctx)?.identities.update(|f| {
+        let (removed, unassigned) = Services::from_ctx(&ctx)?.identities.update(|f| {
+            let unassigned: Vec<String> = f
+                .profiles
+                .iter()
+                .filter(|(_, id)| **id == args.id)
+                .map(|(profile, _)| profile.clone())
+                .collect();
             f.profiles.retain(|_, id| *id != args.id);
-            Ok(f.identities.remove(&args.id).is_some())
+            Ok((f.identities.remove(&args.id).is_some(), unassigned))
         })?;
+        for profile in unassigned {
+            ctx.events
+                .emit(IDENTITY_ASSIGNED, json!({ "profile": profile, "id": null }));
+        }
         Ok(RemoveOutput { removed })
     }
 }
@@ -383,6 +393,10 @@ impl Command for Assign {
             }
             Ok(())
         })?;
+        ctx.events.emit(
+            IDENTITY_ASSIGNED,
+            json!({ "profile": args.profile, "id": args.id }),
+        );
         Ok(AssignOutput {
             profile: args.profile,
             id: args.id,
@@ -1340,46 +1354,12 @@ impl Command for RulesSet {
     async fn run(ctx: Ctx, args: RulesSetArgs) -> Result<RulesSetOutput, CmdError> {
         check_name("profile", &args.profile)?;
         let services = Services::from_ctx(&ctx)?;
-        let mut set = RuleSet {
+        let set = RuleSet {
             rules: args.rules,
             default: args.default.unwrap_or_else(|| "direct".into()),
         };
-        let parsed = set.parse().map_err(|e| {
-            CmdError::invalid_params(e).with_hint("See the rules field description.")
-        })?;
-        // Store references in their normalized form (proxy URLs as parsed).
-        for (rule, (_, via)) in set.rules.iter_mut().zip(&parsed.rules) {
-            rule.via = via.to_stored();
-        }
-        set.default = parsed.default.to_stored();
-
-        // Resolve first: nothing is stored when a route cannot work (e.g. an empty pool).
-        let proxy = services.proxy_pref_for(&args.profile, &set).await?;
-        let pools: Vec<&str> = parsed
-            .rules
-            .iter()
-            .map(|(_, v)| v)
-            .chain([&parsed.default])
-            .filter_map(|v| match v {
-                ProxyRef::Pool(p) => Some(p.as_str()),
-                _ => None,
-            })
-            .collect();
-        let holder = routing::profile_run(&args.profile);
-        services.proxies.update(|f| {
-            if set.is_direct() {
-                f.routes.remove(&args.profile);
-            } else {
-                f.routes.insert(args.profile.clone(), set.clone());
-            }
-            // Pools the profile no longer routes through give its proxy back.
-            for (name, pool) in f.pools.iter_mut() {
-                if !pools.contains(&name.as_str()) {
-                    pool.release(&holder, None);
-                }
-            }
-            Ok(())
-        })?;
+        // Resolves first: nothing is stored when a route cannot work (e.g. an empty pool).
+        let (set, proxy) = services.set_routes(&args.profile, set).await?;
         ctx.events.emit(
             ROUTES_CHANGED,
             json!({ "profile": args.profile, "pref": proxy.pref }),

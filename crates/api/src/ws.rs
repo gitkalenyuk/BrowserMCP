@@ -56,8 +56,8 @@ use crate::access::{PluginAuthHandle, PluginGrant};
 use crate::state::ApiState;
 
 /// Topics every new connection is subscribed to (what the UI needs without asking).
-/// Browser state + the streams the UI panels render (AI chat, terminal, traffic, runs, recording).
-/// High-volume `command.*` stays opt-in.
+/// Browser state, the streams the UI panels render (AI chat, terminal, traffic, runs, recording)
+/// and data changes (bookmarks bar, star, library). High-volume `command.*` stays opt-in.
 pub const DEFAULT_TOPICS: &[&str] = &[
     "tab.*",
     "tabs.*",
@@ -69,6 +69,8 @@ pub const DEFAULT_TOPICS: &[&str] = &[
     "term.*",
     "net.*",
     "record.*",
+    "bookmarks.*",
+    "history.*",
 ];
 
 /// Topic of the notification sent when this connection missed events.
@@ -561,6 +563,14 @@ mod tests {
         for bad in ["", ".*", "Tab.*", "tab..x", "tab*", "a.*.b"] {
             assert!(!valid_pattern(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn defaults_carry_the_data_change_events() {
+        let subs = Subscriptions::with_defaults();
+        assert!(subs.matches("bookmarks.changed"));
+        assert!(subs.matches("history.changed"));
+        assert!(!subs.matches("command.finished"));
     }
 
     #[test]

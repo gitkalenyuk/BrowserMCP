@@ -1,7 +1,10 @@
 /target/
 /data/
 node_modules/
-dist/
+# Build outputs (anchored: `dist/` alone also ignored xtask/src/dist/ source files).
+/dist/
+ui/dist/
+sdk/*/dist/
 *.log
 .DS_Store
 .vscode/*

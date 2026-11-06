@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { BrowserApi } from '../lib/api';
   import Icon from '../lib/components/Icon.svelte';
-  import { bumpDataRev, markImportOffered } from '../lib/data/library';
+  import { markImportOffered } from '../lib/data/library';
   import {
     PART_LABELS,
     canStart,
@@ -40,8 +40,6 @@
       send({ type: 'finished', results });
     } catch (err) {
       send({ type: 'failed', error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      bumpDataRev();
     }
   }
 

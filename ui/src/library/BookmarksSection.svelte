@@ -4,7 +4,7 @@
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { editBookmark, renameFolder } from '../lib/data/edit';
-  import { bumpDataRev, onReconnect } from '../lib/data/library';
+  import { onDataChanged, onReconnect } from '../lib/data/library';
   import {
     canDropInto,
     dropPosition,
@@ -55,7 +55,16 @@
   }
   $effect(() => {
     void reload();
-    return onReconnect(api, () => void reload());
+    // Edits by anyone (the star, an agent, another library tab) arrive as bookmarks.changed.
+    const offChanged = onDataChanged(api, 'bookmarks.changed', () => {
+      void reload();
+      searchTick++;
+    });
+    const offReconnect = onReconnect(api, () => void reload());
+    return () => {
+      offChanged();
+      offReconnect();
+    };
   });
 
   // Search across all folders (debounced).
@@ -82,7 +91,6 @@
     } catch (err) {
       fail(err);
     }
-    bumpDataRev();
     await reload();
     searchTick++; // re-run the search
   }
@@ -165,12 +173,15 @@
     if (!dialogOpen) editing = null;
   });
 
+  /** A full http(s)/file URL, or `example.com` made into https; anything else (javascript:,
+   * data:, …) is refused here and by the core. */
   function validUrl(u: string): string | null {
+    const allowed = (href: string) => (['http:', 'https:', 'file:'].includes(new URL(href).protocol) ? href : null);
     try {
-      return new URL(u.trim()).href;
+      return allowed(new URL(u.trim()).href);
     } catch {
       try {
-        return /^[\w-]+(\.[\w-]+)+/.test(u.trim()) ? new URL(`https://${u.trim()}`).href : null;
+        return /^[\w-]+(\.[\w-]+)+/.test(u.trim()) ? allowed(new URL(`https://${u.trim()}`).href) : null;
       } catch {
         return null;
       }
@@ -199,14 +210,10 @@
           return f;
         }, 'Folder added');
       case 'edit-url':
-        return mutate(() => editBookmark(api, e.node, title || url!, url!), 'Bookmark saved');
+        return mutate(() => editBookmark(api, e.node.id, title || url!, url!), 'Bookmark saved');
       case 'edit-folder': {
         if (title === e.node.title) return;
-        const n = e.node;
-        return mutate(async () => {
-          const id = await renameFolder(api, { id: n.id, parent: n.parent!, position: n.position }, title);
-          if (folder === n.id) folder = id;
-        }, 'Folder renamed');
+        return mutate(() => renameFolder(api, e.node.id, title), 'Folder renamed');
       }
     }
   }

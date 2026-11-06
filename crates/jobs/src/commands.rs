@@ -319,6 +319,13 @@ pub struct RunStartArgs {
     /// (each row gets a fresh in-memory profile and off-screen tabs: parallel rows never
     /// share cookies, focus or keyboard), or a profile id (profile_create; shared by all rows).
     pub profile: Option<String>,
+    /// With profile "isolated": lease one proxy of this pool (proxy_pool_add) per row — the
+    /// row's profile goes through it; a retry rotates to another proxy; released when the
+    /// row ends.
+    pub proxy_pool: Option<String>,
+    /// With proxy_pool: give each row a fresh identity fitted to its proxy's exit IP
+    /// (timezone, languages, geolocation), applied to its tabs and workers. Default false.
+    pub fit_identity: Option<bool>,
 }
 
 impl Command for RunStart {
@@ -352,6 +359,8 @@ impl Command for RunStart {
                 Some(HealArg::Mode(mode)) => mode,
             },
             profile: args.profile,
+            proxy_pool: args.proxy_pool,
+            fit_identity: args.fit_identity.unwrap_or(false),
         })?;
         run_info(&inner, &run.id)
     }

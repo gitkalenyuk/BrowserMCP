@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `plugins.list/install/enable/disable/remove/reload/logs` | `data/plugins/<name>` |
 //! | `plugins.palette` / `plugins.palette_run` | Ctrl+K entries contributed by plugins |
-//! | `userscripts.list/save/delete/enable` | `data/userscripts/*.ts` |
+//! | `userscripts.list/get/save/delete/enable` | `data/userscripts/*.ts` |
 //! | `userscripts.inject` | run JS in an isolated world of a tab (what userscripts use) |
 //! | `trigger.webhook_set/list/remove` | webhook triggers (`POST /v1/hooks/{id}`) |
 //! | `trigger.webhook_fire` | hidden: what the webhook route calls |
@@ -378,6 +378,36 @@ impl Command for UserscriptsSave {
 
     async fn run(ctx: Ctx, args: UserscriptsSaveArgs) -> Result<UserscriptInfo, CmdError> {
         service(&ctx)?.save_userscript(&args.name, &args.code)
+    }
+}
+
+pub struct UserscriptsGet;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UserscriptsGetOutput {
+    pub name: String,
+    pub code: String,
+}
+
+impl Command for UserscriptsGet {
+    const NAME: &'static str = "userscripts.get";
+    type Args = UserscriptNameArgs;
+    type Output = UserscriptsGetOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Read the source of a userscript in data/userscripts (plugins' userscripts are \
+             part of the plugin and not listed here).",
+            Toolset::Script,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: UserscriptNameArgs) -> Result<UserscriptsGetOutput, CmdError> {
+        let code = service(&ctx)?.userscript_code(&args.name)?;
+        Ok(UserscriptsGetOutput {
+            name: args.name,
+            code,
+        })
     }
 }
 

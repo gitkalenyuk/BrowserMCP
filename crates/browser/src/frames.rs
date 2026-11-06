@@ -15,12 +15,13 @@
 
 use std::collections::HashMap;
 
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::{CdpEvents, CmdError, Ctx, TabId};
 use bmcp_perception::AxTree;
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::TryRecvError;
 
-use crate::cdp::{self, perception_error};
+use crate::cdp::perception_error;
 
 /// At most this many frames are merged into one snapshot.
 pub const MAX_FRAMES: usize = 32;
@@ -134,8 +135,26 @@ impl Frames {
     }
 }
 
-fn auto_attach(on: bool) -> Value {
-    json!({ "autoAttach": on, "waitForDebuggerOnStart": false, "flatten": true })
+/// Our name as an auto-attach holder. `Target.setAutoAttach` is one setting per session and
+/// identity tabs need `waitForDebuggerOnStart` on the same page session (their workers start
+/// paused until patched), so it goes through the shared owner in `bmcp-cdpshare`: we ask for
+/// no pausing, and whoever asked for pausing resumes the targets (iframes too).
+const ATTACH_HOLDER: &str = "frames";
+
+/// Hold auto-attach (without pausing) on a session of the tab. When it was on already
+/// (identity tabs switch it on before the first navigation), the existing frames were
+/// announced before we subscribed: have them announced again.
+async fn auto_attach(ctx: &Ctx, tab: TabId, session: Option<String>) -> Result<(), CmdError> {
+    let share = CdpShare::from_ctx(ctx);
+    let switched_on = share
+        .hold_auto_attach(&ctx.backend, tab, session.clone(), ATTACH_HOLDER, false)
+        .await?;
+    if !switched_on {
+        share
+            .reannounce_auto_attach(&ctx.backend, tab, session)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Start following the tab's out-of-process frames (once), then apply the attach/detach
@@ -152,10 +171,7 @@ async fn sync_sessions(ctx: &Ctx, tab: TabId, frames: &mut Frames) {
             return;
         };
         frames.events = Some(events);
-        if cdp::call(ctx, tab, "Target.setAutoAttach", auto_attach(true))
-            .await
-            .is_err()
-        {
+        if auto_attach(ctx, tab, None).await.is_err() {
             frames.unsupported = true;
             frames.events = None;
             return;
@@ -166,8 +182,8 @@ async fn sync_sessions(ctx: &Ctx, tab: TabId, frames: &mut Frames) {
         // detaches and re-announces every frame. (Missing events again would only leave
         // some out-of-process frame out of this snapshot.)
         frames.sessions.clear();
-        let _ = cdp::call(ctx, tab, "Target.setAutoAttach", auto_attach(false)).await;
-        let _ = cdp::call(ctx, tab, "Target.setAutoAttach", auto_attach(true)).await;
+        let _ = auto_attach(ctx, tab, None).await; // held already: off + on
+
         drain_events(ctx, tab, frames).await;
     }
 }
@@ -193,12 +209,15 @@ async fn drain_events(ctx: &Ctx, tab: TabId, frames: &mut Frames) -> bool {
                             frames
                                 .sessions
                                 .insert(target.to_string(), session.to_string());
-                            new_sessions.push(session.to_string());
+                            if !new_sessions.iter().any(|s| s == session) {
+                                new_sessions.push(session.to_string());
+                            }
                         }
                     }
                     "Target.detachedFromTarget" => {
                         let session = event.params["sessionId"].as_str().unwrap_or_default();
                         frames.sessions.retain(|_, s| s != session);
+                        CdpShare::from_ctx(ctx).forget_session(tab, session);
                     }
                     _ => {}
                 },
@@ -211,15 +230,7 @@ async fn drain_events(ctx: &Ctx, tab: TabId, frames: &mut Frames) -> bool {
             break;
         }
         for session in new_sessions {
-            let _ = ctx
-                .backend
-                .cdp_session(
-                    tab,
-                    Some(session),
-                    "Target.setAutoAttach".into(),
-                    auto_attach(true),
-                )
-                .await;
+            let _ = auto_attach(ctx, tab, Some(session)).await;
         }
     }
     lagged

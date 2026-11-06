@@ -28,6 +28,11 @@ use crate::rng::Rng;
 /// [`ProfileProxy::pref`]; contains only local addresses, no passwords).
 pub const ROUTES_CHANGED: &str = "proxy.routes_changed";
 
+/// Event topic: the identity assigned to a profile changed (`identity.assign`, or
+/// `identity.remove` of an assigned identity). Data: `{profile, id}` (`id` null = none).
+/// `bmcp-profiles` re-applies the profile's preferences (Accept-Language) on it.
+pub const IDENTITY_ASSIGNED: &str = "identity.assigned";
+
 /// The run id under which a profile's `pool:NAME` routes lease their proxy, so a profile
 /// keeps its IP across restarts.
 pub fn profile_run(profile: &str) -> String {
@@ -244,6 +249,124 @@ impl Services {
             .cloned()
             .unwrap_or_default();
         self.proxy_pref_for(profile, &set).await
+    }
+
+    /// The stored routing of `profile` (`direct` without rules when it has none).
+    pub fn routes(&self, profile: &str) -> Result<RuleSet, CmdError> {
+        Ok(self
+            .proxies
+            .read()?
+            .routes
+            .get(profile)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Store a profile's routing (what `proxy.rules_set` does, minus the event): validates and
+    /// normalizes the references, resolves every route first (nothing is stored when one
+    /// cannot work, e.g. an empty pool), stores it (a direct set without rules removes the
+    /// entry) and gives back the profile's pool leases it no longer routes through. Returns the
+    /// normalized set and the new preference. Callers that do not apply the preference
+    /// themselves emit [`ROUTES_CHANGED`].
+    pub async fn set_routes(
+        &self,
+        profile: &str,
+        mut set: RuleSet,
+    ) -> Result<(RuleSet, ProfileProxy), CmdError> {
+        let parsed = set.parse().map_err(|e| {
+            CmdError::invalid_params(e).with_hint(
+                "Rules: {match, via}; via/default: direct, fwd-N, pool:NAME, \
+                 lease:POOL/RUN/ROW or a proxy URL.",
+            )
+        })?;
+        // Store references in their normalized form (proxy URLs as parsed).
+        for (rule, (_, via)) in set.rules.iter_mut().zip(&parsed.rules) {
+            rule.via = via.to_stored();
+        }
+        set.default = parsed.default.to_stored();
+        let proxy = self.proxy_pref_for(profile, &set).await?;
+        let pools: Vec<&str> = parsed
+            .rules
+            .iter()
+            .map(|(_, v)| v)
+            .chain([&parsed.default])
+            .filter_map(|v| match v {
+                ProxyRef::Pool(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .collect();
+        let holder = profile_run(profile);
+        self.proxies.update(|f| {
+            if set.is_direct() {
+                f.routes.remove(profile);
+            } else {
+                f.routes.insert(profile.to_string(), set.clone());
+            }
+            // Pools the profile no longer routes through give its proxy back.
+            for (name, pool) in f.pools.iter_mut() {
+                if !pools.contains(&name.as_str()) {
+                    pool.release(&holder, None);
+                }
+            }
+            Ok(())
+        })?;
+        Ok((set, proxy))
+    }
+
+    /// A fresh identity for `profile` (deterministic by `seed`), fitted to the exit IP of
+    /// `via` when given (geo lookup through the proxy at `geo_url`, default ip-api.com; what
+    /// `identity.fit_to_proxy` does), saved under the id `profile` and assigned to the
+    /// profile. Used for the isolated rows of mass runs (`run.start {fit_identity}`).
+    pub async fn identity_for_new_profile(
+        &self,
+        profile: &str,
+        seed: u64,
+        via: Option<&ProxyRef>,
+        geo_url: Option<&str>,
+    ) -> Result<Identity, CmdError> {
+        let mut identity = crate::identity::generate(None, seed, &Default::default());
+        identity.id = profile.to_string();
+        if let Some(via) = via
+            && let Some(upstream) = self.upstream(via, Some(&profile_run(profile)))?
+        {
+            let url = geo_url.unwrap_or(crate::proxy::geo::DEFAULT_URL);
+            let info =
+                crate::proxy::geo::lookup(Some(&upstream), url, std::time::Duration::from_secs(10))
+                    .await
+                    .map_err(|e| {
+                        CmdError::new(ErrorCode::Internal, format!("geo lookup failed: {e}"))
+                            .with_retry(Retry::AfterWait)
+                    })?;
+            crate::fit::fit_to_geo(&mut identity, &info);
+        }
+        let copy = identity.clone();
+        self.identities.update(|f| {
+            f.identities.insert(copy.id.clone(), copy);
+            f.profiles.insert(profile.to_string(), profile.to_string());
+            Ok(())
+        })?;
+        Ok(identity)
+    }
+
+    /// Forget what this crate keeps for a profile that goes away: its routes (and the pool
+    /// leases they held) and its identity assignment. With `own_identity`, also the identity
+    /// saved under the profile's own id when it is the assigned one (what
+    /// [`Self::identity_for_new_profile`] made); other identities always stay.
+    pub fn forget_profile(&self, profile: &str, own_identity: bool) -> Result<(), CmdError> {
+        let holder = profile_run(profile);
+        self.proxies.update(|f| {
+            f.routes.remove(profile);
+            for pool in f.pools.values_mut() {
+                pool.release(&holder, None);
+            }
+            Ok(())
+        })?;
+        self.identities.update(|f| {
+            if f.profiles.remove(profile).as_deref() == Some(profile) && own_identity {
+                f.identities.remove(profile);
+            }
+            Ok(())
+        })
     }
 
     /// [`Self::profile_proxy_pref`] for a rule set that is not stored (yet).

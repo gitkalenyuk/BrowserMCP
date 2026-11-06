@@ -603,3 +603,151 @@ async fn rows_get_their_profile_through_tab_defaults() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);
 }
+
+/// Records what the runner asks of the row-profile hook; `prepare` fails for row 0's first
+/// attempt (e.g. a dead proxy).
+#[derive(Default, Clone)]
+struct RecordingRows {
+    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl RecordingRows {
+    fn log(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+    fn push(&self, line: String) {
+        self.log.lock().unwrap().push(line);
+    }
+}
+
+impl bmcp_jobs::RowProfileHook for RecordingRows {
+    fn check(
+        &self,
+        proxy_pool: Option<&str>,
+        _fit_identity: bool,
+    ) -> Result<(), bmcp_core::CmdError> {
+        match proxy_pool {
+            Some("missing") => Err(bmcp_core::CmdError::new(
+                ErrorCode::NotFound,
+                "no proxy pool \"missing\"",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn prepare(
+        &self,
+        row: bmcp_jobs::RowProfile,
+    ) -> bmcp_core::BoxFuture<'static, Result<(), bmcp_core::CmdError>> {
+        // Profile ids carry the run id; compare without it.
+        let profile = row.profile.replacen(&row.run, "RUN", 1);
+        self.push(format!(
+            "prepare {profile} pool={} fit={} rotate={}",
+            row.proxy_pool.as_deref().unwrap_or("-"),
+            row.fit_identity,
+            row.rotate
+        ));
+        let fail = row.row == 0 && row.attempt == 1;
+        Box::pin(async move {
+            if fail {
+                Err(bmcp_core::CmdError::internal("proxy handshake failed"))
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    fn release(
+        &self,
+        row: bmcp_jobs::RowProfile,
+        row_done: bool,
+    ) -> bmcp_core::BoxFuture<'static, ()> {
+        let profile = row.profile.replacen(&row.run, "RUN", 1);
+        self.push(format!("release {profile} done={row_done}"));
+        Box::pin(async {})
+    }
+
+    fn run_finished(
+        &self,
+        run: String,
+        proxy_pool: Option<String>,
+        profile_prefix: String,
+    ) -> bmcp_core::BoxFuture<'static, ()> {
+        let prefix = profile_prefix.replacen(&run, "RUN", 1);
+        self.push(format!(
+            "finished pool={} prefix={prefix}",
+            proxy_pool.unwrap_or_default()
+        ));
+        Box::pin(async {})
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_rows_lease_a_proxy_per_row_and_rotate_on_retry() {
+    let env = Env::new();
+    // Row 1's script fails once (its retry rotates too); row 0's first attempt never runs
+    // because its profile could not be prepared.
+    env.save("a", "when id=1 flaky r1 1 throw blocked\nargs")
+        .await;
+
+    // Without the hook (no browser profiles) a pool cannot be used.
+    let start = json!({"script": "a", "data": {"rows": id_rows(3)}, "parallel": 1,
+                       "profile": "isolated", "proxy_pool": "res", "fit_identity": true});
+    let err = env.call("run.start", start.clone()).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotImplemented);
+
+    let rows = RecordingRows::default();
+    env.jobs.set_row_profiles(std::sync::Arc::new(rows.clone()));
+    // A pool needs isolated rows; the hook validates the pool.
+    let mut shared = start.clone();
+    shared["profile"] = json!("work");
+    let err = env.call("run.start", shared).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    let mut missing = start.clone();
+    missing["proxy_pool"] = json!("missing");
+    let err = env.call("run.start", missing).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+
+    let run = env.ok("run.start", start).await;
+    let id = run["id"].as_str().unwrap().to_string();
+    let status = env.wait_status(&id, &["finished"]).await;
+    assert_eq!(status["options"]["proxy_pool"], "res");
+    assert_eq!(status["options"]["fit_identity"], true);
+    let mut results = env.rows(&id).await;
+    results.sort_by_key(|r| r["row"].as_u64());
+    for r in &results {
+        assert_eq!(r["status"], "ok", "{r}");
+    }
+    // Row 0 ran its script only in attempt 2, in that attempt's profile.
+    assert_eq!(results[0]["attempts"], 2);
+    let profile = results[0]["result"]["tab_defaults"]["profile"]
+        .as_str()
+        .unwrap();
+    assert!(profile.ends_with("-r0-a2"), "{profile}");
+
+    for _ in 0..100 {
+        if rows.log().iter().any(|l| l.starts_with("finished")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        rows.log(),
+        [
+            // Row 0: preparing attempt 1 failed → retry with a rotated proxy.
+            "prepare RUN-r0-a1 pool=res fit=true rotate=false",
+            "release RUN-r0-a1 done=false",
+            "prepare RUN-r0-a2 pool=res fit=true rotate=true",
+            "release RUN-r0-a2 done=true",
+            // Row 1: the script failed once → same.
+            "prepare RUN-r1-a1 pool=res fit=true rotate=false",
+            "release RUN-r1-a1 done=false",
+            "prepare RUN-r1-a2 pool=res fit=true rotate=true",
+            "release RUN-r1-a2 done=true",
+            // Row 2: one attempt, its proxy released at the end.
+            "prepare RUN-r2-a1 pool=res fit=true rotate=false",
+            "release RUN-r2-a1 done=true",
+            "finished pool=res prefix=RUN-r",
+        ]
+    );
+}

@@ -45,6 +45,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: 'zoom.in', title: 'Zoom in' },
   { id: 'zoom.out', title: 'Zoom out' },
   { id: 'zoom.reset', title: 'Reset zoom' },
+  { id: 'settings.open', title: 'Settings' },
   { id: 'palette.open', title: 'Command palette', hidden: true },
   ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => ({
     id: `tab.select${n}` as CommandId,

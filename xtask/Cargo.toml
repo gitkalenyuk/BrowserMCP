@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Project automation: cargo xtask <doctor|build|run|test|gen-sdk>"
+description = "Project automation: cargo xtask <doctor|build|run|test|gen-sdk|bench|dist|bump-cef>"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,6 @@ publish.workspace = true
 [dependencies]
 # Reads the registry dump for gen-sdk.
 serde_json.workspace = true
+# The portable package archive (`cargo xtask dist`): deflate only, pure Rust (zlib-rs);
+# `time` stamps the entries with the build time instead of 1980-01-01.
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }

@@ -9,7 +9,7 @@ use crate::cookies::CookieInfo;
 use crate::prefs::Prefs;
 
 /// Everything the browser applies to one profile's request context. Proxy passwords never
-/// reach the browser: they stay in the local forwarder (see `service::plan_proxy`).
+/// reach the browser: they stay in bmcp-identity's local forwarders (see [`crate::prefs`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileSettings {
     pub id: String,

@@ -9,7 +9,7 @@ Date: 2026-11-06. CEF 156 Alloy, Windows 11. Follow-ups requested by `crates/adb
 
 | Item | Commands / API | CEF hook |
 |---|---|---|
-| Profiles | `profile.list`, `profile.create {id, proxy?, forward?, proxy_bypass?, identity?, accept_language?}`, `profile.delete {id, keep_data?}`, `tabs.open {profile?, incognito?, window?: "current"\|"new"\|"offscreen", run?}` | one `CefRequestContext` per profile (`data/profiles/<id>`; incognito = no cache path), prefs via `SetPreference`; proxy passwords only in the local forwarder (`forward: false` = password-less proxies) |
+| Profiles | `profile.list`, `profile.create {id, proxy?, proxy_bypass?, identity?, accept_language?}`, `profile.delete {id, keep_data?}`, `tabs.open {profile?, incognito?, window?: "current"\|"new"\|"offscreen", run?}` | one `CefRequestContext` per profile (`data/profiles/<id>`; incognito = no cache path), prefs via `SetPreference`; proxy passwords only in bmcp-identity's local forwarders |
 | Parallel isolation | `tabs.open {window: "offscreen"}`, `run.start {profile: "isolated"}` | windowless (OSR) browsers with their own size and focus |
 | Adblock gate | `adblock.*` unchanged; `adblock.apply` now only does the cosmetic part (`report.network = "cef"`) | `GetResourceRequestHandler` → `OnBeforeResourceLoad` (`RV_CANCEL`), `GetResourceHandler` (redirect body), `OnResourceLoadComplete` (bytes), content settings for `js`/`images` before the navigation commits |
 | Cookies | `cookies.get {profile?, incognito?, domain?}`, `cookies.set {…, cookies}`, `cookies.delete {…, domain?, name?}`, `cookies.apply_pending` | `CefCookieManager` visitor / `SetCookie`; `pending_cookies` are applied at startup and after every `import.chrome` |
@@ -17,6 +17,36 @@ Date: 2026-11-06. CEF 156 Alloy, Windows 11. Follow-ups requested by `crates/adb
 | Permissions | `permissions.set {origin, kind, allow?}`, `permissions.list`, `permissions.pending`, `permissions.answer` | `OnShowPermissionPrompt`, `OnRequestMediaAccessPermission`: rules, else the permission bar asks (window tabs) / deny (off-screen); `bmcp://ui` keeps its loopback grant, also in content tabs |
 | Identity auto-apply | `profile.create {identity}` / `identity.assign` | new tabs and popups of such a profile start on `about:blank`, get `stealth.fingerprint_set`, then load; workers via `Target.setAutoAttach {waitForDebuggerOnStart, flatten}` |
 | External CDP | `browsermcp --cdp-port <n>` | `Settings.remote_debugging_port`; refused while any profile has an identity |
+| Mass-run proxies | `run.start {profile: "isolated", proxy_pool?, fit_identity?}` | per row: `proxy.lease` (rotated on retry, released at the row's end), the row's in-memory profile routed through `lease:POOL/RUN/ROW`, optionally an identity fitted to the proxy's exit IP |
+
+## Unified with bmcp-identity (one source of truth)
+
+bmcp-profiles keeps only `profiles.json` (bypass list, explicit Accept-Language), cookies,
+permissions and download folders. Everything else comes from bmcp-identity:
+
+| What | Before (duplicated in bmcp-profiles) | Now |
+|---|---|---|
+| Proxy of a profile | own `proxy`/`forward` in `profiles.json`, own forwarder per profile, own `fixed_servers` pref | the profile's routing in `proxies.json` (`profile.create {proxy}` = its default, `proxy.rules_set` = rules + default), pref from `Services::profile_proxy_pref` (fixed forwarder or PAC script), forwarders shared in bmcp-identity; old `profiles.json` proxies are moved there on start |
+| WebRTC / Accept-Language prefs | own table in `prefs.rs` | `cef_prefs::profile_prefs(identity, proxied)` (+ explicit `accept_language`, `bypass_list`) |
+| Identity of a profile | own reads of `identities.json` | `Services::identity_for_profile` |
+| Worker patch | own `WorkerOverrides` (UA + cores/memory/languages script) and watcher in `crates/cef/src/hooks.rs` | `worker_commands(identity, type, None)` sent by `bmcp_profiles::hooks::watch_workers` (resume always last, also for paused iframes) |
+| Live changes | — | `proxy.routes_changed` and `identity.assigned` → `ProfilesService::apply` → `ProfileBackend::configure` (`SetPreference` on the live contexts; no new backend method needed) |
+| Auto-attach | identity watcher and `frames.rs` each sent `Target.setAutoAttach`, the later one won | `bmcp_cdpshare::CdpShare::hold_auto_attach`: merged per session, pausing while any holder wants it; a late joiner re-announces |
+
+`crates/cef` changes: `hooks.rs` lost its worker watcher (`prepare` now does it) — a call-site
+change; `profiles.rs` is unchanged (same `Prefs::to_preferences` / `accept_language` API).
+
+Live check after the unification (debug build, `--api-port 47896`, fake upstream HTTP proxy
+with Basic auth that answers tunnelled requests itself):
+
+| Check | Result |
+|---|---|
+| `profile.create px {proxy: "http://alice:…@127.0.0.1:18768"}`, off-screen tab `http://site-a.test/hello` | `proxy_mode: fixed_servers`, `proxy_server: socks5://127.0.0.1:<port>` (bmcp-identity forwarder); page text `PROXIED site-a.test:80 /hello`; proxy log `CONNECT site-a.test:80 auth=ok` |
+| then `proxy.rules_set px {rules: [{match: "*.routed.test", via: <same proxy>}], default: direct}`, same tab, no restart | re-applied live (`pac_script`): `x.routed.test` → `PROXIED x.routed.test:80 /split`; `site-b.test` went direct (`DNS_PROBE_FINISHED_NXDOMAIN`, nothing in the proxy log) |
+| `profile.create stealthy {identity: idw}` (16 cores, 8 GB, fr-FR), page with a blob worker | page and worker: `cores=16 mem=8 langs=fr-FR,fr,en-US,en`; default profile: 12 / 32 / en-US in both |
+| same tab: `page.snapshot` (OOPIF auto-attach joins), then reload | the new worker is patched again (16 / 8 / fr-FR) |
+
+Mass runs with `proxy_pool` were checked with the fake script host only (no V8 build here).
 
 ## Automation cannot close the last window
 
@@ -90,8 +120,8 @@ with `ERR_ABORTED`, so its `blocked` column stays 0 — use `adblock.stats` for 
 * **No `GetAuthCredentials` for proxies**: with an authenticated HTTP proxy set directly in
   the `proxy` pref, CEF 156 never called `CefRequestHandler::GetAuthCredentials` (logged);
   Chromium's own login handling took over and the browser crashed (segfault) shortly after
-  the 407. So passwords always go through the forwarder; `profile.create {forward: false}`
-  with a password is refused.
+  the 407. So passwords always go through the forwarder (since the unification every proxy
+  does; `profile.create {forward}` is gone).
 * **Downloads need the tab**: CEF reports progress through the browser's client; closing the
   tab right after a download starts leaves the row `in_progress`.
 * **Transition type flags**: `Request::transition_type()` returns a Rust enum, but the value
@@ -101,14 +131,19 @@ with `ERR_ABORTED`, so its `blocked` column stays 0 — use `adblock.stats` for 
 
 ## Known gaps
 
-* Identity tabs share `Target.setAutoAttach` (one setting per session) with the OOPIF support
-  of `crates/browser/src/frames.rs` (`waitForDebuggerOnStart: false`, `flatten: true`): after a
-  snapshot has switched it, new workers of that tab are still patched on attach, but no longer
-  paused first, so a worker's very first lines may see the real values. Both use flattened
-  sessions; our watcher resumes every target it paused (iframes included).
-* The newer identity APIs from main (`profile_proxy_pref` / `proxy.rules_set` routes,
-  `cef_prefs::profile_prefs`, `worker_commands`) are not wired; bmcp-profiles has its own
-  proxy setting, prefs and worker patch.
+* Fixed (unification, below): identity tabs and the OOPIF support of
+  `crates/browser/src/frames.rs` no longer overwrite each other's `Target.setAutoAttach`;
+  bmcp-profiles uses bmcp-identity's routing, prefs and worker commands.
+* Workers inside out-of-process iframes (child sessions) are not paused or patched; the OOPIF
+  documents themselves get no identity overrides (they are only resumed).
+* Proxy forwarders live in bmcp-identity, one per upstream, shared by every profile that uses
+  it; they are not stopped when the last profile using them goes (bounded by the proxies in
+  use; `proxy.forward_stop` stops one).
+* `proxy_bypass` only applies to a fixed proxy (no split rules); with split rules use
+  `{match, via: "direct"}` rules (`profile.create` warns).
+* A mass-run row profile whose tabs are still open when its attempt ends keeps its settings in
+  the browser until restart (`forget` is refused while tabs are open; the in-memory context
+  itself goes with its last tab).
 
 * `getUserMedia` in an *off-screen* tab never settles (no permission callback arrives).
 * `webrtc.multiple_routes_enabled` / `webrtc.nonproxied_udp_enabled` are not registered in

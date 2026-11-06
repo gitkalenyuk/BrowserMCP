@@ -5,10 +5,11 @@ export const DEFAULT_WS_URL = 'ws://127.0.0.1:47800/v1/ws';
 
 /**
  * Topics asked for on every connection, on top of the server's defaults (tab.*, tabs.*, …):
- * the side panels render AI sessions, terminals and traffic; ui.* carries notifications.
- * Subscribing twice is harmless.
+ * the side panels render AI sessions, terminals and traffic; ui.* carries notifications;
+ * bookmarks.* / history.* keep the bookmarks bar, the star and the library current (an older
+ * core without them in its defaults still sends them). Subscribing twice is harmless.
  */
-export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*', 'permission.*'];
+export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*', 'bookmarks.*', 'history.*', 'permission.*'];
 
 interface Pending {
   resolve: (value: unknown) => void;

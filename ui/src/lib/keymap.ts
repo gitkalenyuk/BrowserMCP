@@ -47,6 +47,7 @@ export const COMMAND_IDS = [
   'zoom.in',
   'zoom.out',
   'zoom.reset',
+  'settings.open',
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];
@@ -99,6 +100,7 @@ export const DEFAULT_KEYMAP: Keymap = {
   'zoom.in': ['Ctrl+=', 'Ctrl+Shift+=', 'Ctrl++'],
   'zoom.out': ['Ctrl+-'],
   'zoom.reset': ['Ctrl+0'],
+  'settings.open': ['Ctrl+,'],
 };
 
 export interface Chord {

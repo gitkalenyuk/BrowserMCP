@@ -839,6 +839,48 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- bookmarks.update ----
+
+  /** Arguments of `bookmarks.update`. */
+  export interface BookmarksUpdateArgs {
+    /** Bookmark or folder id. */
+    id: number;
+    /** New title (bookmark: empty = the URL; folder: must not be empty). */
+    title?: string | null;
+    /** New URL (bookmarks only; http, https or file). */
+    url?: string | null;
+  }
+
+  /**
+   * Result of `bookmarks.update`.
+   * What `bookmarks.update` changed: exactly one of the two is set.
+   */
+  export interface BookmarksUpdateOutput {
+    /** The bookmark after the edit (when `id` is a bookmark). */
+    bookmark: {
+      /** Unix ms. */
+      created: number;
+      /** Id of the folder it is in. */
+      folder: number;
+      id: number;
+      /** Index among its siblings (folders and bookmarks share one order). */
+      position: number;
+      title: string;
+      url: string;
+    } | null;
+    /** The folder after the edit (when `id` is a folder). */
+    folder: {
+      /** Number of direct children (folders + bookmarks). */
+      children: number;
+      created: number;
+      id: number;
+      /** Parent folder; `null` for the two root folders. */
+      parent: number | null;
+      position: number;
+      title: string;
+    } | null;
+  }
+
   // ---- clipboard.write ----
 
   /** Arguments of `clipboard.write`. */
@@ -1546,14 +1588,22 @@ declare namespace BrowserMCP {
 
   /** Arguments of `history.delete`. */
   export interface HistoryDeleteArgs {
-    /** Forget every visit before this time (Unix ms). Use the current time to clear everything. */
+    /** Only visits before this time (Unix ms). Use the current time to clear everything. */
     before?: number | null;
-    /** Forget this exact URL (all its visits). */
+    /**
+     * Only visits on this local calendar day, `YYYY-MM-DD` (not together with
+     * `since`/`before`).
+     */
+    day?: string | null;
+    /** Only visits at or after this time (Unix ms). */
+    since?: number | null;
+    /** Only the visits of this exact URL (alone: the URL with all its visits). */
     url?: string | null;
   }
 
   /** Result of `history.delete`. */
   export interface HistoryDeleteOutput {
+    /** URLs that had no visit left and were dropped. */
     deleted_urls: number;
     deleted_visits: number;
   }
@@ -3106,7 +3156,7 @@ declare namespace BrowserMCP {
     };
     /**
      * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_proposed","when":"always"},{"aggregate":false,"channels":["ui","telegram"],"topic":"run.heal_applied","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_failed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
      */
     rules: {
       /**
@@ -3268,7 +3318,7 @@ declare namespace BrowserMCP {
     };
     /**
      * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
-     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_proposed","when":"always"},{"aggregate":false,"channels":["ui","telegram"],"topic":"run.heal_applied","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_failed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
      */
     rules: {
       /**
@@ -4729,25 +4779,29 @@ declare namespace BrowserMCP {
   export interface ProfileCreateArgs {
     /** Accept-Language list, e.g. "de-DE,de,en". Default: the identity's. */
     accept_language?: string | null;
-    /**
-     * Use the local forwarder for the proxy (default true; required when the proxy has a
-     * password). false: Chromium connects to a password-less proxy itself.
-     */
-    forward?: boolean | null;
     /** Profile id: 1-64 chars of a-z, 0-9, '-', '_'. Creating an existing id updates it. */
     id: string;
     /** Saved identity id (identity_list) applied to every new tab of this profile. "" removes it. */
     identity?: string | null;
     /**
-     * Upstream proxy: socks5://user:pass@host:port, http://user:pass@host:port or
-     * host:port:user:pass. "" removes it.
+     * Proxy for all of its traffic (the default of its proxy routing; split rules from
+     * proxy_rules_set stay): socks5://user:pass@host:port, http://user:pass@host:port,
+     * host:port:user:pass, pool:NAME (a pool proxy that stays the same for this profile),
+     * fwd-N or direct. Always through a local forwarder (passwords never reach the engine).
+     * "" or "direct" removes it.
      */
     proxy?: string | null;
-    /** Hosts that skip the proxy, e.g. "<local>;*.lan". */
+    /**
+     * Hosts that skip a fixed proxy, e.g. "<local>;*.lan" (with split rules use a
+     * {match, via: "direct"} rule instead).
+     */
     proxy_bypass?: string | null;
   }
 
-  /** Result of `profile.create`. */
+  /**
+   * Result of `profile.create`.
+   * The proxy part of a profile as shown by `profile.list` / `profile.create`.
+   */
   export interface ProfileCreateOutput {
     /** True when it did not exist before. */
     created: boolean;
@@ -4755,9 +4809,18 @@ declare namespace BrowserMCP {
     data_dir: string;
     id: string;
     identity: string | null;
+    /** Default route of the profile's proxy routing (password masked); null = direct. */
     proxy: string | null;
-    /** What Chromium uses for this profile (the local forwarder when there is a proxy). */
+    /**
+     * What Chromium was told: "direct", "fixed_servers" or "pac_script" (null = not applied
+     * yet).
+     */
+    proxy_mode: string | null;
+    /** Split routing rules (proxy_rules_set) besides the default. */
+    proxy_rules: number;
+    /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
     proxy_server: string | null;
+    warning?: string | null;
   }
 
   // ---- profile.delete ----
@@ -4804,9 +4867,16 @@ declare namespace BrowserMCP {
       launch: boolean;
       /** The browser has it loaded (it has, or had, tabs). */
       open: boolean;
-      /** Upstream proxy with the password masked. */
+      /** Default route of the profile's proxy routing (password masked); null = direct. */
       proxy: string | null;
-      /** What Chromium is told to use (e.g. the local forwarder `socks5://127.0.0.1:51234`). */
+      /**
+       * What Chromium was told: "direct", "fixed_servers" or "pac_script" (null = not applied
+       * yet).
+       */
+      proxy_mode: string | null;
+      /** Split routing rules (proxy_rules_set) besides the default. */
+      proxy_rules: number;
+      /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
       proxy_server: string | null;
       /** Settings stored in profiles.json. */
       stored: boolean;
@@ -5379,6 +5449,8 @@ declare namespace BrowserMCP {
     note?: string | null;
     /** Run-wide settings, fixed at `run.start`. */
     options: {
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
       /**
@@ -5400,6 +5472,8 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
       /** Extra attempts per row after a failure. */
       retries: number;
       /** Stop the whole run at the first failed row. */
@@ -5669,6 +5743,8 @@ declare namespace BrowserMCP {
       note?: string | null;
       /** Run-wide settings, fixed at `run.start`. */
       options: {
+        /** Isolated rows: a fresh identity fitted to the row's proxy. */
+        fit_identity?: boolean;
         /** Pause and ask for a patch when a row breaks on a page.* selector error. */
         heal: boolean;
         /**
@@ -5690,6 +5766,8 @@ declare namespace BrowserMCP {
          * profile + off-screen tabs per row attempt), or a profile id.
          */
         profile?: string | null;
+        /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+        proxy_pool?: string | null;
         /** Extra attempts per row after a failure. */
         retries: number;
         /** Stop the whole run at the first failed row. */
@@ -5741,6 +5819,8 @@ declare namespace BrowserMCP {
     note?: string | null;
     /** Run-wide settings, fixed at `run.start`. */
     options: {
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
       /**
@@ -5762,6 +5842,8 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
       /** Extra attempts per row after a failure. */
       retries: number;
       /** Stop the whole run at the first failed row. */
@@ -5862,6 +5944,8 @@ declare namespace BrowserMCP {
     note?: string | null;
     /** Run-wide settings, fixed at `run.start`. */
     options: {
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
       /**
@@ -5883,6 +5967,8 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
       /** Extra attempts per row after a failure. */
       retries: number;
       /** Stop the whole run at the first failed row. */
@@ -5916,6 +6002,11 @@ declare namespace BrowserMCP {
       xlsx_path?: string | null;
     };
     /**
+     * With proxy_pool: give each row a fresh identity fitted to its proxy's exit IP
+     * (timezone, languages, geolocation), applied to its tabs and workers. Default false.
+     */
+    fit_identity?: boolean | null;
+    /**
      * Self-healing when a row breaks on a page.* selector error (NOT_FOUND,
      * NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET): "ask" (default: pause, an AI
      * proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
@@ -5934,6 +6025,12 @@ declare namespace BrowserMCP {
      * share cookies, focus or keyboard), or a profile id (profile_create; shared by all rows).
      */
     profile?: string | null;
+    /**
+     * With profile "isolated": lease one proxy of this pool (proxy_pool_add) per row — the
+     * row's profile goes through it; a retry rotates to another proxy; released when the
+     * row ends.
+     */
+    proxy_pool?: string | null;
     /** Extra attempts for a failed row, with exponential backoff (default 1). */
     retries?: number | null;
     /** Saved script to run once per row. */
@@ -5969,6 +6066,8 @@ declare namespace BrowserMCP {
     note?: string | null;
     /** Run-wide settings, fixed at `run.start`. */
     options: {
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
       /**
@@ -5990,6 +6089,8 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
       /** Extra attempts per row after a failure. */
       retries: number;
       /** Stop the whole run at the first failed row. */
@@ -6040,6 +6141,8 @@ declare namespace BrowserMCP {
     note?: string | null;
     /** Run-wide settings, fixed at `run.start`. */
     options: {
+      /** Isolated rows: a fresh identity fitted to the row's proxy. */
+      fit_identity?: boolean;
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
       /**
@@ -6061,6 +6164,8 @@ declare namespace BrowserMCP {
        * profile + off-screen tabs per row attempt), or a profile id.
        */
       profile?: string | null;
+      /** Isolated rows: one proxy of this pool leased per row (rotated on retry). */
+      proxy_pool?: string | null;
       /** Extra attempts per row after a failure. */
       retries: number;
       /** Stop the whole run at the first failed row. */
@@ -6665,6 +6770,20 @@ declare namespace BrowserMCP {
     warnings: string[];
   }
 
+  // ---- system.open_path ----
+
+  /** Arguments of `system.open_path`. */
+  export interface SystemOpenPathArgs {
+    /** Absolute path inside the BrowserMCP data folder or the Downloads folder. */
+    path: string;
+  }
+
+  /** Result of `system.open_path`. */
+  export interface SystemOpenPathOutput {
+    /** The resolved path that was shown. */
+    path: string;
+  }
+
   // ---- system.ping ----
 
   /**
@@ -6679,6 +6798,20 @@ declare namespace BrowserMCP {
     name: string;
     /** BrowserMCP version, e.g. "0.1.0". */
     version: string;
+  }
+
+  // ---- system.reveal_path ----
+
+  /** Arguments of `system.reveal_path`. */
+  export interface SystemRevealPathArgs {
+    /** Absolute path inside the BrowserMCP data folder or the Downloads folder. */
+    path: string;
+  }
+
+  /** Result of `system.reveal_path`. */
+  export interface SystemRevealPathOutput {
+    /** The resolved path that was shown. */
+    path: string;
   }
 
   // ---- tabs.activate ----
@@ -7544,6 +7677,19 @@ declare namespace BrowserMCP {
     name: string;
   }
 
+  // ---- userscripts.get ----
+
+  /** Arguments of `userscripts.get`. */
+  export interface UserscriptsGetArgs {
+    name: string;
+  }
+
+  /** Result of `userscripts.get`. */
+  export interface UserscriptsGetOutput {
+    code: string;
+    name: string;
+  }
+
   // ---- userscripts.inject ----
 
   /** Arguments of `userscripts.inject`. */
@@ -7731,6 +7877,8 @@ declare namespace BrowserMCP {
     "bookmarks.remove": { args: BookmarksRemoveArgs; output: BookmarksRemoveOutput };
     /** Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first. */
     "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
+    /** Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit. */
+    "bookmarks.update": { args: BookmarksUpdateArgs; output: BookmarksUpdateOutput };
     /** Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused). */
     "clipboard.write": { args: ClipboardWriteArgs; output: ClipboardWriteOutput };
     /** Move cookies waiting from import_chrome (cookies JSON) into a profile's cookie jar. Runs by itself at startup and after each import. */
@@ -7765,7 +7913,7 @@ declare namespace BrowserMCP {
     "hints.hide": { args: HintsHideArgs; output: HintsHideOutput };
     /** Show Vim-style link hints: a short label (as, sd…) next to every interactive element in view. Typing a label in the page clicks it (or opens it in a new tab, focuses it, copies its link — see mode); Esc cancels. Returns the labels with the elements they point at. */
     "hints.show": { args: HintsShowArgs; output: HintsShowOutput };
-    /** Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed. */
+    /** Delete history visits: in a time window (`since` and/or `before`, Unix ms), on a local day (`day`, YYYY-MM-DD) and/or of one URL (`url`; alone it forgets the URL completely). URLs left without visits are dropped. Returns how many visits and URLs were removed. */
     "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
     /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
     "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
@@ -7909,9 +8057,9 @@ declare namespace BrowserMCP {
     "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
     /** Stop a plugin and delete its folder from data/plugins. */
     "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
-    /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
+    /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
     "profile.create": { args: ProfileCreateArgs; output: ProfileCreateOutput };
-    /** Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first. */
+    /** Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first. */
     "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
     /** List browser profiles: stored settings (proxy, language), assigned identity, and which are open with which tabs (incl. in-memory/incognito ones). */
     "profile.list": { args: ProfileListArgs; output: ProfileListOutput };
@@ -8011,8 +8159,12 @@ declare namespace BrowserMCP {
     "stealth.fingerprint_clear": { args: StealthFingerprintClearArgs; output: StealthFingerprintClearOutput };
     /** Apply a fingerprint identity to a tab: user agent + client hints, Accept-Language, timezone, locale, screen/DPR, touch, geolocation, CPU cores and (by a minimal patch script) deviceMemory, webdriver and WebGL GPU strings. Give identity_id, identity or preset. Check the result with stealth_check. */
     "stealth.fingerprint_set": { args: StealthFingerprintSetArgs; output: StealthFingerprintSetOutput };
+    /** Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}. */
+    "system.open_path": { args: SystemOpenPathArgs; output: SystemOpenPathOutput };
     /** Check that BrowserMCP is running. Returns its name and version. */
     "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
+    /** Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}. */
+    "system.reveal_path": { args: SystemRevealPathArgs; output: SystemRevealPathOutput };
     /** Switch the window to this tab (make it the active, visible tab). */
     "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
     /** Close a tab. If it is the last tab of its window, the new tab page takes its place and the window stays open (only a person closing the last tab closes the window). */
@@ -8071,6 +8223,8 @@ declare namespace BrowserMCP {
     "userscripts.delete": { args: UserscriptsDeleteArgs; output: UserscriptsDeleteOutput };
     /** Switch a userscript on or off (enabled: false) without deleting it. */
     "userscripts.enable": { args: UserscriptsEnableArgs; output: UserscriptsEnableOutput };
+    /** Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here). */
+    "userscripts.get": { args: UserscriptsGetArgs; output: UserscriptsGetOutput };
     /** Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner. */
     "userscripts.inject": { args: UserscriptsInjectArgs; output: UserscriptsInjectOutput };
     /** List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run. */
@@ -8228,6 +8382,12 @@ declare namespace BrowserMCP {
        * `bookmarks.search` (MCP: `bookmarks_search`): toolset `data`, read.
        */
       search(args: BookmarksSearchArgs): Promise<BookmarksSearchOutput>;
+      /**
+       * Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit.
+       *
+       * `bookmarks.update` (MCP: `bookmarks_update`): toolset `data`, act.
+       */
+      update(args: BookmarksUpdateArgs): Promise<BookmarksUpdateOutput>;
     };
     /** Commands `clipboard.*`. */
     clipboard: {
@@ -8358,7 +8518,7 @@ declare namespace BrowserMCP {
     /** Commands `history.*`. */
     history: {
       /**
-       * Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed.
+       * Delete history visits: in a time window (`since` and/or `before`, Unix ms), on a local day (`day`, YYYY-MM-DD) and/or of one URL (`url`; alone it forgets the URL completely). URLs left without visits are dropped. Returns how many visits and URLs were removed.
        *
        * `history.delete` (MCP: `history_delete`): toolset `data`, act.
        */
@@ -8824,13 +8984,13 @@ declare namespace BrowserMCP {
     /** Commands `profile.*`. */
     profile: {
       /**
-       * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
+       * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
        *
        * `profile.create` (MCP: `profile_create`): toolset `profile`, act.
        */
       create(args: ProfileCreateArgs): Promise<ProfileCreateOutput>;
       /**
-       * Delete a profile: its settings, identity assignment, proxy forwarder and (unless keep_data) its cookies/cache folder. Close its tabs first.
+       * Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first.
        *
        * `profile.delete` (MCP: `profile_delete`): toolset `profile`, act.
        */
@@ -9151,11 +9311,23 @@ declare namespace BrowserMCP {
     /** Commands `system.*`. */
     system: {
       /**
+       * Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}.
+       *
+       * `system.open_path` (MCP: `system_open_path`): toolset `system`, act.
+       */
+      open_path(args: SystemOpenPathArgs): Promise<SystemOpenPathOutput>;
+      /**
        * Check that BrowserMCP is running. Returns its name and version.
        *
        * `system.ping` (MCP: `system_ping`): toolset `core`, read.
        */
       ping(args?: SystemPingArgs): Promise<SystemPingOutput>;
+      /**
+       * Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}.
+       *
+       * `system.reveal_path` (MCP: `system_reveal_path`): toolset `system`, act.
+       */
+      reveal_path(args: SystemRevealPathArgs): Promise<SystemRevealPathOutput>;
     };
     /** Commands `tabs.*`. */
     tabs: {
@@ -9348,6 +9520,12 @@ declare namespace BrowserMCP {
        * `userscripts.enable` (MCP: `userscripts_enable`): toolset `script`, act.
        */
       enable(args: UserscriptsEnableArgs): Promise<UserscriptsEnableOutput>;
+      /**
+       * Read the source of a userscript in data/userscripts (plugins' userscripts are part of the plugin and not listed here).
+       *
+       * `userscripts.get` (MCP: `userscripts_get`): toolset `script`, read.
+       */
+      get(args: UserscriptsGetArgs): Promise<UserscriptsGetOutput>;
       /**
        * Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.
        *

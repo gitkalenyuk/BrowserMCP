@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 bmcp-core.workspace = true
 bmcp-perception.workspace = true
+# Target.setAutoAttach is shared with identity tabs (worker pausing).
+bmcp-cdpshare = { path = "../cdpshare" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

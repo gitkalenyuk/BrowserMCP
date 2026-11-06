@@ -515,3 +515,131 @@ async fn lost_pauses_are_swept_without_disabling_fetch() {
         .await
         .unwrap();
 }
+
+// ------------------------------------------------------------------ auto-attach
+
+/// One tab whose CDP answers `{}` to `Target.setAutoAttach` (page and child sessions).
+fn attach_setup() -> Setup {
+    let fake = FakeBackend::with_tabs(&["https://a.test/"]);
+    fake.on_cdp(|_, method, _| (method == "Target.setAutoAttach").then(|| Ok(json!({}))));
+    Setup {
+        backend: fake.clone(),
+        fake,
+        share: CdpShare::default(),
+    }
+}
+
+#[tokio::test]
+async fn auto_attach_pauses_when_any_holder_wants_it() {
+    let s = attach_setup();
+    // OOPIF support first: switched on (existing targets announced), no pausing.
+    assert!(
+        s.share
+            .hold_auto_attach(&s.backend, TAB, None, "frames", false)
+            .await
+            .unwrap()
+    );
+    // An identity tab: pausing on top (one more call with the merged setting); it was on
+    // already, so the existing targets were not announced again.
+    assert!(
+        !s.share
+            .hold_auto_attach(&s.backend, TAB, None, "identity", true)
+            .await
+            .unwrap()
+    );
+    // frames again (a later snapshot): the merged setting is unchanged, nothing is sent, and
+    // it can no longer switch the pausing off.
+    assert!(
+        !s.share
+            .hold_auto_attach(&s.backend, TAB, None, "frames", false)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        s.calls("Target.setAutoAttach"),
+        [
+            json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true}),
+            json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}),
+        ]
+    );
+    assert_eq!(s.share.auto_attach_waits(TAB, None), Some(true));
+    assert_eq!(
+        s.share.auto_attach_holders(TAB, None),
+        ["frames", "identity"]
+    );
+
+    // Re-announce (frames after lost events): off, then on with the merged setting.
+    s.share
+        .reannounce_auto_attach(&s.backend, TAB, None)
+        .await
+        .unwrap();
+    let calls = s.calls("Target.setAutoAttach");
+    assert_eq!(calls[2]["autoAttach"], false);
+    assert_eq!(
+        calls[3],
+        json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true})
+    );
+
+    // identity leaves: back to no pausing; frames leaves: off.
+    s.share
+        .release_auto_attach(&s.backend, TAB, None, "identity")
+        .await
+        .unwrap();
+    s.share
+        .release_auto_attach(&s.backend, TAB, None, "frames")
+        .await
+        .unwrap();
+    let calls = s.calls("Target.setAutoAttach");
+    assert_eq!(calls.len(), 6);
+    assert_eq!(
+        calls[4],
+        json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true})
+    );
+    assert_eq!(calls[5]["autoAttach"], false);
+    assert_eq!(s.share.auto_attach_waits(TAB, None), None);
+    // Releasing again is a no-op.
+    s.share
+        .release_auto_attach(&s.backend, TAB, None, "frames")
+        .await
+        .unwrap();
+    assert_eq!(s.calls("Target.setAutoAttach").len(), 6);
+}
+
+#[tokio::test]
+async fn auto_attach_is_per_session_and_failures_undo() {
+    let s = attach_setup();
+    s.share
+        .hold_auto_attach(&s.backend, TAB, None, "identity", true)
+        .await
+        .unwrap();
+    // A child session has its own setting.
+    s.share
+        .hold_auto_attach(&s.backend, TAB, Some("S1".into()), "frames", false)
+        .await
+        .unwrap();
+    let calls = s.calls("Target.setAutoAttach");
+    assert_eq!(calls[1]["sessionId"], "S1");
+    assert_eq!(calls[1]["waitForDebuggerOnStart"], false);
+    assert_eq!(s.share.auto_attach_waits(TAB, None), Some(true));
+    assert_eq!(
+        s.share.auto_attach_waits(TAB, Some("S1".into())),
+        Some(false)
+    );
+    s.share.forget_session(TAB, "S1");
+    assert_eq!(s.share.auto_attach_waits(TAB, Some("S1".into())), None);
+
+    // A failed call leaves no holder behind.
+    s.fake.fail_next(BackendError::Cdp("Not allowed".into()));
+    assert!(
+        s.share
+            .hold_auto_attach(&s.backend, TAB, Some("S2".into()), "frames", false)
+            .await
+            .is_err()
+    );
+    assert!(
+        s.share
+            .auto_attach_holders(TAB, Some("S2".into()))
+            .is_empty()
+    );
+    assert_eq!(s.share.auto_attach_waits(TAB, None), Some(true));
+}

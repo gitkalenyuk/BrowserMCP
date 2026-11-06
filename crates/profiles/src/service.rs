@@ -1,14 +1,20 @@
-//! [`ProfilesService`]: stored profile settings (`data/config/profiles.json`), running proxy
-//! forwarders, and the link to the browser ([`ProfileBackend`]).
+//! [`ProfilesService`]: stored profile settings (`data/config/profiles.json`), the link to the
+//! browser ([`ProfileBackend`]) and applying a profile's preferences.
+//!
+//! The proxy of a profile is *not* kept here: it is the profile's routing in bmcp-identity
+//! (`proxies.json` routes, the same as `proxy.rules_set`), so `profile.create {proxy}` and
+//! `proxy.rules_set` are two views of one setting. `profile.create {proxy}` sets the routing's
+//! default; split rules stay. Proxies are always reached through bmcp-identity's local
+//! forwarders (passwords never reach Chromium).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use bmcp_core::{CmdError, Ctx, ErrorCode};
-
+use bmcp_identity::Services;
+use bmcp_identity::proxy::RuleSet;
 use bmcp_identity::store::JsonStore;
-use bmcp_identity::{Forwarder, ProxyConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{ProfileBackend, ProfileSettings};
@@ -17,15 +23,11 @@ use crate::prefs::Prefs;
 /// Settings of one profile as stored on disk.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileConfig {
-    /// Upstream proxy URL (`socks5://user:pass@host:port`, `http://…`, `host:port:user:pass`).
-    /// Stored with its password as plain text, like `proxies.json`.
+    /// Only in files from before the proxy moved to bmcp-identity's routing: moved there
+    /// (as the routing default) the next time the profile is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
-    /// Go through the local forwarder (default true). `false` = Chromium talks to the proxy
-    /// itself (only for proxies without a password).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub forward: Option<bool>,
-    /// Hosts that skip the proxy (Chromium syntax, `;`-separated, e.g. `<local>;*.lan`).
+    /// Hosts that skip a fixed proxy (Chromium syntax, `;`-separated, e.g. `<local>;*.lan`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_bypass: Option<String>,
     /// Accept-Language list; default: the assigned identity's, else Chromium's.
@@ -53,45 +55,6 @@ pub struct ProfilesFile {
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
 
-/// How a profile reaches the network.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProxyPlan {
-    Direct,
-    /// Through a local forwarder chained to this upstream.
-    Forward(ProxyConfig),
-    /// Chromium uses `server` itself (only proxies without a password).
-    Fixed {
-        server: String,
-    },
-}
-
-/// Decide how a profile's proxy is used (pure).
-pub fn plan_proxy(config: &ProfileConfig) -> Result<ProxyPlan, CmdError> {
-    let Some(url) = config.proxy.as_deref().filter(|u| !u.trim().is_empty()) else {
-        return Ok(ProxyPlan::Direct);
-    };
-    let proxy: ProxyConfig =
-        url.parse()
-            .map_err(|e: bmcp_identity::proxy::config::ParseError| {
-                CmdError::invalid_params(format!("proxy: {e}")).with_hint(
-            "Use http://user:pass@host:port, socks5://user:pass@host:port or host:port:user:pass.",
-        )
-            })?;
-    if config.forward.unwrap_or(true) {
-        return Ok(ProxyPlan::Forward(proxy));
-    }
-    if proxy.has_auth() {
-        // Live finding (CEF 156): `CefRequestHandler::GetAuthCredentials` is not called for
-        // proxy challenges of our contexts; Chromium's own login prompt takes over, has no UI
-        // in Alloy and crashed the browser. So the password always goes through the forwarder.
-        return Err(CmdError::invalid_params(
-            "a proxy with a password needs the local forwarder: keep forward: true (the default)",
-        ));
-    }
-    let server = format!("{}://{}", proxy.scheme.as_str(), proxy.host_port());
-    Ok(ProxyPlan::Fixed { server })
-}
-
 /// Shared state of the profile commands (in the registry's extensions).
 pub struct ProfilesService {
     pub store: JsonStore<ProfilesFile>,
@@ -99,8 +62,10 @@ pub struct ProfilesService {
     profiles_dir: PathBuf,
     /// The profile the browser started with (`--profile`, normally `default`).
     pub launch_profile: String,
-    /// Running forwarders by profile id.
-    forwarders: Mutex<BTreeMap<String, Forwarder>>,
+    /// bmcp-identity (proxy routing, forwarders, identities), set by [`crate::install`].
+    identities: RwLock<Option<Arc<Services>>>,
+    /// What was handed to the browser last, by profile id.
+    applied: Mutex<BTreeMap<String, Prefs>>,
     backend: RwLock<Option<Arc<dyn ProfileBackend>>>,
 }
 
@@ -111,7 +76,8 @@ impl ProfilesService {
             store: JsonStore::new(data_root.join("config").join("profiles.json")),
             profiles_dir: data_root.join("profiles"),
             launch_profile: launch_profile.to_string(),
-            forwarders: Mutex::new(BTreeMap::new()),
+            identities: RwLock::new(None),
+            applied: Mutex::new(BTreeMap::new()),
             backend: RwLock::new(None),
         }
     }
@@ -137,28 +103,86 @@ impl ProfilesService {
             })
     }
 
+    /// Use these identity services (done by [`crate::install`]).
+    pub fn set_identities(&self, services: Arc<Services>) {
+        *self.identities.write().unwrap_or_else(|e| e.into_inner()) = Some(services);
+    }
+
+    /// bmcp-identity's services (proxy routing, identities).
+    pub fn identities(&self) -> Result<Arc<Services>, CmdError> {
+        self.identities
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                CmdError::internal(
+                    "identity services missing: call bmcp_identity::install before \
+                     bmcp_profiles::install",
+                )
+            })
+    }
+
     pub fn profile_dir(&self, id: &str) -> PathBuf {
         self.profiles_dir.join(id)
     }
 
-    /// Local address of the profile's forwarder (e.g. `socks5://127.0.0.1:51234`).
-    pub fn forwarder_url(&self, id: &str) -> Option<String> {
-        self.lock_forwarders().get(id).map(Forwarder::socks5_url)
+    /// The preferences last handed to the browser for `id`.
+    pub fn applied(&self, id: &str) -> Option<Prefs> {
+        self.lock_applied().get(id).cloned()
     }
 
-    fn lock_forwarders(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Forwarder>> {
-        self.forwarders.lock().unwrap_or_else(|e| e.into_inner())
+    /// Forget what was applied to `id` (the profile is gone).
+    pub fn forget_applied(&self, id: &str) {
+        self.lock_applied().remove(id);
     }
 
-    /// Stop the profile's forwarder (if any).
-    pub fn stop_forwarder(&self, id: &str) {
-        let removed = self.lock_forwarders().remove(id);
-        drop(removed); // dropping a Forwarder stops it
+    fn lock_applied(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Prefs>> {
+        self.applied.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Work out the settings of `id` (starting/replacing its forwarder) and hand them to the
-    /// browser. `identity_language` = Accept-Language of the identity assigned to it.
-    pub async fn apply(&self, id: &str, identity_language: Option<String>) -> Result<(), CmdError> {
+    /// Set the default of the profile's routing to `proxy` (`None`/"" = direct), keeping its
+    /// split rules. Any proxy reference works: a proxy URL, `pool:NAME`, `fwd-N`,
+    /// `lease:POOL/RUN/ROW`, `direct`. Nothing is stored when the route cannot work.
+    pub async fn set_proxy(&self, id: &str, proxy: Option<&str>) -> Result<(), CmdError> {
+        let services = self.identities()?;
+        let mut set = services.routes(id)?;
+        set.default = proxy
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .unwrap_or("direct")
+            .to_string();
+        services.set_routes(id, set).await.map_err(|e| {
+            e.with_hint(
+                "proxy: http://user:pass@host:port, socks5://user:pass@host:port, \
+                 host:port:user:pass, pool:NAME (proxy_pool_list), fwd-N or direct.",
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Move a proxy stored in `profiles.json` by older versions into the routing.
+    async fn migrate_proxy(&self, id: &str, config: &ProfileConfig) -> Result<(), CmdError> {
+        let Some(proxy) = config.proxy.as_deref() else {
+            return Ok(());
+        };
+        let services = self.identities()?;
+        if services.routes(id)? == RuleSet::default() {
+            self.set_proxy(id, Some(proxy)).await?;
+        }
+        self.store.update(|f| {
+            if let Some(c) = f.profiles.get_mut(id) {
+                c.proxy = None;
+            }
+            Ok(())
+        })?;
+        tracing::info!(profile = id, "proxy moved into the profile's proxy routing");
+        Ok(())
+    }
+
+    /// Work out the preferences of `id` from its settings, its routing and its identity
+    /// (starting the local forwarders its routes need) and hand them to the browser: right
+    /// away for its live request contexts, and remembered for the ones created later.
+    pub async fn apply(&self, id: &str) -> Result<Prefs, CmdError> {
         let config = self
             .store
             .read()?
@@ -166,83 +190,42 @@ impl ProfilesService {
             .get(id)
             .cloned()
             .unwrap_or_default();
-        let server = match plan_proxy(&config)? {
-            ProxyPlan::Direct => {
-                self.stop_forwarder(id);
-                None
-            }
-            ProxyPlan::Fixed { server } => {
-                self.stop_forwarder(id);
-                Some(server)
-            }
-            ProxyPlan::Forward(upstream) => {
-                // Reuse a running forwarder to the same upstream (its port stays the same).
-                let existing = self
-                    .lock_forwarders()
-                    .get(id)
-                    .filter(|f| *f.upstream() == upstream)
-                    .map(Forwarder::socks5_url);
-                let url = match existing {
-                    Some(url) => url,
-                    None => {
-                        let forwarder = Forwarder::start(upstream).await.map_err(|e| {
-                            CmdError::internal(format!("cannot start the proxy forwarder: {e}"))
-                        })?;
-                        let url = forwarder.socks5_url();
-                        self.lock_forwarders().insert(id.to_string(), forwarder);
-                        url
-                    }
-                };
-                Some(url)
-            }
-        };
-        let settings = ProfileSettings {
-            id: id.to_string(),
-            prefs: Prefs {
-                proxy_server: server,
-                proxy_bypass: config.proxy_bypass.clone(),
-                accept_language: config.accept_language.clone().or(identity_language),
-            },
-            label: config.label.clone(),
-        };
-        match self.backend() {
-            Ok(backend) => backend.configure(settings).await.map_err(CmdError::from),
-            Err(_) => Ok(()), // no browser (tests, schema dump): the file is what counts
+        self.migrate_proxy(id, &config).await?;
+        let services = self.identities()?;
+        let proxy = services.profile_proxy_pref(id).await?;
+        let identity = services.identity_for_profile(id).unwrap_or_else(|err| {
+            tracing::warn!(profile = id, %err, "assigned identity not found");
+            None
+        });
+        let prefs = Prefs::build(
+            proxy.pref,
+            config.proxy_bypass.as_deref(),
+            identity.as_ref(),
+            config.accept_language.as_deref(),
+        );
+        if let Ok(backend) = self.backend() {
+            // No browser (tests, schema dump): only the files count.
+            backend
+                .configure(ProfileSettings {
+                    id: id.to_string(),
+                    prefs: prefs.clone(),
+                    label: config.label.clone(),
+                })
+                .await?;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn config(proxy: &str, forward: Option<bool>) -> ProfileConfig {
-        ProfileConfig {
-            proxy: Some(proxy.into()),
-            forward,
-            ..Default::default()
-        }
+        self.lock_applied().insert(id.to_string(), prefs.clone());
+        Ok(prefs)
     }
 
-    #[test]
-    fn proxy_plans() {
-        assert_eq!(
-            plan_proxy(&ProfileConfig::default()).unwrap(),
-            ProxyPlan::Direct
-        );
-        assert!(matches!(
-            plan_proxy(&config("socks5://u:p@h:1080", None)).unwrap(),
-            ProxyPlan::Forward(_)
-        ));
-        // A password always needs the forwarder (Chromium's own proxy login crashes in Alloy).
-        assert!(plan_proxy(&config("http://u:p@h:3128", Some(false))).is_err());
-        assert_eq!(
-            plan_proxy(&config("h:8080", Some(false))).unwrap(),
-            ProxyPlan::Fixed {
-                server: "http://h:8080".into(),
-            }
-        );
-        assert!(plan_proxy(&config("socks5://u:p@h:1", Some(false))).is_err());
-        assert!(plan_proxy(&config("ftp://nope", None)).is_err());
+    /// Every profile that has settings anywhere: `profiles.json`, proxy routing, an assigned
+    /// identity.
+    pub fn known_profiles(&self) -> Result<Vec<String>, CmdError> {
+        let mut ids: std::collections::BTreeSet<String> =
+            self.store.read()?.profiles.into_keys().collect();
+        if let Ok(services) = self.identities() {
+            ids.extend(services.proxies.read()?.routes.into_keys());
+            ids.extend(services.identities.read()?.profiles.into_keys());
+        }
+        Ok(ids.into_iter().collect())
     }
 }
