@@ -572,6 +572,8 @@ export function createRecordRunsMocks(emit: Emit, activeTab: () => TabId | null)
       else throw new RpcError('INVALID_PARAMS', 'data needs one of csv_path, json_path, xlsx_path or rows');
       if (rows.length === 0) throw new RpcError('INVALID_PARAMS', 'the data has no rows');
       const created = Date.now();
+      // `heal` is true/false or "ask" | "auto" | "off" (self-healing modes).
+      const healOn = heal !== false && heal !== 'off';
       const info: RunInfo = {
         id: `run-${created}`,
         script,
@@ -580,10 +582,10 @@ export function createRecordRunsMocks(emit: Emit, activeTab: () => TabId | null)
         done: 0,
         counts: counts(rows),
         created_ms: created,
-        options: { ...options(parallel ?? 4), retries: retries ?? 1, timeout_secs: timeout_secs ?? 300, heal: heal ?? true, stop_on_error: !!stop_on_error },
+        options: { ...options(parallel ?? 4), retries: retries ?? 1, timeout_secs: timeout_secs ?? 300, heal: healOn, stop_on_error: !!stop_on_error },
       };
       // Heal demo: with healing on, the row in the middle breaks on a selector.
-      const r: MockRun = { info, rows, breakAt: (heal ?? true) && rows.length >= 6 ? Math.floor(rows.length / 2) : null };
+      const r: MockRun = { info, rows, breakAt: healOn && rows.length >= 6 ? Math.floor(rows.length / 2) : null };
       runs.set(info.id, r);
       wake();
       emit('run.started', { id: info.id, script, total: rows.length, parallel: info.options.parallel });
