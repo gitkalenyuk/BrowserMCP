@@ -85,7 +85,8 @@ a heal request, triggers). Shared-file edits are one line each in `types.ts`, `m
 `crates/app/src/main.rs`: `start_api` received the listener bound before CEF starts but called
 `bmcp_api::serve(…, port, …)`, which binds the port a second time, so on Windows the API never
 started ("Only one usage of each socket address"). It now calls `bmcp_api::serve_on(…, listener,
-…)`. One line.
+…)`. One line; main got the same fix meanwhile (110dc6f), so the merge took it without a
+conflict.
 
 ## Gaps
 
