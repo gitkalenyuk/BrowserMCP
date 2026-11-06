@@ -6592,6 +6592,20 @@ declare namespace BrowserMCP {
     version: string;
   }
 
+  // ---- system.quit ----
+
+  /**
+   * Arguments of `system.quit`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type SystemQuitArgs = Record<string, never>;
+
+  /** Result of `system.quit`. */
+  export interface SystemQuitOutput {
+    /** Always true: the browser is closing (shortly after this answer). */
+    quitting: boolean;
+  }
+
   // ---- system.reveal_path ----
 
   /** Arguments of `system.reveal_path`. */
@@ -7842,6 +7856,8 @@ declare namespace BrowserMCP {
     "system.open_path": { args: SystemOpenPathArgs; output: SystemOpenPathOutput };
     /** Check that BrowserMCP is running. Returns its name and version. */
     "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
+    /** Quit BrowserMCP: close every tab and window, stop the API and end the process (the way to stop a --headless browser, which outlives its last tab). Answers first, then quits. */
+    "system.quit": { args: SystemQuitArgs; output: SystemQuitOutput };
     /** Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}. */
     "system.reveal_path": { args: SystemRevealPathArgs; output: SystemRevealPathOutput };
     /** Switch the window to this tab (make it the active, visible tab). */
@@ -8971,6 +8987,12 @@ declare namespace BrowserMCP {
        * `system.ping` (MCP: `system_ping`): toolset `core`, read.
        */
       ping(args?: SystemPingArgs): Promise<SystemPingOutput>;
+      /**
+       * Quit BrowserMCP: close every tab and window, stop the API and end the process (the way to stop a --headless browser, which outlives its last tab). Answers first, then quits.
+       *
+       * `system.quit` (MCP: `system_quit`): toolset `system`, act.
+       */
+      quit(args?: SystemQuitArgs): Promise<SystemQuitOutput>;
       /**
        * Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}.
        *

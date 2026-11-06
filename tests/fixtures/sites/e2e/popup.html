@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Popup opener – Fixture</title>
+</head>
+<!-- Used by tests/e2e (headless): window.open and target=_blank must become new tabs. -->
+<body>
+<main>
+  <h1>Popups</h1>
+  <button id="open" onclick="window.open('/list.html?from=popup', 'child')">Open popup</button>
+  <a id="blank" href="/form.html?from=blank" target="_blank">Open in new tab</a>
+  <p id="size"></p>
+</main>
+<script>
+  document.getElementById('size').textContent =
+    innerWidth + 'x' + innerHeight + '@' + devicePixelRatio + ' ' + document.visibilityState;
+</script>
+</body>
+</html>

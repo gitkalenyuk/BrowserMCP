@@ -26,6 +26,7 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<agents::Handoff>();
     registry
         .add::<system::Ping>()
+        .add::<system::Quit>()
         .add::<tabs::List>()
         .add::<tabs::Open>()
         .add::<tabs::Close>()
@@ -65,6 +66,17 @@ mod tests {
         let out = call(&FakeBackend::new(), "system_ping", json!({})).await;
         assert_eq!(out["name"], "BrowserMCP");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn quit_answers_then_quits() {
+        let fake = FakeBackend::new();
+        let out = call(&fake, "system.quit", json!({})).await;
+        assert_eq!(out, json!({ "quitting": true }));
+        // The backend is asked after a short delay (the answer goes out first).
+        assert!(!fake.calls().contains(&"quit".to_string()));
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        assert!(fake.calls().contains(&"quit".to_string()));
     }
 
     /// What the fake reports for a fresh tab, as JSON (camelCase, like the UI expects).

@@ -48,6 +48,13 @@ pub(crate) struct Browsers {
     windowed: AtomicUsize,
 }
 
+impl Browsers {
+    /// Live browsers of any kind.
+    pub(crate) fn open_count(&self) -> usize {
+        self.open.load(Ordering::SeqCst)
+    }
+}
+
 wrap_app! {
     pub struct ShellApp {
         config: Arc<StartConfig>,
@@ -87,7 +94,12 @@ wrap_browser_process_handler! {
                 browsers: Arc::new(Browsers::default()),
             };
             bridge::with_ui(|ui| ui.shell = Some(ctx.clone()));
-            open_window(PendingTab::new(&self.config.url, ProfileKey::default(), None), &ctx);
+            let first = PendingTab::new(&self.config.url, ProfileKey::default(), None);
+            if crate::osr::headless() {
+                crate::osr::open_first_tab(first, &ctx); // no window, no chrome UI
+            } else {
+                open_window(first, &ctx);
+            }
 
             let ready = self.config.on_ready.lock().unwrap_or_else(|e| e.into_inner()).take();
             if let Some(ready) = ready {
@@ -406,6 +418,10 @@ wrap_client! {
         fn render_handler(&self) -> Option<RenderHandler> {
             self.offscreen.then(crate::osr::render_handler)
         }
+
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            self.offscreen.then(crate::osr::dialog_handler)
+        }
     }
 }
 
@@ -677,7 +693,11 @@ wrap_life_span_handler! {
             let open = self.browsers.open.fetch_sub(1, Ordering::SeqCst) - 1;
             tracing::debug!(open, kind = ?self.kind, "browser closed");
             if open == 0 {
-                quit_message_loop();
+                // Headless: the automation host outlives its last tab (until system.quit).
+                if !crate::osr::keep_alive_without_browsers() {
+                    quit_message_loop();
+                    crate::cdp_port::release_keep_alive(); // else --cdp-port keeps us alive
+                }
             } else if !self.offscreen
                 && self.browsers.windowed.fetch_sub(1, Ordering::SeqCst) == 1
             {
