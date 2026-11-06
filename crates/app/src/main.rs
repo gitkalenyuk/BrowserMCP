@@ -94,6 +94,11 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         } else {
             bmcp_cef::Style::Alloy
         },
+        layout: if cli.single_layout {
+            bmcp_cef::WindowLayout::Single
+        } else {
+            bmcp_cef::WindowLayout::Chrome
+        },
         on_ready: Some(on_ready),
     })?;
 

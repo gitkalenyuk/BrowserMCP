@@ -2,12 +2,15 @@
 //!
 //! Startup sequence (see [`start`]):
 //! 1. The same executable is launched by Chromium for renderer/GPU/utility sub-processes
-//!    with a `--type=...` switch. [`start`] detects this and runs the sub-process.
+//!    with a `--type=...` switch. [`start`] detects this and runs the sub-process (with a
+//!    small App that registers the `bmcp://` scheme, which every process must know).
 //! 2. Otherwise it is the browser process: initialize CEF, open the shell window and run
 //!    the message loop on the main thread (the CEF UI thread) until every window closed.
 
 mod backend;
 mod bridge;
+mod chrome;
+mod scheme;
 mod shell;
 
 pub use backend::CefBackend;
@@ -28,12 +31,23 @@ pub enum Style {
     Alloy,
 }
 
+/// How a browser window is composed (spike S1, see docs/spikes/S1-S2-S3.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowLayout {
+    /// UI strip (`bmcp://ui/`) on top, the page below, Ctrl+K palette overlay.
+    #[default]
+    Chrome,
+    /// Phase 0: the page fills the window, no UI of our own.
+    Single,
+}
+
 /// Options for the browser process.
 pub struct LaunchOptions {
     pub start_url: String,
     pub data: DataDir,
     pub profile: ProfileId,
     pub style: Style,
+    pub layout: WindowLayout,
     /// Runs on the UI thread once the first window exists. Hand the backend to async
     /// code (API servers, scripts) from here; do not block.
     pub on_ready: Option<ReadyCallback>,
@@ -58,7 +72,13 @@ pub fn start() -> Process {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
     let args = Args::new();
-    let code = execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
+    // Sub-processes need an App too: custom schemes must be registered in every process.
+    let mut app = scheme::SchemeApp::new();
+    let code = execute_process(
+        Some(args.as_main_args()),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    );
     if code >= 0 {
         Process::SubprocessExited(code)
     } else {
@@ -93,6 +113,7 @@ impl Browser {
         let mut app = shell::ShellApp::new(std::sync::Arc::new(shell::StartConfig {
             url: opts.start_url,
             style: opts.style,
+            layout: opts.layout,
             on_ready: std::sync::Mutex::new(opts.on_ready),
         }));
 

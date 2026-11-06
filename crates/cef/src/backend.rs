@@ -43,7 +43,7 @@ impl BrowserBackend for CefBackend {
                 let Some(shell) = with_ui(|ui| ui.shell.clone()) else {
                     return Err(BackendError::ShuttingDown);
                 };
-                crate::shell::open_window(&url, shell.style, shell.browsers);
+                crate::shell::open_window(&url, &shell);
                 Ok(())
             })
             .await??;
