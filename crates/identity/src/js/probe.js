@@ -34,11 +34,29 @@
     ok('UA vs UA-CH mobile', uad.mobile === /Mobile/.test(ua), `UA-CH mobile=${uad.mobile}`);
     try {
       const he = await uad.getHighEntropyValues(
-        ['platformVersion', 'architecture', 'model', 'fullVersionList', 'bitness']);
+        ['platformVersion', 'architecture', 'model', 'fullVersionList', 'bitness', 'wow64']);
       const full = (he.fullVersionList || []).find((b) => b.brand === 'Google Chrome' || b.brand === 'Chromium');
       ok('UA-CH fullVersionList', full && full.version.split('.')[0] === major,
          `${(he.fullVersionList || []).map((b) => b.brand + '/' + b.version).join(', ')}; ` +
          `platformVersion=${he.platformVersion} arch=${he.architecture} bitness=${he.bitness} model=${he.model || '-'}`);
+      // High-entropy values must be exactly what the override set (a partial override leaks
+      // the real OS version or CPU architecture).
+      const meta = expected && expected.ua_metadata;
+      if (meta) {
+        const diffs = [];
+        const cmp = (what, got, want) => { if (got !== want) diffs.push(`${what}: ${got} != ${want}`); };
+        cmp('platform', he.platform, meta.platform);
+        cmp('platformVersion', he.platformVersion, meta.platform_version);
+        cmp('architecture', he.architecture, meta.architecture);
+        cmp('bitness', he.bitness, meta.bitness);
+        cmp('model', he.model, meta.model);
+        cmp('wow64', he.wow64, meta.wow64);
+        const list = (l) => (l || []).map((b) => `${b.brand}/${b.version}`).sort().join(', ');
+        cmp('fullVersionList', list(he.fullVersionList), list(meta.full_version_list));
+        cmp('brands', list(uad.brands), list(meta.brands));
+        ok('UA-CH high entropy vs identity', diffs.length === 0,
+           diffs.length ? diffs.join('; ') : 'all high-entropy hints match the override');
+      }
     } catch (e) {
       add('UA-CH fullVersionList', 'warn', `getHighEntropyValues failed: ${e}`);
     }
@@ -80,6 +98,22 @@
      `screen ${s.width}x${s.height} avail ${s.availWidth}x${s.availHeight}, inner ${innerWidth}x${innerHeight}, dpr ${devicePixelRatio}`, 'warn');
   ok('outer window size', outerWidth > 0 && outerHeight > 0,
      `outer ${outerWidth}x${outerHeight} (0 = headless tell)`);
+  // A real desktop has a taskbar / menu bar: avail < screen. Screen emulation makes them
+  // equal (the patch script fixes it for applied identities).
+  const desktopUA = !/Mobile|Android|iPhone|iPad/.test(ua);
+  const availDetail = `screen ${s.width}x${s.height}, avail ${s.availWidth}x${s.availHeight}`;
+  if (expected && expected.screen_avail) {
+    ok('screen.availHeight', s.availWidth === expected.screen_avail.width && s.availHeight === expected.screen_avail.height,
+       `${availDetail}, identity avail ${expected.screen_avail.width}x${expected.screen_avail.height}`);
+  } else {
+    ok('screen.availHeight', !desktopUA || s.availHeight < s.height,
+       desktopUA && s.availHeight >= s.height ? `${availDetail} (no taskbar: emulation/headless tell)` : availDetail, 'warn');
+  }
+
+  // Background / headless: hidden pages pause requestAnimationFrame and throttle timers, which
+  // a page can measure. Reported, not fixable from here.
+  ok('page visibility', document.visibilityState === 'visible',
+     `visibilityState=${document.visibilityState} hasFocus=${document.hasFocus()}`, 'warn');
 
   // 6. Hardware.
   const mem = nav.deviceMemory;
@@ -105,6 +139,60 @@
   } else {
     add('WebGL renderer', 'warn', 'WebGL unavailable');
   }
+  // WebGL2 must report the same GPU as WebGL1 (a patch on only one of them is a tell).
+  const gl2 = safe(() => document.createElement('canvas').getContext('webgl2'), null);
+  if (gl2) {
+    const ext2 = gl2.getExtension('WEBGL_debug_renderer_info');
+    const renderer2 = ext2 ? gl2.getParameter(ext2.UNMASKED_RENDERER_WEBGL) : '';
+    const sw2 = /SwiftShader|llvmpipe|Software/i.test(renderer2);
+    ok('WebGL2 renderer', !sw2 && (!gl || renderer2 === renderer),
+       gl && renderer2 !== renderer ? `WebGL2 ${renderer2} != WebGL ${renderer}` : renderer2 || '(no debug info)');
+  } else {
+    add('WebGL2 renderer', 'warn', 'WebGL2 unavailable');
+  }
+
+  // Fonts: the installed fonts are the host's. A "Mac" with Segoe UI and no Helvetica Neue is
+  // a tell. Detection: text drawn in "Font, fallback" is wider/narrower than in the fallback.
+  try {
+    const ctx2d = document.createElement('canvas').getContext('2d');
+    const sample = 'mmmmmmmmmmlli1WwQ@#';
+    const width = (font) => { ctx2d.font = `72px ${font}`; return ctx2d.measureText(sample).width; };
+    const bases = ['monospace', 'sans-serif', 'serif'];
+    const baseWidths = bases.map(width);
+    const has = (family) => bases.some((b, i) => width(`"${family}", ${b}`) !== baseWidths[i]);
+    const groups = {
+      windows: ['Segoe UI', 'Calibri', 'Consolas', 'Cambria', 'Tahoma'],
+      macos: ['Helvetica Neue', 'Menlo', 'Avenir', 'Geneva', 'Apple Color Emoji'],
+      linux: ['DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'Cantarell'],
+      android: ['Roboto', 'Noto Sans', 'Droid Sans'],
+    };
+    const found = {};
+    for (const [os, list] of Object.entries(groups)) found[os] = list.filter(has);
+    const claimed = /Windows/.test(ua) ? 'windows' : /Android/.test(ua) ? 'android'
+      : /iPhone|iPad|Mac OS X/.test(ua) ? 'macos' : /Linux/.test(ua) ? 'linux' : null;
+    const best = Object.keys(found).reduce((a, b) => (found[b].length > found[a].length ? b : a));
+    const fits = !claimed || found[claimed].length > 0 || found[best].length === 0;
+    ok('fonts vs OS', fits,
+       Object.entries(found).map(([os, f]) => `${os}: ${f.length ? f.join('/') : '-'}`).join('; ') +
+       (fits ? '' : ` (claims ${claimed}, fonts look like ${best})`), 'warn');
+  } catch (e) {
+    add('fonts vs OS', 'warn', `font probe failed: ${e}`);
+  }
+
+  // Media devices: without a permission grant the labels must be empty. Real names leak the
+  // hardware; no devices at all is a headless/VM tell.
+  try {
+    const devices = nav.mediaDevices ? await nav.mediaDevices.enumerateDevices() : [];
+    const kinds = {};
+    for (const d of devices) kinds[d.kind] = (kinds[d.kind] || 0) + 1;
+    const labelled = devices.filter((d) => d.label).length;
+    const summary = Object.entries(kinds).map(([k, n]) => `${k}=${n}`).join(' ') || 'none';
+    ok('media devices', devices.length > 0 && labelled === 0,
+       labelled ? `${summary}; ${labelled} label(s) visible without a permission prompt`
+         : devices.length ? `${summary}; labels hidden` : 'no media devices (headless/VM tell)', 'warn');
+  } catch (e) {
+    add('media devices', 'warn', `enumerateDevices failed: ${e}`);
+  }
 
   // 8. window.chrome (present in real Chrome, desktop and Android).
   const chromeObj = window.chrome;
@@ -117,7 +205,11 @@
     const st = (await nav.permissions.query({ name: 'notifications' })).state;
     const np = typeof Notification !== 'undefined' ? Notification.permission : 'n/a';
     const agree = np === 'n/a' || (np === 'default' ? st === 'prompt' : np === st);
-    ok('permissions consistency', agree, `Notification.permission=${np}, permissions.query=${st}`);
+    // The classic headless tell is exactly this: Notification says "denied", the
+    // Permissions API says "prompt".
+    const headless = np === 'denied' && st === 'prompt';
+    ok('permissions consistency', agree,
+       `Notification.permission=${np}, permissions.query=${st}${headless ? ' (headless Chrome pattern)' : ''}`);
   } catch (e) {
     add('permissions consistency', 'warn', `permissions.query failed: ${e}`);
   }

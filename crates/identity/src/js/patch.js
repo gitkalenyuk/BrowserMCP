@@ -1,9 +1,12 @@
-// Fingerprint patches for values CDP Emulation cannot set. Runs in the page's main world
-// before any page script (Page.addScriptToEvaluateOnNewDocument), once per document.
+// Fingerprint patches for values CDP Emulation cannot set. Runs before any page script
+// (Page.addScriptToEvaluateOnNewDocument), once per document — or, for workers, by
+// Runtime.evaluate while the worker is still paused (see worker.rs). `cfg` values that are
+// null are left alone.
 //
 // Rules that keep the patches hard to notice:
-// * replace getters on the *prototype* (Navigator.prototype), never add own properties to
-//   `navigator` (Object.getOwnPropertyNames(navigator) stays empty);
+// * replace getters on the *prototype* (Navigator.prototype / WorkerNavigator.prototype /
+//   Screen.prototype), never add own properties to `navigator`
+//   (Object.getOwnPropertyNames(navigator) stays empty);
 // * replacements are method-shorthand functions: no `prototype`, same `name` and `length` as
 //   the native ones, and they call the native getter first so a wrong `this` still throws
 //   "Illegal invocation";
@@ -36,14 +39,33 @@
     nativeLike(fn, `get ${prop}`);
     Object.defineProperty(proto, prop, { ...desc, get: fn });
   };
+  const given = (v) => v !== null && v !== undefined;
 
-  const nav = typeof Navigator !== 'undefined' ? Navigator.prototype : null;
-  if (cfg.hardwareConcurrency) getter(nav, 'hardwareConcurrency', cfg.hardwareConcurrency);
-  if (cfg.deviceMemory) getter(nav, 'deviceMemory', cfg.deviceMemory);
-  // Automation flag: a normal user's browser says false.
+  // Pages have Navigator, workers WorkerNavigator.
+  const nav = typeof Navigator !== 'undefined' ? Navigator.prototype
+    : typeof WorkerNavigator !== 'undefined' ? WorkerNavigator.prototype : null;
+  if (given(cfg.hardwareConcurrency)) getter(nav, 'hardwareConcurrency', cfg.hardwareConcurrency);
+  if (given(cfg.deviceMemory)) getter(nav, 'deviceMemory', cfg.deviceMemory);
+  // Automation flag: a normal user's browser says false (workers have no webdriver).
   getter(nav, 'webdriver', false);
+  // Worker fallbacks (pages get these from Network.setUserAgentOverride).
+  if (given(cfg.userAgent)) getter(nav, 'userAgent', cfg.userAgent);
+  if (given(cfg.appVersion)) getter(nav, 'appVersion', cfg.appVersion);
+  if (given(cfg.platform)) getter(nav, 'platform', cfg.platform);
+  if (given(cfg.languages) && cfg.languages.length) {
+    // navigator.languages is a frozen array, the same object on every read.
+    const languages = Object.freeze(cfg.languages.slice());
+    getter(nav, 'language', languages[0]);
+    getter(nav, 'languages', languages);
+  }
 
-  // WebGL: the unmasked GPU strings (WEBGL_debug_renderer_info).
+  // Screen: under emulation avail* equals the screen size; a real desktop has a taskbar.
+  const scr = typeof Screen !== 'undefined' ? Screen.prototype : null;
+  if (given(cfg.availWidth)) getter(scr, 'availWidth', cfg.availWidth);
+  if (given(cfg.availHeight)) getter(scr, 'availHeight', cfg.availHeight);
+
+  // WebGL: the unmasked GPU strings (WEBGL_debug_renderer_info), WebGL 1 and 2, also for
+  // OffscreenCanvas in workers.
   if (cfg.webglVendor || cfg.webglRenderer) {
     const UNMASKED_VENDOR = 0x9245;
     const UNMASKED_RENDERER = 0x9246;

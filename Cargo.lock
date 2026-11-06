@@ -520,7 +520,9 @@ dependencies = [
 name = "bmcp-identity"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bmcp-core",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
