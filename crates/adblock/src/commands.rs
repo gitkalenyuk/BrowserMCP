@@ -378,9 +378,11 @@ impl Command for Apply {
                 service.engine_status()
             }
         };
-        let (session, report) = interim::start(ctx.backend.clone(), service.gate.clone(), tab)
-            .await
-            .map_err(CmdError::from)?;
+        let share = bmcp_cdpshare::CdpShare::from_ctx(&ctx);
+        let (session, report) =
+            interim::start(ctx.backend.clone(), share, service.gate.clone(), tab)
+                .await
+                .map_err(CmdError::from)?;
         let stats = session.shared.stats(true);
         let replaced = service
             .sessions

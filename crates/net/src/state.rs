@@ -6,14 +6,20 @@
 //! tab's CDP events ([`crate::listener`]).
 //!
 //! Locking: the data is behind a plain `std::sync::Mutex` that is only held for a few lines and
-//! never across an `.await`. Changes to the CDP setup (enable/disable `Network` and `Fetch`)
-//! also take the async `config` lock, so two commands never interleave those calls.
+//! never across an `.await`. Changes to the CDP setup (hold/release `Network`, update the Fetch
+//! patterns) also take the async `config` lock, so two commands never interleave those calls.
+//!
+//! The CDP session is shared with other subsystems (record, adblock), so net never sends
+//! `Network.enable/disable` or `Fetch.enable/disable` itself: it holds `Network` through the
+//! domain refcount and registers its rules as the "net" client of the tab's Fetch coordinator
+//! (both in `bmcp-cdpshare`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use bmcp_cdpshare::{CdpShare, FetchClient, ORDER_NET};
 use bmcp_core::{BrowserBackend, CmdError, Ctx, EventBus, TabId};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -92,14 +98,13 @@ pub struct TabInner {
     /// Also download every response body when it finishes (instead of on demand).
     pub bodies: bool,
     pub store: TrafficStore,
-    /// Rules and breakpoints in the order they were added (first match wins for terminal
-    /// actions like block/mock).
+    /// Rules and breakpoints in the order they were added. They are checked in that order: a
+    /// block/mock before the first matching breakpoint answers the request (no pause);
+    /// otherwise the first matching breakpoint pauses it (see `intercept::on_paused`).
     pub rules: Vec<Rule>,
     /// Requests held by a breakpoint, by pause id.
     pub paused: BTreeMap<String, Paused>,
-    /// Patterns `Fetch.enable` was last called with; empty = Fetch is disabled.
-    pub fetch_patterns: Vec<Value>,
-    /// The background task reading this tab's CDP events.
+    /// The background task reading this tab's `Network.*` events (while capturing).
     listener: Option<JoinHandle<()>>,
 }
 
@@ -129,11 +134,10 @@ impl TabInner {
         }
     }
 
-    /// Stop the listener when nothing needs CDP events any more.
+    /// Stop the listener when capture is off (rules and breakpoints do not need it: their
+    /// paused requests come from the Fetch coordinator).
     pub fn stop_listener_if_idle(&mut self) {
         if !self.capture
-            && self.rules.is_empty()
-            && self.paused.is_empty()
             && let Some(handle) = self.listener.take()
         {
             handle.abort();
@@ -160,6 +164,9 @@ pub struct Paused {
     pub tab: TabId,
     /// The breakpoint that caught it.
     pub rule_id: String,
+    /// What the matching action rules would do with it: applied when it is released without
+    /// edits (`net.resume {}`, the 60 s timeout, removing the breakpoint).
+    pub actions: Vec<crate::rules::Action>,
     /// `Fetch` request id (not the `Network` one).
     pub request_id: String,
     pub stage: Stage,
@@ -195,6 +202,10 @@ impl Paused {
         });
         if let Some(post) = r["postData"].as_str() {
             info["post_data"] = json!(cut(post, 2048));
+        }
+        if !self.actions.is_empty() {
+            let pending: Vec<String> = self.actions.iter().map(|a| a.short()).collect();
+            info["pending_actions"] = json!(pending);
         }
         if self.stage == Stage::Response {
             info["status"] = self.params["responseStatusCode"].clone();
@@ -237,17 +248,25 @@ pub struct Env {
     pub net: Arc<NetState>,
     pub backend: Arc<dyn BrowserBackend>,
     pub events: EventBus,
+    /// The tab's shared CDP state (domain refcount, Fetch coordinator).
+    pub share: Arc<CdpShare>,
 }
 
 impl Env {
     pub fn new(ctx: &Ctx, tab: TabId) -> Env {
         let net = NetState::from_ctx(ctx);
+        Env::for_tab(ctx, net.tab(tab))
+    }
+
+    /// The environment of an existing tab state.
+    pub fn for_tab(ctx: &Ctx, tn: Arc<TabNet>) -> Env {
         Env {
-            tab,
-            tn: net.tab(tab),
-            net,
+            tab: tn.tab,
+            tn,
+            net: NetState::from_ctx(ctx),
             backend: ctx.backend.clone(),
             events: ctx.events.clone(),
+            share: CdpShare::from_ctx(ctx),
         }
     }
 
@@ -271,27 +290,27 @@ impl Env {
         Ok(())
     }
 
-    /// Make `Fetch` match the current rules: enable it with their patterns, or disable it
-    /// when there are none (interception slows every request down, so only while needed).
-    /// Call with the tab's `config` lock held.
+    /// Give the tab's Fetch coordinator the patterns of the current rules (as client "net"),
+    /// or unregister when there are none. The coordinator enables Fetch with the union of all
+    /// clients' patterns and disables it only when no client is left (interception slows every
+    /// request down, so only while needed). Call with the tab's `config` lock held.
     pub async fn sync_fetch(&self) -> Result<(), CmdError> {
-        let (wanted, current) = {
-            let inner = self.tn.lock();
-            (inner.wanted_patterns(), inner.fetch_patterns.clone())
-        };
-        if wanted == current {
-            return Ok(());
-        }
+        let wanted = self.tn.lock().wanted_patterns();
         if wanted.is_empty() {
-            self.cdp("Fetch.disable", json!({})).await?;
+            self.share
+                .clear_fetch(&self.backend, self.tab, crate::intercept::CLIENT)
+                .await?;
         } else {
-            self.ensure_listener().await?;
-            self.cdp("Fetch.enable", json!({ "patterns": wanted }))
+            let client = FetchClient {
+                name: crate::intercept::CLIENT.to_string(),
+                order: ORDER_NET,
+                patterns: wanted,
+                handler: Arc::new(crate::intercept::NetFetch { env: self.clone() }),
+            };
+            self.share
+                .set_fetch(&self.backend, self.tab, client)
                 .await?;
         }
-        let mut inner = self.tn.lock();
-        inner.fetch_patterns = wanted;
-        inner.stop_listener_if_idle();
         Ok(())
     }
 }

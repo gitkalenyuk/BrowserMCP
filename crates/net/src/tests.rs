@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::testing::{FakeBackend, ctx};
-use bmcp_core::{Caller, CmdError, Ctx, ErrorCode, Registry, TabId};
+use bmcp_core::{BrowserBackend, Caller, CmdError, Ctx, ErrorCode, Registry, TabId};
 use serde_json::{Value, json};
 
 use crate::NetState;
@@ -1044,6 +1045,263 @@ async fn removing_a_breakpoint_releases_what_it_holds() {
         vec![json!({ "requestId": "f1" })]
     );
     assert_eq!(s.calls("Fetch.disable").len(), 1);
+}
+
+// ------------------------------------------------------------------ shared CDP session
+
+impl Setup {
+    /// The tab's shared CDP state (the same instance the commands use).
+    fn share(&self) -> Arc<CdpShare> {
+        self.registry
+            .extensions()
+            .get_or_insert_with(CdpShare::default)
+    }
+
+    fn backend(&self) -> Arc<dyn BrowserBackend> {
+        self.fake.clone()
+    }
+
+    /// CDP answers (`Fetch.*Request`, `continueResponse`) sent for one request id.
+    fn answers_for(&self, id: &str) -> Vec<String> {
+        self.fake
+            .cdp_calls()
+            .into_iter()
+            .filter(|(m, p)| {
+                p["requestId"] == id
+                    && matches!(
+                        m.as_str(),
+                        "Fetch.continueRequest"
+                            | "Fetch.continueResponse"
+                            | "Fetch.fulfillRequest"
+                            | "Fetch.failRequest"
+                    )
+            })
+            .map(|(m, _)| m)
+            .collect()
+    }
+}
+
+/// Review item: `net.capture off` sent `Network.disable` on the shared session and so ended
+/// the traffic log of a running recording.
+#[tokio::test]
+async fn capture_off_keeps_network_on_while_a_recording_holds_it() {
+    let s = Setup::new(HashMap::new());
+    // What `record.start {traffic: true}` does.
+    s.share()
+        .acquire(&s.backend(), TAB, "Network", "record:rec-1", json!({}))
+        .await
+        .unwrap();
+    s.ok("net.capture", json!({ "on": true })).await;
+    // Net needs bigger post bodies: enable is sent again with the merged parameters.
+    assert_eq!(
+        s.calls("Network.enable"),
+        vec![json!({}), json!({ "maxPostDataSize": 65536 })]
+    );
+    let out = s.ok("net.capture", json!({ "on": false })).await;
+    assert_eq!(out["capturing"], false);
+    assert!(s.calls("Network.disable").is_empty(), "record still logs");
+    assert_eq!(s.share().holders(TAB, "Network"), ["record:rec-1"]);
+
+    // The recording ends: now nobody needs Network.
+    s.share()
+        .release(&s.backend(), TAB, "Network", "record:rec-1")
+        .await
+        .unwrap();
+    assert_eq!(s.calls("Network.disable").len(), 1);
+}
+
+/// Review item: a matching breakpoint used to win over earlier block/mock rules.
+#[tokio::test]
+async fn rules_and_breakpoints_apply_in_the_order_they_were_added() {
+    let s = Setup::new(HashMap::new());
+    let mut events = s.ctx.events.subscribe();
+    s.ok(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*://ads.test/*" }, "action": "block" }),
+    )
+    .await;
+    s.ok(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*/api/*" }, "action": { "set_headers": { "X-Debug": "1" } } }),
+    )
+    .await;
+    s.ok("net.breakpoint", json!({})).await; // b3: everything
+    s.ok(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*/late/*" }, "action": "block" }),
+    )
+    .await;
+
+    // r1 comes before b3: blocked, never paused.
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("f1", "GET", "https://ads.test/banner.js"),
+    );
+    settle().await;
+    assert_eq!(s.answers_for("f1"), ["Fetch.failRequest"]);
+    assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 0);
+
+    // b3 holds it; the header rule before it is kept for the release.
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("f2", "GET", "https://a.test/api/x"),
+    );
+    settle().await;
+    let paused = std::iter::from_fn(|| events.try_recv().ok())
+        .find(|e| e.topic == "net.paused")
+        .expect("net.paused");
+    assert_eq!(paused.data["rule"], "b3");
+    assert_eq!(
+        paused.data["pending_actions"],
+        json!(["set_headers X-Debug"])
+    );
+    let pause_id = paused.data["pause_id"].as_str().unwrap().to_string();
+    let out = s.ok("net.resume", json!({ "pause_id": pause_id })).await;
+    assert_eq!(out["done"], "continued");
+    let sent = s.calls("Fetch.continueRequest").pop().unwrap();
+    assert_eq!(sent["requestId"], "f2");
+    assert!(
+        sent["headers"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({ "name": "X-Debug", "value": "1" })),
+        "{sent}"
+    );
+
+    // b3 comes before r4: paused first, and releasing it without edits blocks it.
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("f3", "GET", "https://a.test/late/x"),
+    );
+    settle().await;
+    let paused = std::iter::from_fn(|| events.try_recv().ok())
+        .find(|e| e.topic == "net.paused")
+        .expect("net.paused");
+    let pause_id = paused.data["pause_id"].as_str().unwrap().to_string();
+    let out = s.ok("net.resume", json!({ "pause_id": pause_id })).await;
+    assert_eq!(out["done"], "dropped");
+    assert_eq!(s.answers_for("f3"), ["Fetch.failRequest"]);
+}
+
+/// Review item: `net.resume` returned early (no answer at all) when the original response
+/// body could not be read, so the request hung.
+#[tokio::test]
+async fn resume_always_answers_even_when_the_body_cannot_be_read() {
+    // No bodies: every Fetch.getResponseBody fails.
+    let s = Setup::new(HashMap::new());
+    s.ok("net.breakpoint", json!({ "stage": "response" })).await;
+    let mut failed = paused_event("f2", "GET", "https://a.test/broken");
+    failed["responseErrorReason"] = json!("ConnectionReset");
+    s.emit("Fetch.requestPaused", failed);
+    s.emit(
+        "Fetch.requestPaused",
+        response_paused("f3", "https://a.test/moved", 302),
+    );
+    s.emit(
+        "Fetch.requestPaused",
+        response_paused("f4", "https://a.test/api", 200),
+    );
+    settle().await;
+    let list = s.ok("net.paused_list", json!({})).await;
+    assert_eq!(list["count"], 3);
+    let pause_of = |url: &str| -> String {
+        let text = list["text"].as_str().unwrap();
+        let line = text.lines().find(|l| l.contains(url)).unwrap();
+        line.split(' ').next().unwrap().to_string()
+    };
+
+    // A failed response and a redirect have no body to keep: refused up front, still paused.
+    for url in ["/broken", "/moved"] {
+        let err = s
+            .call(
+                "net.resume",
+                json!({ "pause_id": pause_of(url), "edits": { "status": 200 } }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidParams, "{url}: {err:?}");
+    }
+    assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 3);
+    // With a body it works.
+    let out = s
+        .ok(
+            "net.resume",
+            json!({ "pause_id": pause_of("/broken"), "edits": { "status": 200, "response_body": "ok" } }),
+        )
+        .await;
+    assert_eq!(out["done"], "fulfilled");
+
+    // The body read fails at resume time: an error, but the request is still released.
+    let err = s
+        .call(
+            "net.resume",
+            json!({ "pause_id": pause_of("/api"), "edits": { "status": 500 } }),
+        )
+        .await
+        .unwrap_err();
+    assert_ne!(err.code, ErrorCode::InvalidParams);
+    assert_eq!(s.answers_for("f4"), ["Fetch.continueRequest"]);
+    assert_eq!(s.ok("net.paused_list", json!({})).await["count"], 1);
+}
+
+/// Review item: when the capture listener fell behind, lost `Fetch.requestPaused` events
+/// stranded their requests forever. Pauses now come from the Fetch coordinator, which sweeps
+/// lost ones without disabling Fetch.
+#[tokio::test(start_paused = true)]
+async fn lost_pause_events_are_recovered_without_disabling_fetch() {
+    let s = Setup::new(HashMap::new());
+    let mut events = s.ctx.events.subscribe();
+    s.ok("net.capture", json!({ "on": true })).await;
+    s.ok(
+        "net.rule_add",
+        json!({ "match": { "url_glob": "*/api/*" }, "action": { "mock": { "body": "{}" } } }),
+    )
+    .await;
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("interception-job-1.0", "GET", "https://a.test/api/a"),
+    );
+    settle().await;
+    assert_eq!(
+        s.answers_for("interception-job-1.0"),
+        ["Fetch.fulfillRequest"]
+    );
+
+    // A burst the single-threaded test runtime cannot read in time: the oldest events
+    // (the pause of job 2) are dropped from every subscriber's 1024-event channel.
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("interception-job-2.0", "GET", "https://a.test/api/b"),
+    );
+    for i in 0..1100 {
+        s.emit(
+            "Network.dataReceived",
+            json!({ "requestId": format!("n{i}"), "dataLength": 1 }),
+        );
+    }
+    s.emit(
+        "Fetch.requestPaused",
+        paused_event("interception-job-3.0", "GET", "https://a.test/x"),
+    );
+    settle().await;
+    assert!(s.answers_for("interception-job-2.0").is_empty());
+    assert_eq!(
+        s.answers_for("interception-job-3.0"),
+        ["Fetch.continueRequest"]
+    );
+    let lagged = std::iter::from_fn(|| events.try_recv().ok()).any(|e| e.topic == "net.lagged");
+    assert!(lagged, "the capture listener reports its own loss");
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(
+        s.answers_for("interception-job-2.0"),
+        ["Fetch.continueRequest"],
+        "swept"
+    );
+    assert_eq!(s.answers_for("interception-job-1.0").len(), 1);
+    assert!(s.calls("Fetch.disable").is_empty());
+    assert!(s.share().fetch_stats(TAB).swept >= 1);
 }
 
 // ------------------------------------------------------------------ replay

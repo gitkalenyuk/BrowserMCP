@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::events::topics;
 use bmcp_core::{BrowserBackend, CdpEvent, Ctx, Event, TabId};
 use serde_json::{Value, json};
@@ -29,6 +30,26 @@ use crate::video::VideoRecorder;
 
 /// How long a human event waits before it is matched against API windows.
 const HOLD: Duration = Duration::from_millis(300);
+
+/// A recording's holder name in the tab's domain refcount (`bmcp-cdpshare`).
+pub fn domain_holder(recording_id: &str) -> String {
+    format!("record:{recording_id}")
+}
+
+/// Give back the `Page` and `Network` domains a recording held (best effort: the tab may be
+/// gone). `Network` is only disabled when nobody else (e.g. `net.capture`) still holds it.
+pub async fn release_domains(
+    backend: &Arc<dyn BrowserBackend>,
+    tab: TabId,
+    holder: &str,
+    share: &CdpShare,
+) {
+    for domain in ["Network", "Page"] {
+        if let Err(err) = share.release(backend, tab, domain, holder).await {
+            tracing::debug!(%err, domain, "recorder: releasing the domain failed");
+        }
+    }
+}
 /// Wait this long for the recorder's `hello` through the binding before falling back to polling.
 const HELLO_TIMEOUT: Duration = Duration::from_millis(1500);
 /// Poll interval in queue mode (and the housekeeping tick in binding mode).
@@ -594,6 +615,9 @@ impl Session {
         if let Some(mut out) = self.traffic.take() {
             let _ = out.flush();
         }
+        let holder = domain_holder(&lock(&self.meta).id);
+        let share = CdpShare::from_ctx(&self.ctx);
+        release_domains(&backend, self.tab, &holder, &share).await;
         self.save();
         let mut meta = lock(&self.meta);
         meta.stopped_ms = Some(now_ms());
