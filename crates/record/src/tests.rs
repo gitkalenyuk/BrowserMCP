@@ -5,9 +5,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bmcp_cdpshare::CdpShare;
 use bmcp_core::events::topics;
 use bmcp_core::testing::FakeBackend;
-use bmcp_core::{Caller, CmdError, Ctx, DataDir, EventBus, Registry, TabId};
+use bmcp_core::{BrowserBackend, Caller, CmdError, Ctx, DataDir, EventBus, Registry, TabId};
 use serde_json::{Value, json};
 
 use crate::model::Step;
@@ -61,7 +62,7 @@ impl Harness {
                     }
                 }
                 m if m.starts_with("Page.") || m.starts_with("Runtime.") => json!({}),
-                "Network.enable" => json!({}),
+                "Network.enable" | "Network.disable" => json!({}),
                 _ => return None,
             };
             Some(Ok(answer))
@@ -146,6 +147,57 @@ fn ref_in(snapshot: &str, line_start: &str) -> String {
 /// Let the session task process what was sent (it runs on the same runtime).
 async fn settle() {
     tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+/// Review item: `net.capture off` used to send `Network.disable` under a running recording's
+/// traffic log. The recorder now holds `Network` (and `Page`) through the shared refcount and
+/// gives it back on stop; `Network.disable` goes out only after the last holder.
+#[tokio::test]
+async fn traffic_log_holds_network_through_the_shared_refcount() {
+    let h = Harness::new();
+    let share = h
+        .registry
+        .extensions()
+        .get_or_insert_with(CdpShare::default);
+    let backend: Arc<dyn BrowserBackend> = h.fake.clone();
+    // Another user of the tab holds Network too (as `net.capture on` does).
+    share
+        .acquire(
+            &backend,
+            TabId(1),
+            "Network",
+            "net",
+            json!({ "maxPostDataSize": 65536 }),
+        )
+        .await
+        .unwrap();
+    let out = h.ok("record.start", json!({ "traffic": true })).await;
+    let id = out["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        share.holders(TabId(1), "Network"),
+        ["net".to_string(), format!("record:{id}")]
+    );
+    let disables = || {
+        h.methods()
+            .iter()
+            .filter(|m| *m == "Network.disable")
+            .count()
+    };
+
+    // `net.capture off`: the recording still needs Network.
+    share
+        .release(&backend, TabId(1), "Network", "net")
+        .await
+        .unwrap();
+    assert_eq!(disables(), 0);
+    // The recording ends: it was the last holder.
+    h.ok("record.stop", json!({ "id": id })).await;
+    assert_eq!(disables(), 1);
+    assert!(share.holders(TabId(1), "Network").is_empty());
+    assert!(
+        !h.methods().iter().any(|m| m == "Page.disable"),
+        "Page is never switched off"
+    );
 }
 
 #[tokio::test]

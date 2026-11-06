@@ -30,6 +30,8 @@ const HAR_INLINE_MAX: usize = 16 * 1024;
 const SEARCH_FETCH_MAX: usize = 200;
 /// `net.api_to_code` looks at this many response bodies per endpoint.
 const SAMPLES_PER_ENDPOINT: usize = 3;
+/// Net's holder name in the tab's `Network` domain refcount (`bmcp-cdpshare`).
+const NETWORK_HOLDER: &str = "net";
 
 /// The tab's state for read-only commands (does not start anything).
 async fn read_tab(ctx: &Ctx, tab: Option<TabId>) -> Result<(TabId, Arc<TabNet>), CmdError> {
@@ -151,15 +153,23 @@ impl Command for Capture {
                 inner.capture = true;
                 inner.bodies = args.bodies.unwrap_or(false);
             }
-            // Request bodies up to 64 kB come with `requestWillBeSent`.
+            // Hold `Network` (shared with e.g. record's traffic log: only the last holder's
+            // release disables it). Request bodies up to 64 kB come with `requestWillBeSent`.
             if let Err(err) = env
-                .cdp("Network.enable", json!({ "maxPostDataSize": 65536 }))
+                .share
+                .acquire(
+                    &env.backend,
+                    tab,
+                    "Network",
+                    NETWORK_HOLDER,
+                    json!({ "maxPostDataSize": 65536 }),
+                )
                 .await
             {
                 let mut inner = env.tn.lock();
                 inner.capture = false;
                 inner.stop_listener_if_idle();
-                return Err(err);
+                return Err(err.into());
             }
         } else {
             {
@@ -167,7 +177,9 @@ impl Command for Capture {
                 inner.capture = false;
                 inner.stop_listener_if_idle();
             }
-            env.cdp("Network.disable", json!({})).await?;
+            env.share
+                .release(&env.backend, tab, "Network", NETWORK_HOLDER)
+                .await?;
         }
         let inner = env.tn.lock();
         Ok(CaptureOutput {

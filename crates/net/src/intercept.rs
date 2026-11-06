@@ -1,19 +1,29 @@
 //! Handling of `Fetch.requestPaused`: apply rules, hold requests for breakpoints, resume them.
 //!
 //! The one hard rule: **every paused request gets exactly one answer** (`Fetch.continueRequest`,
-//! `continueResponse`, `fulfillRequest` or `failRequest`), otherwise the page hangs. So:
-//! * rules are decided and answered right away ([`on_paused`]);
-//! * a breakpoint parks the request in `TabInner::paused` and starts a 60 s timer
-//!   ([`auto_continue`]); whoever removes it from the map first (`net.resume`, the timer,
-//!   `net.rule_remove`) answers it;
-//! * when an answer fails (e.g. a bad edited header), we fall back to a plain continue.
+//! `continueResponse`, `fulfillRequest` or `failRequest`), otherwise the page hangs. Net is the
+//! "net" client of the tab's Fetch coordinator (`bmcp-cdpshare`), which reads every pause once,
+//! asks adblock first and net second, and sends every answer itself:
+//! * rules are decided right away ([`on_paused`] returns the answer, or `Pass` when no rule
+//!   matches, and the coordinator continues the request);
+//! * a breakpoint parks the request in `TabInner::paused` (`Verdict::Hold`) and starts a 60 s
+//!   timer ([`auto_continue`]); whoever removes it from the map first (`net.resume`, the timer,
+//!   `net.rule_remove`) answers it through the coordinator ([`finish`]);
+//! * when an answer fails (e.g. a bad edited header), the coordinator falls back to a plain
+//!   continue and [`NetFetch::done`] emits `net.intercept_error`.
+//!
+//! Rule order: rules and breakpoints are checked in the order they were added. A block/mock
+//! before the first matching breakpoint answers the request and it never pauses. Otherwise
+//! the first matching breakpoint pauses it, and the matching action rules (up to the first
+//! block/mock) are kept with the pause: releasing it without edits applies them.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use bmcp_core::CmdError;
+use bmcp_cdpshare::{Answer, AnswerError, Answered, FetchHandler, PausedRequest, Verdict};
+use bmcp_core::{BoxFuture, CmdError, ErrorCode, Retry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -22,8 +32,11 @@ use crate::rules::{Action, RuleKind, Stage};
 use crate::state::{Env, Paused};
 use crate::store::{Headers, header, headers_from};
 
-/// A paused request that nobody resumes is continued unchanged after this long.
+/// A paused request that nobody resumes is continued after this long.
 pub const PAUSE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Net's client name at the tab's Fetch coordinator (also the `by` of its answers).
+pub const CLIENT: &str = "net";
 
 /// The answer to one paused request.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,17 +68,23 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// The CDP method and parameters that send this answer.
-    fn to_cdp(&self, request_id: &str) -> (&'static str, Value) {
+    /// The CDP answer (the coordinator adds the `requestId`).
+    pub fn to_answer(&self) -> Answer {
+        let (method, params) = self.to_cdp();
+        Answer::new(method, params)
+    }
+
+    /// The CDP method and parameters that send this answer, without `requestId`.
+    fn to_cdp(&self) -> (&'static str, Value) {
         match self {
-            Outcome::Continue => ("Fetch.continueRequest", json!({ "requestId": request_id })),
+            Outcome::Continue => ("Fetch.continueRequest", json!({})),
             Outcome::ContinueRequest {
                 url,
                 method,
                 headers,
                 post_data,
             } => {
-                let mut p = json!({ "requestId": request_id });
+                let mut p = json!({});
                 if let Some(url) = url {
                     p["url"] = json!(url);
                 }
@@ -87,7 +106,6 @@ impl Outcome {
                 headers,
             } => {
                 let mut p = json!({
-                    "requestId": request_id,
                     "responseCode": status,
                     "responseHeaders": headers_to_cdp(headers),
                 });
@@ -103,7 +121,6 @@ impl Outcome {
                 body,
             } => {
                 let mut p = json!({
-                    "requestId": request_id,
                     "responseCode": status,
                     "responseHeaders": headers_to_cdp(headers),
                     "body": B64.encode(body),
@@ -113,31 +130,62 @@ impl Outcome {
                 }
                 ("Fetch.fulfillRequest", p)
             }
-            Outcome::Fail(reason) => (
-                "Fetch.failRequest",
-                json!({ "requestId": request_id, "errorReason": reason }),
-            ),
+            Outcome::Fail(reason) => ("Fetch.failRequest", json!({ "errorReason": reason })),
         }
     }
 }
 
-/// Send the answer. If it fails, still release the request with a plain continue.
+/// Answer a held request through the tab's Fetch coordinator. If the answer fails, the
+/// coordinator still releases the request with a plain continue ([`NetFetch::done`] reports
+/// it as `net.intercept_error`).
 pub async fn finish(env: &Env, request_id: &str, outcome: &Outcome) -> Result<(), CmdError> {
-    let (method, params) = outcome.to_cdp(request_id);
-    let Err(err) = env.cdp(method, params).await else {
-        return Ok(());
-    };
-    if *outcome != Outcome::Continue {
-        let _ = env
-            .cdp("Fetch.continueRequest", json!({ "requestId": request_id }))
-            .await;
+    env.share
+        .answer(env.tab, request_id, outcome.to_answer(), CLIENT)
+        .await
+        .map_err(|err| match err {
+            AnswerError::NotPaused => CmdError::new(
+                ErrorCode::NotFound,
+                format!("request {request_id} is not paused any more"),
+            )
+            .with_retry(Retry::No)
+            .with_hint("Its tab closed or the browser released it; nothing to resume."),
+            AnswerError::Cdp(err) => CmdError::from(err),
+        })
+}
+
+/// Net as a client of the tab's Fetch coordinator (registered by `Env::sync_fetch`).
+pub struct NetFetch {
+    pub env: Env,
+}
+
+impl FetchHandler for NetFetch {
+    fn on_paused<'a>(&'a self, req: &'a PausedRequest) -> BoxFuture<'a, Verdict> {
+        Box::pin(on_paused(&self.env, req))
     }
-    env.events.emit(
-        "net.intercept_error",
-        json!({ "tab": env.tab, "request_id": request_id, "call": method, "error": err.message,
-                "warning": "the change could not be applied; the request was continued unchanged" }),
-    );
-    Err(err)
+
+    fn done(&self, req: &PausedRequest, answered: &Answered<'_>) {
+        let env = &self.env;
+        if answered.by == CLIENT {
+            if let Some(error) = answered.error {
+                let warning = if answered.released {
+                    "the change could not be applied; the request was continued unchanged"
+                } else {
+                    "the request could not be answered (it may be gone already)"
+                };
+                env.events.emit(
+                    "net.intercept_error",
+                    json!({ "tab": env.tab, "request_id": req.request_id, "call": answered.method,
+                            "error": error, "warning": warning }),
+                );
+            }
+        } else if answered.held {
+            // Released without us (tab closed, interception reset): forget the stale pause.
+            env.tn
+                .lock()
+                .paused
+                .retain(|_, p| p.request_id != req.request_id);
+        }
+    }
 }
 
 /// Request stage or response stage? Response-stage pauses carry the response status.
@@ -155,58 +203,72 @@ enum Decision {
     Apply(Vec<Action>),
 }
 
-/// Handle one `Fetch.requestPaused` event (runs in its own task).
-pub async fn on_paused(env: Env, params: Value) {
-    let Some(request_id) = params["requestId"].as_str().map(str::to_string) else {
-        return;
-    };
-    let stage = stage_of(&params);
-    let url = params["request"]["url"].as_str().unwrap_or_default();
-    let method = params["request"]["method"].as_str().unwrap_or_default();
+/// Decide about one paused request (the coordinator calls this after adblock let it pass).
+pub async fn on_paused(env: &Env, req: &PausedRequest) -> Verdict {
+    let params = &req.params;
+    let stage = stage_of(params);
+    let (url, method) = (req.url(), req.method());
     let network_id = params["networkId"].as_str().unwrap_or_default().to_string();
 
     let decision = {
         let mut guard = env.tn.lock();
         // Borrow the fields separately (rules, paused, store) through one `&mut`.
         let inner = &mut *guard;
-        let breakpoint = inner
-            .rules
-            .iter_mut()
-            .find(|r| r.is_breakpoint() && r.matcher.matches(url, method, stage));
-        if let Some(bp) = breakpoint {
-            bp.hits += 1;
-            let pause = Paused {
-                pause_id: env.net.new_id("p"),
-                tab: env.tab,
-                rule_id: bp.id.clone(),
-                request_id: request_id.clone(),
-                stage,
-                params: params.clone(),
-                deadline: tokio::time::Instant::now() + PAUSE_TIMEOUT,
-            };
-            inner.store.note(&network_id, format!("{} paused", bp.id));
-            inner.paused.insert(pause.pause_id.clone(), pause.clone());
-            Decision::Pause(pause)
-        } else {
-            let mut actions = Vec::new();
-            for rule in inner
-                .rules
-                .iter_mut()
-                .filter(|r| r.matcher.matches(url, method, stage))
-            {
-                if let RuleKind::Action(action) = &rule.kind {
-                    rule.hits += 1;
-                    inner
-                        .store
-                        .note(&network_id, format!("{} {}", rule.id, action.short()));
+        // Walk the rules in the order they were added: collect the actions up to the first
+        // block/mock (it answers the request, later rules never see it) and remember the first
+        // matching breakpoint met on the way.
+        let mut breakpoint = None;
+        let mut actions = Vec::new();
+        let mut action_rules = Vec::new();
+        for (i, rule) in inner.rules.iter().enumerate() {
+            if !rule.matcher.matches(url, method, stage) {
+                continue;
+            }
+            match &rule.kind {
+                RuleKind::Breakpoint => {
+                    breakpoint.get_or_insert(i);
+                }
+                RuleKind::Action(action) => {
+                    action_rules.push(i);
                     actions.push(action.clone());
-                    // Block and mock answer the request: later rules never see it.
                     if matches!(action, Action::Block | Action::Mock { .. }) {
                         break;
                     }
                 }
             }
-            Decision::Apply(actions)
+        }
+        for &i in &action_rules {
+            inner.rules[i].hits += 1;
+        }
+        match breakpoint {
+            // A breakpoint came before any block/mock: hold the request.
+            Some(b) => {
+                let bp = &mut inner.rules[b];
+                bp.hits += 1;
+                let pause = Paused {
+                    pause_id: env.net.new_id("p"),
+                    tab: env.tab,
+                    rule_id: bp.id.clone(),
+                    actions,
+                    request_id: req.request_id.clone(),
+                    stage,
+                    params: params.clone(),
+                    deadline: tokio::time::Instant::now() + PAUSE_TIMEOUT,
+                };
+                inner.store.note(&network_id, format!("{} paused", bp.id));
+                inner.paused.insert(pause.pause_id.clone(), pause.clone());
+                Decision::Pause(pause)
+            }
+            None => {
+                for &i in &action_rules {
+                    let rule = &inner.rules[i];
+                    if let RuleKind::Action(action) = &rule.kind {
+                        let note = format!("{} {}", rule.id, action.short());
+                        inner.store.note(&network_id, note);
+                    }
+                }
+                Decision::Apply(actions)
+            }
         }
     };
 
@@ -214,11 +276,15 @@ pub async fn on_paused(env: Env, params: Value) {
         Decision::Pause(pause) => {
             env.events.emit("net.paused", pause.info());
             tokio::spawn(auto_continue(env.clone(), pause.pause_id.clone()));
+            Verdict::Hold
         }
-        Decision::Apply(actions) => {
-            let outcome = plan(&env, &params, stage, &actions).await;
-            let _ = finish(&env, &request_id, &outcome).await;
-        }
+        // No rule of ours matches: the coordinator continues it.
+        Decision::Apply(actions) if actions.is_empty() => Verdict::Pass,
+        Decision::Apply(actions) => match plan(env, params, stage, &actions).await {
+            // The rules changed nothing (e.g. a rewrite of a binary body).
+            Outcome::Continue => Verdict::Pass,
+            outcome => Verdict::Answer(outcome.to_answer()),
+        },
     }
 }
 
@@ -415,16 +481,59 @@ impl Edits {
     }
 }
 
-/// Answer a paused request for `net.resume`. Returns what was done.
+/// Answer a paused request for `net.resume`. Returns what was done. The request is always
+/// answered, also when this fails (then with a plain continue).
 pub async fn resume(
     env: &Env,
     paused: &Paused,
     edits: &Edits,
     drop: bool,
 ) -> Result<&'static str, CmdError> {
+    let outcome = match resume_outcome(env, paused, edits, drop).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            // E.g. the original body could not be read: never leave the request hanging.
+            let _ = finish(env, &paused.request_id, &Outcome::Continue).await;
+            return Err(err);
+        }
+    };
+    finish(env, &paused.request_id, &outcome).await?;
+    Ok(match outcome {
+        Outcome::Fail(_) => "dropped",
+        Outcome::Fulfill { .. } => "fulfilled",
+        _ => "continued",
+    })
+}
+
+/// Why these edits cannot work on this response-stage pause, if they cannot: a new `status`
+/// without `response_body` keeps the original body, and failed responses and redirects have
+/// none.
+pub fn body_problem(paused: &Paused, edits: &Edits) -> Option<String> {
+    if paused.stage != Stage::Response || edits.status.is_none() || edits.response_body.is_some() {
+        return None;
+    }
+    let params = &paused.params;
+    if let Some(reason) = params["responseErrorReason"].as_str() {
+        return Some(format!(
+            "the response failed ({reason}), so it has no body to keep"
+        ));
+    }
+    match params["responseStatusCode"].as_u64() {
+        Some(code @ 300..=399) => Some(format!("a {code} redirect has no body to keep")),
+        _ => None,
+    }
+}
+
+/// What `net.resume` sends. Without edits: what the pending rules would have done.
+async fn resume_outcome(
+    env: &Env,
+    paused: &Paused,
+    edits: &Edits,
+    drop: bool,
+) -> Result<Outcome, CmdError> {
     let params = &paused.params;
     let request = &params["request"];
-    let outcome = if drop {
+    Ok(if drop {
         Outcome::Fail("Aborted")
     } else {
         match paused.stage {
@@ -450,7 +559,7 @@ pub async fn resume(
                     && edits.body.is_none()
                     && !headers_changed
                 {
-                    Outcome::Continue
+                    plan(env, params, paused.stage, &paused.actions).await
                 } else {
                     Outcome::ContinueRequest {
                         url: edits.url.clone(),
@@ -492,16 +601,10 @@ pub async fn resume(
                         headers,
                     }
                 } else {
-                    Outcome::Continue
+                    plan(env, params, paused.stage, &paused.actions).await
                 }
             }
         }
-    };
-    finish(env, &paused.request_id, &outcome).await?;
-    Ok(match outcome {
-        Outcome::Fail(_) => "dropped",
-        Outcome::Fulfill { .. } => "fulfilled",
-        _ => "continued",
     })
 }
 
@@ -522,7 +625,8 @@ async fn original_body(env: &Env, params: &Value) -> Result<Vec<u8>, CmdError> {
     }
 }
 
-/// Continue a breakpoint's request unchanged when nobody resumed it in time.
+/// Release a breakpoint's request when nobody resumed it in time, with what the pending rules
+/// would have done (see the module docs).
 pub async fn auto_continue(env: Env, pause_id: String) {
     let deadline = match env.tn.lock().paused.get(&pause_id) {
         Some(p) => p.deadline,
@@ -536,7 +640,8 @@ pub async fn auto_continue(env: Env, pause_id: String) {
         taken
     };
     if let Some(paused) = taken {
-        let _ = finish(&env, &paused.request_id, &Outcome::Continue).await;
+        let outcome = plan(&env, &paused.params, paused.stage, &paused.actions).await;
+        let _ = finish(&env, &paused.request_id, &outcome).await;
         env.events.emit(
             "net.pause_timeout",
             json!({
@@ -544,8 +649,13 @@ pub async fn auto_continue(env: Env, pause_id: String) {
                 "tab": env.tab,
                 "url": paused.url(),
                 "warning": format!(
-                    "paused request was not resumed within {} s and was continued unchanged",
-                    PAUSE_TIMEOUT.as_secs()
+                    "paused request was not resumed within {} s and was {}",
+                    PAUSE_TIMEOUT.as_secs(),
+                    if paused.actions.is_empty() {
+                        "continued unchanged"
+                    } else {
+                        "released with its matching rules applied"
+                    }
                 ),
             }),
         );

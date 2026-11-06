@@ -98,7 +98,13 @@ pub fn spawn(cmd: &mut tokio::process::Command) -> std::io::Result<(Child, Proce
 }
 
 /// How long a stdout reader may keep draining after its process was stopped or exited.
-const READER_GRACE: Duration = Duration::from_secs(3);
+/// Tests use a much longer grace so "finished quickly" can only mean "the process tree was
+/// killed and stdout closed", never "the grace period ran out" — robust on a loaded machine.
+const READER_GRACE: Duration = if cfg!(test) {
+    Duration::from_secs(20)
+} else {
+    Duration::from_secs(3)
+};
 
 /// Wait for a stdout reader task to see EOF; abort it if the pipe stays open (some process we
 /// could not kill still holds it), so the session task always finishes.

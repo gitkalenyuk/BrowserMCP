@@ -57,6 +57,7 @@ instance listens.
 | `crates/core` | Command registry, `BrowserBackend` trait, events, portable paths (no CEF) |
 | `crates/cef` | The only crate that talks to CEF (windows, UI-thread bridge, DevTools) |
 | `crates/cdp` | Chrome DevTools Protocol client over a pluggable transport |
+| `crates/cdpshare` | Shared use of a tab's CDP session: domain refcount, one `Fetch` coordinator per tab |
 | `crates/perception` | Accessibility-tree snapshots with refs, find, diff |
 | `crates/api` | MCP server (rmcp, Streamable HTTP) generated from the registry |
 | `crates/script` | `bmcp-script-host`: TypeScript automation scripts on deno_core (sidecar) |

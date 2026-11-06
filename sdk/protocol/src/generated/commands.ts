@@ -38,11 +38,15 @@ export interface AdblockApplyOutput {
     avg_roundtrip_ms: number;
     /** Answered with `Fetch.failRequest`. */
     blocked: number;
-    /** Answered with `Fetch.continueRequest`. */
+    /** Let through (continued, or answered by another interception client such as net rules). */
     continued: number;
     errors: number;
     /** Answered with `Fetch.fulfillRequest` (redirect resources). */
     fulfilled: number;
+    /**
+     * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+     * recovered by the shared Fetch coordinator).
+     */
     lagged: number;
     max_decision_us: number;
     max_roundtrip_ms: number;
@@ -223,11 +227,15 @@ export interface AdblockStatsOutput {
       avg_roundtrip_ms: number;
       /** Answered with `Fetch.failRequest`. */
       blocked: number;
-      /** Answered with `Fetch.continueRequest`. */
+      /** Let through (continued, or answered by another interception client such as net rules). */
       continued: number;
       errors: number;
       /** Answered with `Fetch.fulfillRequest` (redirect resources). */
       fulfilled: number;
+      /**
+       * Page events lost by adblock's own loop (cosmetics only; lost paused requests are
+       * recovered by the shared Fetch coordinator).
+       */
       lagged: number;
       max_decision_us: number;
       max_roundtrip_ms: number;
@@ -933,6 +941,231 @@ export interface GeoLookupOutput {
   via: string | null;
 }
 
+// ---- governor.config ----
+
+/**
+ * Arguments of `governor.config`.
+ * Every field is optional; only the given ones change. 0 for a time or max_live_tabs = off.
+ */
+export interface GovernorConfigArgs {
+  /** A tab that got a command this recently is never touched. */
+  busy_secs?: number | null;
+  /** Discard after this many seconds in the background. */
+  discard_after_secs?: number | null;
+  /** Turn the automatic policy on/off (manual tabs.freeze always works). */
+  enabled?: boolean | null;
+  /** Freeze after this many seconds in the background. */
+  freeze_after_secs?: number | null;
+  /** Discard the most idle tabs above this many live (not discarded) tabs. */
+  max_live_tabs?: number | null;
+  /** Memory pressure below this percentage of free RAM. */
+  pressure_free_pct?: number | null;
+  /**
+   * low | normal | high; default chosen from RAM.
+   *
+   * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+   * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+   * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+   */
+  profile?: "low" | "normal" | "high" | null;
+  /** Clear all overrides first (back to the profile's defaults). */
+  reset?: boolean | null;
+  /** Policy interval. */
+  tick_secs?: number | null;
+}
+
+/** Result of `governor.config`. */
+export interface GovernorConfigOutput {
+  /** The limits in force now. */
+  limits: {
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
+    enabled: boolean;
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /**
+     * Hardware class. Chosen automatically from total RAM, overridable in the config.
+     *
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile: "low" | "normal" | "high";
+    /** How often the policy looks at the tabs. */
+    tick_secs: number;
+  };
+  /** What is stored in data/config/governor.json. */
+  overrides: {
+    busy_secs?: number | null;
+    discard_after_secs?: number | null;
+    enabled?: boolean | null;
+    freeze_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    /**
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile?: "low" | "normal" | "high" | null;
+    tick_secs?: number | null;
+  };
+}
+
+// ---- governor.recommend_parallel ----
+
+/** Arguments of `governor.recommend_parallel`. */
+export interface GovernorRecommendParallelArgs {
+  /** Memory one parallel slot needs (default 400 MB: a script host plus its tabs). */
+  per_slot_mb?: number | null;
+}
+
+/**
+ * Result of `governor.recommend_parallel`.
+ * How many parallel slots (script hosts + their tabs) this machine can carry.
+ */
+export interface GovernorRecommendParallelOutput {
+  /** Available RAM in MB (0 when unknown). */
+  available_mb: number;
+  /** Half the CPUs (the browser needs the rest), at least 1. */
+  by_cpu: number;
+  /** Available RAM / per-slot memory; null when RAM could not be read. */
+  by_ram: number | null;
+  /** Logical CPUs. */
+  cpus: number;
+  /** `min(by_cpu, by_ram)`, at least 1. */
+  parallel: number;
+}
+
+// ---- governor.status ----
+
+/**
+ * Arguments of `governor.status`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type GovernorStatusArgs = Record<string, never>;
+
+/**
+ * Result of `governor.status`.
+ * `governor.status` output.
+ */
+export interface GovernorStatusOutput {
+  /** Recent freeze/discard/thaw decisions, oldest first (manual and automatic). */
+  decisions: {
+    /**
+     * freeze | discard | thaw
+     *
+     * - `"freeze"`: Pause the page (keeps memory, stops CPU).
+     * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
+     * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
+     */
+    action: "freeze" | "discard" | "thaw";
+    /** False when nothing had to be done (already in that state). */
+    changed: boolean;
+    error?: string | null;
+    reason: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    ts_ms: number;
+  }[];
+  /** The limits in force (profile defaults with the overrides applied). */
+  limits: {
+    /** A tab that got a command less than this long ago is "in use" and never touched. */
+    busy_secs: number;
+    /** Discard a tab this long in the background (0 = never). */
+    discard_after_secs: number;
+    /** False = the automatic policy does nothing (manual `tabs.freeze` still works). */
+    enabled: boolean;
+    /** Freeze a tab this long in the background (0 = never). */
+    freeze_after_secs: number;
+    /** Discard the longest-idle tabs when more than this many are not discarded (0 = no limit). */
+    max_live_tabs: number;
+    /** Memory pressure = available RAM below this percentage of total RAM. */
+    pressure_free_pct: number;
+    /**
+     * Hardware class. Chosen automatically from total RAM, overridable in the config.
+     *
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile: "low" | "normal" | "high";
+    /** How often the policy looks at the tabs. */
+    tick_secs: number;
+  };
+  memory: {
+    available_mb: number;
+    /** Working set of the browser and all its helper processes. */
+    browser_mb: number;
+    free_pct: number;
+    /** Available RAM is below `limits.pressure_free_pct`. */
+    pressure: boolean;
+    processes: {
+      /** `browser` (us), or Chromium's `--type=` value: `renderer`, `gpu-process`, `utility`, … */
+      kind: string;
+      /** Working set (resident memory) in MB. */
+      mb: number;
+      pid: number;
+    }[];
+    /** Number of renderer processes. */
+    renderers: number;
+    total_mb: number;
+  };
+  /** What `governor.config` changed (the rest are profile defaults). */
+  overrides: {
+    busy_secs?: number | null;
+    discard_after_secs?: number | null;
+    enabled?: boolean | null;
+    freeze_after_secs?: number | null;
+    max_live_tabs?: number | null;
+    pressure_free_pct?: number | null;
+    /**
+     * - `"low"`: ≤ 8 GB RAM: freeze after 2 min, discard after 10 min, at most 8 live tabs.
+     * - `"normal"`: Around 16 GB: freeze after 5 min, discard after 30 min, at most 20 live tabs.
+     * - `"high"`: ≥ 32 GB: freeze after 10 min, discard after 60 min, at most 40 live tabs.
+     */
+    profile?: "low" | "normal" | "high" | null;
+    tick_secs?: number | null;
+  };
+  tabs: {
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    id: number;
+    /** Seconds in the background without commands (0 for the active tab). */
+    idle_secs: number;
+    /**
+     * JS heap of the page (`Runtime.getHeapUsage`); null when frozen/discarded. Renderer
+     * processes cannot be mapped to tabs from here, so this is the per-tab estimate.
+     */
+    js_heap_mb: number | null;
+    /** Why the policy leaves it alone (null = it may be frozen/discarded). */
+    protected: string | null;
+    /** What a discarded tab will restore. */
+    saved?: {
+      scroll_x: number;
+      scroll_y: number;
+      title: string;
+      url: string;
+    } | null;
+    /** A tab's state as reported on the wire. */
+    state: "live" | "frozen" | "discarded";
+    title: string;
+    url: string;
+  }[];
+}
+
 // ---- hints.config ----
 
 /** Arguments of `hints.config`. */
@@ -1131,6 +1364,150 @@ export interface IdentityAssignArgs {
 export interface IdentityAssignOutput {
   id: string | null;
   profile: string;
+}
+
+// ---- identity.fit_to_proxy ----
+
+/** Arguments of `identity.fit_to_proxy`. */
+export interface IdentityFitToProxyArgs {
+  /** Saved identity (identity_list). */
+  identity_id: string;
+  /**
+   * For pool:NAME: use the proxy this profile is routed through (its lease) instead of
+   * a fresh pick.
+   */
+  profile?: string | null;
+  /**
+   * The proxy whose exit IP to fit: fwd-N, pool:NAME, lease:POOL/RUN/ROW or a proxy URL
+   * (direct = this machine's IP).
+   */
+  proxy_id: string;
+  /** Save the changed identity (default true). */
+  save?: boolean | null;
+  /** Timeout in milliseconds (default 10000). */
+  timeout_ms?: number | null;
+  /** Lookup endpoint (http:// only, ip-api.com JSON format). Default: ip-api.com. */
+  url?: string | null;
+}
+
+/** Result of `identity.fit_to_proxy`. */
+export interface IdentityFitToProxyOutput {
+  /** What changed (empty = it already fit). The device (UA, platform, screen) never does. */
+  changes: {
+    /** Identity field, e.g. "timezone". */
+    field: string;
+    from: unknown;
+    to: unknown;
+  }[];
+  /** Where an IP is, plus the locale and Accept-Language an identity there should use. */
+  geo: {
+    accept_language: string | null;
+    city: string;
+    country: string;
+    /** ISO code, e.g. "DE". */
+    country_code: string;
+    /** The public IP the lookup service saw. */
+    ip: string;
+    isp: string;
+    latitude: number;
+    /** Suggested locale for the country ("de-DE"), if known. */
+    locale: string | null;
+    longitude: number;
+    region: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+  };
+  /** A complete, consistent fingerprint. Stored in `data/config/identities.json`. */
+  identity: {
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** A fake position for the Geolocation API. */
+    geolocation: {
+      /** Metres. */
+      accuracy: number;
+      latitude: number;
+      longitude: number;
+    } | null;
+    hardware_concurrency: number;
+    /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
+    id: string;
+    /**
+     * What an identity is good for.
+     *
+     * - `"stealth"`: Consistent with the Chromium engine: meant to look like a normal Chrome user.
+     * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
+     */
+    kind: "stealth" | "device_emulation";
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
+    /** Operating system family an identity claims. */
+    os: "windows" | "macos" | "android" | "ios";
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      dpr: number;
+      height: number;
+      width: number;
+    };
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    /** Client hints; `None` for Safari identities (Safari has none). */
+    ua_metadata: {
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
+      /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
+      brands: {
+        brand: string;
+        version: string;
+      }[];
+      /** The same brands with full versions (high entropy). */
+      full_version_list: {
+        brand: string;
+        version: string;
+      }[];
+      mobile: boolean;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      /** "Windows", "macOS", "Android". */
+      platform: string;
+      /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
+      platform_version: string;
+      wow64: boolean;
+    } | null;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
+    /** Forced viewport (mobile). `None` = keep the real window size. */
+    viewport: {
+      height: number;
+      width: number;
+    } | null;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
+    /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
+    webgl_vendor: string;
+  };
+  identity_id: string;
+  saved: boolean;
+  /** The proxy the lookup went through (masked), null = direct. */
+  via: string | null;
 }
 
 // ---- identity.generate ----
@@ -3076,6 +3453,8 @@ export interface ProxyForwardStartArgs {
   pool?: string | null;
   /** Upstream proxy URL (with user:pass). */
   proxy?: string | null;
+  /** Or: a proxy reference such as "lease:POOL/RUN/ROW" (from proxy_lease) or "pool:NAME". */
+  proxy_id?: string | null;
   /** Run id for sticky pools. */
   run?: string | null;
 }
@@ -3103,6 +3482,40 @@ export interface ProxyForwardStopArgs {
 /** Result of `proxy.forward_stop`. */
 export interface ProxyForwardStopOutput {
   stopped: boolean;
+}
+
+// ---- proxy.lease ----
+
+/** Arguments of `proxy.lease`. */
+export interface ProxyLeaseArgs {
+  pool: string;
+  /**
+   * Give the row a different proxy than it has now (e.g. its IP got blocked). Default
+   * false: sticky, the row keeps its proxy.
+   */
+  rotate?: boolean | null;
+  /** Row number in the run. */
+  row: number;
+  /** The mass run, e.g. "run-42". */
+  run_id: string;
+}
+
+/** Result of `proxy.lease`. */
+export interface ProxyLeaseOutput {
+  /** Active leases on this proxy (including this one). */
+  load: number;
+  pool: string;
+  /** The leased proxy, password masked. */
+  proxy: string;
+  /**
+   * Reference for proxy_rules_set (via/default), identity_fit_to_proxy and
+   * proxy_forward_start: "lease:POOL/RUN/ROW".
+   */
+  proxy_id: string;
+  /** True when the row already had this proxy. */
+  reused: boolean;
+  row: number;
+  run_id: string;
 }
 
 // ---- proxy.next ----
@@ -3212,6 +3625,95 @@ export interface ProxyPoolRemoveOutput {
   /** Proxies left in the pool (0 when the pool was deleted). */
   remaining: number;
   removed: boolean;
+}
+
+// ---- proxy.release ----
+
+/** Arguments of `proxy.release`. */
+export interface ProxyReleaseArgs {
+  pool: string;
+  /** One row; omit to release every row of the run (when the run ends). */
+  row?: number | null;
+  run_id: string;
+}
+
+/** Result of `proxy.release`. */
+export interface ProxyReleaseOutput {
+  /** How many leases were released. */
+  released: number;
+}
+
+// ---- proxy.rules_set ----
+
+/** Arguments of `proxy.rules_set`. */
+export interface ProxyRulesSetArgs {
+  /** Where everything else goes (default "direct"). No rules + direct = remove the routing. */
+  default?: string | null;
+  /** Profile id, e.g. "work". */
+  profile: string;
+  /**
+   * Checked in order; the first match wins. `match`: host glob ("*.example.com" also
+   * matches example.com), URL glob ("http://example.com/api/*") or "re:REGEX" (searched in
+   * the URL, case-insensitive). `via`: direct, fwd-N, pool:NAME, lease:POOL/RUN/ROW or a
+   * proxy URL. Note: for https URLs only scheme://host:port/ is visible to the rules.
+   * @default []
+   */
+  rules?: {
+    /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+    match: string;
+    /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+    via: string;
+  }[];
+}
+
+/** Result of `proxy.rules_set`. */
+export interface ProxyRulesSetOutput {
+  default: string;
+  /** Local forwarders the routes go through. */
+  forwarders: string[];
+  /** The generated PAC script (null when no script is needed). */
+  pac_script: string | null;
+  /**
+   * The Chromium `proxy` preference for the profile's request context (the browser applies
+   * it; it is also sent as a proxy.routes_changed event).
+   */
+  pref: unknown;
+  profile: string;
+  /** The stored rules (passwords masked). */
+  rules: {
+    /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+    match: string;
+    /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+    via: string;
+  }[];
+}
+
+// ---- proxy.rules_test ----
+
+/** Arguments of `proxy.rules_test`. */
+export interface ProxyRulesTestArgs {
+  profile: string;
+  /** Full URL, e.g. "https://www.example.com/page". */
+  url: string;
+}
+
+/** Result of `proxy.rules_test`. */
+export interface ProxyRulesTestOutput {
+  host: string;
+  /** The matching rule's pattern. */
+  matched: string | null;
+  /** What the PAC script sees (https URLs are cut to scheme://host:port/). */
+  pac_url: string;
+  profile: string;
+  /** 1-based number of the matching rule; null = the default route. */
+  rule: number | null;
+  /**
+   * The upstream proxy behind the route when it is already known (masked); null for
+   * direct or a pool the profile has not used yet.
+   */
+  upstream: string | null;
+  /** The route (passwords masked): direct, fwd-N, pool:NAME, lease:..., or a proxy URL. */
+  via: string;
 }
 
 // ---- record.codegen ----
@@ -4580,6 +5082,46 @@ export interface TabsCloseArgs {
  */
 export type TabsCloseOutput = Record<string, never>;
 
+// ---- tabs.freeze ----
+
+/** Arguments of `tabs.freeze`. */
+export interface TabsFreezeArgs {
+  /**
+   * freeze = pause the page (keeps memory, no CPU); discard = unload it and keep URL,
+   * title and scroll to restore (frees memory); thaw = undo either.
+   *
+   * - `"freeze"`: Pause the page (keeps memory, stops CPU).
+   * - `"discard"`: Unload the page, keep URL/title/scroll to restore it (frees memory).
+   * - `"thaw"`: Undo either: resume a frozen page, reload a discarded one.
+   */
+  mode: "freeze" | "discard" | "thaw";
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.freeze`.
+ * Result of one freeze/discard/thaw.
+ */
+export interface TabsFreezeOutput {
+  /** False when the tab already was in that state. */
+  changed: boolean;
+  /** What a discarded tab remembers (URL, title, scroll). */
+  saved?: {
+    scroll_x: number;
+    scroll_y: number;
+    title: string;
+    url: string;
+  } | null;
+  /** The tab's state afterwards. */
+  state: "live" | "frozen" | "discarded";
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
 // ---- tabs.list ----
 
 /**
@@ -5055,6 +5597,12 @@ export interface Commands {
   "downloads.list": { args: DownloadsListArgs; output: DownloadsListOutput };
   /** Find where an IP is (country, city, timezone, coordinates) — directly or through a proxy — and suggest the locale/Accept-Language. Feed timezone/country into identity_generate to fit a fingerprint to the proxy's IP. */
   "geo.lookup": { args: GeoLookupArgs; output: GeoLookupOutput };
+  /** Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force. */
+  "governor.config": { args: GovernorConfigArgs; output: GovernorConfigOutput };
+  /** How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule. */
+  "governor.recommend_parallel": { args: GovernorRecommendParallelArgs; output: GovernorRecommendParallelOutput };
+  /** Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions. */
+  "governor.status": { args: GovernorStatusArgs; output: GovernorStatusOutput };
   /** Read or change link-hint settings: enabled, trigger keys (default f = click, F = new tab), sites where the keys are off, label alphabet. No arguments = just read them. */
   "hints.config": { args: HintsConfigArgs; output: HintsConfigOutput };
   /** Take the link hints off the page. */
@@ -5067,6 +5615,8 @@ export interface Commands {
   "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
   /** Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set). */
   "identity.assign": { args: IdentityAssignArgs; output: IdentityAssignOutput };
+  /** Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set. */
+  "identity.fit_to_proxy": { args: IdentityFitToProxyArgs; output: IdentityFitToProxyOutput };
   /** Generate a consistent random fingerprint identity (UA + client hints + platform + CPU/memory + screen + timezone/locale + GPU) from the presets; deterministic by seed. save=true stores it in identities.json for stealth_fingerprint_set. */
   "identity.generate": { args: IdentityGenerateArgs; output: IdentityGenerateOutput };
   /** Return one saved identity with all its values. */
@@ -5165,6 +5715,8 @@ export interface Commands {
   "proxy.forward_start": { args: ProxyForwardStartArgs; output: ProxyForwardStartOutput };
   /** Stop a local proxy forwarder (closes its open connections). */
   "proxy.forward_stop": { args: ProxyForwardStopArgs; output: ProxyForwardStopOutput };
+  /** Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release. */
+  "proxy.lease": { args: ProxyLeaseArgs; output: ProxyLeaseOutput };
   /** Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it. */
   "proxy.next": { args: ProxyNextArgs; output: ProxyNextOutput };
   /** Add proxies to a named pool (created if new) in proxies.json, optionally setting its rotation strategy (round_robin, random, sticky). */
@@ -5175,6 +5727,12 @@ export interface Commands {
   "proxy.pool_list": { args: ProxyPoolListArgs; output: ProxyPoolListOutput };
   /** Remove one proxy from a pool, or the whole pool. */
   "proxy.pool_remove": { args: ProxyPoolRemoveArgs; output: ProxyPoolRemoveOutput };
+  /** Release proxy leases of a mass run (one row, or the whole run). */
+  "proxy.release": { args: ProxyReleaseArgs; output: ProxyReleaseOutput };
+  /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test. */
+  "proxy.rules_set": { args: ProxyRulesSetArgs; output: ProxyRulesSetOutput };
+  /** Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does. */
+  "proxy.rules_test": { args: ProxyRulesTestArgs; output: ProxyRulesTestOutput };
   /** Turn a recording into a TypeScript script for the script host (elements found by role and name, not refs). With parametrize, typed values become inputs. Saves it to data/scripts/<name>.ts and returns the code. */
   "record.codegen": { args: RecordCodegenArgs; output: RecordCodegenOutput };
   /** A recording's steps: a readable summary (default) or the raw JSONL action log. */
@@ -5243,6 +5801,8 @@ export interface Commands {
   "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
   /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
   "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
+  /** Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state. */
+  "tabs.freeze": { args: TabsFreezeArgs; output: TabsFreezeOutput };
   /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
   "tabs.list": { args: TabsListArgs; output: TabsListOutput };
   /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
@@ -5519,6 +6079,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "governor.config": {
+    wireName: "governor_config",
+    description: "Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "governor.recommend_parallel": {
+    wireName: "governor_recommend_parallel",
+    description: "How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "governor.status": {
+    wireName: "governor_status",
+    description: "Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: "Governor: memory and tab states",
+    defaultKeys: [],
+  },
   "hints.config": {
     wireName: "hints_config",
     description: "Read or change link-hint settings: enabled, trigger keys (default f = click, F = new tab), sites where the keys are off, label alphabet. No arguments = just read them.",
@@ -5567,6 +6154,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   "identity.assign": {
     wireName: "identity_assign",
     description: "Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set).",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "identity.fit_to_proxy": {
+    wireName: "identity_fit_to_proxy",
+    description: "Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set.",
     toolset: "stealth",
     sensitivity: "act",
     mutatesTab: false,
@@ -6014,6 +6610,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "proxy.lease": {
+    wireName: "proxy_lease",
+    description: "Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release.",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "proxy.next": {
     wireName: "proxy_next",
     description: "Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it.",
@@ -6055,6 +6660,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     description: "Remove one proxy from a pool, or the whole pool.",
     toolset: "stealth",
     sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.release": {
+    wireName: "proxy_release",
+    description: "Release proxy leases of a mass run (one row, or the whole run).",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.rules_set": {
+    wireName: "proxy_rules_set",
+    description: "Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.",
+    toolset: "stealth",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.rules_test": {
+    wireName: "proxy_rules_test",
+    description: "Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does.",
+    toolset: "stealth",
+    sensitivity: "read",
     mutatesTab: false,
     palette: null,
     defaultKeys: [],
@@ -6363,6 +6995,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: true,
     palette: "Close tab",
+    defaultKeys: [],
+  },
+  "tabs.freeze": {
+    wireName: "tabs_freeze",
+    description: "Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
     defaultKeys: [],
   },
   "tabs.list": {
@@ -6676,6 +7317,27 @@ export interface Browser {
      */
     lookup(args?: GeoLookupArgs, options?: CallOptions): Promise<GeoLookupOutput>;
   };
+  /** Commands `governor.*`. */
+  governor: {
+    /**
+     * Change the resource governor's limits (saved in data/config/governor.json): enabled, profile, freeze_after_secs, discard_after_secs, max_live_tabs, pressure_free_pct, busy_secs, tick_secs; reset clears overrides. Returns the limits in force.
+     *
+     * `governor.config` (MCP: `governor_config`): toolset `system`, act.
+     */
+    config(args?: GovernorConfigArgs, options?: CallOptions): Promise<GovernorConfigOutput>;
+    /**
+     * How many things to run in parallel on this machine: min(CPUs / 2, available RAM / per_slot_mb), at least 1. The mass-run auto-limit uses the same rule.
+     *
+     * `governor.recommend_parallel` (MCP: `governor_recommend_parallel`): toolset `system`, read.
+     */
+    recommend_parallel(args?: GovernorRecommendParallelArgs, options?: CallOptions): Promise<GovernorRecommendParallelOutput>;
+    /**
+     * Resource governor state: limits in force (profile from RAM + overrides), RAM and the browser's process tree working set, every tab's state (live/frozen/discarded, idle time, why it is protected, JS heap) and the recent decisions.
+     *
+     * `governor.status` (MCP: `governor_status`): toolset `system`, read.
+     */
+    status(args?: GovernorStatusArgs, options?: CallOptions): Promise<GovernorStatusOutput>;
+  };
   /** Commands `hints.*`. */
   hints: {
     /**
@@ -6720,6 +7382,12 @@ export interface Browser {
      * `identity.assign` (MCP: `identity_assign`): toolset `stealth`, act.
      */
     assign(args: IdentityAssignArgs, options?: CallOptions): Promise<IdentityAssignOutput>;
+    /**
+     * Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set.
+     *
+     * `identity.fit_to_proxy` (MCP: `identity_fit_to_proxy`): toolset `stealth`, act.
+     */
+    fit_to_proxy(args: IdentityFitToProxyArgs, options?: CallOptions): Promise<IdentityFitToProxyOutput>;
     /**
      * Generate a consistent random fingerprint identity (UA + client hints + platform + CPU/memory + screen + timezone/locale + GPU) from the presets; deterministic by seed. save=true stores it in identities.json for stealth_fingerprint_set.
      *
@@ -7040,6 +7708,12 @@ export interface Browser {
      */
     forward_stop(args: ProxyForwardStopArgs, options?: CallOptions): Promise<ProxyForwardStopOutput>;
     /**
+     * Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release.
+     *
+     * `proxy.lease` (MCP: `proxy_lease`): toolset `stealth`, act.
+     */
+    lease(args: ProxyLeaseArgs, options?: CallOptions): Promise<ProxyLeaseOutput>;
+    /**
      * Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it.
      *
      * `proxy.next` (MCP: `proxy_next`): toolset `stealth`, act.
@@ -7069,6 +7743,24 @@ export interface Browser {
      * `proxy.pool_remove` (MCP: `proxy_pool_remove`): toolset `stealth`, act.
      */
     pool_remove(args: ProxyPoolRemoveArgs, options?: CallOptions): Promise<ProxyPoolRemoveOutput>;
+    /**
+     * Release proxy leases of a mass run (one row, or the whole run).
+     *
+     * `proxy.release` (MCP: `proxy_release`): toolset `stealth`, act.
+     */
+    release(args: ProxyReleaseArgs, options?: CallOptions): Promise<ProxyReleaseOutput>;
+    /**
+     * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.
+     *
+     * `proxy.rules_set` (MCP: `proxy_rules_set`): toolset `stealth`, secret.
+     */
+    rules_set(args: ProxyRulesSetArgs, options?: CallOptions): Promise<ProxyRulesSetOutput>;
+    /**
+     * Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does.
+     *
+     * `proxy.rules_test` (MCP: `proxy_rules_test`): toolset `stealth`, read.
+     */
+    rules_test(args: ProxyRulesTestArgs, options?: CallOptions): Promise<ProxyRulesTestOutput>;
   };
   /** Commands `record.*`. */
   record: {
@@ -7295,6 +7987,12 @@ export interface Browser {
      */
     close(args: TabsCloseArgs, options?: CallOptions): Promise<TabsCloseOutput>;
     /**
+     * Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state.
+     *
+     * `tabs.freeze` (MCP: `tabs_freeze`): toolset `core`, act, mutates the tab.
+     */
+    freeze(args: TabsFreezeArgs, options?: CallOptions): Promise<TabsFreezeOutput>;
+    /**
      * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.
      *
      * `tabs.list` (MCP: `tabs_list`): toolset `core`, read.
@@ -7440,6 +8138,11 @@ export function createBrowser(transport: Transport): Browser {
     geo: {
       lookup: (args, options) => call<GeoLookupOutput>("geo.lookup", args, options),
     },
+    governor: {
+      config: (args, options) => call<GovernorConfigOutput>("governor.config", args, options),
+      recommend_parallel: (args, options) => call<GovernorRecommendParallelOutput>("governor.recommend_parallel", args, options),
+      status: (args, options) => call<GovernorStatusOutput>("governor.status", args, options),
+    },
     hints: {
       config: (args, options) => call<HintsConfigOutput>("hints.config", args, options),
       hide: (args, options) => call<HintsHideOutput>("hints.hide", args, options),
@@ -7451,6 +8154,7 @@ export function createBrowser(transport: Transport): Browser {
     },
     identity: {
       assign: (args, options) => call<IdentityAssignOutput>("identity.assign", args, options),
+      fit_to_proxy: (args, options) => call<IdentityFitToProxyOutput>("identity.fit_to_proxy", args, options),
       generate: (args, options) => call<IdentityGenerateOutput>("identity.generate", args, options),
       get: (args, options) => call<IdentityGetOutput>("identity.get", args, options),
       list: (args, options) => call<IdentityListOutput>("identity.list", args, options),
@@ -7516,11 +8220,15 @@ export function createBrowser(transport: Transport): Browser {
       forward_list: (args, options) => call<ProxyForwardListOutput>("proxy.forward_list", args, options),
       forward_start: (args, options) => call<ProxyForwardStartOutput>("proxy.forward_start", args, options),
       forward_stop: (args, options) => call<ProxyForwardStopOutput>("proxy.forward_stop", args, options),
+      lease: (args, options) => call<ProxyLeaseOutput>("proxy.lease", args, options),
       next: (args, options) => call<ProxyNextOutput>("proxy.next", args, options),
       pool_add: (args, options) => call<ProxyPoolAddOutput>("proxy.pool_add", args, options),
       pool_check: (args, options) => call<ProxyPoolCheckOutput>("proxy.pool_check", args, options),
       pool_list: (args, options) => call<ProxyPoolListOutput>("proxy.pool_list", args, options),
       pool_remove: (args, options) => call<ProxyPoolRemoveOutput>("proxy.pool_remove", args, options),
+      release: (args, options) => call<ProxyReleaseOutput>("proxy.release", args, options),
+      rules_set: (args, options) => call<ProxyRulesSetOutput>("proxy.rules_set", args, options),
+      rules_test: (args, options) => call<ProxyRulesTestOutput>("proxy.rules_test", args, options),
     },
     record: {
       codegen: (args, options) => call<RecordCodegenOutput>("record.codegen", args, options),
@@ -7569,6 +8277,7 @@ export function createBrowser(transport: Transport): Browser {
     tabs: {
       activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),
       close: (args, options) => call<TabsCloseOutput>("tabs.close", args, options),
+      freeze: (args, options) => call<TabsFreezeOutput>("tabs.freeze", args, options),
       list: (args, options) => call<TabsListOutput>("tabs.list", args, options),
       open: (args, options) => call<TabsOpenOutput>("tabs.open", args, options),
     },

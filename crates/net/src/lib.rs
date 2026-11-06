@@ -16,6 +16,12 @@
 //! dependency and the tests use `bmcp_core::testing::FakeBackend`. All commands are in
 //! `Toolset::Net`: MCP clients ask for them with `/mcp?toolsets=core,net`.
 //!
+//! The tab's CDP session is shared with other subsystems, so `Network` is held through the
+//! domain refcount of `bmcp-cdpshare` (`net.capture off` leaves it on while e.g. a recording
+//! still logs traffic), and rules/breakpoints are the "net" client of the tab's Fetch
+//! coordinator there (one `Fetch.enable` with everybody's patterns; adblock decides first;
+//! exactly one answer per paused request).
+//!
 //! Module map: [`store`] (the data, built from events) · [`listener`] (background task per
 //! tab) · [`rules`] + [`intercept`] (Fetch handling) · [`state`] (per-tab state in
 //! `Extensions`) · [`format`], [`har`], [`apicode`] (output) · `commands` / `rule_commands`.

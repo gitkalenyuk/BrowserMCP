@@ -10,7 +10,7 @@
 //! | touch                                  | `Emulation.setTouchEmulationEnabled`             |
 //! | location                               | `Emulation.setGeolocationOverride`               |
 //! | CPU cores                              | `Emulation.setHardwareConcurrencyOverride` (JS patch if missing) |
-//! | deviceMemory, webdriver, WebGL strings | small main-world script (`js/patch.js`) via `Page.addScriptToEvaluateOnNewDocument` |
+//! | deviceMemory, webdriver, WebGL strings, screen.avail* | small main-world script (`js/patch.js`) via `Page.addScriptToEvaluateOnNewDocument` |
 //!
 //! Overrides belong to the tab's DevTools session: they last until cleared or the tab closes,
 //! and a new tab starts clean (auto-applying a profile's identity to new tabs is a CEF-side
@@ -24,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::identity::{Identity, Kind, problems};
+use crate::identity::{Identity, Kind, Os, problems};
 
 const PATCH_JS: &str = include_str!("js/patch.js");
 const PROBE_JS: &str = include_str!("js/probe.js");
@@ -168,13 +168,77 @@ fn ua_metadata_json(identity: &Identity) -> Option<Value> {
     }))
 }
 
-/// The patch script for an identity (see `js/patch.js`).
+/// `Network.setUserAgentOverride` parameters: user agent, `navigator.platform`, client hints
+/// and (`with_language`) Accept-Language / `navigator.languages`. Also used for workers.
+pub fn ua_override_params(identity: &Identity, with_language: bool) -> Value {
+    let mut ua = json!({ "userAgent": identity.user_agent, "platform": identity.platform });
+    if with_language {
+        ua["acceptLanguage"] = json!(identity.accept_language);
+    }
+    if let Some(meta) = ua_metadata_json(identity) {
+        ua["userAgentMetadata"] = meta;
+    }
+    ua
+}
+
+/// `screen.availWidth/availHeight` for a desktop identity: the screen minus the taskbar
+/// (Windows 11: 48 px, Windows 10: 40 px) or the menu bar (macOS: 25 px). Under
+/// `Emulation.setDeviceMetricsOverride` Chromium reports avail = screen size, which no real
+/// desktop has. `None` for phones and tablets (they report the full screen).
+pub fn available_screen(identity: &Identity) -> Option<(u32, u32)> {
+    let bar = match identity.os {
+        Os::Windows => {
+            // UA-CH platformVersion 13+ = Windows 11.
+            let major = identity
+                .ua_metadata
+                .as_ref()
+                .and_then(|m| m.platform_version.split('.').next()?.parse::<u32>().ok())
+                .unwrap_or(13);
+            if major >= 13 { 48 } else { 40 }
+        }
+        Os::Macos => 25,
+        Os::Android | Os::Ios => return None,
+    };
+    let s = identity.screen;
+    Some((s.width, s.height.saturating_sub(bar)))
+}
+
+/// The patch script for a page (see `js/patch.js`). `patch_cores`: also patch
+/// `hardwareConcurrency` (when the CDP override is missing).
 pub fn patch_script(identity: &Identity, patch_cores: bool) -> String {
+    let avail = available_screen(identity);
     let config = json!({
         "hardwareConcurrency": if patch_cores { json!(identity.hardware_concurrency) } else { Value::Null },
         "deviceMemory": identity.device_memory,
         "webglVendor": identity.webgl_vendor,
         "webglRenderer": identity.webgl_renderer,
+        "availWidth": avail.map(|a| a.0),
+        "availHeight": avail.map(|a| a.1),
+        // Set by Network.setUserAgentOverride on pages; only workers need the JS fallback.
+        "userAgent": Value::Null,
+        "appVersion": Value::Null,
+        "platform": Value::Null,
+        "languages": Value::Null,
+    });
+    PATCH_JS.replace("__CONFIG__", &config.to_string())
+}
+
+/// The patch script for a worker (`WorkerNavigator`): everything as a fallback, because
+/// the CDP overrides may not reach the worker (see [`crate::worker`]). Workers have no
+/// `screen`, so no avail* values.
+pub fn worker_patch_script(identity: &Identity) -> String {
+    let languages: Vec<&str> = identity.accept_language.split(',').map(str::trim).collect();
+    let config = json!({
+        "hardwareConcurrency": identity.hardware_concurrency,
+        "deviceMemory": identity.device_memory,
+        "webglVendor": identity.webgl_vendor,
+        "webglRenderer": identity.webgl_renderer,
+        "availWidth": Value::Null,
+        "availHeight": Value::Null,
+        "userAgent": identity.user_agent,
+        "appVersion": identity.user_agent.strip_prefix("Mozilla/").unwrap_or(&identity.user_agent),
+        "platform": identity.platform,
+        "languages": languages,
     });
     PATCH_JS.replace("__CONFIG__", &config.to_string())
 }
@@ -220,13 +284,7 @@ pub async fn apply(
     let previous = tabs.get(tab);
 
     // 1. User agent + client hints (+ Accept-Language for stealth).
-    let mut ua = json!({ "userAgent": identity.user_agent, "platform": identity.platform });
-    if scope == Scope::Fingerprint {
-        ua["acceptLanguage"] = json!(identity.accept_language);
-    }
-    if let Some(meta) = ua_metadata_json(&identity) {
-        ua["userAgentMetadata"] = meta;
-    }
+    let ua = ua_override_params(&identity, scope == Scope::Fingerprint);
     call(ctx, tab, "Network.setUserAgentOverride", ua).await?;
     report.applied.push("Network.setUserAgentOverride".into());
 
@@ -493,7 +551,15 @@ pub async fn probe(
     expected: Option<&Identity>,
 ) -> Result<Vec<Check>, CmdError> {
     let expected = match expected {
-        Some(id) => serde_json::to_value(id).map_err(|e| CmdError::internal(e.to_string()))?,
+        Some(id) => {
+            let mut v = serde_json::to_value(id).map_err(|e| CmdError::internal(e.to_string()))?;
+            // What the patch script sets for screen.avail* (compared by the probe).
+            v["screen_avail"] = match available_screen(id) {
+                Some((w, h)) => json!({ "width": w, "height": h }),
+                None => Value::Null,
+            };
+            v
+        }
         None => Value::Null,
     };
     let source = PROBE_JS.replace("__EXPECTED__", &expected.to_string());
