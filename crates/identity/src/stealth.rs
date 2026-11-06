@@ -141,6 +141,20 @@ async fn set_exclusive(
 }
 
 /// CDP `UserAgentMetadata` for the identity's client hints.
+/// `Network.setUserAgentOverride` parameters of a fingerprint identity (UA, platform,
+/// Accept-Language, client hints). The CEF crate sends the same to worker targets.
+pub fn user_agent_params(identity: &Identity) -> Value {
+    let mut ua = json!({
+        "userAgent": identity.user_agent,
+        "platform": identity.platform,
+        "acceptLanguage": identity.accept_language,
+    });
+    if let Some(meta) = ua_metadata_json(identity) {
+        ua["userAgentMetadata"] = meta;
+    }
+    ua
+}
+
 fn ua_metadata_json(identity: &Identity) -> Option<Value> {
     let m = identity.ua_metadata.as_ref()?;
     let brands = |list: &[crate::identity::Brand]| -> Vec<Value> {

@@ -211,7 +211,7 @@ fn mask_input(input: &str) -> String {
 }
 
 impl ProxyConfig {
-    fn host_port(&self) -> String {
+    pub fn host_port(&self) -> String {
         if self.host.contains(':') {
             format!("[{}]:{}", self.host, self.port)
         } else {

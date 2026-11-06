@@ -39,7 +39,14 @@ The claimed browser is always Chrome with the engine's major version: other vers
 revealed by feature detection. iPhone/iPad presets claim Safari and are marked
 `device_emulation` — fine for responsive testing, not for stealth.
 
-## CEF follow-ups (owned by the `cef` crate)
+## CEF follow-ups (owned by the `cef` crate) — done, see `crates/profiles` and `docs/phase2/profiles.md`
+
+Status: 1–5 are implemented. `profile.create {id, proxy, identity, accept_language}`
+(bmcp-profiles) stores the settings, starts this crate's forwarder and sets the prefs below on
+the profile's own `CefRequestContext`; new tabs and popups of a profile with an assigned
+identity are created on `about:blank`, get `stealth.fingerprint_set`, and only then load their
+URL; their workers are auto-attached and patched (UA, Accept-Language, `hardwareConcurrency`,
+`deviceMemory`, `languages`) before they run. The original notes:
 
 1. **Per-profile proxy.** Each profile gets its own `CefRequestContext` (already one cache
    folder per profile). After `proxy.forward_start`, set on that context (UI thread):
@@ -70,11 +77,13 @@ revealed by feature detection. iPhone/iPad presets claim Safari and are marked
 
 ## Known gaps
 
-* Workers: `Emulation.setHardwareConcurrencyOverride` does not reach dedicated workers (they
-  still see the real core count; `stealth.check` warns) — see CEF follow-up 4.
+* Workers: `Emulation.setHardwareConcurrencyOverride` does not reach dedicated workers. Tabs
+  of a profile with an assigned identity are fixed by the CEF worker auto-attach (follow-up
+  4); a tab that only got `stealth.fingerprint_set` by hand still shows the real core count
+  in its workers.
 * No H.264 in the CEF build (sannysoft `VIDEO_CODECS` warns); real Chrome has it.
-* Pages can list media devices with their real labels (CEF grants media permission); the
-  per-profile permission handling in the `cef` crate should deny or prompt instead.
+* Camera/microphone are denied unless `permissions.set` allows them for the site, so pages no
+  longer get device labels by default.
 * Fonts are the host's, `screen.availHeight` equals `screen.height` under emulation.
 * `geo.lookup` uses ip-api.com's free endpoint, which is plain HTTP (the lookup request is not
   encrypted); pass `url` for another service with the same JSON format.
