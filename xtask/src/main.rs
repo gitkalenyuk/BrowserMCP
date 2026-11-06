@@ -9,11 +9,18 @@
 //!                       (--check: fail if the committed files are stale; see gen_sdk.rs)
 //!   bench --agent claude-code|codex --tasks all|<id,id>
 //!                       MVP benchmark: 10 tasks on local fixture sites (see bench.rs)
+//!   dist [--skip-script-host] [--out <dir>] [--locales en-US,uk|all] [--no-build] [--no-zip]
+//!                       portable Windows package dist/BrowserMCP-<version>-win64(.zip)
+//!                       (see dist.rs)
+//!   bump-cef <version> [--dry-run]
+//!                       re-pin the `cef` crate and `cargo update` it (see bump_cef.rs)
 //!
 //! The first build downloads CEF (~500 MB) into target/ and copies its runtime files
 //! next to browsermcp.exe automatically (done by the `cef-dll-sys` build script).
 
 mod bench;
+mod bump_cef;
+mod dist;
 mod gen_sdk;
 
 use std::env;
@@ -38,9 +45,11 @@ fn main() -> ExitCode {
             .and_then(|env| cargo(&["test", "--workspace", "--exclude", "bmcp-script"], &env)),
         "gen-sdk" => gen_sdk::gen_sdk(has_flag(rest, "--check")),
         "bench" => bench::bench(rest),
+        "dist" => dist::dist(rest),
+        "bump-cef" => bump_cef::bump_cef(rest),
         _ => {
             eprintln!(
-                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all>"
+                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all|dist [--skip-script-host] [--out <dir>]|bump-cef <version> [--dry-run]>"
             );
             Ok(())
         }

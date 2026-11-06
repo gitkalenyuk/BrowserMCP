@@ -3,7 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # Release tags also build the portable package (the `release` job).
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -43,3 +46,48 @@ jobs:
 
       - name: Build release
         run: cargo xtask build --release
+
+  # Portable Windows package (cargo xtask dist) on release tags and manual runs. Uploads the zip
+  # as a workflow artifact only: nothing is published as a GitHub release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Only package what passed fmt, clippy and the tests.
+    needs: windows
+    runs-on: windows-latest
+    env:
+      CEF_PATH: ${{ github.workspace }}/.cef
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Cache CEF binaries
+        uses: actions/cache@v6
+        with:
+          path: .cef
+          key: cef-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      # ui/dist is embedded into browsermcp.exe: dist runs `pnpm install` + `pnpm -C ui build`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        run: npm install -g pnpm@11.7.0
+
+      - name: Build the portable package
+        run: cargo xtask dist
+
+      - name: Upload the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrowserMCP-${{ github.ref_name }}-win64
+          path: dist/BrowserMCP-*-win64.zip
+          # Already deflated.
+          compression-level: 0
+          if-no-files-found: error
