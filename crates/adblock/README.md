@@ -38,7 +38,19 @@ A request costs one atomic load to check that the snapshot is still current — 
 the engine lookup (microseconds). Changing settings/policies/lists swaps the snapshot; every
 thread notices on its next request. Only the stats counters take a short mutex.
 
-## CEF hook (follow-up for the CEF crate — not done here)
+## CEF hook — implemented in `crates/cef/src/net.rs`
+
+Status: done as specified below. The app builds the `AdblockService` before the browser
+starts, passes `gate` as `LaunchOptions.resource_gate`, marks it `Gate::set_native(true)` (so
+`adblock.apply` skips `Fetch.enable` and only injects the cosmetic CSS; its report says
+`network: "cef"`) and loads `engine.dat` at startup. Redirects are served from
+`GetResourceHandler`; requests without a browser (service workers) are filtered through the
+profile context's `RequestContextHandler`. Content settings come from
+`ResourceGate::content_settings` and are applied in `OnBeforeBrowse` of the main frame. Live
+numbers: `docs/phase2/profiles.md`. Note that CEF-cancelled requests fail with `ERR_ABORTED`,
+which `simplify.measure` does not count as blocked — read `adblock.stats`.
+
+The original spec:
 
 The interim CDP path pays one IPC round trip per request and misses service workers and
 out-of-process iframes. The real enforcement is in CEF's network stack, on the IO thread:

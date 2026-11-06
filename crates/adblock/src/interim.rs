@@ -216,6 +216,9 @@ pub struct ApplyReport {
     pub js_disabled: bool,
     /// Animations were disabled by the site policy.
     pub animations_disabled: bool,
+    /// Where requests are blocked: "cef" (the browser's network hook, every request incl.
+    /// workers and iframes) or "cdp" (interim `Fetch` interception of this tab).
+    pub network: &'static str,
 }
 
 /// Start intercepting `tab`. The caller checks that no session runs yet.
@@ -247,7 +250,10 @@ pub(crate) async fn start(
     // The loop must already run when the first request pauses (the cosmetic calls below may
     // wait for a navigation, which waits for its paused request).
     let task = tokio::spawn(event_loop(shared.clone(), events));
-    if let Err(err) = shared.cdp("Fetch.enable", fetch_patterns()).await {
+    // With the CEF network hook (`Gate::is_native`) every request is already decided in the
+    // browser's network stack: only the cosmetic part below is needed here.
+    let native = shared.gate.is_native();
+    if !native && let Err(err) = shared.cdp("Fetch.enable", fetch_patterns()).await {
         task.abort();
         return Err(err);
     }
@@ -261,6 +267,7 @@ pub(crate) async fn start(
         generic_selectors: generic,
         js_disabled: shared.js_disabled.load(Ordering::Relaxed),
         animations_disabled: shared.reduced_motion.load(Ordering::Relaxed),
+        network: if native { "cef" } else { "cdp" },
     };
     Ok((Session { task, shared }, report))
 }
@@ -310,6 +317,9 @@ async fn event_loop(shared: Arc<Shared>, mut events: bmcp_core::CdpEvents) {
                 // re-enabling Fetch releases everything that is still paused.
                 tracing::warn!(tab = %shared.tab, lost, "adblock: CDP events lost; resetting Fetch");
                 shared.metrics.lagged.fetch_add(lost, Ordering::Relaxed);
+                if shared.gate.is_native() {
+                    continue; // Fetch is not enabled: nothing can be left paused
+                }
                 let shared = shared.clone();
                 tokio::spawn(async move {
                     let _ = shared.cdp("Fetch.disable", json!({})).await;
