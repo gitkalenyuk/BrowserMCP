@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cookie wall – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  #overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .4); }
+  #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; top: 0; margin: auto;
+    width: 360px; height: 160px; background: #fff; padding: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shop</h1>
+  <p><button id="start">Get started</button></p>
+  <p id="status"></p>
+</main>
+<!-- The dialog covers the whole page until accepted. -->
+<div id="overlay">
+  <div id="cookie-banner" role="dialog" aria-label="We use cookies" aria-modal="true">
+    <p>We use cookies to make this shop work.</p>
+    <button id="accept">Accept</button>
+    <button id="reject">Reject</button>
+  </div>
+</div>
+<script>
+  const close = () => document.getElementById('overlay').remove();
+  document.getElementById('accept').onclick = close;
+  document.getElementById('reject').onclick = close;
+  document.getElementById('start').onclick = () => {
+    const s = document.getElementById('status');
+    s.setAttribute('role', 'status');
+    s.textContent = 'Started!';
+  };
+</script>
+</body>
+</html>

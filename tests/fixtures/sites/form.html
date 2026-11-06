@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Preferences – Fixture</title>
+<style>body { font-family: sans-serif; margin: 40px; } label { display: block; margin: 8px 0; }</style>
+</head>
+<body>
+<main>
+  <h1>Preferences</h1>
+  <form id="prefs" aria-label="Preferences">
+    <label>Country
+      <select id="country">
+        <option value="">Choose…</option>
+        <option value="ua">Ukraine</option>
+        <option value="pl">Poland</option>
+        <option value="de" disabled>Germany</option>
+      </select>
+    </label>
+    <label><input id="news" type="checkbox"> Send me news</label>
+    <label>Birthday <input id="birthday" type="date"></label>
+    <button type="submit">Save</button>
+  </form>
+  <p id="saved"></p>
+  <p><a href="login.html">Go to sign in</a></p>
+</main>
+<script>
+  document.getElementById('prefs').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const country = document.getElementById('country').value || 'none';
+    const news = document.getElementById('news').checked ? 'yes' : 'no';
+    const birthday = document.getElementById('birthday').value || 'none';
+    const p = document.getElementById('saved');
+    p.setAttribute('role', 'status');
+    p.textContent = `Saved: country=${country} news=${news} birthday=${birthday}`;
+  });
+  // Shows that select fires change events like a person would.
+  document.getElementById('country').addEventListener('change', (e) => {
+    document.title = 'Preferences – ' + e.target.value;
+  });
+</script>
+</body>
+</html>

@@ -14,14 +14,20 @@ use crate::command::{Caller, Ctx};
 use crate::events::EventBus;
 use crate::tabs::TabStrip;
 
-/// A browser with one window whose tabs live in a `Vec`. Navigation finishes instantly; the
-/// page title becomes the URL; `Runtime.evaluate` returns the text set with
-/// [`FakeBackend::set_text`]. Tab order and the active tab follow the real rules
-/// ([`TabStrip`]).
+/// A browser with one window. Navigation finishes instantly; the page title becomes the URL;
+/// `Runtime.evaluate` returns the text set with [`FakeBackend::set_text`]. Tab order and the
+/// active tab follow the real rules ([`TabStrip`]).
+///
+/// Other CDP methods can be scripted with [`FakeBackend::on_cdp`]; every CDP call is logged with
+/// its parameters ([`FakeBackend::cdp_calls`]).
 #[derive(Default)]
 pub struct FakeBackend {
     state: Mutex<FakeState>,
 }
+
+/// Scripted CDP answers: `(tab, method, params)` → `Some(result)` to answer, `None` to fall back
+/// to the built-in behaviour.
+pub type CdpHandler = Box<dyn Fn(TabId, &str, &Value) -> Option<BackendResult<Value>> + Send>;
 
 #[derive(Default)]
 struct FakeState {
@@ -34,6 +40,9 @@ struct FakeState {
     fail_next: Option<BackendError>,
     /// Log like `"navigate 1 https://a.test"`, to assert what the backend was asked to do.
     calls: Vec<String>,
+    /// Every CDP call as `(method, params)`, in order.
+    cdp_calls: Vec<(String, Value)>,
+    cdp_handler: Option<CdpHandler>,
 }
 
 impl FakeBackend {
@@ -64,6 +73,29 @@ impl FakeBackend {
     /// Make the next backend call fail with `err`.
     pub fn fail_next(&self, err: BackendError) {
         self.lock().fail_next = Some(err);
+    }
+
+    /// Answer CDP calls with `handler` first (see [`CdpHandler`]). Replaces an earlier handler.
+    /// The handler runs while the fake's state is locked, so it must not call the fake.
+    pub fn on_cdp(
+        &self,
+        handler: impl Fn(TabId, &str, &Value) -> Option<BackendResult<Value>> + Send + 'static,
+    ) {
+        self.lock().cdp_handler = Some(Box::new(handler));
+    }
+
+    /// Every CDP call so far as `(method, params)`.
+    pub fn cdp_calls(&self) -> Vec<(String, Value)> {
+        self.lock().cdp_calls.clone()
+    }
+
+    /// Change a tab's title, URL and loading flag (as seen by `list_tabs`).
+    pub fn set_tab(&self, tab: TabId, title: &str, url: &str, loading: bool) {
+        if let Ok(info) = self.lock().tab_mut(tab) {
+            info.title = title.to_string();
+            info.url = url.to_string();
+            info.loading = loading;
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -182,10 +214,18 @@ impl BrowserBackend for FakeBackend {
         &self,
         tab: TabId,
         method: String,
-        _params: Value,
+        params: Value,
     ) -> BoxFuture<'_, BackendResult<Value>> {
         self.with_state(format!("cdp {tab} {method}"), |s| {
             s.tab_mut(tab)?;
+            s.cdp_calls.push((method.clone(), params.clone()));
+            if let Some(answer) = s
+                .cdp_handler
+                .as_ref()
+                .and_then(|h| h(tab, &method, &params))
+            {
+                return answer;
+            }
             match method.as_str() {
                 "Runtime.evaluate" => {
                     let text = s.texts.get(&tab).cloned().unwrap_or_default();

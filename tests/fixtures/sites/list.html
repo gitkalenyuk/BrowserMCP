@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Long list – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  li { height: 40px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Products</h1>
+  <ul id="items" aria-label="Products"></ul>
+  <p id="picked"></p>
+</main>
+<script>
+  // 200 items with a button each; the last ones are far below the fold.
+  const ul = document.getElementById('items');
+  for (let i = 1; i <= 200; i++) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.textContent = 'Add item ' + i;
+    b.onclick = () => {
+      const p = document.getElementById('picked');
+      p.setAttribute('role', 'status');
+      p.textContent = 'Added item ' + i;
+    };
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+</script>
+</body>
+</html>

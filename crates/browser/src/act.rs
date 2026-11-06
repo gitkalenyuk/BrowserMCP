@@ -1,0 +1,929 @@
+//! The engine behind `page.act`: resolve a ref, make sure the element can really be used
+//! ("actionability"), then send trusted input the way a person would.
+//!
+//! For a click that means: ref → DOM node → scroll it into view → it must be visible, have a
+//! box and be enabled → hit-test its centre (is something else on top, like a cookie dialog?)
+//! → `Input.dispatchMouseEvent` moved/pressed/released. Failures come back as
+//! `NOT_INTERACTABLE` with a hint that names what is in the way.
+
+use std::time::Duration;
+
+use bmcp_core::{CmdError, Ctx, ErrorCode, TabId};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use crate::cdp::{self, BoxRect, perception_error};
+use crate::keys;
+use crate::page;
+use crate::state::TabState;
+
+/// How long an element may take to become usable (animations, late enabling) before we give up.
+pub const ACTIONABLE_WAIT: Duration = Duration::from_millis(1500);
+const RETRY_PAUSE: Duration = Duration::from_millis(200);
+
+/// What to do with the element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    /// Left click in the middle of the element.
+    Click,
+    /// Double click.
+    Dblclick,
+    /// Replace the field's text with `value` (focus, select all, type, fire change).
+    Fill,
+    /// Type `value` at the cursor without clearing the field first.
+    Type,
+    /// Pick the `<select>` option whose value or label is `value`.
+    Select,
+    /// Make a checkbox/radio/switch checked (clicks only if needed).
+    Check,
+    /// Make a checkbox/switch unchecked (clicks only if needed).
+    Uncheck,
+    /// Move the mouse over the element.
+    Hover,
+    /// Focus the element (if a ref is given) and press the keys in `value`, e.g. "Enter".
+    Press,
+    /// Scroll: `value` = into_view (default), up, down, top, bottom, left, right. Without a ref
+    /// it scrolls the page.
+    Scroll,
+    /// Give the element keyboard focus.
+    Focus,
+}
+
+impl Action {
+    fn past_tense(self) -> &'static str {
+        match self {
+            Action::Click => "clicked",
+            Action::Dblclick => "double-clicked",
+            Action::Fill => "filled",
+            Action::Type => "typed into",
+            Action::Select => "selected in",
+            Action::Check => "checked",
+            Action::Uncheck => "unchecked",
+            Action::Hover => "hovered",
+            Action::Press => "pressed keys on",
+            Action::Scroll => "scrolled",
+            Action::Focus => "focused",
+        }
+    }
+
+    /// Actions that send mouse or keyboard input (which Chromium drops for hidden pages).
+    fn sends_input(self) -> bool {
+        !matches!(self, Action::Select | Action::Scroll | Action::Focus)
+    }
+
+    /// Actions that may start a navigation, so it is worth waiting for one afterwards.
+    pub fn may_navigate(self) -> bool {
+        matches!(
+            self,
+            Action::Click | Action::Dblclick | Action::Press | Action::Check | Action::Uncheck
+        )
+    }
+}
+
+/// One action to perform.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Step {
+    /// Element ref from page_snapshot / page_find, e.g. "@4:e3" (or bare "e3" = latest
+    /// snapshot). Optional only for press (focused element) and scroll (the page).
+    #[serde(rename = "ref")]
+    pub target: Option<String>,
+    pub action: Action,
+    /// Text for fill/type, option for select, keys for press ("Enter", "Control+A",
+    /// "Tab Tab"), direction for scroll.
+    pub value: Option<String>,
+}
+
+/// What we learn about an element from the page (see [`PROBE_JS`]).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct Probe {
+    connected: bool,
+    tag: String,
+    #[serde(rename = "type")]
+    input_type: String,
+    disabled: bool,
+    readonly: bool,
+    hidden: bool,
+    editable: bool,
+    /// `checked` / `aria-checked` / `aria-pressed`, when the element has such a state.
+    checked: Option<bool>,
+}
+
+/// Runs with `this` = the element. Returns facts as JSON (see [`Probe`]).
+const PROBE_JS: &str = r#"function() {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el || !el.isConnected) return { connected: false };
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  let disabled = false;
+  try { disabled = el.matches(':disabled'); } catch (e) {}
+  disabled = disabled || !!el.closest('[aria-disabled="true"]');
+  const style = getComputedStyle(el);
+  const hidden = style.visibility === 'hidden' || style.visibility === 'collapse' || style.display === 'none';
+  const notText = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'hidden', 'range', 'color'];
+  const editable = (tag === 'input' && !notText.includes(type)) || tag === 'textarea' || el.isContentEditable;
+  const readonly = !!el.readOnly || el.getAttribute('aria-readonly') === 'true';
+  let checked = null;
+  if (tag === 'input' && (type === 'checkbox' || type === 'radio')) checked = el.checked;
+  else if (el.hasAttribute('aria-checked')) checked = el.getAttribute('aria-checked') === 'true';
+  else if (el.hasAttribute('aria-pressed')) checked = el.getAttribute('aria-pressed') === 'true';
+  return { connected: true, tag, type, disabled, readonly, hidden, editable, checked };
+}"#;
+
+/// `this` = target element, argument = the node the hit test found. True when a click there
+/// reaches the target: the hit node is the target, inside it (also across shadow roots), or
+/// inside one of its `<label>`s.
+const HIT_OK_JS: &str = r#"function(hit) {
+  for (let n = hit; n; n = n.parentNode || n.host) { if (n === this) return true; }
+  if (this.labels) { for (const l of this.labels) { if (l === hit || l.contains(hit)) return true; } }
+  return false;
+}"#;
+
+/// `this` = the node on top. Returns the element worth naming: the dialog it belongs to, or
+/// the dialog inside it (a dimmed backdrop around a cookie banner), else the element itself.
+const COVER_JS: &str = r#"function() {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el) return null;
+  const dialog = 'dialog, [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+  return el.closest(dialog) || el.querySelector(dialog) || el;
+}"#;
+
+/// `this` = an element. A short CSS-like description: `div#cookie-banner` or `div.overlay.dark`.
+const CSS_NAME_JS: &str = r#"function() {
+  let s = this.tagName.toLowerCase();
+  if (this.id) return s + '#' + this.id;
+  if (this.classList && this.classList.length) s += '.' + [...this.classList].slice(0, 2).join('.');
+  return s;
+}"#;
+
+/// `this` = a field. Select all its text so typing replaces it.
+const SELECT_ALL_JS: &str = r#"function() {
+  if ((this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') && typeof this.select === 'function') {
+    this.select();
+  } else if (this.isContentEditable) {
+    const range = document.createRange();
+    range.selectNodeContents(this);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}"#;
+
+/// `this` = an element. Fire `change` like a person leaving the field would.
+const CHANGE_JS: &str =
+    r#"function() { this.dispatchEvent(new Event('change', { bubbles: true })); }"#;
+
+/// `this` = an `<input>` whose value cannot be typed (date, color, range…). Set it directly
+/// through the native setter (so frameworks notice) and fire input + change.
+const SET_VALUE_JS: &str = r#"function(v) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(this, v);
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return this.value;
+}"#;
+
+/// Input types where typing does not work and the value is set directly.
+const SET_BY_VALUE_TYPES: &[&str] = &[
+    "date",
+    "time",
+    "datetime-local",
+    "month",
+    "week",
+    "color",
+    "range",
+];
+
+/// `this` = a `<select>`. Pick the option by value, then exact label, then loose label.
+const SELECT_JS: &str = r#"function(wanted) {
+  if (this.tagName !== 'SELECT') return { error: 'not_select' };
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const opts = [...this.options];
+  const o = opts.find(o => o.value === wanted)
+    || opts.find(o => o.label === wanted || o.text === wanted)
+    || opts.find(o => norm(o.label) === norm(wanted));
+  if (!o) return { error: 'no_option', options: opts.slice(0, 30).map(o => o.label || o.value) };
+  if (o.disabled) return { error: 'disabled_option' };
+  this.value = o.value;
+  o.selected = true;
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return { selected: o.label || o.value };
+}"#;
+
+/// `this` = an element (or the page's scrolling element). Scroll it, or the nearest scrollable
+/// ancestor, in a direction. Returns the new scroll position.
+const SCROLL_JS: &str = r#"function(dir) {
+  const page = document.scrollingElement || document.documentElement;
+  const scrollable = e => {
+    if (!e || e === page || e === document.body) return false;
+    const s = getComputedStyle(e);
+    return (e.scrollHeight > e.clientHeight + 1 && /(auto|scroll)/.test(s.overflowY))
+        || (e.scrollWidth > e.clientWidth + 1 && /(auto|scroll)/.test(s.overflowX));
+  };
+  let t = this.nodeType === 1 ? this : this.parentElement;
+  while (t && !scrollable(t)) t = t.parentElement;
+  if (!t) t = page;
+  const h = t === page ? window.innerHeight : t.clientHeight;
+  const w = t === page ? window.innerWidth : t.clientWidth;
+  const by = (x, y) => t.scrollBy({ left: x, top: y, behavior: 'instant' });
+  switch (dir) {
+    case 'up': by(0, -0.8 * h); break;
+    case 'down': by(0, 0.8 * h); break;
+    case 'left': by(-0.8 * w, 0); break;
+    case 'right': by(0.8 * w, 0); break;
+    case 'top': t.scrollTo({ top: 0, behavior: 'instant' }); break;
+    case 'bottom': t.scrollTo({ top: t.scrollHeight, behavior: 'instant' }); break;
+  }
+  return { y: Math.round(t.scrollTop), height: Math.round(t.scrollHeight), view: Math.round(h) };
+}"#;
+
+/// `this` = an element. Its visible text (or value for form fields).
+pub const READ_JS: &str = r#"function() {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el) return this.textContent || '';
+  if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.type !== 'password') return el.value;
+  return el.innerText !== undefined ? el.innerText : (el.textContent || '');
+}"#;
+
+/// A resolved target element.
+struct Target {
+    backend_node_id: i64,
+    object_id: String,
+    /// For messages: `@4:e3 button "Sign in"`.
+    label: String,
+}
+
+/// Why an element cannot be used right now.
+#[derive(Debug, Clone, PartialEq)]
+enum Blocker {
+    Gone,
+    Hidden,
+    Disabled,
+    ReadOnly,
+    NotEditable,
+    NoBox,
+    /// With details (box position or failed hit test).
+    OutsideViewport(String),
+    Covered {
+        x: f64,
+        y: f64,
+        hit: i64,
+    },
+}
+
+/// How much checking an action needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Need {
+    /// Mouse actions: visible, enabled, has a box in the viewport, nothing on top.
+    Pointer,
+    /// Typing: visible, enabled, editable, not read-only.
+    Editable,
+    /// Visible and enabled (select).
+    Enabled,
+}
+
+/// Perform one step on the tab. Does not wait for the page or compute a diff; returns a short
+/// line such as `clicked @4:e3 button "Sign in"`.
+pub async fn perform(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    step: &Step,
+) -> Result<String, CmdError> {
+    let value = step.value.as_deref();
+    if step.action.sends_input() {
+        ensure_page_visible(ctx, tab).await?;
+    }
+    let need_value = |what: &str| {
+        value.ok_or_else(|| {
+            CmdError::invalid_params(format!("action {:?} needs a value ({what})", step.action))
+        })
+    };
+
+    let Some(target_ref) = step.target.as_deref() else {
+        // Only press and scroll work without an element.
+        return match step.action {
+            Action::Press => {
+                let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
+                keys::press(ctx, tab, &chords).await?;
+                Ok(format!("pressed {}", value.unwrap_or_default()))
+            }
+            Action::Scroll => {
+                let dir = scroll_direction(value)?;
+                if dir == "into_view" {
+                    return Err(CmdError::invalid_params(
+                        "scroll without a ref needs value up, down, top, bottom, left or right",
+                    ));
+                }
+                let page = cdp::evaluate_object(
+                    ctx,
+                    tab,
+                    "document.scrollingElement || document.documentElement",
+                )
+                .await?
+                .ok_or_else(|| CmdError::internal("the page has no document element"))?;
+                let pos = cdp::call_function(ctx, tab, &page, SCROLL_JS, &[json!(dir)]).await?;
+                Ok(format!("scrolled page {dir} {}", scroll_position(&pos)))
+            }
+            _ => Err(
+                CmdError::invalid_params(format!("action {:?} needs a ref", step.action))
+                    .with_hint("Take a page_snapshot and pass ref, e.g. \"@4:e3\"."),
+            ),
+        };
+    };
+
+    let target = resolve_target(ctx, tab, state, target_ref).await?;
+    let done = format!("{} {}", step.action.past_tense(), target.label);
+    match step.action {
+        Action::Click | Action::Dblclick | Action::Hover => {
+            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (x, y) = point.expect("pointer checks return a point");
+            match step.action {
+                Action::Hover => mouse_move(ctx, tab, x, y).await?,
+                Action::Dblclick => mouse_click(ctx, tab, x, y, 2).await?,
+                _ => mouse_click(ctx, tab, x, y, 1).await?,
+            }
+            Ok(done)
+        }
+        Action::Check | Action::Uncheck => {
+            let want = step.action == Action::Check;
+            let probe = probe_element(ctx, tab, &target).await?;
+            let Some(current) = probe.checked else {
+                return Err(not_interactable(
+                    format!("{} has no checked state", target.label),
+                    "check/uncheck work on checkboxes, radio buttons and switches; use click \
+                     for other elements.",
+                ));
+            };
+            if current == want {
+                return Ok(format!("{} was already {}", target.label, on_off(want)));
+            }
+            if !want && probe.input_type == "radio" {
+                return Err(CmdError::invalid_params(format!(
+                    "{} is a radio button: it cannot be unchecked",
+                    target.label
+                ))
+                .with_hint("Check another option of the same group instead."));
+            }
+            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (x, y) = point.expect("pointer checks return a point");
+            mouse_click(ctx, tab, x, y, 1).await?;
+            let after = probe_element(ctx, tab, &target).await?;
+            if after.checked != Some(want) {
+                return Err(not_interactable(
+                    format!("clicking {} did not make it {}", target.label, on_off(want)),
+                    "The page may handle clicks elsewhere; take a page_snapshot and look for \
+                     the real control.",
+                ));
+            }
+            Ok(done)
+        }
+        Action::Fill | Action::Type => {
+            let text = need_value("the text to type")?;
+            let (probe, _) = wait_actionable(ctx, tab, state, &target, Need::Editable).await?;
+            focus(ctx, tab, &target).await?;
+            if probe.tag == "input" && SET_BY_VALUE_TYPES.contains(&probe.input_type.as_str()) {
+                cdp::call_function(ctx, tab, &target.object_id, SET_VALUE_JS, &[json!(text)])
+                    .await?;
+                return Ok(done);
+            }
+            if step.action == Action::Fill {
+                cdp::call_function(ctx, tab, &target.object_id, SELECT_ALL_JS, &[]).await?;
+                if text.is_empty() {
+                    // Typing "" would leave the selection; delete it instead.
+                    keys::press(ctx, tab, &[keys::parse_chord("Delete")?]).await?;
+                }
+            }
+            if !text.is_empty() {
+                // Trusted text input: fires beforeinput/input like real typing.
+                cdp::call(ctx, tab, "Input.insertText", json!({ "text": text })).await?;
+            }
+            if step.action == Action::Fill {
+                cdp::call_function(ctx, tab, &target.object_id, CHANGE_JS, &[]).await?;
+            }
+            Ok(done)
+        }
+        Action::Select => {
+            let wanted = need_value("the option's value or label")?;
+            wait_actionable(ctx, tab, state, &target, Need::Enabled).await?;
+            let reply =
+                cdp::call_function(ctx, tab, &target.object_id, SELECT_JS, &[json!(wanted)])
+                    .await?;
+            match reply["error"].as_str() {
+                None => Ok(format!(
+                    "selected \"{}\" in {}",
+                    reply["selected"].as_str().unwrap_or(wanted),
+                    target.label
+                )),
+                Some("not_select") => Err(not_interactable(
+                    format!("{} is not a <select>", target.label),
+                    "For custom dropdowns click the element, then click the option in the diff.",
+                )),
+                Some("disabled_option") => Err(not_interactable(
+                    format!("option \"{wanted}\" of {} is disabled", target.label),
+                    "Pick another option.",
+                )),
+                Some(_) => {
+                    let options = reply["options"].as_array().cloned().unwrap_or_default();
+                    Err(CmdError::new(
+                        ErrorCode::NotFound,
+                        format!("{} has no option \"{wanted}\"", target.label),
+                    )
+                    .with_retry(bmcp_core::Retry::No)
+                    .with_hint("Use one of the candidates (value or label).")
+                    .with_candidates(options))
+                }
+            }
+        }
+        Action::Press => {
+            let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
+            focus(ctx, tab, &target).await?;
+            keys::press(ctx, tab, &chords).await?;
+            Ok(format!(
+                "pressed {} on {}",
+                value.unwrap_or_default(),
+                target.label
+            ))
+        }
+        Action::Scroll => {
+            let dir = scroll_direction(value)?;
+            if dir == "into_view" {
+                scroll_into_view(ctx, tab, target.backend_node_id).await;
+                return Ok(format!("scrolled {} into view", target.label));
+            }
+            let pos =
+                cdp::call_function(ctx, tab, &target.object_id, SCROLL_JS, &[json!(dir)]).await?;
+            Ok(format!(
+                "scrolled {dir} at {} {}",
+                target.label,
+                scroll_position(&pos)
+            ))
+        }
+        Action::Focus => {
+            focus(ctx, tab, &target).await?;
+            Ok(done)
+        }
+    }
+}
+
+fn on_off(checked: bool) -> &'static str {
+    if checked { "checked" } else { "unchecked" }
+}
+
+fn scroll_direction(value: Option<&str>) -> Result<&'static str, CmdError> {
+    let dir = value.unwrap_or("into_view").trim().to_ascii_lowercase();
+    ["into_view", "up", "down", "top", "bottom", "left", "right"]
+        .into_iter()
+        .find(|d| *d == dir)
+        .ok_or_else(|| {
+            CmdError::invalid_params(format!(
+                "scroll value '{dir}' is unknown; use into_view, up, down, top, bottom, left or \
+                 right"
+            ))
+        })
+}
+
+/// `(y=1200/5400)`: scroll offset / scroll height after scrolling.
+fn scroll_position(pos: &Value) -> String {
+    format!(
+        "(y={}/{})",
+        pos["y"].as_i64().unwrap_or(0),
+        pos["height"].as_i64().unwrap_or(0)
+    )
+}
+
+/// Chromium silently drops mouse/keyboard input for hidden pages (window minimized, or fully
+/// covered by other windows when Windows occlusion tracking is on). Say so instead of
+/// "clicking" without effect.
+pub async fn ensure_page_visible(ctx: &Ctx, tab: TabId) -> Result<(), CmdError> {
+    let state = cdp::evaluate(ctx, tab, "document.visibilityState").await?;
+    if state.as_str() == Some("hidden") {
+        return Err(not_interactable(
+            format!("tab {tab} is hidden, so the browser ignores input to it"),
+            "Activate the tab and make sure the BrowserMCP window is not minimized or fully \
+             covered by other windows, then retry.",
+        ));
+    }
+    Ok(())
+}
+
+pub fn not_interactable(message: impl Into<String>, hint: &str) -> CmdError {
+    CmdError::new(ErrorCode::NotInteractable, message).with_hint(hint)
+}
+
+/// Ref → DOM node → JavaScript handle, with a label for messages.
+async fn resolve_target(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &TabState,
+    target_ref: &str,
+) -> Result<Target, CmdError> {
+    let backend_node_id = state
+        .registry
+        .resolve(target_ref)
+        .map_err(perception_error)?;
+    let label = match state.describe(backend_node_id) {
+        Some(desc) => format!("{} {desc}", target_ref.trim()),
+        None => target_ref.trim().to_string(),
+    };
+    let object_id = cdp::resolve_object(ctx, tab, backend_node_id, &label).await?;
+    Ok(Target {
+        backend_node_id,
+        object_id,
+        label,
+    })
+}
+
+async fn probe_element(ctx: &Ctx, tab: TabId, target: &Target) -> Result<Probe, CmdError> {
+    let value = cdp::call_function(ctx, tab, &target.object_id, PROBE_JS, &[]).await?;
+    let probe: Probe = serde_json::from_value(value).unwrap_or_default();
+    if !probe.connected {
+        return Err(cdp::node_gone(&target.label));
+    }
+    Ok(probe)
+}
+
+async fn focus(ctx: &Ctx, tab: TabId, target: &Target) -> Result<(), CmdError> {
+    let reply = ctx
+        .backend
+        .cdp(
+            tab,
+            "DOM.focus".into(),
+            json!({ "backendNodeId": target.backend_node_id }),
+        )
+        .await;
+    match reply {
+        Ok(_) => Ok(()),
+        Err(bmcp_core::BackendError::Cdp(msg)) => Err(not_interactable(
+            format!("{} cannot take keyboard focus ({msg})", target.label),
+            "Click the element instead, or pick the real input field from a page_snapshot.",
+        )),
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// `DOM.scrollIntoViewIfNeeded`. Failure (no layout box) is not an error here: the box check
+/// that follows reports it better.
+async fn scroll_into_view(ctx: &Ctx, tab: TabId, backend_node_id: i64) {
+    let _ = ctx
+        .backend
+        .cdp(
+            tab,
+            "DOM.scrollIntoViewIfNeeded".into(),
+            json!({ "backendNodeId": backend_node_id }),
+        )
+        .await;
+}
+
+/// Check the element again and again until it is usable or [`ACTIONABLE_WAIT`] is over.
+/// Returns the probe and, for [`Need::Pointer`], the point to click.
+async fn wait_actionable(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    target: &Target,
+    need: Need,
+) -> Result<(Probe, Option<(f64, f64)>), CmdError> {
+    let started = tokio::time::Instant::now();
+    loop {
+        let blocker = match check_once(ctx, tab, target, need).await? {
+            Ok(found) => return Ok(found),
+            Err(blocker) => blocker,
+        };
+        // Waiting does not help for these.
+        let permanent = matches!(
+            blocker,
+            Blocker::Gone | Blocker::NotEditable | Blocker::ReadOnly
+        );
+        if permanent || started.elapsed() >= ACTIONABLE_WAIT {
+            return Err(blocker_error(ctx, tab, state, target, blocker).await);
+        }
+        tokio::time::sleep(RETRY_PAUSE).await;
+    }
+}
+
+/// One round of actionability checks.
+async fn check_once(
+    ctx: &Ctx,
+    tab: TabId,
+    target: &Target,
+    need: Need,
+) -> Result<Result<(Probe, Option<(f64, f64)>), Blocker>, CmdError> {
+    let value = cdp::call_function(ctx, tab, &target.object_id, PROBE_JS, &[]).await?;
+    let probe: Probe = serde_json::from_value(value).unwrap_or_default();
+    if !probe.connected {
+        return Ok(Err(Blocker::Gone));
+    }
+    if probe.hidden {
+        return Ok(Err(Blocker::Hidden));
+    }
+    if probe.disabled {
+        return Ok(Err(Blocker::Disabled));
+    }
+    if need == Need::Editable {
+        if !probe.editable {
+            return Ok(Err(Blocker::NotEditable));
+        }
+        if probe.readonly {
+            return Ok(Err(Blocker::ReadOnly));
+        }
+    }
+
+    scroll_into_view(ctx, tab, target.backend_node_id).await;
+    let Some(rect) = cdp::content_box(ctx, tab, target.backend_node_id).await? else {
+        return Ok(Err(Blocker::NoBox));
+    };
+    if need != Need::Pointer {
+        return Ok(Ok((probe, None)));
+    }
+
+    // Click the middle of the part that is inside the viewport.
+    let layout = cdp::layout(ctx, tab).await?;
+    let Some(visible) = clip_to_viewport(rect, layout.viewport_width, layout.viewport_height)
+    else {
+        return Ok(Err(Blocker::OutsideViewport(format!(
+            "its box at ({:.0}, {:.0}) is outside the {:.0}x{:.0} viewport",
+            rect.x, rect.y, layout.viewport_width, layout.viewport_height
+        ))));
+    };
+    let (x, y) = visible.center();
+
+    // Hit test: which node would receive a click at (x, y)? Unlike the quads and mouse events
+    // (viewport coordinates), `DOM.getNodeForLocation` takes document coordinates, so add the
+    // scroll offset (verified live on a scrolled page).
+    let hit = ctx
+        .backend
+        .cdp(
+            tab,
+            "DOM.getNodeForLocation".into(),
+            json!({
+                "x": (x + layout.page_x).floor() as i64,
+                "y": (y + layout.page_y).floor() as i64,
+                "includeUserAgentShadowDOM": false,
+                "ignorePointerEventsNone": true,
+            }),
+        )
+        .await;
+    let hit = match hit {
+        Ok(reply) => reply["backendNodeId"].as_i64().ok_or_else(String::new),
+        // "No node found at given location"
+        Err(bmcp_core::BackendError::Cdp(msg)) => Err(msg),
+        Err(other) => return Err(other.into()),
+    };
+    let hit = match hit {
+        Ok(hit) => hit,
+        Err(msg) => {
+            return Ok(Err(Blocker::OutsideViewport(format!(
+                "nothing is hit at ({x:.0}, {y:.0}) {msg}"
+            ))));
+        }
+    };
+    if hit != target.backend_node_id {
+        let hit_object = cdp::resolve_object(ctx, tab, hit, "the element on top").await?;
+        let reaches = cdp::call_on(
+            ctx,
+            tab,
+            &target.object_id,
+            HIT_OK_JS,
+            vec![cdp::arg_object(&hit_object)],
+            true,
+        )
+        .await?;
+        if reaches["value"].as_bool() != Some(true) {
+            return Ok(Err(Blocker::Covered { x, y, hit }));
+        }
+    }
+    Ok(Ok((probe, Some((x, y)))))
+}
+
+/// The part of `rect` inside a `width`×`height` viewport, if any.
+fn clip_to_viewport(rect: BoxRect, width: f64, height: f64) -> Option<BoxRect> {
+    // Unknown viewport size (metrics failed): trust the element box.
+    if width <= 0.0 || height <= 0.0 {
+        return Some(rect);
+    }
+    let left = rect.x.max(0.0);
+    let top = rect.y.max(0.0);
+    let right = (rect.x + rect.width).min(width);
+    let bottom = (rect.y + rect.height).min(height);
+    if right - left < 1.0 || bottom - top < 1.0 {
+        return None;
+    }
+    Some(BoxRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
+/// Turn a blocker into the error the agent sees.
+async fn blocker_error(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    target: &Target,
+    blocker: Blocker,
+) -> CmdError {
+    let label = &target.label;
+    match blocker {
+        Blocker::Gone => cdp::node_gone(label),
+        Blocker::Hidden => not_interactable(
+            format!("{label} is hidden (display:none or visibility:hidden)"),
+            "It may appear after another action (open a menu, expand a section); take a \
+             page_snapshot.",
+        ),
+        Blocker::Disabled => not_interactable(
+            format!("{label} is disabled"),
+            "Fill in the required fields first, or wait (nav_wait) until it is enabled.",
+        ),
+        Blocker::ReadOnly => {
+            not_interactable(format!("{label} is read-only"), "Pick another field.")
+        }
+        Blocker::NotEditable => not_interactable(
+            format!("{label} is not a text field"),
+            "fill/type work on text inputs, textareas and contenteditable elements; use select \
+             for <select>, check for checkboxes, click for buttons.",
+        ),
+        Blocker::NoBox => not_interactable(
+            format!("{label} is not visible (it has no box on the page)"),
+            "It may be collapsed or not rendered yet; take a page_snapshot.",
+        ),
+        Blocker::OutsideViewport(detail) => not_interactable(
+            format!("{label} could not be scrolled into the visible area: {detail}"),
+            "Try page_act with action scroll, then retry.",
+        ),
+        Blocker::Covered { x, y, hit } => covered_error(ctx, tab, state, target, x, y, hit)
+            .await
+            .unwrap_or_else(|err| {
+                // Describing the cover failed; still report the main fact.
+                not_interactable(
+                    format!("{label} is covered by another element at ({x:.0}, {y:.0})"),
+                    &format!(
+                        "Close what is on top first (details failed: {})",
+                        err.message
+                    ),
+                )
+            }),
+    }
+}
+
+/// `NOT_INTERACTABLE` that names what covers the target and offers refs to deal with it, e.g.
+/// `covered by dialog "Cookies" (div#cookie-banner)` + `button "Accept all" @5:e9`.
+async fn covered_error(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    target: &Target,
+    x: f64,
+    y: f64,
+    hit: i64,
+) -> Result<CmdError, CmdError> {
+    let hit_object = cdp::resolve_object(ctx, tab, hit, "the element on top").await?;
+    let cover_object = cdp::call_function_object(ctx, tab, &hit_object, COVER_JS)
+        .await?
+        .unwrap_or(hit_object);
+    let css = cdp::call_function(ctx, tab, &cover_object, CSS_NAME_JS, &[])
+        .await?
+        .as_str()
+        .unwrap_or("element")
+        .to_string();
+    let described = cdp::call(
+        ctx,
+        tab,
+        "DOM.describeNode",
+        json!({ "objectId": cover_object }),
+    )
+    .await?;
+    let cover = described["node"]["backendNodeId"].as_i64().unwrap_or(hit);
+
+    // A fresh snapshot gives the agent refs for the controls inside the cover.
+    let (snap, tree) =
+        page::take_snapshot_with_tree(ctx, tab, state, bmcp_perception::SnapshotOptions::default())
+            .await?;
+
+    // Role and name of the cover from the accessibility tree, e.g. `dialog "Cookies"`.
+    let mut name = css.clone();
+    if let Some(index) = tree.index_of_backend(cover) {
+        let node = &tree.nodes[index];
+        let role = node.role();
+        if !matches!(role, "generic" | "none" | "") || !node.name().is_empty() {
+            name = if node.name().is_empty() {
+                format!("{role} ({css})")
+            } else {
+                format!("{role} \"{}\" ({css})", node.name())
+            };
+        }
+    }
+
+    // Refs printed in the snapshot whose node lies inside the cover.
+    let inside = |backend: i64| -> bool {
+        let mut index = tree.index_of_backend(backend);
+        while let Some(i) = index {
+            if tree.nodes[i].backend_dom_node_id == Some(cover) {
+                return true;
+            }
+            index = tree.parent(i);
+        }
+        false
+    };
+    let controls: Vec<String> = snap
+        .refs
+        .iter()
+        .filter(|r| inside(r.backend_node_id))
+        .take(5)
+        .map(|r| {
+            if r.name.is_empty() {
+                format!("{} {}", r.role, r.ref_str)
+            } else {
+                format!("{} \"{}\" {}", r.role, r.name, r.ref_str)
+            }
+        })
+        .collect();
+    let hint = if controls.is_empty() {
+        format!("Close or remove {name} first (take a page_snapshot to find its controls).")
+    } else {
+        format!(
+            "Deal with {name} first, e.g. page_act on one of: {}.",
+            controls.join(", ")
+        )
+    };
+    Ok(not_interactable(
+        format!("{} is covered by {name} at ({x:.0}, {y:.0})", target.label),
+        &hint,
+    ))
+}
+
+/// Move the mouse to (x, y).
+async fn mouse_move(ctx: &Ctx, tab: TabId, x: f64, y: f64) -> Result<(), CmdError> {
+    cdp::call(
+        ctx,
+        tab,
+        "Input.dispatchMouseEvent",
+        json!({ "type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0 }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Move there, then press and release the left button `clicks` times (2 = double click).
+async fn mouse_click(ctx: &Ctx, tab: TabId, x: f64, y: f64, clicks: u32) -> Result<(), CmdError> {
+    mouse_move(ctx, tab, x, y).await?;
+    for count in 1..=clicks {
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            cdp::call(
+                ctx,
+                tab,
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": kind, "x": x, "y": y,
+                    "button": "left", "buttons": buttons, "clickCount": count,
+                }),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clips_boxes_to_the_viewport() {
+        let inside = BoxRect {
+            x: 10.0,
+            y: 10.0,
+            width: 100.0,
+            height: 20.0,
+        };
+        assert_eq!(clip_to_viewport(inside, 800.0, 600.0), Some(inside));
+        let tall = BoxRect {
+            x: 0.0,
+            y: -100.0,
+            width: 200.0,
+            height: 1000.0,
+        };
+        let clipped = clip_to_viewport(tall, 800.0, 600.0).unwrap();
+        assert_eq!(clipped.center(), (100.0, 300.0));
+        let below = BoxRect {
+            x: 0.0,
+            y: 700.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(clip_to_viewport(below, 800.0, 600.0), None);
+    }
+
+    #[test]
+    fn scroll_directions() {
+        assert_eq!(scroll_direction(None).unwrap(), "into_view");
+        assert_eq!(scroll_direction(Some("Down")).unwrap(), "down");
+        assert!(scroll_direction(Some("sideways")).is_err());
+    }
+}

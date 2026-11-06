@@ -25,6 +25,7 @@ use super::{
 };
 use crate::backend::BoxFuture;
 use crate::events::topics;
+use crate::extensions::Extensions;
 
 /// A type-erased command: takes the context and raw JSON args, returns JSON output.
 type Handler = Box<dyn Fn(Ctx, Value) -> BoxFuture<'static, Result<Value, CmdError>> + Send + Sync>;
@@ -60,6 +61,8 @@ pub struct Registry {
     /// Wire name → dotted name.
     by_wire: HashMap<String, &'static str>,
     lock: Arc<dyn LockPolicy>,
+    /// Shared services handed to every call as `ctx.extensions`.
+    extensions: Arc<Extensions>,
     next_call_id: AtomicU64,
 }
 
@@ -71,6 +74,7 @@ impl Registry {
             commands: BTreeMap::new(),
             by_wire: HashMap::new(),
             lock: Arc::new(AllowAll),
+            extensions: Arc::new(Extensions::new()),
             next_call_id: AtomicU64::new(0),
         }
     }
@@ -123,6 +127,12 @@ impl Registry {
     /// Replace the tab-lock policy (default: [`AllowAll`]).
     pub fn set_lock_policy(&mut self, policy: Arc<dyn LockPolicy>) {
         self.lock = policy;
+    }
+
+    /// The services map every call gets as `ctx.extensions`. Command crates put their
+    /// long-lived state here when they register (e.g. the per-tab ref registries).
+    pub fn extensions(&self) -> &Arc<Extensions> {
+        &self.extensions
     }
 
     /// Commands sorted by name.
@@ -180,6 +190,7 @@ impl Registry {
             return Box::pin(std::future::ready(Err(err)));
         }
         ctx.lock = self.lock.clone();
+        ctx.extensions = self.extensions.clone();
         ctx.mutates_tab = entry.info.mutates_tab;
         (entry.handler)(ctx, args)
     }

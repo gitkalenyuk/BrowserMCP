@@ -18,6 +18,8 @@ bmcp-core = { path = "crates/core" }
 bmcp-cef = { path = "crates/cef" }
 bmcp-cdp = { path = "crates/cdp" }
 bmcp-api = { path = "crates/api" }
+bmcp-browser = { path = "crates/browser" }
+bmcp-perception = { path = "crates/perception" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

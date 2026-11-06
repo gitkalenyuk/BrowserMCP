@@ -23,7 +23,8 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<nav::Stop>()
         .add::<page::Text>()
         .add::<ui::Layout>();
-    // TODO(perception): page.snapshot / page.find / page.act once the perception crate lands.
+    // page.snapshot / page.find / page.act, nav.back/forward/reload/wait ... live in the
+    // `bmcp-browser` crate.
 }
 
 #[cfg(test)]

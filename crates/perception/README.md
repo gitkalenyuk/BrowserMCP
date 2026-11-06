@@ -42,7 +42,7 @@ snap 7 tab=3 "Sign in – Acme" https://acme.com/login vp=1280x720 y=0/1840
 | Mode | Shows |
 |---|---|
 | `Interactive` (default) | controls + headings, alerts, dialogs + landmarks/lists/forms that contain them. Text, images, unnamed wrappers dropped. |
-| `Full` | also text and images; wrappers still flattened, label text that repeats a control's name dropped. |
+| `Full` | also text and images; wrappers still flattened, label text that repeats a control's name dropped, text inside text fields (their value, `•••` for passwords) never printed. |
 | `Skeleton { depth }` | interactive content `depth` levels deep; deeper subtrees become `(collapsed, N refs) → @S:gN`. |
 
 * Lists (list, listbox, menu, tree, table, grid, feed, tablist) with more than
