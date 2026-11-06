@@ -202,6 +202,8 @@ async fn start_api(
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    // Tab freezing/discarding and automatic limits from RAM (data/config/governor.json).
+    bmcp_governor::start(registry.extensions(), backend.clone(), events.clone());
     // Notification buttons (heal: Skip row / Stop run) run commands through the registry.
     bmcp_notify::attach(&registry, backend.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.

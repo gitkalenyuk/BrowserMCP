@@ -518,6 +518,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-governor"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-hints"
 version = "0.1.0"
 dependencies = [
@@ -550,6 +564,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bmcp-core",
+ "bmcp-governor",
  "calamine",
  "chrono",
  "cron",
@@ -561,7 +576,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sysinfo",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -637,6 +651,7 @@ dependencies = [
  "bmcp-browser",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-governor",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
@@ -686,6 +701,7 @@ dependencies = [
  "bmcp-cef",
  "bmcp-core",
  "bmcp-data",
+ "bmcp-governor",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",

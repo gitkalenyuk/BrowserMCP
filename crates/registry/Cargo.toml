@@ -17,5 +17,6 @@ bmcp-ai = { path = "../ai" }
 bmcp-record = { path = "../record" }
 bmcp-adblock = { path = "../adblock" }
 bmcp-jobs = { path = "../jobs" }
+bmcp-governor.workspace = true
 bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }

@@ -189,13 +189,9 @@ impl Inner {
     fn effective_parallel(&self, requested: usize) -> usize {
         let mut parallel = requested.min(self.config.max_parallel);
         if self.config.auto_limit {
-            let cpus = std::thread::available_parallelism().map_or(2, |n| n.get());
-            // If memory cannot be read, only the CPU limit applies.
-            let by_ram = sysinfo::System::new().map_or(usize::MAX, |mut sys| {
-                sys.refresh_memory();
-                (sys.available_memory() / RAM_PER_SLOT) as usize
-            });
-            parallel = parallel.min((cpus / 2).max(1)).min(by_ram.max(1));
+            // The governor's rule (also `governor.recommend_parallel`); if memory cannot be
+            // read, only the CPU limit applies.
+            parallel = parallel.min(bmcp_governor::recommend_parallel(RAM_PER_SLOT).parallel);
         }
         parallel.max(1)
     }
