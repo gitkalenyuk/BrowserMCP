@@ -191,26 +191,39 @@ async fn start_api(
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
     }
+    // Plugins, userscripts and webhook triggers (data/plugins, data/userscripts,
+    // data/config/webhooks.json). The auth handle lets the API restrict plugin connections.
+    let plugins = bmcp_plugins::PluginsService::open(
+        bmcp_plugins::PluginsConfig::new(&data, port),
+        events.clone(),
+    );
+    registry.extensions().insert(plugins.clone());
+    registry.extensions().insert(plugins.auth_handle());
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    plugins.attach(&registry);
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
-    match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
+    // Serve on the socket bound before CEF started (binding the port a second time fails).
+    match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
             if let Some(jobs) = &jobs {
                 jobs.set_ws_url(server.ws_url());
             }
-            // Kill agent, terminal and script child processes when the browser quits.
+            // Plugin processes connect to the API, so they start once it listens.
+            plugins.start(server.ws_url());
+            // Kill agent, terminal, script and plugin child processes when the browser quits.
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
                 if let Some(jobs) = jobs {
                     jobs.shutdown();
                 }
+                plugins.shutdown();
             });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

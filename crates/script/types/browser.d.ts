@@ -2547,6 +2547,456 @@ declare namespace BrowserMCP {
     origin: string;
   }
 
+  // ---- plugins.disable ----
+
+  /** Arguments of `plugins.disable`. */
+  export interface PluginsDisableArgs {
+    /** Plugin name (its folder in data/plugins). */
+    name: string;
+  }
+
+  /**
+   * Result of `plugins.disable`.
+   * A plugin as `plugins.list` shows it.
+   */
+  export interface PluginsDisableOutput {
+    dir: string;
+    enabled: boolean;
+    /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+    error?: string | null;
+    /** The manifest (missing when it could not be read). */
+    manifest?: {
+      /** @default "" */
+      description: string;
+      /**
+       * Event topic globs, e.g. `["tab.updated"]`.
+       * @default []
+       */
+      events: string[];
+      /** Entry script, relative to the plugin folder. */
+      main: string;
+      name: string;
+      /**
+       * Command globs, e.g. `["page.*", "net.rule_add"]`.
+       * @default []
+       */
+      permissions: string[];
+      /**
+       * What the plugin adds to the browser UI.
+       * @default {"palette":[]}
+       */
+      ui: {
+        /**
+         * Ctrl+K palette entries.
+         * @default []
+         */
+        palette: {
+          /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+          id: string;
+          /** Shown in the palette. */
+          title: string;
+        }[];
+      };
+      /**
+       * Userscript files (with `// @match` headers), relative to the plugin folder.
+       * @default []
+       */
+      userscripts: string[];
+      version: string;
+    } | null;
+    name: string;
+    pid?: number | null;
+    restarts: number;
+    /**
+     * What a plugin is doing right now.
+     *
+     * - `"disabled"`: Switched off by the user.
+     * - `"waiting"`: Enabled; the browser API is not up yet.
+     * - `"restarting"`: Failed; a restart is scheduled.
+     * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+     * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+     * - `"error"`: Bad manifest or no script host binary.
+     */
+    status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+    /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+    warnings?: string[];
+  }
+
+  // ---- plugins.enable ----
+
+  /** Arguments of `plugins.enable`. */
+  export interface PluginsEnableArgs {
+    /** Plugin name (its folder in data/plugins). */
+    name: string;
+  }
+
+  /**
+   * Result of `plugins.enable`.
+   * A plugin as `plugins.list` shows it.
+   */
+  export interface PluginsEnableOutput {
+    dir: string;
+    enabled: boolean;
+    /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+    error?: string | null;
+    /** The manifest (missing when it could not be read). */
+    manifest?: {
+      /** @default "" */
+      description: string;
+      /**
+       * Event topic globs, e.g. `["tab.updated"]`.
+       * @default []
+       */
+      events: string[];
+      /** Entry script, relative to the plugin folder. */
+      main: string;
+      name: string;
+      /**
+       * Command globs, e.g. `["page.*", "net.rule_add"]`.
+       * @default []
+       */
+      permissions: string[];
+      /**
+       * What the plugin adds to the browser UI.
+       * @default {"palette":[]}
+       */
+      ui: {
+        /**
+         * Ctrl+K palette entries.
+         * @default []
+         */
+        palette: {
+          /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+          id: string;
+          /** Shown in the palette. */
+          title: string;
+        }[];
+      };
+      /**
+       * Userscript files (with `// @match` headers), relative to the plugin folder.
+       * @default []
+       */
+      userscripts: string[];
+      version: string;
+    } | null;
+    name: string;
+    pid?: number | null;
+    restarts: number;
+    /**
+     * What a plugin is doing right now.
+     *
+     * - `"disabled"`: Switched off by the user.
+     * - `"waiting"`: Enabled; the browser API is not up yet.
+     * - `"restarting"`: Failed; a restart is scheduled.
+     * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+     * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+     * - `"error"`: Bad manifest or no script host binary.
+     */
+    status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+    /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+    warnings?: string[];
+  }
+
+  // ---- plugins.install ----
+
+  /** Arguments of `plugins.install`. */
+  export interface PluginsInstallArgs {
+    /** Start it right away (default true). */
+    enable?: boolean | null;
+    /**
+     * Folder with plugin.json and the main script (absolute, or relative to the browser's
+     * working directory). It is copied to data/plugins/<name>.
+     */
+    path: string;
+    /** Overwrite an installed plugin of the same name (default false). */
+    replace?: boolean | null;
+  }
+
+  /**
+   * Result of `plugins.install`.
+   * A plugin as `plugins.list` shows it.
+   */
+  export interface PluginsInstallOutput {
+    dir: string;
+    enabled: boolean;
+    /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+    error?: string | null;
+    /** The manifest (missing when it could not be read). */
+    manifest?: {
+      /** @default "" */
+      description: string;
+      /**
+       * Event topic globs, e.g. `["tab.updated"]`.
+       * @default []
+       */
+      events: string[];
+      /** Entry script, relative to the plugin folder. */
+      main: string;
+      name: string;
+      /**
+       * Command globs, e.g. `["page.*", "net.rule_add"]`.
+       * @default []
+       */
+      permissions: string[];
+      /**
+       * What the plugin adds to the browser UI.
+       * @default {"palette":[]}
+       */
+      ui: {
+        /**
+         * Ctrl+K palette entries.
+         * @default []
+         */
+        palette: {
+          /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+          id: string;
+          /** Shown in the palette. */
+          title: string;
+        }[];
+      };
+      /**
+       * Userscript files (with `// @match` headers), relative to the plugin folder.
+       * @default []
+       */
+      userscripts: string[];
+      version: string;
+    } | null;
+    name: string;
+    pid?: number | null;
+    restarts: number;
+    /**
+     * What a plugin is doing right now.
+     *
+     * - `"disabled"`: Switched off by the user.
+     * - `"waiting"`: Enabled; the browser API is not up yet.
+     * - `"restarting"`: Failed; a restart is scheduled.
+     * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+     * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+     * - `"error"`: Bad manifest or no script host binary.
+     */
+    status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+    /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+    warnings?: string[];
+  }
+
+  // ---- plugins.list ----
+
+  /**
+   * Arguments of `plugins.list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type PluginsListArgs = Record<string, never>;
+
+  /** Result of `plugins.list`. */
+  export interface PluginsListOutput {
+    plugins: {
+      dir: string;
+      enabled: boolean;
+      /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+      error?: string | null;
+      /** The manifest (missing when it could not be read). */
+      manifest?: {
+        /** @default "" */
+        description: string;
+        /**
+         * Event topic globs, e.g. `["tab.updated"]`.
+         * @default []
+         */
+        events: string[];
+        /** Entry script, relative to the plugin folder. */
+        main: string;
+        name: string;
+        /**
+         * Command globs, e.g. `["page.*", "net.rule_add"]`.
+         * @default []
+         */
+        permissions: string[];
+        /**
+         * What the plugin adds to the browser UI.
+         * @default {"palette":[]}
+         */
+        ui: {
+          /**
+           * Ctrl+K palette entries.
+           * @default []
+           */
+          palette: {
+            /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+            id: string;
+            /** Shown in the palette. */
+            title: string;
+          }[];
+        };
+        /**
+         * Userscript files (with `// @match` headers), relative to the plugin folder.
+         * @default []
+         */
+        userscripts: string[];
+        version: string;
+      } | null;
+      name: string;
+      pid?: number | null;
+      restarts: number;
+      /**
+       * What a plugin is doing right now.
+       *
+       * - `"disabled"`: Switched off by the user.
+       * - `"waiting"`: Enabled; the browser API is not up yet.
+       * - `"restarting"`: Failed; a restart is scheduled.
+       * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+       * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+       * - `"error"`: Bad manifest or no script host binary.
+       */
+      status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+      /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+      warnings?: string[];
+    }[];
+  }
+
+  // ---- plugins.logs ----
+
+  /** Arguments of `plugins.logs`. */
+  export interface PluginsLogsArgs {
+    /** Newest lines to return (default 100, at most 500 are kept). */
+    limit?: number | null;
+    name: string;
+  }
+
+  /** Result of `plugins.logs`. */
+  export interface PluginsLogsOutput {
+    /**
+     * Oldest first. `stream` is stdout (console.log), stderr (console.error, uncaught errors)
+     * or system (started, exited, restarting…).
+     */
+    lines: {
+      line: string;
+      /** `stdout`, `stderr` or `system` (lines from the plugin manager itself). */
+      stream: string;
+      ts_ms: number;
+    }[];
+    name: string;
+  }
+
+  // ---- plugins.palette ----
+
+  /**
+   * Arguments of `plugins.palette`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type PluginsPaletteArgs = Record<string, never>;
+
+  /** Result of `plugins.palette`. */
+  export interface PluginsPaletteOutput {
+    commands: {
+      id: string;
+      plugin: string;
+      title: string;
+    }[];
+  }
+
+  // ---- plugins.palette_run ----
+
+  /** Arguments of `plugins.palette_run`. */
+  export interface PluginsPaletteRunArgs {
+    /** Entry id from plugins.palette. */
+    id: string;
+    plugin: string;
+  }
+
+  /** Result of `plugins.palette_run`. */
+  export interface PluginsPaletteRunOutput {
+    /** False when the plugin is not running (the event was sent anyway). */
+    delivered: boolean;
+  }
+
+  // ---- plugins.reload ----
+
+  /** Arguments of `plugins.reload`. */
+  export interface PluginsReloadArgs {
+    /** Plugin to reload; omit to rescan data/plugins and restart every plugin. */
+    name?: string | null;
+  }
+
+  /** Result of `plugins.reload`. */
+  export interface PluginsReloadOutput {
+    plugins: {
+      dir: string;
+      enabled: boolean;
+      /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+      error?: string | null;
+      /** The manifest (missing when it could not be read). */
+      manifest?: {
+        /** @default "" */
+        description: string;
+        /**
+         * Event topic globs, e.g. `["tab.updated"]`.
+         * @default []
+         */
+        events: string[];
+        /** Entry script, relative to the plugin folder. */
+        main: string;
+        name: string;
+        /**
+         * Command globs, e.g. `["page.*", "net.rule_add"]`.
+         * @default []
+         */
+        permissions: string[];
+        /**
+         * What the plugin adds to the browser UI.
+         * @default {"palette":[]}
+         */
+        ui: {
+          /**
+           * Ctrl+K palette entries.
+           * @default []
+           */
+          palette: {
+            /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+            id: string;
+            /** Shown in the palette. */
+            title: string;
+          }[];
+        };
+        /**
+         * Userscript files (with `// @match` headers), relative to the plugin folder.
+         * @default []
+         */
+        userscripts: string[];
+        version: string;
+      } | null;
+      name: string;
+      pid?: number | null;
+      restarts: number;
+      /**
+       * What a plugin is doing right now.
+       *
+       * - `"disabled"`: Switched off by the user.
+       * - `"waiting"`: Enabled; the browser API is not up yet.
+       * - `"restarting"`: Failed; a restart is scheduled.
+       * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+       * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+       * - `"error"`: Bad manifest or no script host binary.
+       */
+      status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+      /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+      warnings?: string[];
+    }[];
+  }
+
+  // ---- plugins.remove ----
+
+  /** Arguments of `plugins.remove`. */
+  export interface PluginsRemoveArgs {
+    /** Plugin name (its folder in data/plugins). */
+    name: string;
+  }
+
+  /** Result of `plugins.remove`. */
+  export interface PluginsRemoveOutput {
+    /** False when there was nothing to remove. */
+    removed: boolean;
+  }
+
   // ---- proxy.forward_list ----
 
   /**
@@ -4324,6 +4774,98 @@ declare namespace BrowserMCP {
     spec: string;
   }
 
+  // ---- trigger.webhook_fire ----
+
+  /** Arguments of `trigger.webhook_fire`. */
+  export interface TriggerWebhookFireArgs {
+    /** The raw request body. */
+    body: string;
+    id: string;
+    /** The X-BMCP-Signature header value. */
+    signature: string;
+  }
+
+  /** Result of `trigger.webhook_fire`. */
+  export interface TriggerWebhookFireOutput {
+    /** See run.status / run.results. */
+    run_id: string;
+    script: string;
+  }
+
+  // ---- trigger.webhook_list ----
+
+  /**
+   * Arguments of `trigger.webhook_list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type TriggerWebhookListArgs = Record<string, never>;
+
+  /** Result of `trigger.webhook_list`. */
+  export interface TriggerWebhookListOutput {
+    /** Without secrets. */
+    hooks: {
+      created_ms: number;
+      id: string;
+      inputs: Record<string, unknown>;
+      inputs_from_body: boolean;
+      last_fired_ms?: number | null;
+      last_run_id?: string | null;
+      /** `POST` here: `/v1/hooks/<id>`. */
+      path: string;
+      script: string;
+    }[];
+  }
+
+  // ---- trigger.webhook_remove ----
+
+  /** Arguments of `trigger.webhook_remove`. */
+  export interface TriggerWebhookRemoveArgs {
+    id: string;
+  }
+
+  /** Result of `trigger.webhook_remove`. */
+  export interface TriggerWebhookRemoveOutput {
+    /** False when there was nothing to remove. */
+    removed: boolean;
+  }
+
+  // ---- trigger.webhook_set ----
+
+  /** Arguments of `trigger.webhook_set`. */
+  export interface TriggerWebhookSetArgs {
+    /** Replace the hook with this id (default: a new random id). */
+    id?: string | null;
+    /** Fixed inputs added to every call (the body's keys win). */
+    inputs?: Record<string, unknown> | null;
+    /**
+     * The JSON object body becomes the script's inputs (default true); false = the raw body
+     * arrives as inputs.body.
+     */
+    inputs_from_body?: boolean | null;
+    /** Saved script (data/scripts/<name>.ts) to run on every call. */
+    script: string;
+    /** Shared secret (at least 16 chars) the sender signs bodies with; default: random. */
+    secret?: string | null;
+  }
+
+  /**
+   * Result of `trigger.webhook_set`.
+   * What `trigger.webhook_set` returns: the hook plus its secret (shown only here).
+   */
+  export interface TriggerWebhookSetOutput {
+    created_ms: number;
+    id: string;
+    inputs: Record<string, unknown>;
+    inputs_from_body: boolean;
+    last_fired_ms?: number | null;
+    last_run_id?: string | null;
+    /** `POST` here: `/v1/hooks/<id>`. */
+    path: string;
+    script: string;
+    /** Give this to the sender; it signs every request with it. Not shown by webhook_list. */
+    secret: string;
+  }
+
   // ---- ui.layout ----
 
   /** Arguments of `ui.layout`. */
@@ -4342,6 +4884,177 @@ declare namespace BrowserMCP {
    * Arguments/output for commands that take or return nothing: `{}`.
    */
   export type UiLayoutOutput = Record<string, never>;
+
+  // ---- userscripts.delete ----
+
+  /** Arguments of `userscripts.delete`. */
+  export interface UserscriptsDeleteArgs {
+    name: string;
+  }
+
+  /** Result of `userscripts.delete`. */
+  export interface UserscriptsDeleteOutput {
+    /** False when there was nothing to remove. */
+    removed: boolean;
+  }
+
+  // ---- userscripts.enable ----
+
+  /** Arguments of `userscripts.enable`. */
+  export interface UserscriptsEnableArgs {
+    /** false = switch it off (default true). */
+    enabled?: boolean | null;
+    name: string;
+  }
+
+  /** Result of `userscripts.enable`. */
+  export interface UserscriptsEnableOutput {
+    enabled: boolean;
+    name: string;
+  }
+
+  // ---- userscripts.inject ----
+
+  /** Arguments of `userscripts.inject`. */
+  export interface UserscriptsInjectArgs {
+    /**
+     * Body of an async function run in the page's main frame, in an isolated world (same
+     * DOM, own globals). `return` a JSON value to get it back.
+     */
+    js: string;
+    /** Tab id (a userscript gets it as inputs.tab). Default: the most recently opened tab. */
+    tab?: number | null;
+  }
+
+  /** Result of `userscripts.inject`. */
+  export interface UserscriptsInjectOutput {
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    /** What the function returned (null for nothing). */
+    value: unknown;
+  }
+
+  // ---- userscripts.list ----
+
+  /**
+   * Arguments of `userscripts.list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type UserscriptsListArgs = Record<string, never>;
+
+  /** Result of `userscripts.list`. */
+  export interface UserscriptsListOutput {
+    userscripts: {
+      enabled: boolean;
+      error?: string | null;
+      /** Parsed header; missing when it is invalid (see `error`). */
+      header?: {
+        description?: string | null;
+        exclude_matches: string[];
+        excludes: string[];
+        includes: string[];
+        matches: string[];
+        name?: string | null;
+        /** When a userscript runs during a navigation. */
+        run_at: "document-start" | "document-end" | "document-idle";
+        timeout_secs?: number | null;
+        version?: string | null;
+      } | null;
+      /** The last run of a userscript. */
+      last_run?: {
+        at_ms: number;
+        duration_ms: number;
+        /** What the host printed when a script failed, split into parts an agent can act on. */
+        error?: {
+          /**
+           * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+           * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+           */
+          code: string;
+          /** The browser command that failed, e.g. `page.find`. */
+          command?: string | null;
+          /** Line in the script of the top stack frame. */
+          line?: number | null;
+          /** First line of the error message. */
+          message: string;
+        } | null;
+        ok: boolean;
+        tab: number;
+        url: string;
+      } | null;
+      /** File name without `.ts`; `<plugin>/<file>` for a plugin's userscript. */
+      name: string;
+      path: string;
+      /** `user` (data/userscripts) or `plugin:<name>`. */
+      source: string;
+    }[];
+  }
+
+  // ---- userscripts.save ----
+
+  /** Arguments of `userscripts.save`. */
+  export interface UserscriptsSaveArgs {
+    /**
+     * TypeScript starting with a header, e.g. `// @match https://*.example.com/*` and
+     * `// @run-at document-end`. It runs once per matching page load with inputs.tab (tab id)
+     * and inputs.url; change the page with browser.userscripts.inject({tab, js}).
+     */
+    code: string;
+    /** 1-64 chars of A-Z a-z 0-9 _ - (no .ts); overwrites. */
+    name: string;
+  }
+
+  /**
+   * Result of `userscripts.save`.
+   * A userscript as `userscripts.list` shows it.
+   */
+  export interface UserscriptsSaveOutput {
+    enabled: boolean;
+    error?: string | null;
+    /** Parsed header; missing when it is invalid (see `error`). */
+    header?: {
+      description?: string | null;
+      exclude_matches: string[];
+      excludes: string[];
+      includes: string[];
+      matches: string[];
+      name?: string | null;
+      /** When a userscript runs during a navigation. */
+      run_at: "document-start" | "document-end" | "document-idle";
+      timeout_secs?: number | null;
+      version?: string | null;
+    } | null;
+    /** The last run of a userscript. */
+    last_run?: {
+      at_ms: number;
+      duration_ms: number;
+      /** What the host printed when a script failed, split into parts an agent can act on. */
+      error?: {
+        /**
+         * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+         * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+         */
+        code: string;
+        /** The browser command that failed, e.g. `page.find`. */
+        command?: string | null;
+        /** Line in the script of the top stack frame. */
+        line?: number | null;
+        /** First line of the error message. */
+        message: string;
+      } | null;
+      ok: boolean;
+      tab: number;
+      url: string;
+    } | null;
+    /** File name without `.ts`; `<plugin>/<file>` for a plugin's userscript. */
+    name: string;
+    path: string;
+    /** `user` (data/userscripts) or `plugin:<name>`. */
+    source: string;
+  }
 
   /** Every command by dotted name, with its argument and result types. */
   export interface Commands {
@@ -4483,6 +5196,24 @@ declare namespace BrowserMCP {
     "passwords.list": { args: PasswordsListArgs; output: PasswordsListOutput };
     /** Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}. */
     "passwords.save": { args: PasswordsSaveArgs; output: PasswordsSaveOutput };
+    /** Disable a plugin: stop its process and revoke its connection token. */
+    "plugins.disable": { args: PluginsDisableArgs; output: PluginsDisableOutput };
+    /** Enable a plugin and start its script (remembered across restarts). */
+    "plugins.enable": { args: PluginsEnableArgs; output: PluginsEnableOutput };
+    /** Install a plugin from a folder (plugin.json + main.ts) into data/plugins and start it. The plugin may only call the commands in its manifest's permissions; check `warnings` for permissions that amount to full access. */
+    "plugins.install": { args: PluginsInstallArgs; output: PluginsInstallOutput };
+    /** List installed plugins (data/plugins/<name>) with manifest, permissions, status (running, exited, crashed, disabled, error), pid and restarts. */
+    "plugins.list": { args: PluginsListArgs; output: PluginsListOutput };
+    /** The last output lines of a plugin's script (console.log/error, crashes, restarts). */
+    "plugins.logs": { args: PluginsLogsArgs; output: PluginsLogsOutput };
+    /** Ctrl+K palette entries contributed by enabled plugins (ui.palette in plugin.json). Run one with plugins.palette_run. */
+    "plugins.palette": { args: PluginsPaletteArgs; output: PluginsPaletteOutput };
+    /** Run a plugin's palette entry: sends plugin.command {plugin, id} to that plugin. */
+    "plugins.palette_run": { args: PluginsPaletteRunArgs; output: PluginsPaletteRunOutput };
+    /** Re-read plugin.json from disk and restart the plugin (after editing its files); without a name, rescan data/plugins and restart all. */
+    "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
+    /** Stop a plugin and delete its folder from data/plugins. */
+    "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
     /** List running local proxy forwarders. */
     "proxy.forward_list": { args: ProxyForwardListArgs; output: ProxyForwardListOutput };
     /** Start a local proxy on 127.0.0.1 (SOCKS5 and HTTP, no auth) that forwards through an authenticated upstream proxy — Chromium cannot do SOCKS5 auth itself. Returns the local address to configure as the browser proxy. */
@@ -4583,14 +5314,40 @@ declare namespace BrowserMCP {
     "trigger.remove": { args: TriggerRemoveArgs; output: TriggerRemoveOutput };
     /** Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time. */
     "trigger.set": { args: TriggerSetArgs; output: TriggerSetOutput };
+    /** Internal: behind POST /v1/hooks/{id}. Checks the signature and starts the run. */
+    "trigger.webhook_fire": { args: TriggerWebhookFireArgs; output: TriggerWebhookFireOutput };
+    /** List webhook triggers (path, script, last firing and run id; secrets are not shown). */
+    "trigger.webhook_list": { args: TriggerWebhookListArgs; output: TriggerWebhookListOutput };
+    /** Delete a webhook trigger. */
+    "trigger.webhook_remove": { args: TriggerWebhookRemoveArgs; output: TriggerWebhookRemoveOutput };
+    /** Create or replace a webhook trigger: POST /v1/hooks/<id> with header X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with the secret> runs the script as a one-row run and answers {run_id}. Returns the path and the secret. The API listens on 127.0.0.1 only: outside services need a tunnel that rewrites Host. */
+    "trigger.webhook_set": { args: TriggerWebhookSetArgs; output: TriggerWebhookSetOutput };
     /** Internal: the browser UI reports its page area. No effect over the API. */
     "ui.layout": { args: UiLayoutArgs; output: UiLayoutOutput };
+    /** Delete a userscript file. */
+    "userscripts.delete": { args: UserscriptsDeleteArgs; output: UserscriptsDeleteOutput };
+    /** Switch a userscript on or off (enabled: false) without deleting it. */
+    "userscripts.enable": { args: UserscriptsEnableArgs; output: UserscriptsEnableOutput };
+    /** Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner. */
+    "userscripts.inject": { args: UserscriptsInjectArgs; output: UserscriptsInjectOutput };
+    /** List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run. */
+    "userscripts.list": { args: UserscriptsListArgs; output: UserscriptsListOutput };
+    /** Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load. */
+    "userscripts.save": { args: UserscriptsSaveArgs; output: UserscriptsSaveOutput };
   }
 
   /** The global `browser`: `browser.<group>.<action>(args)` sends that command. */
   export interface Browser {
     /** Low level: `browser.call("tabs.list", {})`. Also accepts wire names (`tabs_list`). */
     call<N extends keyof Commands>(name: N, args?: Commands[N]["args"]): Promise<Commands[N]["output"]>;
+    /** Report a structured result (`##bmcp:result` line); several calls are merged. */
+    output(value: unknown): void;
+    /**
+     * Call `handler(data, topic)` for every event matching `pattern` (exact topic, `"prefix.*"`
+     * or `"*"`). Returns a function that removes the handler. While handlers exist the script
+     * keeps running (plugins); it ends when the browser connection closes.
+     */
+    on(pattern: string, handler: (data: any, topic: string) => void | Promise<void>): () => void;
     /** Commands `adblock.*`. */
     adblock: {
       /**
@@ -5051,6 +5808,63 @@ declare namespace BrowserMCP {
        */
       save(args: PasswordsSaveArgs): Promise<PasswordsSaveOutput>;
     };
+    /** Commands `plugins.*`. */
+    plugins: {
+      /**
+       * Disable a plugin: stop its process and revoke its connection token.
+       *
+       * `plugins.disable` (MCP: `plugins_disable`): toolset `script`, act.
+       */
+      disable(args: PluginsDisableArgs): Promise<PluginsDisableOutput>;
+      /**
+       * Enable a plugin and start its script (remembered across restarts).
+       *
+       * `plugins.enable` (MCP: `plugins_enable`): toolset `script`, act.
+       */
+      enable(args: PluginsEnableArgs): Promise<PluginsEnableOutput>;
+      /**
+       * Install a plugin from a folder (plugin.json + main.ts) into data/plugins and start it. The plugin may only call the commands in its manifest's permissions; check `warnings` for permissions that amount to full access.
+       *
+       * `plugins.install` (MCP: `plugins_install`): toolset `script`, act.
+       */
+      install(args: PluginsInstallArgs): Promise<PluginsInstallOutput>;
+      /**
+       * List installed plugins (data/plugins/<name>) with manifest, permissions, status (running, exited, crashed, disabled, error), pid and restarts.
+       *
+       * `plugins.list` (MCP: `plugins_list`): toolset `script`, read.
+       */
+      list(args?: PluginsListArgs): Promise<PluginsListOutput>;
+      /**
+       * The last output lines of a plugin's script (console.log/error, crashes, restarts).
+       *
+       * `plugins.logs` (MCP: `plugins_logs`): toolset `script`, read.
+       */
+      logs(args: PluginsLogsArgs): Promise<PluginsLogsOutput>;
+      /**
+       * Ctrl+K palette entries contributed by enabled plugins (ui.palette in plugin.json). Run one with plugins.palette_run.
+       *
+       * `plugins.palette` (MCP: `plugins_palette`): toolset `ui`, read.
+       */
+      palette(args?: PluginsPaletteArgs): Promise<PluginsPaletteOutput>;
+      /**
+       * Run a plugin's palette entry: sends plugin.command {plugin, id} to that plugin.
+       *
+       * `plugins.palette_run` (MCP: `plugins_palette_run`): toolset `ui`, act.
+       */
+      palette_run(args: PluginsPaletteRunArgs): Promise<PluginsPaletteRunOutput>;
+      /**
+       * Re-read plugin.json from disk and restart the plugin (after editing its files); without a name, rescan data/plugins and restart all.
+       *
+       * `plugins.reload` (MCP: `plugins_reload`): toolset `script`, act.
+       */
+      reload(args?: PluginsReloadArgs): Promise<PluginsReloadOutput>;
+      /**
+       * Stop a plugin and delete its folder from data/plugins.
+       *
+       * `plugins.remove` (MCP: `plugins_remove`): toolset `script`, act.
+       */
+      remove(args: PluginsRemoveArgs): Promise<PluginsRemoveOutput>;
+    };
     /** Commands `proxy.*`. */
     proxy: {
       /**
@@ -5380,6 +6194,31 @@ declare namespace BrowserMCP {
        * `trigger.set` (MCP: `trigger_set`): toolset `run`, act.
        */
       set(args: TriggerSetArgs): Promise<TriggerSetOutput>;
+      /**
+       * Internal: behind POST /v1/hooks/{id}. Checks the signature and starts the run.
+       *
+       * `trigger.webhook_fire` (MCP: `trigger_webhook_fire`): toolset `hidden`, act.
+       * Internal (hidden toolset): not listed to agents by default.
+       */
+      webhook_fire(args: TriggerWebhookFireArgs): Promise<TriggerWebhookFireOutput>;
+      /**
+       * List webhook triggers (path, script, last firing and run id; secrets are not shown).
+       *
+       * `trigger.webhook_list` (MCP: `trigger_webhook_list`): toolset `run`, read.
+       */
+      webhook_list(args?: TriggerWebhookListArgs): Promise<TriggerWebhookListOutput>;
+      /**
+       * Delete a webhook trigger.
+       *
+       * `trigger.webhook_remove` (MCP: `trigger_webhook_remove`): toolset `run`, act.
+       */
+      webhook_remove(args: TriggerWebhookRemoveArgs): Promise<TriggerWebhookRemoveOutput>;
+      /**
+       * Create or replace a webhook trigger: POST /v1/hooks/<id> with header X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with the secret> runs the script as a one-row run and answers {run_id}. Returns the path and the secret. The API listens on 127.0.0.1 only: outside services need a tunnel that rewrites Host.
+       *
+       * `trigger.webhook_set` (MCP: `trigger_webhook_set`): toolset `run`, act.
+       */
+      webhook_set(args: TriggerWebhookSetArgs): Promise<TriggerWebhookSetOutput>;
     };
     /** Commands `ui.*`. */
     ui: {
@@ -5390,6 +6229,39 @@ declare namespace BrowserMCP {
        * Internal (hidden toolset): not listed to agents by default.
        */
       layout(args: UiLayoutArgs): Promise<UiLayoutOutput>;
+    };
+    /** Commands `userscripts.*`. */
+    userscripts: {
+      /**
+       * Delete a userscript file.
+       *
+       * `userscripts.delete` (MCP: `userscripts_delete`): toolset `script`, act.
+       */
+      delete(args: UserscriptsDeleteArgs): Promise<UserscriptsDeleteOutput>;
+      /**
+       * Switch a userscript on or off (enabled: false) without deleting it.
+       *
+       * `userscripts.enable` (MCP: `userscripts_enable`): toolset `script`, act.
+       */
+      enable(args: UserscriptsEnableArgs): Promise<UserscriptsEnableOutput>;
+      /**
+       * Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.
+       *
+       * `userscripts.inject` (MCP: `userscripts_inject`): toolset `script`, act, mutates the tab.
+       */
+      inject(args: UserscriptsInjectArgs): Promise<UserscriptsInjectOutput>;
+      /**
+       * List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run.
+       *
+       * `userscripts.list` (MCP: `userscripts_list`): toolset `script`, read.
+       */
+      list(args?: UserscriptsListArgs): Promise<UserscriptsListOutput>;
+      /**
+       * Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load.
+       *
+       * `userscripts.save` (MCP: `userscripts_save`): toolset `script`, act.
+       */
+      save(args: UserscriptsSaveArgs): Promise<UserscriptsSaveOutput>;
     };
   }
 }

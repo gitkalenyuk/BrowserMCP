@@ -13,8 +13,11 @@
 //! * `/mcp` rejects any request carrying an `Origin` header — web pages, including the ones
 //!   open in BrowserMCP itself, always send `Origin`; MCP clients like Claude Code don't;
 //! * REST/WS reject `Origin` too, except the browser's own UI (`bmcp://ui`, plus the Vite dev
-//!   server when `BMCP_DEV_UI=1`), see [`guard`].
+//!   server when `BMCP_DEV_UI=1`), see [`guard`];
+//! * plugins get restricted WebSocket connections (`/v1/ws?plugin=…&token=…`), see [`access`];
+//! * webhooks (`POST /v1/hooks/{id}`) must be signed with the hook's secret, see [`rest`].
 
+pub mod access;
 mod ax;
 pub mod commands;
 pub mod guard;

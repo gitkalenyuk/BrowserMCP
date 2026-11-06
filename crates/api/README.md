@@ -11,7 +11,8 @@ all of them without touching this crate.
 | `GET /v1/commands?toolsets=core,net` | `{"commands":[CommandInfo…]}` with `args_schema` / `output_schema`; no `toolsets` = all except `hidden` |
 | `POST /v1/cmd/{name}` | body = arguments (JSON object, empty = `{}`); 200 + output, or error status + `CmdError` |
 | `GET /openapi.json` | OpenAPI 3.1, one `POST /v1/cmd/{name}` path per command |
-| `GET /v1/ws` | WebSocket, JSON-RPC 2.0 + event notifications |
+| `GET /v1/ws` | WebSocket, JSON-RPC 2.0 + event notifications (`?plugin=…&token=…` = restricted plugin connection) |
+| `POST /v1/hooks/{id}` | signed webhook trigger, see "Webhooks" below |
 
 The running browser writes the URLs to `<data>/runtime/endpoint.json`:
 `{"pid":…,"mcp":"http://127.0.0.1:47800/mcp","rest":"http://127.0.0.1:47800/v1","ws":"ws://127.0.0.1:47800/v1/ws"}`.
@@ -108,3 +109,18 @@ Note the WS server adds `seq` to every payload object.
   `Access-Control-Allow-Origin` and preflight support. `http://localhost:5173` /
   `http://127.0.0.1:5173` → allowed only with `BMCP_DEV_UI=1` (Vite dev server). Anything else
   → 403 `{"code":"FORBIDDEN",…}`. `/mcp` keeps refusing every `Origin`.
+* Plugin connections: `GET /v1/ws?plugin=<name>&token=<token>` (opened by the plugin's script
+  host, see `crates/plugins`). A wrong token → 403 before the upgrade. Such a connection runs
+  commands as `Caller::Plugin {name}`, only those matching the plugin's `permissions` globs
+  (others → `NEEDS_APPROVAL`), starts with no subscriptions and only receives events matching
+  its `events` globs plus `plugin.command` events for itself (`src/access.rs`).
+
+## Webhooks
+
+`POST /v1/hooks/{id}` with header `X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with
+the hook's secret>` → `{"run_id":"…","script":"…"}` (403 bad signature, 404 unknown hook). The
+route forwards the raw body to the hidden command `trigger.webhook_fire` (`bmcp-plugins`);
+hooks are made with `trigger.webhook_set`. The guard above still applies: the API listens on
+127.0.0.1 only and wants a loopback `Host`, so a service outside this machine needs a tunnel
+that rewrites `Host`, e.g. `cloudflared tunnel --url http://127.0.0.1:47800 --http-host-header
+127.0.0.1` or `ngrok http 47800 --host-header=rewrite`.
