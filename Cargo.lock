@@ -476,11 +476,16 @@ dependencies = [
 name = "bmcp-cef"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "bmcp-adblock",
  "bmcp-cdp",
  "bmcp-core",
+ "bmcp-data",
+ "bmcp-profiles",
  "cef",
  "include_dir",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -497,6 +502,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -579,6 +585,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-profiles"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "bmcp-data",
+ "bmcp-identity",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-record"
 version = "0.1.0"
 dependencies = [
@@ -607,6 +628,7 @@ dependencies = [
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
+ "bmcp-profiles",
  "bmcp-record",
 ]
 
@@ -646,6 +668,7 @@ name = "browsermcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmcp-adblock",
  "bmcp-ai",
  "bmcp-api",
  "bmcp-cef",
@@ -653,6 +676,7 @@ dependencies = [
  "bmcp-data",
  "bmcp-identity",
  "bmcp-jobs",
+ "bmcp-profiles",
  "bmcp-record",
  "bmcp-registry",
  "serde_json",

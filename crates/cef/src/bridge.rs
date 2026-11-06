@@ -29,6 +29,8 @@ use cef::*;
 use serde_json::Value;
 use tokio::sync::{oneshot, watch};
 
+use crate::profiles::ProfileKey;
+
 /// Load progress of one tab. `seq` increases every time a load finishes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct LoadState {
@@ -46,9 +48,16 @@ pub(crate) struct TabEntry {
     pub favicon: Option<String>,
     pub can_go_back: bool,
     pub can_go_forward: bool,
-    /// Key of the composed window that shows this tab (None in the single layout).
+    /// Key of the composed window that shows this tab (None in the single layout and for
+    /// off-screen tabs).
     pub window: Option<i32>,
     pub load: watch::Sender<LoadState>,
+    /// Profile (request context) of the tab.
+    pub profile: ProfileKey,
+    /// Mass run the tab belongs to (downloads go to its folder).
+    pub run: Option<String>,
+    /// Windowless (off-screen rendering) tab.
+    pub offscreen: bool,
 }
 
 impl TabEntry {
@@ -80,6 +89,38 @@ pub(crate) struct PendingTab {
     pub url: String,
     /// Told the new tab id once the browser exists (`tabs.open` waits for it).
     pub reply: Option<oneshot::Sender<TabId>>,
+    pub profile: ProfileKey,
+    pub run: Option<String>,
+    /// The browser starts on `about:blank`; this URL is loaded once the tab was prepared
+    /// (identity applied, see `hooks.rs`).
+    pub then_load: Option<String>,
+}
+
+impl PendingTab {
+    /// A tab that shows `url` in `profile`. When the profile wants its tabs prepared, the
+    /// browser must be created with [`PendingTab::initial_url`] instead.
+    pub fn new(url: &str, profile: ProfileKey, run: Option<String>) -> Self {
+        let then_load = crate::hooks::wants_prepare(&profile.name()).then(|| url.to_owned());
+        PendingTab {
+            window: None,
+            index: None,
+            activate: true,
+            url: url.to_owned(),
+            reply: None,
+            profile,
+            run,
+            then_load,
+        }
+    }
+
+    /// What the browser is created with.
+    pub fn initial_url(&self) -> &str {
+        if self.then_load.is_some() {
+            "about:blank"
+        } else {
+            &self.url
+        }
+    }
 }
 
 /// Everything the shell needs to open another window later.
@@ -106,6 +147,8 @@ pub(crate) struct UiState {
     /// Key of the window that was active last (where `tabs.open` puts new tabs).
     pub last_window: Option<i32>,
     pub shell: Option<ShellContext>,
+    /// Request contexts and settings of the profiles.
+    pub profiles: crate::profiles::ProfilesState,
 }
 
 thread_local! {
@@ -134,7 +177,7 @@ pub(crate) fn set_events(bus: EventBus) {
     let _ = EVENTS.set(bus);
 }
 
-fn emit(topic: &str, data: Value) {
+pub(crate) fn emit(topic: &str, data: Value) {
     if let Some(bus) = EVENTS.get() {
         bus.emit(topic, data);
     }
@@ -280,7 +323,9 @@ wrap_dev_tools_message_observer! {
 // ------------------------------------------------------------------ tab lifecycle
 
 /// Called from `LifeSpanHandler::on_after_created` for content browsers (UI thread).
-pub(crate) fn register_tab(browser: &Browser) {
+/// `offscreen`: a windowless browser; its intent is `UiState::pending[pending_key]` (it has
+/// no view id).
+pub(crate) fn register_tab(browser: &Browser, offscreen: bool, pending_key: i32) {
     let id = TabId(browser.identifier());
     let cdp = Arc::new(CdpClient::new(CefTransport { tab: id }));
     let mut observer = DevToolsObserver::new(cdp.clone());
@@ -298,9 +343,15 @@ pub(crate) fn register_tab(browser: &Browser) {
 
     // One short borrow: store the entry and place the tab in its window's strip.
     let (pending, index) = with_ui(|ui| {
-        let mut pending = ui.pending.remove(&view_id);
+        let key = if offscreen { pending_key } else { view_id };
+        let mut pending = ui.pending.remove(&key);
         let window = pending.as_ref().and_then(|p| p.window);
         let url = pending.as_ref().map(|p| p.url.clone()).unwrap_or_default();
+        let profile = pending
+            .as_ref()
+            .map(|p| p.profile.clone())
+            .unwrap_or_default();
+        let run = pending.as_ref().and_then(|p| p.run.clone());
         ui.tabs.insert(
             id,
             TabEntry {
@@ -314,13 +365,22 @@ pub(crate) fn register_tab(browser: &Browser) {
                 can_go_forward: false,
                 window,
                 load,
+                profile,
+                run,
+                offscreen,
             },
         );
         let index = window
             .and_then(|key| ui.windows.get_mut(&key))
             .map(|w| w.strip.insert(id, pending.as_ref().and_then(|p| p.index)));
         let reply = pending.as_mut().and_then(|p| p.reply.take());
-        (pending.map(|p| (p.window, p.activate, reply)), index)
+        let prepare = pending
+            .as_mut()
+            .and_then(|p| p.then_load.take().map(|url| (p.profile.name(), url)));
+        (
+            pending.map(|p| (p.window, p.activate, reply, prepare)),
+            index,
+        )
     });
 
     if let Some(info) = tab_info(id) {
@@ -331,12 +391,24 @@ pub(crate) fn register_tab(browser: &Browser) {
     }
     tracing::debug!(%id, view_id, ?index, "tab registered");
 
-    if let Some((window, activate, reply)) = pending {
+    if offscreen && let Some(host) = browser.host() {
+        // A windowless page has its own focus: it is always "the focused, visible page".
+        host.was_hidden(0);
+        host.set_focus(1);
+    }
+
+    if let Some((window, activate, reply, prepare)) = pending {
         if let (Some(key), true) = (window, activate) {
             crate::chrome::show_tab(key, id);
         }
-        if let Some(reply) = reply {
-            let _ = reply.send(id);
+        match prepare {
+            // Identity first, then the real page; `tabs.open` answers after that.
+            Some((profile, url)) => crate::hooks::prepare_then_load(id, profile, url, reply),
+            None => {
+                if let Some(reply) = reply {
+                    let _ = reply.send(id);
+                }
+            }
         }
     }
 }
@@ -358,8 +430,13 @@ pub(crate) fn unregister_tab(browser: &Browser) {
     // Dropped outside the borrow: releasing the registration calls into CEF.
     if let Some(tab) = removed {
         tab.cdp.close();
+        let profile = tab.profile.clone();
         drop(tab);
         emit(topics::TAB_CLOSED, tab_events::closed(id));
+        // An in-memory profile goes away with its last tab (later, outside CEF's callback).
+        post_to_ui(Box::new(move || {
+            crate::profiles::release_if_unused(&profile)
+        }));
     }
     if let Some((key, next)) = next {
         // Not from inside CEF's close callback: show the neighbour a moment later.
