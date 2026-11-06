@@ -147,14 +147,11 @@ async fn start_api(
     runtime_dir: std::path::PathBuf,
     data: DataDir,
 ) {
-    // One registry for every API surface: built-in commands + API-crate commands.
-    let mut registry = bmcp_core::Registry::new();
-    bmcp_core::commands::register_builtin(&mut registry);
-    bmcp_api::commands::register(&mut registry);
-    bmcp_browser::register(&mut registry);
-    bmcp_net::register(&mut registry);
-    bmcp_identity::register(&mut registry, data.config());
-    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite.
+    // One registry for every API surface; command crates are registered in `bmcp-registry`.
+    let registry = bmcp_registry::build_registry();
+    // Identities and proxy pools in data/config.
+    bmcp_identity::install(&registry, data.config());
+    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite (used by the data commands).
     let store = match bmcp_data::DataStore::open_in(&data) {
         Ok(store) => {
             registry.extensions().insert(store.clone());
@@ -165,14 +162,12 @@ async fn start_api(
             None
         }
     };
-    bmcp_data::register(&mut registry);
     // Built-in AI: agents reach the browser through this same registry (API providers) or the
     // MCP endpoint (Claude Code / Codex).
     let ai = registry.extensions().insert(bmcp_ai::AiService::new(
         data.root(),
         format!("http://127.0.0.1:{port}/mcp"),
     ));
-    bmcp_ai::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
