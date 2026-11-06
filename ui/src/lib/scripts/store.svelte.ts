@@ -270,7 +270,7 @@ export class ScriptsStore {
         this.errorLine = res.error.line ?? null;
         return;
       }
-      this.verified = res.breakpoints;
+      this.#moveBreakpoints(res.breakpoints);
       if (this.debug) this.debug = { ...this.debug, id: res.id, status: 'running' };
       // Replay what arrived before we knew the id (e.g. an immediate breakpoint hit).
       const early = this.#early.filter((e) => e.payload.id === res.id);
@@ -308,7 +308,16 @@ export class ScriptsStore {
     const res = await this.#call('Breakpoints', () =>
       this.api.call('script.debug_cmd', { id, action: 'set_breakpoints', lines }),
     );
-    if (res?.breakpoints) this.verified = res.breakpoints;
+    if (res?.breakpoints && this.current === name) this.#moveBreakpoints(res.breakpoints);
+  }
+
+  /**
+   * The debugger moves a breakpoint on a line without code (blank, comment, type-only) to the
+   * next line with code: show them where they really are.
+   */
+  #moveBreakpoints(resolved: number[]): void {
+    this.verified = resolved;
+    if (this.current !== null) this.breakpoints = { ...this.breakpoints, [this.current]: resolved };
   }
 
   #onEvent(topic: string, payload: { id: string }): void {

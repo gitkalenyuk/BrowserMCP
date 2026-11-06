@@ -69,12 +69,26 @@ exit_code, duration_ms, result, stopped, error?}`.
   F5 continues, variables / call stack, Shift+F5 stops; Ctrl+Space on `browser.page.` lists the
   commands with their docs from browser.d.ts.
 
+* Live: `browsermcp --api-port 47861 --data-dir target/live-data` (BMCP_DEV_UI=1,
+  BMCP_SCRIPT_HOST = the worktree's host) with the dev UI (`?api=ws&ws=ws://127.0.0.1:47861/v1/ws`)
+  in a browser preview. `tab-report.ts` (saved with REST `script.save`, `script.run` →
+  `{count: 1, longest: "# 3: Example Domain"}`): breakpoints on line 2 (type-only) and 9,
+  Debug → paused on line 4 (the moved breakpoint; the UI now redraws it there) with
+  `prefix/tabs/longest` uninitialized; F5 → paused on line 9 AFTER the real
+  `await browser.tabs.list()`, `label = "# 3: Example Domain"`, `tab = {active: true, …}` from
+  the browser; F10; F5 → console line, RESULT `{count, longest}`, "done". The first start took
+  ~10 s (V8 host cold start on a loaded machine).
+
 ## Screenshots
 
 | | |
 |---|---|
-| ![paused](img/mock-debug-paused.jpg) | ![intellisense](img/mock-intellisense.jpg) |
-| mock: paused at a breakpoint (line 9), block + module variables | IntelliSense from the generated browser.d.ts |
+| ![live first](img/live-debug-first-breakpoint.jpg) | ![live paused](img/live-debug-paused.jpg) |
+| real core: the line-2 breakpoint landed on line 4 | real core: paused after `browser.tabs.list()`, real tab object |
+| ![live ended](img/live-debug-ended.jpg) | ![paused](img/mock-debug-paused.jpg) |
+| real core: output + structured result after F5 | mock: paused, block + module variables |
+| ![intellisense](img/mock-intellisense.jpg) | |
+| IntelliSense from the generated browser.d.ts | |
 
 ## Gaps
 
