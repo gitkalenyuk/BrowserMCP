@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `script.list/get/save/delete` | the library in `data/scripts/*.ts` |
 //! | `script.run` | run a saved script or inline code once, wait, return output + result |
+//! | `script.debug_start/debug_cmd` | step debugger (breakpoints, steps, variables; see [`crate::debug`]) |
 //! | `run.start` | run a script once per data row (CSV/JSON/Excel/inline), N in parallel |
 //! | `run.status/list/results` | progress, run list, paged row results |
 //! | `run.pause/resume/cancel` | control a run |
@@ -21,11 +22,12 @@ use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::data::{DataArgs, load_rows, object_to_row};
+use crate::debug::{DebugCmdArgs, DebugCmdOutput, DebugStartArgs, DebugStartOutput};
 use crate::export::{ExportArgs, ExportOutput};
 use crate::host::HostOutcome;
 use crate::runner::{DEFAULT_TIMEOUT_SECS, ScriptSource, StartRequest};
 use crate::scripts::ScriptInfo;
-use crate::store::{Counts, RowRecord, RowStatus, RunRecord};
+use crate::store::{Counts, HealMode, RowRecord, RowStatus, RunRecord};
 use crate::triggers::{TriggerInfo, TriggerKind};
 use crate::{Inner, JobsService};
 
@@ -202,6 +204,56 @@ impl Command for ScriptRun {
     }
 }
 
+// ------------------------------------------------------------------ script.debug_*
+
+pub struct ScriptDebugStart;
+
+impl Command for ScriptDebugStart {
+    const NAME: &'static str = "script.debug_start";
+    type Args = DebugStartArgs;
+    type Output = DebugStartOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Start a saved script (name) or inline TypeScript (code) under the step debugger, \
+             stopping at the given TypeScript lines. Returns a session id; then use \
+             script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). \
+             Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, \
+             script.debug_output, script.debug_ended.",
+            Toolset::Script,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: DebugStartArgs) -> Result<DebugStartOutput, CmdError> {
+        let inner = service(&ctx)?;
+        let inputs = object_to_row(args.inputs.clone().unwrap_or_default())?;
+        inner.debug_start(args, inputs).await
+    }
+}
+
+pub struct ScriptDebugCmd;
+
+impl Command for ScriptDebugCmd {
+    const NAME: &'static str = "script.debug_cmd";
+    type Args = DebugCmdArgs;
+    type Output = DebugCmdOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Control a debug session from script_debug_start: continue, step_over, step_into, \
+             step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. \
+             Pauses arrive as script.debug_paused events.",
+            Toolset::Script,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: DebugCmdArgs) -> Result<DebugCmdOutput, CmdError> {
+        service(&ctx)?.debug_cmd(args).await
+    }
+}
+
 // ------------------------------------------------------------------ run.*
 
 /// A run with its row counts.
@@ -233,6 +285,14 @@ pub struct RunIdArgs {
 
 pub struct RunStart;
 
+/// `heal` of `run.start`: a mode, or the older on/off flag.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum HealArg {
+    Flag(bool),
+    Mode(HealMode),
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunStartArgs {
@@ -248,9 +308,11 @@ pub struct RunStartArgs {
     pub timeout_secs: Option<u64>,
     /// Stop the run at the first failed row (default false).
     pub stop_on_error: Option<bool>,
-    /// Pause and emit run.heal_needed when a row breaks on a page.* selector error
-    /// (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
-    pub heal: Option<bool>,
+    /// Self-healing when a row breaks on a page.* selector error (NOT_FOUND,
+    /// NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET): "ask" (default: pause, an AI
+    /// proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
+    /// are applied) or "off". `true` = "ask", `false` = "off".
+    pub heal: Option<HealArg>,
     /// Browser profile for the rows. Only "default" for now (all rows share it); isolated
     /// per-row profiles come later.
     pub profile: Option<String>,
@@ -281,7 +343,11 @@ impl Command for RunStart {
             retries: args.retries,
             timeout_secs: args.timeout_secs,
             stop_on_error: args.stop_on_error.unwrap_or(false),
-            heal: args.heal.unwrap_or(true),
+            heal: match args.heal {
+                None | Some(HealArg::Flag(true)) => HealMode::Ask,
+                Some(HealArg::Flag(false)) => HealMode::Off,
+                Some(HealArg::Mode(mode)) => mode,
+            },
             profile: args.profile,
         })?;
         run_info(&inner, &run.id)

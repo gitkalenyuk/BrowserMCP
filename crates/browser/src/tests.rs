@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use bmcp_core::testing::{FakeBackend, ctx};
-use bmcp_core::{BackendError, Caller, CmdError, ErrorCode, Registry, TabId};
+use bmcp_core::{BackendError, BrowserBackend, Caller, CmdError, ErrorCode, Registry, TabId};
 use serde_json::{Value, json};
 
 /// Backend ids in `tests/fixtures/cdp/login_form.json`.
@@ -38,7 +38,54 @@ struct Page {
     gone: HashSet<i64>,
     /// Node the hit test reports, whatever the point (e.g. a dialog on top).
     hit_override: Option<i64>,
+    /// A `pointer-events: none` overlay over everything: the hit test only reports it when
+    /// asked to hit-test such elements (`ignorePointerEventsNone: true`).
+    click_through_overlay: Option<i64>,
+    /// Text nodes → their parent element. Like Chromium, the hit test reports the parent.
+    text_parents: HashMap<i64, i64>,
+    /// Iframes (see [`Page::frames`]): the tree of the out-of-process frame `F1` (child
+    /// session `S1`, shown by `<iframe>` [`OOP_IFRAME`]) ...
+    oopif_tree: Option<Value>,
+    /// ... and of the same-process frame `F2` (shown by [`SAME_IFRAME`]).
+    same_frame_tree: Option<Value>,
     history: Value,
+}
+
+/// The page of [`Page::frames`]: a button, an out-of-process and a same-process iframe.
+const TOP_BUTTON: i64 = 2;
+const OOP_IFRAME: i64 = 3;
+const SAME_IFRAME: i64 = 4;
+/// In the out-of-process frame (its own DOM numbering: 2 again, like the top button).
+const CARD_FIELD: i64 = 2;
+const PAY_BUTTON: i64 = 5;
+/// In the same-process frame.
+const INNER_BUTTON: i64 = 41;
+/// Content box of the out-of-process iframe in the page's viewport: x, y, width, height.
+const OOP_BOX: (f64, f64, f64, f64) = (300.0, 600.0, 400.0, 100.0);
+
+/// A merged-tree id of a node in the out-of-process frame (slot 1, see `frames.rs`).
+fn in_oopif(backend: i64) -> i64 {
+    (1 << 32) | backend
+}
+
+/// An accessibility tree from `(id, parent, role, name, backend)` rows.
+fn ax_rows(rows: &[(&str, &str, &str, &str, i64)]) -> Value {
+    let nodes: Vec<Value> = rows
+        .iter()
+        .map(|(id, parent, role, name, backend)| {
+            let children: Vec<&str> = rows.iter().filter(|r| r.1 == *id).map(|r| r.0).collect();
+            let mut node = json!({
+                "nodeId": id, "role": { "type": "role", "value": role },
+                "name": { "type": "computedString", "value": name },
+                "childIds": children, "backendDOMNodeId": backend,
+            });
+            if !parent.is_empty() {
+                node["parentId"] = json!(parent);
+            }
+            node
+        })
+        .collect();
+    json!({ "nodes": nodes })
 }
 
 impl Page {
@@ -61,8 +108,41 @@ impl Page {
             probes,
             gone: HashSet::new(),
             hit_override: None,
+            click_through_overlay: None,
+            text_parents: HashMap::new(),
+            oopif_tree: None,
+            same_frame_tree: None,
             history: json!({ "currentIndex": 0, "entries": [{ "id": 1, "url": "https://acme.com/login" }] }),
         }
+    }
+
+    /// A page with a button, a cross-site (out-of-process) iframe holding a card field and a
+    /// Pay button, and a same-site iframe holding one button.
+    fn frames() -> Page {
+        let mut page = Page::login();
+        page.tree = ax_rows(&[
+            ("1", "", "RootWebArea", "Shop", 1),
+            ("2", "1", "button", "Top", TOP_BUTTON),
+            ("3", "1", "Iframe", "Payment", OOP_IFRAME),
+            ("4", "1", "Iframe", "Same", SAME_IFRAME),
+        ]);
+        page.tree_after_click = None;
+        page.oopif_tree = Some(ax_rows(&[
+            ("1", "", "RootWebArea", "Pay", 1),
+            ("2", "1", "textbox", "Card", CARD_FIELD),
+            ("5", "1", "button", "Pay", PAY_BUTTON),
+        ]));
+        page.same_frame_tree = Some(ax_rows(&[
+            ("1", "", "RootWebArea", "Inner", 40),
+            ("2", "1", "button", "Inner", INNER_BUTTON),
+        ]));
+        // The card field is a text input; the fake ignores sessions here, so the page's
+        // button 2 answers like one too (it is only clicked).
+        page.probes.insert(
+            CARD_FIELD,
+            json!({ "connected": true, "tag": "input", "type": "text", "editable": true }),
+        );
+        page
     }
 }
 
@@ -86,9 +166,47 @@ fn id_of(object: &Value) -> i64 {
 fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value, BackendError>> {
     let cdp_err = |m: &str| Err(BackendError::Cdp(format!("CDP error -32000: {m}")));
     let backend = params["backendNodeId"].as_i64().unwrap_or(0);
+    // Calls in the out-of-process frame's child session carry `sessionId` (FakeBackend).
+    let in_frame = params["sessionId"] == "S1";
     let result = match method {
         "Page.getFrameTree" => Ok(json!({ "frameTree": { "frame": { "loaderId": page.loader } } })),
+        // Following frames: announce the out-of-process frame while handling the call.
+        "Target.setAutoAttach" if page.oopif_tree.is_some() && !in_frame => Ok(json!({
+            "__events": [{ "method": "Target.attachedToTarget", "params": {
+                "sessionId": "S1",
+                "targetInfo": { "targetId": "F1", "type": "iframe", "url": "https://pay.test/card" },
+            }}],
+        })),
+        "Target.setAutoAttach" if page.oopif_tree.is_some() => Ok(json!({})),
+        "Accessibility.getFullAXTree" if in_frame => Ok(page.oopif_tree.clone().unwrap()),
+        "Accessibility.getFullAXTree" if params["frameId"] == "F2" => {
+            Ok(page.same_frame_tree.clone().unwrap())
+        }
         "Accessibility.getFullAXTree" => Ok(page.tree.clone()),
+        "DOM.describeNode" if backend == OOP_IFRAME && page.oopif_tree.is_some() => Ok(
+            json!({ "node": { "frameId": "F1", "attributes": ["src", "https://pay.test/card"] } }),
+        ),
+        "DOM.describeNode" if backend == SAME_IFRAME && page.same_frame_tree.is_some() => Ok(
+            json!({ "node": { "frameId": "F2", "attributes": ["src", "https://acme.com/inner"] } }),
+        ),
+        "DOM.getBoxModel" if backend == OOP_IFRAME => {
+            let (x, y, w, h) = OOP_BOX;
+            Ok(json!({ "model": { "content": [x, y, x + w, y, x + w, y + h, x, y + h] } }))
+        }
+        // Inside the frame: its own coordinates (same layout rule as the page).
+        "DOM.getNodeForLocation" if in_frame => {
+            Ok(json!({ "backendNodeId": params["y"].as_i64().unwrap_or(0) / 10 }))
+        }
+        "DOM.getNodeForLocation"
+            if page.oopif_tree.is_some() && page.hit_override.is_none() && {
+                let (x, y) = (params["x"].as_f64().unwrap(), params["y"].as_f64().unwrap());
+                let (bx, by, bw, bh) = OOP_BOX;
+                (bx..bx + bw).contains(&x) && (by..by + bh).contains(&y)
+            } =>
+        {
+            // The page's hit test over the frame finds the <iframe> element.
+            Ok(json!({ "backendNodeId": OOP_IFRAME }))
+        }
         "Page.getLayoutMetrics" => Ok(json!({
             "cssLayoutViewport": { "clientWidth": 1280, "clientHeight": 720, "pageX": 0, "pageY": 0 },
             "cssContentSize": { "width": 1280, "height": 1840 },
@@ -104,7 +222,11 @@ fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value,
         }
         "DOM.getNodeForLocation" => {
             let y = params["y"].as_i64().unwrap_or(0);
-            Ok(json!({ "backendNodeId": page.hit_override.unwrap_or(y / 10) }))
+            let under = page.text_parents.get(&(y / 10)).copied().unwrap_or(y / 10);
+            let overlay = page
+                .click_through_overlay
+                .filter(|_| params["ignorePointerEventsNone"] == true);
+            Ok(json!({ "backendNodeId": page.hit_override.or(overlay).unwrap_or(under) }))
         }
         "Input.dispatchMouseEvent" => {
             if params["type"] == "mousePressed"
@@ -122,9 +244,16 @@ fn answer(page: &mut Page, method: &str, params: &Value) -> Option<Result<Value,
                     || json!({ "connected": true, "tag": "button", "type": "submit" }),
                 )
             } else if function.contains("n.host") {
-                // Hit check: does the hit node belong to the target?
+                // Hit check: does the hit node belong to the target? Like the real script,
+                // a text node stands for its parent element when the script normalizes it.
                 let hit = id_of(&params["arguments"][0]["objectId"]);
-                json!(hit == this)
+                let normalizes =
+                    function.contains("this.nodeType === 1 ? this : this.parentElement");
+                let target = match page.text_parents.get(&this) {
+                    Some(&parent) if normalizes => parent,
+                    _ => this,
+                };
+                json!(hit == target)
             } else if function.contains("[role=\"dialog\"]") {
                 // Cover lookup: the Accept button lives in the cookie dialog.
                 let cover = if this == ACCEPT_ALL {
@@ -195,16 +324,16 @@ impl Harness {
 
     /// Take a snapshot and return the ref printed for a backend node.
     async fn snapshot_ref(&self, backend: i64) -> String {
-        let out = self.ok("page.snapshot", json!({})).await;
+        self.snapshot_ref_in(TabId(1), backend).await
+    }
+
+    /// [`Harness::snapshot_ref`] in a given tab.
+    async fn snapshot_ref_in(&self, tab: TabId, backend: i64) -> String {
+        let out = self.ok("page.snapshot", json!({ "tab": tab })).await;
         let text = out["text"].as_str().unwrap().to_string();
         // Look the node up in the snapshot the command just stored (the registry's shared
         // state), instead of guessing ref numbers.
-        let ext = self
-            .registry
-            .extensions()
-            .get::<crate::PerceptionState>()
-            .unwrap();
-        let tab = ext.tab(TabId(1));
+        let tab = self.perception().tab(tab);
         let st = tab.lock().await;
         let (snap, _) = st.history.back().unwrap();
         snap.refs
@@ -212,6 +341,22 @@ impl Harness {
             .find(|r| r.backend_node_id == backend)
             .map(|r| r.ref_str.clone())
             .unwrap_or_else(|| panic!("no ref for {backend} in:\n{text}"))
+    }
+
+    /// The shared per-tab state the commands use.
+    fn perception(&self) -> Arc<crate::PerceptionState> {
+        self.registry
+            .extensions()
+            .get::<crate::PerceptionState>()
+            .unwrap()
+    }
+
+    /// Open another tab showing the same scripted page.
+    async fn open_tab(&self) -> TabId {
+        self.fake
+            .open_tab("https://acme.com/login".into(), true)
+            .await
+            .unwrap()
     }
 
     /// CDP calls of one method, as params.
@@ -744,6 +889,336 @@ async fn per_tab_state_survives_between_calls() {
     // Same refs, next snapshot id.
     assert_eq!(out["snap"], 2);
     assert!(out["text"].as_str().unwrap().contains("@2:e2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn click_through_overlay_does_not_cover_the_target() {
+    // Regression: the hit test asked Chromium to hit-test `pointer-events: none` elements,
+    // so a decorative overlay that real clicks pass through made every click fail with
+    // NOT_INTERACTABLE "covered by ...".
+    let mut page = Page::login();
+    page.click_through_overlay = Some(COOKIES_DIALOG);
+    let h = Harness::new(page);
+    let sign_in = h.snapshot_ref(SIGN_IN).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": sign_in, "action": "click", "returns": "none" }),
+    )
+    .await;
+    let hit_test = &h.sent("DOM.getNodeForLocation")[0];
+    assert_eq!(hit_test["ignorePointerEventsNone"], false);
+    assert_eq!(h.sent("Input.dispatchMouseEvent").len(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn text_refs_from_find_can_be_clicked_and_hovered() {
+    // Regression: a page.find text match is a DOM text node. The hit test reports the
+    // element around it, which never "was" the text node, so every click ended in
+    // NOT_INTERACTABLE "covered by <its own parent>".
+    const COOKIE_TEXT: i64 = 70; // StaticText "We use cookies..." inside paragraph 69
+    let mut page = Page::login();
+    page.text_parents.insert(COOKIE_TEXT, 69);
+    let h = Harness::new(page);
+    let out = h.ok("page.find", json!({ "text": "we use cookies" })).await;
+    let text = out["text"].as_str().unwrap();
+    assert!(text.contains("- text \"We use cookies"), "{text}");
+    let r = text
+        .split_whitespace()
+        .find(|w| w.starts_with('@'))
+        .unwrap();
+    h.ok(
+        "page.act",
+        json!({ "ref": r, "action": "hover", "returns": "none" }),
+    )
+    .await;
+    h.ok(
+        "page.act",
+        json!({ "ref": r, "action": "click", "returns": "none" }),
+    )
+    .await;
+    // The click lands on the text itself (its own box), not the middle of the paragraph.
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 4);
+    assert_eq!(mouse[1]["type"], "mouseMoved");
+    assert_eq!(mouse[2]["y"].as_f64(), Some(704.0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn ref_from_another_tab_never_resolves_and_names_its_tab() {
+    // Regression: snapshot ids and e-numbers started at 1 in every tab, so `@1:e5` from
+    // tab 1, sent without `tab` (default: the newest tab), clicked e5 of tab 2.
+    let mut page = Page::login();
+    page.tree_after_click = None;
+    let h = Harness::new(page);
+    let tab1_ref = h.snapshot_ref(SIGN_IN).await;
+    let tab2 = h.open_tab().await;
+    let tab2_ref = h.snapshot_ref_in(tab2, SIGN_IN).await;
+    // Same page, same DOM ids, but a different snapshot id and e-number.
+    assert_ne!(tab1_ref, tab2_ref);
+    assert!(tab2_ref.starts_with("@2:"), "{tab2_ref}");
+
+    let bare = tab1_ref.split(':').nth(1).unwrap().to_string();
+    for r in [tab1_ref.clone(), bare] {
+        let err = h
+            .call("page.act", json!({ "ref": r, "action": "click" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound, "{r}: {}", err.message);
+        assert!(
+            err.message.contains("belongs to tab 1, not to tab 2"),
+            "{}",
+            err.message
+        );
+        assert!(err.hint.unwrap().contains("tab=1"));
+        assert_eq!(err.retry, bmcp_core::Retry::No);
+    }
+    assert!(h.sent("Input.dispatchMouseEvent").is_empty());
+
+    // page.read and page.snapshot root= say the same.
+    let err = h
+        .call("page.read", json!({ "ref": tab1_ref }))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("belongs to tab 1"), "{}", err.message);
+    let err = h
+        .call("page.snapshot", json!({ "root": tab1_ref }))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("belongs to tab 1"), "{}", err.message);
+
+    // With the right tab both refs work.
+    h.ok(
+        "page.act",
+        json!({ "ref": tab1_ref, "tab": 1, "action": "click", "returns": "none" }),
+    )
+    .await;
+    h.ok(
+        "page.act",
+        json!({ "ref": tab2_ref, "action": "click", "returns": "none" }),
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn closed_tabs_are_forgotten() {
+    // Regression: nothing removed a closed tab's state (refs + up to 16 full snapshots).
+    let h = Harness::new(Page::login());
+    let tab2 = h.open_tab().await;
+    h.ok("page.snapshot", json!({ "tab": 1 })).await;
+    h.ok("page.snapshot", json!({ "tab": tab2 })).await;
+    let mut tracked = h.perception().tracked_tabs();
+    tracked.sort();
+    assert_eq!(tracked, [TabId(1), tab2]);
+
+    h.fake.close_tab(tab2).await.unwrap();
+    h.ok("page.snapshot", json!({ "tab": 1 })).await;
+    assert_eq!(h.perception().tracked_tabs(), [TabId(1)]);
+}
+
+#[test]
+fn snapshot_history_is_capped_in_bytes() {
+    use bmcp_perception::{PageHeader, Snapshot, SnapshotOptions};
+    let mut state = crate::TabState::default();
+    let big = |id: u64| Snapshot {
+        id,
+        document: 0,
+        header: PageHeader::default(),
+        text: "x".repeat(3 << 20),
+        refs: Vec::new(),
+        nodes: Vec::new(),
+        skeleton_fallback: false,
+        cut: false,
+    };
+    for id in 1..=10 {
+        state.remember(big(id), SnapshotOptions::default());
+        assert!(state.history_bytes() <= crate::state::KEEP_HISTORY_BYTES);
+    }
+    // The newest snapshots stay; a single one over the limit is still kept.
+    assert_eq!(state.history.back().unwrap().0.id, 10);
+    assert_eq!(state.history.len(), 2);
+    let mut huge = big(11);
+    huge.text = "x".repeat(crate::state::KEEP_HISTORY_BYTES + 1);
+    state.remember(huge, SnapshotOptions::default());
+    assert_eq!(state.history.len(), 1);
+    assert_eq!(state.latest().unwrap().0.id, 11);
+}
+
+#[tokio::test(start_paused = true)]
+async fn explicit_refs_stay_valid_over_many_acts_on_an_unchanged_page() {
+    // Regression: each page.act took two diff snapshots, and after 64 snapshots the record
+    // of the agent's snapshot was gone, so `@1:e5` failed with STALE_REF after ~32 acts.
+    let mut page = Page::login();
+    page.tree_after_click = None;
+    let h = Harness::new(page);
+    let email = h.snapshot_ref(EMAIL).await;
+    assert!(email.starts_with("@1:"), "{email}");
+    for i in 0..40 {
+        let out = h
+            .call("page.act", json!({ "ref": email, "action": "hover" }))
+            .await
+            .unwrap_or_else(|e| panic!("act {i} failed: {e:?}"));
+        assert!(out["text"].as_str().unwrap().contains("no changes"));
+    }
+}
+
+// ------------------------------------------------------------------ iframes and shadow DOM
+
+/// The ref printed for `merged` (a node id of the merged tree) in the latest snapshot.
+async fn ref_of(h: &Harness, merged: i64) -> String {
+    let tab = h.perception().tab(TabId(1));
+    let st = tab.lock().await;
+    let (snap, _) = st.history.back().unwrap();
+    snap.refs
+        .iter()
+        .find(|r| r.backend_node_id == merged)
+        .map(|r| r.ref_str.clone())
+        .unwrap_or_else(|| panic!("no ref for {merged} in:\n{}", snap.text))
+}
+
+#[tokio::test(start_paused = true)]
+async fn snapshot_merges_same_and_out_of_process_iframes() {
+    let h = Harness::new(Page::frames());
+    let out = h.ok("page.snapshot", json!({})).await;
+    let text = out["text"].as_str().unwrap();
+    let body: Vec<&str> = text.lines().skip(1).collect();
+    assert_eq!(
+        body,
+        [
+            "- button \"Top\" @1:e1",
+            "- iframe \"Payment\" (pay.test)",
+            "  - textbox \"Card\" @1:e2",
+            "  - button \"Pay\" @1:e3",
+            "- iframe \"Same\" (acme.com)",
+            "  - button \"Inner\" @1:e4",
+        ],
+        "{text}"
+    );
+    // The out-of-process frame was read in its own session; auto-attach was switched on
+    // for the page and for that session (for frames inside it).
+    let trees = h.sent("Accessibility.getFullAXTree");
+    assert!(trees.iter().any(|p| p["sessionId"] == "S1"), "{trees:?}");
+    assert!(trees.iter().any(|p| p["frameId"] == "F2"), "{trees:?}");
+    let attach = h.sent("Target.setAutoAttach");
+    assert_eq!(attach[0]["flatten"], true);
+    assert_eq!(attach[0]["waitForDebuggerOnStart"], false);
+    assert!(attach.iter().any(|p| p["sessionId"] == "S1"));
+
+    // page.find sees inside frames too.
+    let found = h.ok("page.find", json!({ "name": "pay" })).await;
+    assert!(
+        found["text"]
+            .as_str()
+            .unwrap()
+            .contains("button \"Pay\" @2:e3"),
+        "{found}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn act_inside_an_out_of_process_iframe_uses_its_session_and_page_coordinates() {
+    let h = Harness::new(Page::frames());
+    h.ok("page.snapshot", json!({})).await;
+    let pay = ref_of(&h, in_oopif(PAY_BUTTON)).await;
+    let card = ref_of(&h, in_oopif(CARD_FIELD)).await;
+    let top = ref_of(&h, TOP_BUTTON).await;
+    // Same DOM node id 2 in two frames, two different refs.
+    assert_ne!(card, top);
+
+    h.ok(
+        "page.act",
+        json!({ "ref": pay, "action": "click", "returns": "none" }),
+    )
+    .await;
+    // Node calls went to the frame's session with the frame's own node id ...
+    let resolved = h.sent("DOM.resolveNode");
+    assert_eq!(resolved[0]["backendNodeId"], PAY_BUTTON);
+    assert_eq!(resolved[0]["sessionId"], "S1");
+    // ... the mouse went to the page: the button's centre in the frame (150, 54) plus the
+    // iframe's content box corner (300, 600).
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(
+        (mouse[1]["x"].as_f64(), mouse[1]["y"].as_f64()),
+        (Some(450.0), Some(654.0))
+    );
+    assert!(mouse.iter().all(|p| p.get("sessionId").is_none()));
+
+    h.ok(
+        "page.act",
+        json!({ "ref": card, "action": "fill", "value": "4242", "returns": "none" }),
+    )
+    .await;
+    let focus = h.sent("DOM.focus");
+    assert_eq!(focus[0]["backendNodeId"], CARD_FIELD);
+    assert_eq!(focus[0]["sessionId"], "S1");
+    assert_eq!(h.sent("Input.insertText")[0]["text"], "4242");
+
+    // The page's own node 2 is still the page's.
+    h.ok(
+        "page.act",
+        json!({ "ref": top, "action": "click", "returns": "none" }),
+    )
+    .await;
+    let last = h.sent("DOM.resolveNode").pop().unwrap();
+    assert_eq!(last, json!({ "backendNodeId": TOP_BUTTON }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn act_inside_a_same_process_iframe_uses_the_page_session() {
+    let h = Harness::new(Page::frames());
+    h.ok("page.snapshot", json!({})).await;
+    let inner = ref_of(&h, INNER_BUTTON).await;
+    h.ok(
+        "page.act",
+        json!({ "ref": inner, "action": "click", "returns": "none" }),
+    )
+    .await;
+    assert_eq!(
+        h.sent("DOM.resolveNode")[0],
+        json!({ "backendNodeId": INNER_BUTTON })
+    );
+    // Same-process boxes are already in the page's coordinates.
+    let mouse = h.sent("Input.dispatchMouseEvent");
+    assert_eq!(
+        (mouse[1]["x"].as_f64(), mouse[1]["y"].as_f64()),
+        (Some(150.0), Some(414.0))
+    );
+    assert!(h.sent("DOM.getBoxModel").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn page_covering_an_iframe_blocks_clicks_inside_it() {
+    let mut page = Page::frames();
+    // Something in the page (the top button, say a sticky bar) lies over the frame.
+    page.hit_override = Some(TOP_BUTTON);
+    let h = Harness::new(page);
+    h.ok("page.snapshot", json!({})).await;
+    let pay = ref_of(&h, in_oopif(PAY_BUTTON)).await;
+    // The frame's own hit test is fine, but the page's finds the cover, not the iframe.
+    let err = h
+        .call("page.act", json!({ "ref": pay, "action": "click" }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotInteractable);
+    assert!(err.message.contains("is covered by"), "{}", err.message);
+    assert!(err.message.contains("(450, 654)"), "{}", err.message);
+    assert!(h.sent("Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn reading_the_page_walks_shadow_roots() {
+    let h = Harness::new(Page::login());
+    h.ok("page.read", json!({})).await;
+    let evaluated = h.sent("Runtime.evaluate");
+    let expression = evaluated
+        .iter()
+        .filter_map(|p| p["expression"].as_str())
+        .find(|e| e.contains("document.body"))
+        .unwrap();
+    // The page text goes through the same script as one element, which descends into
+    // shadow roots (innerText does not).
+    assert!(expression.contains(".call(document.body)"), "{expression}");
+    assert!(expression.contains("n.shadowRoot"), "{expression}");
+    assert!(expression.contains("assignedNodes"), "{expression}");
 }
 
 #[test]

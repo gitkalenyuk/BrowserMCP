@@ -1,6 +1,6 @@
 // Pure tab-state reducer. The core owns the truth; the chrome folds its events into
 // this state. No Svelte here so it can be unit-tested directly.
-import type { ApiEvents, TabGroup, TabId, TabInfo, TabsSnapshot } from '../api/types';
+import type { Agent, ApiEvents, TabGroup, TabId, TabInfo, TabsSnapshot } from '../api/types';
 
 export interface TabsState {
   tabs: TabInfo[];
@@ -96,4 +96,26 @@ export function groupRuns(state: TabsState): TabRun[] {
     else runs.push({ group, tabs: [tab] });
   }
   return runs;
+}
+
+/**
+ * The core gives every agent one tab group (`agent:<id>`, the agent's name and color).
+ * After `agents.updated` the chrome rebuilds those groups from the agent list and keeps
+ * the other (human) groups as they are.
+ */
+export function groupsWithAgents(groups: TabGroup[], agents: Agent[]): TabGroup[] {
+  const human = groups.filter((g) => !g.agentId);
+  const fromAgents: TabGroup[] = agents.map((a) => ({
+    id: a.groupId ?? `agent:${a.id}`,
+    name: a.name,
+    color: a.color,
+    agentId: a.id,
+  }));
+  return [...human, ...fromAgents];
+}
+
+/** Who controls a tab: the lock state, or `active` for an old-style `lockedBy` only. */
+export function lockState(tab: TabInfo): 'active' | 'paused' | 'handoff' | null {
+  if (tab.lock) return tab.lock.state;
+  return tab.lockedBy ? 'active' : null;
 }

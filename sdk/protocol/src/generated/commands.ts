@@ -343,6 +343,99 @@ export interface AdblockUpdateListsOutput {
   }[];
 }
 
+// ---- agents.forget ----
+
+/** Arguments of `agents.forget`. */
+export interface AgentsForgetArgs {
+  /** Agent id from agents_list. */
+  id: string;
+}
+
+/** Result of `agents.forget`. */
+export interface AgentsForgetOutput {
+  /** Tabs that left the agent's group and were unlocked. */
+  released: number[];
+}
+
+// ---- agents.list ----
+
+/**
+ * Arguments of `agents.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type AgentsListArgs = Record<string, never>;
+
+/** Result of `agents.list`. */
+export interface AgentsListOutput {
+  /** Known agents, oldest first. */
+  agents: {
+    /** Number of commands it called. */
+    calls: number;
+    /** Group color name: blue | orange | green | purple | pink | cyan | yellow | red. */
+    color: string;
+    /** Its tab group id (`agent:<id>`). */
+    groupId: string;
+    id: string;
+    /** Last call, ms since the Unix epoch. */
+    lastSeenMs: number;
+    /** Display name, e.g. "claude-code" or "Claude Code". */
+    name: string;
+    /**
+     * What an agent is doing, in the UI's words.
+     *
+     * - `"waiting"`: Waiting for the user (a tab in `handoff`).
+     */
+    status: "idle" | "running" | "error" | "waiting";
+    /** Tabs in its group. */
+    tabs: number[];
+    /** What it is doing right now (last command, or the handoff reason). */
+    task: string | null;
+  }[];
+}
+
+// ---- ai.handoff ----
+
+/** Arguments of `ai.handoff`. */
+export interface AiHandoffArgs {
+  /** What the user should do, shown in the browser, e.g. "Solve the CAPTCHA, then click Done". */
+  reason: string;
+  /** Tab the user should work in. Default: your current tab. */
+  tab?: number | null;
+  /**
+   * Wait up to this many seconds for the user to click Done (0 = return at once,
+   * default 0, max 600).
+   */
+  wait_secs?: number | null;
+}
+
+/** Result of `ai.handoff`. */
+export interface AiHandoffOutput {
+  /** Lock of one tab, as listed in `tabs.list` (`lock`) and sent in `tab.updated`. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /** True when the user clicked Done (the tab is yours again). */
+  resolved: boolean;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
 // ---- ai.provider_set ----
 
 /** Arguments of `ai.provider_set`. */
@@ -357,6 +450,12 @@ export interface AiProviderSetArgs {
    * @default null
    */
   base_url?: string | null;
+  /**
+   * true: make this the default provider of background AI features (self-healing,
+   * page.extract); false: stop it being the default.
+   * @default null
+   */
+  default?: boolean | null;
   /** Provider id from ai.providers. */
   id: string;
   /**
@@ -383,6 +482,8 @@ export interface AiProviderSetOutput {
   has_key: boolean;
   /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
   id: string;
+  /** Used by background AI features (self-healing, page.extract) when they name no provider. */
+  is_default: boolean;
   /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
   kind: string;
   /** Model used when `ai.session_start` gives none. */
@@ -434,6 +535,8 @@ export interface AiProvidersOutput {
     has_key: boolean;
     /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
     id: string;
+    /** Used by background AI features (self-healing, page.extract) when they name no provider. */
+    is_default: boolean;
     /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
     kind: string;
     /** Model used when `ai.session_start` gives none. */
@@ -3218,6 +3321,162 @@ export interface PageAxTreeOutput {
   tree: string;
 }
 
+// ---- page.dialog ----
+
+/** Arguments of `page.dialog`. */
+export interface PageDialogArgs {
+  /**
+   * OK or Cancel.
+   *
+   * - `"accept"`: OK / Leave.
+   * - `"dismiss"`: Cancel / Stay.
+   */
+  action: "accept" | "dismiss";
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** Text to type into a prompt before accepting it. */
+  text?: string | null;
+}
+
+/** Result of `page.dialog`. */
+export interface PageDialogOutput {
+  /**
+   * OK or Cancel.
+   *
+   * - `"accept"`: OK / Leave.
+   * - `"dismiss"`: Cancel / Stay.
+   */
+  action: "accept" | "dismiss";
+  /** The dialog that was answered (null when it opened before the browser watched the tab). */
+  dialog: {
+    /** Prefilled text of a prompt ("" for the other kinds). */
+    default_prompt: string;
+    message: string;
+    /**
+     * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+     * On the wire it is a plain number: `3`.
+     */
+    tab: number;
+    /**
+     * The four kinds of JavaScript dialogs (CDP `DialogType`).
+     *
+     * - `"beforeunload"`: "Leave site? Changes you made may not be saved."
+     */
+    type: "alert" | "confirm" | "prompt" | "beforeunload";
+    /** URL of the frame that opened it. */
+    url: string;
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- page.dialog_policy ----
+
+/** Arguments of `page.dialog_policy`. */
+export interface PageDialogPolicyArgs {
+  /**
+   * Rules for each kind: accept | dismiss | ask (leave it to the agent/human) |
+   * auto (accept while automation is active, else ask). Omitted = unchanged.
+   *
+   * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+   * - `"dismiss"`: Press Cancel at once.
+   * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+   * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+   */
+  alert?: "accept" | "dismiss" | "ask" | "auto" | null;
+  /**
+   * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+   * - `"dismiss"`: Press Cancel at once.
+   * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+   * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+   */
+  beforeunload?: "accept" | "dismiss" | "ask" | "auto" | null;
+  /**
+   * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+   * - `"dismiss"`: Press Cancel at once.
+   * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+   * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+   */
+  confirm?: "accept" | "dismiss" | "ask" | "auto" | null;
+  /**
+   * Change the rules of every tab (tab rules still win over global ones).
+   * @default false
+   */
+  global?: boolean;
+  /**
+   * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+   * - `"dismiss"`: Press Cancel at once.
+   * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+   * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+   */
+  prompt?: "accept" | "dismiss" | "ask" | "auto" | null;
+  /** Text for prompts that are accepted automatically (default: their prefilled text). */
+  prompt_text?: string | null;
+  /**
+   * Drop this level's rules first (back to the global rules / the defaults).
+   * @default false
+   */
+  reset?: boolean;
+  /** Tab id from tabs_list. Default: the most recently opened tab (unless `global`). */
+  tab?: number | null;
+}
+
+/** Result of `page.dialog_policy`. */
+export interface PageDialogPolicyOutput {
+  /**
+   * True when automation counts as active (a non-UI caller ran a command in the last
+   * minute): `auto` rules accept right now.
+   */
+  automation_active: boolean;
+  /** The rules now in force for this scope. */
+  policy: {
+    /**
+     * What to do with one kind of dialog.
+     *
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    alert: "accept" | "dismiss" | "ask" | "auto";
+    /**
+     * What to do with one kind of dialog.
+     *
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    beforeunload: "accept" | "dismiss" | "ask" | "auto";
+    /**
+     * What to do with one kind of dialog.
+     *
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    confirm: "accept" | "dismiss" | "ask" | "auto";
+    /**
+     * What to do with one kind of dialog.
+     *
+     * - `"accept"`: Press OK at once (prompts get `prompt_text`, else their default text).
+     * - `"dismiss"`: Press Cancel at once.
+     * - `"ask"`: Leave it open for the agent or the human (event + `DIALOG_OPEN` errors).
+     * - `"auto"`: `accept` while automation is active, otherwise `ask`.
+     */
+    prompt: "accept" | "dismiss" | "ask" | "auto";
+    prompt_text: string | null;
+  };
+  /** "global" or "tab". */
+  scope: string;
+  /** The tab (null for the global scope). */
+  tab: number | null;
+}
+
 // ---- page.diff ----
 
 /** Arguments of `page.diff`. */
@@ -3239,6 +3498,49 @@ export interface PageDiffOutput {
   tab: number;
   /** `diff A→B: + added | ~ changed | - removed`, or a full snapshot if the page navigated. */
   text: string;
+}
+
+// ---- page.extract ----
+
+/**
+ * Arguments of `page.extract`.
+ * `page.extract` arguments.
+ */
+export interface PageExtractArgs {
+  /**
+   * Name of the cached plan (data/extract-cache/<key>.json); default: the page's host plus
+   * a hash of the schema.
+   */
+  cache_key?: string | null;
+  /** Tells the AI what to look for, e.g. "the main product, not the recommendations". */
+  hint?: string | null;
+  model?: string | null;
+  /** AI provider for building the plan (default: the configured default provider). */
+  provider?: string | null;
+  /** Ignore the cache and build a new plan. */
+  rebuild?: boolean | null;
+  /** JSON Schema of the result: an object with `properties` (and `required`). */
+  schema: unknown;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `page.extract`.
+ * `page.extract` result.
+ */
+export interface PageExtractOutput {
+  cache_key: string;
+  /** The extracted object. */
+  data: unknown;
+  /** True when the cached plan worked (no AI call). */
+  from_cache: boolean;
+  /** Required fields still empty (the plan was then not cached). */
+  missing?: string[];
+  /** Id of the plan that produced `data`. */
+  plan_id: string;
+  /** True when the AI built a second plan because the first one missed required fields. */
+  rebuilt: boolean;
 }
 
 // ---- page.find ----
@@ -3270,6 +3572,138 @@ export interface PageFindOutput {
   text: string;
   /** Total matches before `limit`. */
   total: number;
+}
+
+// ---- page.find_clear ----
+
+/** Arguments of `page.find_clear`. */
+export interface PageFindClearArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `page.find_clear`. */
+export interface PageFindClearOutput {
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- page.find_text ----
+
+/** Arguments of `page.find_text`. */
+export interface PageFindTextArgs {
+  /**
+   * Match upper/lower case exactly (default false).
+   * @default false
+   */
+  case?: boolean;
+  /**
+   * Go to the next match of the same query (wraps around).
+   * @default false
+   */
+  next?: boolean;
+  /**
+   * Go to the previous match of the same query (wraps around).
+   * @default false
+   */
+  prev?: boolean;
+  /** Text to find (plain text, not a regex). "" clears the highlights. */
+  query: string;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `page.find_text`. */
+export interface PageFindTextOutput {
+  /** Text around the current match. */
+  context: string;
+  /** Number of visible matches (at most 1000). */
+  count: number;
+  /** 1-based number of the current match (0 when nothing matched). */
+  index: number;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- page.mhtml ----
+
+/** Arguments of `page.mhtml`. */
+export interface PageMhtmlArgs {
+  /** Output file: absolute, or relative to data/mhtml/. Default: data/mhtml/tab<N>-<time>.mhtml. */
+  path?: string | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `page.mhtml`.
+ * A file written by `page.pdf` / `page.mhtml`.
+ */
+export interface PageMhtmlOutput {
+  /** File size in bytes. */
+  bytes: number;
+  /** Absolute path of the file. */
+  path: string;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- page.pdf ----
+
+/** Arguments of `page.pdf`. */
+export interface PagePdfArgs {
+  /**
+   * Landscape pages (default false).
+   * @default false
+   */
+  landscape?: boolean;
+  /**
+   * Paper size (default letter).
+   *
+   * - `"letter"`: 8.5 × 11 in (Chromium's default).
+   * - `"legal"`: 8.5 × 14 in
+   * - `"tabloid"`: 11 × 17 in
+   * - `"a3"`: 297 × 420 mm
+   * - `"a4"`: 210 × 297 mm
+   * - `"a5"`: 148 × 210 mm
+   */
+  paper?: "letter" | "legal" | "tabloid" | "a3" | "a4" | "a5";
+  /** Output file: absolute, or relative to data/pdf/. Default: data/pdf/tab<N>-<time>.pdf. */
+  path?: string | null;
+  /**
+   * Print background colours and images (default false, like the print dialog).
+   * @default false
+   */
+  print_background?: boolean;
+  /** Zoom of the page content, 0.1–2 (default 1). */
+  scale?: number | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `page.pdf`.
+ * A file written by `page.pdf` / `page.mhtml`.
+ */
+export interface PagePdfOutput {
+  /** File size in bytes. */
+  bytes: number;
+  /** Absolute path of the file. */
+  path: string;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- page.read ----
@@ -3386,6 +3820,35 @@ export interface PageTextOutput {
   truncated: boolean;
 }
 
+// ---- page.upload ----
+
+/** Arguments of `page.upload`. */
+export interface PageUploadArgs {
+  /** Files to upload: absolute paths, or paths relative to data/runs/<run_id>/. */
+  files: string[];
+  /** The file input, or the button/label that opens the file chooser (from page_snapshot). */
+  ref: string;
+  /** Run whose folder relative paths are resolved in (see run_list). */
+  run_id?: string | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+  /** How long to wait for the file chooser after clicking a button (default 5000). */
+  timeout_ms?: number | null;
+}
+
+/** Result of `page.upload`. */
+export interface PageUploadOutput {
+  /** The files as given to the page (absolute paths). */
+  files: string[];
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  /** "input" (the ref was the file input) or "chooser" (clicking it opened a chooser). */
+  via: string;
+}
+
 // ---- passwords.delete ----
 
 /** Arguments of `passwords.delete`. */
@@ -3471,6 +3934,456 @@ export interface PasswordsSaveOutput {
   id: number;
   /** The normalized origin it was saved under. */
   origin: string;
+}
+
+// ---- plugins.disable ----
+
+/** Arguments of `plugins.disable`. */
+export interface PluginsDisableArgs {
+  /** Plugin name (its folder in data/plugins). */
+  name: string;
+}
+
+/**
+ * Result of `plugins.disable`.
+ * A plugin as `plugins.list` shows it.
+ */
+export interface PluginsDisableOutput {
+  dir: string;
+  enabled: boolean;
+  /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+  error?: string | null;
+  /** The manifest (missing when it could not be read). */
+  manifest?: {
+    /** @default "" */
+    description: string;
+    /**
+     * Event topic globs, e.g. `["tab.updated"]`.
+     * @default []
+     */
+    events: string[];
+    /** Entry script, relative to the plugin folder. */
+    main: string;
+    name: string;
+    /**
+     * Command globs, e.g. `["page.*", "net.rule_add"]`.
+     * @default []
+     */
+    permissions: string[];
+    /**
+     * What the plugin adds to the browser UI.
+     * @default {"palette":[]}
+     */
+    ui: {
+      /**
+       * Ctrl+K palette entries.
+       * @default []
+       */
+      palette: {
+        /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+        id: string;
+        /** Shown in the palette. */
+        title: string;
+      }[];
+    };
+    /**
+     * Userscript files (with `// @match` headers), relative to the plugin folder.
+     * @default []
+     */
+    userscripts: string[];
+    version: string;
+  } | null;
+  name: string;
+  pid?: number | null;
+  restarts: number;
+  /**
+   * What a plugin is doing right now.
+   *
+   * - `"disabled"`: Switched off by the user.
+   * - `"waiting"`: Enabled; the browser API is not up yet.
+   * - `"restarting"`: Failed; a restart is scheduled.
+   * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+   * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+   * - `"error"`: Bad manifest or no script host binary.
+   */
+  status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+  /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+  warnings?: string[];
+}
+
+// ---- plugins.enable ----
+
+/** Arguments of `plugins.enable`. */
+export interface PluginsEnableArgs {
+  /** Plugin name (its folder in data/plugins). */
+  name: string;
+}
+
+/**
+ * Result of `plugins.enable`.
+ * A plugin as `plugins.list` shows it.
+ */
+export interface PluginsEnableOutput {
+  dir: string;
+  enabled: boolean;
+  /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+  error?: string | null;
+  /** The manifest (missing when it could not be read). */
+  manifest?: {
+    /** @default "" */
+    description: string;
+    /**
+     * Event topic globs, e.g. `["tab.updated"]`.
+     * @default []
+     */
+    events: string[];
+    /** Entry script, relative to the plugin folder. */
+    main: string;
+    name: string;
+    /**
+     * Command globs, e.g. `["page.*", "net.rule_add"]`.
+     * @default []
+     */
+    permissions: string[];
+    /**
+     * What the plugin adds to the browser UI.
+     * @default {"palette":[]}
+     */
+    ui: {
+      /**
+       * Ctrl+K palette entries.
+       * @default []
+       */
+      palette: {
+        /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+        id: string;
+        /** Shown in the palette. */
+        title: string;
+      }[];
+    };
+    /**
+     * Userscript files (with `// @match` headers), relative to the plugin folder.
+     * @default []
+     */
+    userscripts: string[];
+    version: string;
+  } | null;
+  name: string;
+  pid?: number | null;
+  restarts: number;
+  /**
+   * What a plugin is doing right now.
+   *
+   * - `"disabled"`: Switched off by the user.
+   * - `"waiting"`: Enabled; the browser API is not up yet.
+   * - `"restarting"`: Failed; a restart is scheduled.
+   * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+   * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+   * - `"error"`: Bad manifest or no script host binary.
+   */
+  status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+  /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+  warnings?: string[];
+}
+
+// ---- plugins.install ----
+
+/** Arguments of `plugins.install`. */
+export interface PluginsInstallArgs {
+  /** Start it right away (default true). */
+  enable?: boolean | null;
+  /**
+   * Folder with plugin.json and the main script (absolute, or relative to the browser's
+   * working directory). It is copied to data/plugins/<name>.
+   */
+  path: string;
+  /** Overwrite an installed plugin of the same name (default false). */
+  replace?: boolean | null;
+}
+
+/**
+ * Result of `plugins.install`.
+ * A plugin as `plugins.list` shows it.
+ */
+export interface PluginsInstallOutput {
+  dir: string;
+  enabled: boolean;
+  /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+  error?: string | null;
+  /** The manifest (missing when it could not be read). */
+  manifest?: {
+    /** @default "" */
+    description: string;
+    /**
+     * Event topic globs, e.g. `["tab.updated"]`.
+     * @default []
+     */
+    events: string[];
+    /** Entry script, relative to the plugin folder. */
+    main: string;
+    name: string;
+    /**
+     * Command globs, e.g. `["page.*", "net.rule_add"]`.
+     * @default []
+     */
+    permissions: string[];
+    /**
+     * What the plugin adds to the browser UI.
+     * @default {"palette":[]}
+     */
+    ui: {
+      /**
+       * Ctrl+K palette entries.
+       * @default []
+       */
+      palette: {
+        /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+        id: string;
+        /** Shown in the palette. */
+        title: string;
+      }[];
+    };
+    /**
+     * Userscript files (with `// @match` headers), relative to the plugin folder.
+     * @default []
+     */
+    userscripts: string[];
+    version: string;
+  } | null;
+  name: string;
+  pid?: number | null;
+  restarts: number;
+  /**
+   * What a plugin is doing right now.
+   *
+   * - `"disabled"`: Switched off by the user.
+   * - `"waiting"`: Enabled; the browser API is not up yet.
+   * - `"restarting"`: Failed; a restart is scheduled.
+   * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+   * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+   * - `"error"`: Bad manifest or no script host binary.
+   */
+  status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+  /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+  warnings?: string[];
+}
+
+// ---- plugins.list ----
+
+/**
+ * Arguments of `plugins.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type PluginsListArgs = Record<string, never>;
+
+/** Result of `plugins.list`. */
+export interface PluginsListOutput {
+  plugins: {
+    dir: string;
+    enabled: boolean;
+    /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+    error?: string | null;
+    /** The manifest (missing when it could not be read). */
+    manifest?: {
+      /** @default "" */
+      description: string;
+      /**
+       * Event topic globs, e.g. `["tab.updated"]`.
+       * @default []
+       */
+      events: string[];
+      /** Entry script, relative to the plugin folder. */
+      main: string;
+      name: string;
+      /**
+       * Command globs, e.g. `["page.*", "net.rule_add"]`.
+       * @default []
+       */
+      permissions: string[];
+      /**
+       * What the plugin adds to the browser UI.
+       * @default {"palette":[]}
+       */
+      ui: {
+        /**
+         * Ctrl+K palette entries.
+         * @default []
+         */
+        palette: {
+          /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+          id: string;
+          /** Shown in the palette. */
+          title: string;
+        }[];
+      };
+      /**
+       * Userscript files (with `// @match` headers), relative to the plugin folder.
+       * @default []
+       */
+      userscripts: string[];
+      version: string;
+    } | null;
+    name: string;
+    pid?: number | null;
+    restarts: number;
+    /**
+     * What a plugin is doing right now.
+     *
+     * - `"disabled"`: Switched off by the user.
+     * - `"waiting"`: Enabled; the browser API is not up yet.
+     * - `"restarting"`: Failed; a restart is scheduled.
+     * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+     * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+     * - `"error"`: Bad manifest or no script host binary.
+     */
+    status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+    /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+    warnings?: string[];
+  }[];
+}
+
+// ---- plugins.logs ----
+
+/** Arguments of `plugins.logs`. */
+export interface PluginsLogsArgs {
+  /** Newest lines to return (default 100, at most 500 are kept). */
+  limit?: number | null;
+  name: string;
+}
+
+/** Result of `plugins.logs`. */
+export interface PluginsLogsOutput {
+  /**
+   * Oldest first. `stream` is stdout (console.log), stderr (console.error, uncaught errors)
+   * or system (started, exited, restarting…).
+   */
+  lines: {
+    line: string;
+    /** `stdout`, `stderr` or `system` (lines from the plugin manager itself). */
+    stream: string;
+    ts_ms: number;
+  }[];
+  name: string;
+}
+
+// ---- plugins.palette ----
+
+/**
+ * Arguments of `plugins.palette`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type PluginsPaletteArgs = Record<string, never>;
+
+/** Result of `plugins.palette`. */
+export interface PluginsPaletteOutput {
+  commands: {
+    id: string;
+    plugin: string;
+    title: string;
+  }[];
+}
+
+// ---- plugins.palette_run ----
+
+/** Arguments of `plugins.palette_run`. */
+export interface PluginsPaletteRunArgs {
+  /** Entry id from plugins.palette. */
+  id: string;
+  plugin: string;
+}
+
+/** Result of `plugins.palette_run`. */
+export interface PluginsPaletteRunOutput {
+  /** False when the plugin is not running (the event was sent anyway). */
+  delivered: boolean;
+}
+
+// ---- plugins.reload ----
+
+/** Arguments of `plugins.reload`. */
+export interface PluginsReloadArgs {
+  /** Plugin to reload; omit to rescan data/plugins and restart every plugin. */
+  name?: string | null;
+}
+
+/** Result of `plugins.reload`. */
+export interface PluginsReloadOutput {
+  plugins: {
+    dir: string;
+    enabled: boolean;
+    /** Why the plugin is in `error` / `crashed` (manifest problem, last stderr line, …). */
+    error?: string | null;
+    /** The manifest (missing when it could not be read). */
+    manifest?: {
+      /** @default "" */
+      description: string;
+      /**
+       * Event topic globs, e.g. `["tab.updated"]`.
+       * @default []
+       */
+      events: string[];
+      /** Entry script, relative to the plugin folder. */
+      main: string;
+      name: string;
+      /**
+       * Command globs, e.g. `["page.*", "net.rule_add"]`.
+       * @default []
+       */
+      permissions: string[];
+      /**
+       * What the plugin adds to the browser UI.
+       * @default {"palette":[]}
+       */
+      ui: {
+        /**
+         * Ctrl+K palette entries.
+         * @default []
+         */
+        palette: {
+          /** Sent back to the plugin as `plugin.command {plugin, id}`. */
+          id: string;
+          /** Shown in the palette. */
+          title: string;
+        }[];
+      };
+      /**
+       * Userscript files (with `// @match` headers), relative to the plugin folder.
+       * @default []
+       */
+      userscripts: string[];
+      version: string;
+    } | null;
+    name: string;
+    pid?: number | null;
+    restarts: number;
+    /**
+     * What a plugin is doing right now.
+     *
+     * - `"disabled"`: Switched off by the user.
+     * - `"waiting"`: Enabled; the browser API is not up yet.
+     * - `"restarting"`: Failed; a restart is scheduled.
+     * - `"exited"`: The script ended by itself with exit code 0 (no event handlers left).
+     * - `"crashed"`: Failed too often in a row; enable or reload to try again.
+     * - `"error"`: Bad manifest or no script host binary.
+     */
+    status: "running" | "disabled" | "waiting" | "restarting" | "exited" | "crashed" | "error";
+    /** Permissions that amount to full access (see `manifest::Manifest::warnings`). */
+    warnings?: string[];
+  }[];
+}
+
+// ---- plugins.remove ----
+
+/** Arguments of `plugins.remove`. */
+export interface PluginsRemoveArgs {
+  /** Plugin name (its folder in data/plugins). */
+  name: string;
+}
+
+/** Result of `plugins.remove`. */
+export interface PluginsRemoveOutput {
+  /** False when there was nothing to remove. */
+  removed: boolean;
 }
 
 // ---- proxy.forward_list ----
@@ -4021,6 +4934,16 @@ export interface RunCancelOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4094,6 +5017,26 @@ export interface RunExportOutput {
   to: "csv" | "xlsx" | "json" | "sqlite" | "webhook" | "google_sheets";
 }
 
+// ---- run.heal_accept ----
+
+/** Arguments of `run.heal_accept`. */
+export interface RunHealAcceptArgs {
+  proposal_id: string;
+}
+
+/**
+ * Result of `run.heal_accept`.
+ * What `run.heal_accept` returns.
+ */
+export interface RunHealAcceptOutput {
+  id: string;
+  proposal_id: string;
+  /** Rows put back into the queue. */
+  requeued: number;
+  /** The new script version the run continues with. */
+  script: string;
+}
+
 // ---- run.heal_apply ----
 
 /** Arguments of `run.heal_apply`. */
@@ -4110,6 +5053,142 @@ export interface RunHealApplyOutput {
   requeued: number;
   /** The new script version the run continues with. */
   script: string;
+}
+
+// ---- run.heal_proposals ----
+
+/** Arguments of `run.heal_proposals`. */
+export interface RunHealProposalsArgs {
+  /** Only proposals of this run. */
+  id?: string | null;
+}
+
+/** Result of `run.heal_proposals`. */
+export interface RunHealProposalsOutput {
+  /** Newest first. */
+  proposals: {
+    /** 1-based attempt of this heal request. */
+    attempt: number;
+    /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+    checks: string[];
+    /** The model's own estimate, 0..1. */
+    confidence: number;
+    created_ms: number;
+    /** Unified diff of the change. */
+    diff: string;
+    explanation: string;
+    /** The run. */
+    id: string;
+    max_attempts: number;
+    model?: string | null;
+    patched_code: string;
+    proposal_id: string;
+    /** AI provider and model that wrote it. */
+    provider: string;
+    /** The row that broke. */
+    row: number;
+    /** The script version the row ran (the patch becomes the next version). */
+    script: string;
+    /**
+     * Where a proposal stands.
+     *
+     * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+     * - `"superseded"`: A newer proposal for the same run replaced it.
+     */
+    status: "accepted" | "rejected" | "pending" | "superseded";
+  }[];
+}
+
+// ---- run.heal_propose ----
+
+/** Arguments of `run.heal_propose`. */
+export interface RunHealProposeArgs {
+  /** Extra instructions for the AI, e.g. "the button is now called Log in". */
+  feedback?: string | null;
+  /** Run id of a run paused by run.heal_needed. */
+  id: string;
+  model?: string | null;
+  /** AI provider from ai_providers (default: the configured default provider). */
+  provider?: string | null;
+}
+
+/**
+ * Result of `run.heal_propose`.
+ * A validated patch for a paused run.
+ */
+export interface RunHealProposeOutput {
+  /** 1-based attempt of this heal request. */
+  attempt: number;
+  /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+  checks: string[];
+  /** The model's own estimate, 0..1. */
+  confidence: number;
+  created_ms: number;
+  /** Unified diff of the change. */
+  diff: string;
+  explanation: string;
+  /** The run. */
+  id: string;
+  max_attempts: number;
+  model?: string | null;
+  proposal_id: string;
+  /** AI provider and model that wrote it. */
+  provider: string;
+  /** The row that broke. */
+  row: number;
+  /** The script version the row ran (the patch becomes the next version). */
+  script: string;
+  /**
+   * Where a proposal stands.
+   *
+   * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+   * - `"superseded"`: A newer proposal for the same run replaced it.
+   */
+  status: "accepted" | "rejected" | "pending" | "superseded";
+}
+
+// ---- run.heal_reject ----
+
+/** Arguments of `run.heal_reject`. */
+export interface RunHealRejectArgs {
+  /** What is wrong with it; the AI gets this for the next attempt. */
+  feedback?: string | null;
+  proposal_id: string;
+}
+
+/**
+ * Result of `run.heal_reject`.
+ * A validated patch for a paused run.
+ */
+export interface RunHealRejectOutput {
+  /** 1-based attempt of this heal request. */
+  attempt: number;
+  /** What was validated, e.g. ["applies", "region 12-42", "transpiles"]. */
+  checks: string[];
+  /** The model's own estimate, 0..1. */
+  confidence: number;
+  created_ms: number;
+  /** Unified diff of the change. */
+  diff: string;
+  explanation: string;
+  /** The run. */
+  id: string;
+  max_attempts: number;
+  model?: string | null;
+  proposal_id: string;
+  /** AI provider and model that wrote it. */
+  provider: string;
+  /** The row that broke. */
+  row: number;
+  /** The script version the row ran (the patch becomes the next version). */
+  script: string;
+  /**
+   * Where a proposal stands.
+   *
+   * - `"pending"`: Waiting for `run.heal_accept` / `run.heal_reject`.
+   * - `"superseded"`: A newer proposal for the same run replaced it.
+   */
+  status: "accepted" | "rejected" | "pending" | "superseded";
 }
 
 // ---- run.list ----
@@ -4145,6 +5224,16 @@ export interface RunListOutput {
     options: {
       /** Pause and ask for a patch when a row breaks on a page.* selector error. */
       heal: boolean;
+      /**
+       * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+       * (confident patches are applied after a dry run). Absent in runs from older versions
+       * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+       *
+       * - `"off"`: The row just fails.
+       * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+       * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+       */
+      heal_mode?: "off" | "ask" | "auto" | null;
       /** Worker slots actually used (after the CPU/RAM auto-limit). */
       parallel: number;
       /** What the caller asked for. */
@@ -4207,6 +5296,16 @@ export interface RunPauseOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4318,6 +5417,16 @@ export interface RunResumeOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4360,10 +5469,16 @@ export interface RunStartArgs {
     xlsx_path?: string | null;
   };
   /**
-   * Pause and emit run.heal_needed when a row breaks on a page.* selector error
-   * (NOT_FOUND, NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET). Default true.
+   * Self-healing when a row breaks on a page.* selector error (NOT_FOUND,
+   * NOT_INTERACTABLE, STALE_REF, TIMEOUT, AMBIGUOUS_TARGET): "ask" (default: pause, an AI
+   * proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
+   * are applied) or "off". `true` = "ask", `false` = "off".
+   *
+   * - `"off"`: The row just fails.
+   * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+   * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
    */
-  heal?: boolean | null;
+  heal?: boolean | "off" | "ask" | "auto" | null;
   /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
   parallel?: number | null;
   /**
@@ -4408,6 +5523,16 @@ export interface RunStartOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4469,6 +5594,16 @@ export interface RunStatusOutput {
   options: {
     /** Pause and ask for a patch when a row breaks on a page.* selector error. */
     heal: boolean;
+    /**
+     * How a heal request is answered: `ask` (a person confirms the AI's patch) or `auto`
+     * (confident patches are applied after a dry run). Absent in runs from older versions
+     * (= `ask` when `heal` is on). Acted on by `crates/heal`, not by this crate.
+     *
+     * - `"off"`: The row just fails.
+     * - `"ask"`: Pause; an AI proposes a patch and a person accepts or rejects it (default).
+     * - `"auto"`: Pause; an AI patch with confidence >= 0.8 that fixes the failing row in a dry run is applied without asking (otherwise like `ask`).
+     */
+    heal_mode?: "off" | "ask" | "auto" | null;
     /** Worker slots actually used (after the CPU/RAM auto-limit). */
     parallel: number;
     /** What the caller asked for. */
@@ -4493,6 +5628,72 @@ export interface RunStatusOutput {
    */
   status: "running" | "paused" | "finished" | "failed" | "cancelled";
   total: number;
+}
+
+// ---- script.debug_cmd ----
+
+/** Arguments of `script.debug_cmd`. */
+export interface ScriptDebugCmdArgs {
+  /**
+   * What `script.debug_cmd` can do.
+   *
+   * - `"continue"`: Run to the next breakpoint (F5).
+   * - `"step_over"`: Next line, over calls (F10).
+   * - `"step_into"`: Next line, into calls (F11).
+   * - `"step_out"`: Run until the current function returns (Shift+F11).
+   * - `"pause"`: Stop as soon as possible.
+   * - `"set_breakpoints"`: Replace all breakpoints with `lines`.
+   * - `"stop"`: Kill the script.
+   */
+  action: "continue" | "step_over" | "step_into" | "step_out" | "pause" | "set_breakpoints" | "stop";
+  /** Session id from script.debug_start. */
+  id: string;
+  /** For set_breakpoints: TypeScript lines (1-based). */
+  lines?: number[] | null;
+}
+
+/** Result of `script.debug_cmd`. */
+export interface ScriptDebugCmdOutput {
+  /** For set_breakpoints: where the breakpoints really are. */
+  breakpoints?: number[] | null;
+}
+
+// ---- script.debug_start ----
+
+/** Arguments of `script.debug_start`. */
+export interface ScriptDebugStartArgs {
+  /** TypeScript lines (1-based) to stop at. */
+  breakpoints?: number[] | null;
+  /** Inline TypeScript instead of a saved script (e.g. the editor's unsaved buffer). */
+  code?: string | null;
+  /** Values the script reads as inputs.<key> (passed as strings). */
+  inputs?: Record<string, unknown> | null;
+  /** Saved script to debug. Give `name` or `code`. */
+  name?: string | null;
+  /** End the session after this many seconds (default 1800). */
+  timeout_secs?: number | null;
+}
+
+/** Result of `script.debug_start`. */
+export interface ScriptDebugStartOutput {
+  /** Where the breakpoints really are (a line without code moves to the next one). */
+  breakpoints: number[];
+  /** Set when the script could not even start (e.g. a syntax error); the session is gone. */
+  error?: {
+    /**
+     * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+     * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+     */
+    code: string;
+    /** The browser command that failed, e.g. `page.find`. */
+    command?: string | null;
+    /** Line in the script of the top stack frame. */
+    line?: number | null;
+    /** First line of the error message. */
+    message: string;
+  } | null;
+  /** Session id for script.debug_cmd and the script.debug_* events. */
+  id: string;
 }
 
 // ---- script.delete ----
@@ -5134,6 +6335,27 @@ export interface TabsFreezeOutput {
   tab: number;
 }
 
+// ---- tabs.groups ----
+
+/**
+ * Arguments of `tabs.groups`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TabsGroupsArgs = Record<string, never>;
+
+/** Result of `tabs.groups`. */
+export interface TabsGroupsOutput {
+  groups: {
+    /** Set for agent-owned groups. */
+    agentId: string | null;
+    /** grey | blue | red | yellow | green | pink | purple | cyan | orange */
+    color: string;
+    id: string;
+    name: string;
+    tabs: number[];
+  }[];
+}
+
 // ---- tabs.list ----
 
 /**
@@ -5146,7 +6368,7 @@ export type TabsListArgs = Record<string, never>;
 export interface TabsListOutput {
   /** The tab the user is looking at, or null when no tab is open. */
   activeId: number | null;
-  /** Tab groups (always empty for now). */
+  /** Tab groups: one per known agent (`agent:<id>`). */
   groups: {
     /** Set for agent-owned groups. */
     agentId: string | null;
@@ -5155,7 +6377,10 @@ export interface TabsListOutput {
     id: string;
     name: string;
   }[];
-  /** Open tabs in tab-strip order. */
+  /**
+   * Open tabs in tab-strip order; `groupId` / `lockedBy` / `lock` say which agent owns
+   * a tab.
+   */
   tabs: {
     /**
      * True for the tab shown in its window (one per window).
@@ -5186,6 +6411,23 @@ export interface TabsListOutput {
     id: number;
     /** True while the page is still loading. */
     loading: boolean;
+    /** Agent lock of the tab; null when no agent owns it. */
+    lock: {
+      /** Agent whose group the tab is in. */
+      owner: string;
+      /** `handoff`: what the agent asks the user to do. */
+      reason: string | null;
+      /** When the state last changed, ms since the Unix epoch. */
+      sinceMs: number;
+      /**
+       * Who controls an agent-owned tab right now.
+       *
+       * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+       * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+       * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+       */
+      state: "active" | "paused" | "handoff";
+    } | null;
     /**
      * Agent holding the tab lock. Always null for now (agent locks come later).
      * @default null
@@ -5196,6 +6438,48 @@ export interface TabsListOutput {
     /** Current URL. */
     url: string;
   }[];
+}
+
+// ---- tabs.lock ----
+
+/** Arguments of `tabs.lock`. */
+export interface TabsLockArgs {
+  /**
+   * Only for the user / scripts: give the tab to this agent (default: the agent whose
+   * group the tab is in). Agents leave it out and lock for themselves.
+   */
+  agent?: string | null;
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.lock`.
+ * Output of `tabs.lock` / `tabs.unlock`.
+ */
+export interface TabsLockOutput {
+  /** The tab's lock now; null = no agent owns the tab. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- tabs.open ----
@@ -5254,6 +6538,43 @@ export interface TabsOpenOutput {
   title: string;
   /** Current URL. */
   url: string;
+}
+
+// ---- tabs.unlock ----
+
+/** Arguments of `tabs.unlock`. */
+export interface TabsUnlockArgs {
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.unlock`.
+ * Output of `tabs.lock` / `tabs.unlock`.
+ */
+export interface TabsUnlockOutput {
+  /** The tab's lock now; null = no agent owns the tab. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- term.close ----
@@ -5449,6 +6770,98 @@ export interface TriggerSetOutput {
   spec: string;
 }
 
+// ---- trigger.webhook_fire ----
+
+/** Arguments of `trigger.webhook_fire`. */
+export interface TriggerWebhookFireArgs {
+  /** The raw request body. */
+  body: string;
+  id: string;
+  /** The X-BMCP-Signature header value. */
+  signature: string;
+}
+
+/** Result of `trigger.webhook_fire`. */
+export interface TriggerWebhookFireOutput {
+  /** See run.status / run.results. */
+  run_id: string;
+  script: string;
+}
+
+// ---- trigger.webhook_list ----
+
+/**
+ * Arguments of `trigger.webhook_list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TriggerWebhookListArgs = Record<string, never>;
+
+/** Result of `trigger.webhook_list`. */
+export interface TriggerWebhookListOutput {
+  /** Without secrets. */
+  hooks: {
+    created_ms: number;
+    id: string;
+    inputs: Record<string, unknown>;
+    inputs_from_body: boolean;
+    last_fired_ms?: number | null;
+    last_run_id?: string | null;
+    /** `POST` here: `/v1/hooks/<id>`. */
+    path: string;
+    script: string;
+  }[];
+}
+
+// ---- trigger.webhook_remove ----
+
+/** Arguments of `trigger.webhook_remove`. */
+export interface TriggerWebhookRemoveArgs {
+  id: string;
+}
+
+/** Result of `trigger.webhook_remove`. */
+export interface TriggerWebhookRemoveOutput {
+  /** False when there was nothing to remove. */
+  removed: boolean;
+}
+
+// ---- trigger.webhook_set ----
+
+/** Arguments of `trigger.webhook_set`. */
+export interface TriggerWebhookSetArgs {
+  /** Replace the hook with this id (default: a new random id). */
+  id?: string | null;
+  /** Fixed inputs added to every call (the body's keys win). */
+  inputs?: Record<string, unknown> | null;
+  /**
+   * The JSON object body becomes the script's inputs (default true); false = the raw body
+   * arrives as inputs.body.
+   */
+  inputs_from_body?: boolean | null;
+  /** Saved script (data/scripts/<name>.ts) to run on every call. */
+  script: string;
+  /** Shared secret (at least 16 chars) the sender signs bodies with; default: random. */
+  secret?: string | null;
+}
+
+/**
+ * Result of `trigger.webhook_set`.
+ * What `trigger.webhook_set` returns: the hook plus its secret (shown only here).
+ */
+export interface TriggerWebhookSetOutput {
+  created_ms: number;
+  id: string;
+  inputs: Record<string, unknown>;
+  inputs_from_body: boolean;
+  last_fired_ms?: number | null;
+  last_run_id?: string | null;
+  /** `POST` here: `/v1/hooks/<id>`. */
+  path: string;
+  script: string;
+  /** Give this to the sender; it signs every request with it. Not shown by webhook_list. */
+  secret: string;
+}
+
 // ---- ui.answer ----
 
 /** Arguments of `ui.answer`. */
@@ -5557,6 +6970,177 @@ export interface UiNotifyOutput {
   skipped: ("ui" | "os" | "telegram" | "webhook")[];
 }
 
+// ---- userscripts.delete ----
+
+/** Arguments of `userscripts.delete`. */
+export interface UserscriptsDeleteArgs {
+  name: string;
+}
+
+/** Result of `userscripts.delete`. */
+export interface UserscriptsDeleteOutput {
+  /** False when there was nothing to remove. */
+  removed: boolean;
+}
+
+// ---- userscripts.enable ----
+
+/** Arguments of `userscripts.enable`. */
+export interface UserscriptsEnableArgs {
+  /** false = switch it off (default true). */
+  enabled?: boolean | null;
+  name: string;
+}
+
+/** Result of `userscripts.enable`. */
+export interface UserscriptsEnableOutput {
+  enabled: boolean;
+  name: string;
+}
+
+// ---- userscripts.inject ----
+
+/** Arguments of `userscripts.inject`. */
+export interface UserscriptsInjectArgs {
+  /**
+   * Body of an async function run in the page's main frame, in an isolated world (same
+   * DOM, own globals). `return` a JSON value to get it back.
+   */
+  js: string;
+  /** Tab id (a userscript gets it as inputs.tab). Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `userscripts.inject`. */
+export interface UserscriptsInjectOutput {
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+  /** What the function returned (null for nothing). */
+  value: unknown;
+}
+
+// ---- userscripts.list ----
+
+/**
+ * Arguments of `userscripts.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type UserscriptsListArgs = Record<string, never>;
+
+/** Result of `userscripts.list`. */
+export interface UserscriptsListOutput {
+  userscripts: {
+    enabled: boolean;
+    error?: string | null;
+    /** Parsed header; missing when it is invalid (see `error`). */
+    header?: {
+      description?: string | null;
+      exclude_matches: string[];
+      excludes: string[];
+      includes: string[];
+      matches: string[];
+      name?: string | null;
+      /** When a userscript runs during a navigation. */
+      run_at: "document-start" | "document-end" | "document-idle";
+      timeout_secs?: number | null;
+      version?: string | null;
+    } | null;
+    /** The last run of a userscript. */
+    last_run?: {
+      at_ms: number;
+      duration_ms: number;
+      /** What the host printed when a script failed, split into parts an agent can act on. */
+      error?: {
+        /**
+         * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+         * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+         */
+        code: string;
+        /** The browser command that failed, e.g. `page.find`. */
+        command?: string | null;
+        /** Line in the script of the top stack frame. */
+        line?: number | null;
+        /** First line of the error message. */
+        message: string;
+      } | null;
+      ok: boolean;
+      tab: number;
+      url: string;
+    } | null;
+    /** File name without `.ts`; `<plugin>/<file>` for a plugin's userscript. */
+    name: string;
+    path: string;
+    /** `user` (data/userscripts) or `plugin:<name>`. */
+    source: string;
+  }[];
+}
+
+// ---- userscripts.save ----
+
+/** Arguments of `userscripts.save`. */
+export interface UserscriptsSaveArgs {
+  /**
+   * TypeScript starting with a header, e.g. `// @match https://*.example.com/*` and
+   * `// @run-at document-end`. It runs once per matching page load with inputs.tab (tab id)
+   * and inputs.url; change the page with browser.userscripts.inject({tab, js}).
+   */
+  code: string;
+  /** 1-64 chars of A-Z a-z 0-9 _ - (no .ts); overwrites. */
+  name: string;
+}
+
+/**
+ * Result of `userscripts.save`.
+ * A userscript as `userscripts.list` shows it.
+ */
+export interface UserscriptsSaveOutput {
+  enabled: boolean;
+  error?: string | null;
+  /** Parsed header; missing when it is invalid (see `error`). */
+  header?: {
+    description?: string | null;
+    exclude_matches: string[];
+    excludes: string[];
+    includes: string[];
+    matches: string[];
+    name?: string | null;
+    /** When a userscript runs during a navigation. */
+    run_at: "document-start" | "document-end" | "document-idle";
+    timeout_secs?: number | null;
+    version?: string | null;
+  } | null;
+  /** The last run of a userscript. */
+  last_run?: {
+    at_ms: number;
+    duration_ms: number;
+    /** What the host printed when a script failed, split into parts an agent can act on. */
+    error?: {
+      /**
+       * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+       * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+       */
+      code: string;
+      /** The browser command that failed, e.g. `page.find`. */
+      command?: string | null;
+      /** Line in the script of the top stack frame. */
+      line?: number | null;
+      /** First line of the error message. */
+      message: string;
+    } | null;
+    ok: boolean;
+    tab: number;
+    url: string;
+  } | null;
+  /** File name without `.ts`; `<plugin>/<file>` for a plugin's userscript. */
+  name: string;
+  path: string;
+  /** `user` (data/userscripts) or `plugin:<name>`. */
+  source: string;
+}
+
 /** Every command by dotted name, with its argument and result types. */
 export interface Commands {
   /** Enforce adblock + site policies in a tab now (interim: CDP Fetch interception and cosmetic CSS in an isolated world, until the CEF network hook lands). Downloads the filter lists on first use. Reload the page to see the full effect. */
@@ -5569,6 +7153,12 @@ export interface Commands {
   "adblock.toggle": { args: AdblockToggleArgs; output: AdblockToggleOutput };
   /** Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list. */
   "adblock.update_lists": { args: AdblockUpdateListsArgs; output: AdblockUpdateListsOutput };
+  /** Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call. */
+  "agents.forget": { args: AgentsForgetArgs; output: AgentsForgetOutput };
+  /** List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs. */
+  "agents.list": { args: AgentsListArgs; output: AgentsListOutput };
+  /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
+  "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
   /** Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider. */
   "ai.provider_set": { args: AiProviderSetArgs; output: AiProviderSetOutput };
   /** Check a provider without spending tokens: API providers list their models (GET /models), CLI providers run --version. Returns ok, models/version or error. */
@@ -5703,10 +7293,24 @@ export interface Commands {
   "page.act_batch": { args: PageActBatchArgs; output: PageActBatchOutput };
   /** Accessibility tree of the page as an indented list of roles and names (debug preview; agents should use page_snapshot). */
   "page.ax_tree": { args: PageAxTreeArgs; output: PageAxTreeOutput };
+  /** Answer the JavaScript dialog (alert/confirm/prompt/beforeunload) open on a tab: accept (OK; prompts take `text`) or dismiss (Cancel). While a dialog is open, other page_*\/input_*\/nav_* commands on the tab fail with DIALOG_OPEN, whose candidates[0] describes the dialog. NOT_FOUND when no dialog is open. */
+  "page.dialog": { args: PageDialogArgs; output: PageDialogOutput };
+  /** Set how JavaScript dialogs are handled automatically, per tab or `global`: alert/confirm/prompt/beforeunload = accept | dismiss | ask | auto. Default: ask (left open: page_dialog_opened event, DIALOG_OPEN errors), beforeunload = auto (accepted while automation runs). Call without rules to read the policy. */
+  "page.dialog_policy": { args: PageDialogPolicyArgs; output: PageDialogPolicyOutput };
   /** What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists). */
   "page.diff": { args: PageDiffArgs; output: PageDiffOutput };
+  /** Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}. */
+  "page.extract": { args: PageExtractArgs; output: PageExtractOutput };
   /** Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need. */
   "page.find": { args: PageFindArgs; output: PageFindOutput };
+  /** Remove the find-in-page highlights (page_find_text) from a tab. */
+  "page.find_clear": { args: PageFindClearArgs; output: PageFindClearOutput };
+  /** Find text in the page like Ctrl+F: highlight every visible match, scroll to the current one; `next`/`prev` step through them. Returns count, 1-based index and the text around the match. */
+  "page.find_text": { args: PageFindTextArgs; output: PageFindTextOutput };
+  /** Save the page as one MHTML file (HTML + images + styles; data/mhtml/ or `path`); returns the path and size. */
+  "page.mhtml": { args: PageMhtmlArgs; output: PageMhtmlOutput };
+  /** Print the page to a PDF file (data/pdf/ or `path`); returns the path and size. */
+  "page.pdf": { args: PagePdfArgs; output: PagePdfOutput };
   /** Visible text of the page or of one element (ref), cut to max_chars. Use it to read articles, messages or table contents a snapshot only names. */
   "page.read": { args: PageReadArgs; output: PageReadOutput };
   /** JPEG screenshot of the visible page, the full page or one element (ref). Costs many tokens: use only when page_snapshot/page_read are not enough (canvas, images, layout questions). */
@@ -5715,6 +7319,8 @@ export interface Commands {
   "page.snapshot": { args: PageSnapshotArgs; output: PageSnapshotOutput };
   /** Visible text of the page (document.body.innerText), cut to `limit` characters. */
   "page.text": { args: PageTextArgs; output: PageTextOutput };
+  /** Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist. */
+  "page.upload": { args: PageUploadArgs; output: PageUploadOutput };
   /** Delete a saved login by id. Returns {deleted: true}. */
   "passwords.delete": { args: PasswordsDeleteArgs; output: PasswordsDeleteOutput };
   /** Get the saved logins for a site, WITH plain-text passwords (for signing in). Returns {entries:[{id,origin,username,password,…}]}, empty when none are saved. */
@@ -5723,6 +7329,24 @@ export interface Commands {
   "passwords.list": { args: PasswordsListArgs; output: PasswordsListOutput };
   /** Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}. */
   "passwords.save": { args: PasswordsSaveArgs; output: PasswordsSaveOutput };
+  /** Disable a plugin: stop its process and revoke its connection token. */
+  "plugins.disable": { args: PluginsDisableArgs; output: PluginsDisableOutput };
+  /** Enable a plugin and start its script (remembered across restarts). */
+  "plugins.enable": { args: PluginsEnableArgs; output: PluginsEnableOutput };
+  /** Install a plugin from a folder (plugin.json + main.ts) into data/plugins and start it. The plugin may only call the commands in its manifest's permissions; check `warnings` for permissions that amount to full access. */
+  "plugins.install": { args: PluginsInstallArgs; output: PluginsInstallOutput };
+  /** List installed plugins (data/plugins/<name>) with manifest, permissions, status (running, exited, crashed, disabled, error), pid and restarts. */
+  "plugins.list": { args: PluginsListArgs; output: PluginsListOutput };
+  /** The last output lines of a plugin's script (console.log/error, crashes, restarts). */
+  "plugins.logs": { args: PluginsLogsArgs; output: PluginsLogsOutput };
+  /** Ctrl+K palette entries contributed by enabled plugins (ui.palette in plugin.json). Run one with plugins.palette_run. */
+  "plugins.palette": { args: PluginsPaletteArgs; output: PluginsPaletteOutput };
+  /** Run a plugin's palette entry: sends plugin.command {plugin, id} to that plugin. */
+  "plugins.palette_run": { args: PluginsPaletteRunArgs; output: PluginsPaletteRunOutput };
+  /** Re-read plugin.json from disk and restart the plugin (after editing its files); without a name, rescan data/plugins and restart all. */
+  "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
+  /** Stop a plugin and delete its folder from data/plugins. */
+  "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
   /** List running local proxy forwarders. */
   "proxy.forward_list": { args: ProxyForwardListArgs; output: ProxyForwardListOutput };
   /** Start a local proxy on 127.0.0.1 (SOCKS5 and HTTP, no auth) that forwards through an authenticated upstream proxy — Chromium cannot do SOCKS5 auth itself. Returns the local address to configure as the browser proxy. */
@@ -5765,8 +7389,16 @@ export interface Commands {
   "run.cancel": { args: RunCancelArgs; output: RunCancelOutput };
   /** Export a run's rows to csv, xlsx, json or sqlite (default data/runs/<id>/results.<ext>) or POST them to a webhook in JSON batches. Columns: row, status, inputs, result keys, error, attempts, duration. */
   "run.export": { args: RunExportArgs; output: RunExportOutput };
+  /** Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it. */
+  "run.heal_accept": { args: RunHealAcceptArgs; output: RunHealAcceptOutput };
   /** Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version. */
   "run.heal_apply": { args: RunHealApplyArgs; output: RunHealApplyOutput };
+  /** List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. */
+  "run.heal_proposals": { args: RunHealProposalsArgs; output: RunHealProposalsOutput };
+  /** Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject. */
+  "run.heal_propose": { args: RunHealProposeArgs; output: RunHealProposeOutput };
+  /** Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused). */
+  "run.heal_reject": { args: RunHealRejectArgs; output: RunHealRejectOutput };
   /** List runs (also from before a browser restart), newest first, with row counts. */
   "run.list": { args: RunListArgs; output: RunListOutput };
   /** Pause a run: rows already running finish, no new rows start. */
@@ -5779,6 +7411,10 @@ export interface Commands {
   "run.start": { args: RunStartArgs; output: RunStartOutput };
   /** Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request. */
   "run.status": { args: RunStatusArgs; output: RunStatusOutput };
+  /** Control a debug session from script_debug_start: continue, step_over, step_into, step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. Pauses arrive as script.debug_paused events. */
+  "script.debug_cmd": { args: ScriptDebugCmdArgs; output: ScriptDebugCmdOutput };
+  /** Start a saved script (name) or inline TypeScript (code) under the step debugger, stopping at the given TypeScript lines. Returns a session id; then use script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, script.debug_output, script.debug_ended. */
+  "script.debug_start": { args: ScriptDebugStartArgs; output: ScriptDebugStartOutput };
   /** Delete a saved script file. */
   "script.delete": { args: ScriptDeleteArgs; output: ScriptDeleteOutput };
   /** Return the source code of a saved script. */
@@ -5817,10 +7453,16 @@ export interface Commands {
   "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
   /** Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state. */
   "tabs.freeze": { args: TabsFreezeArgs; output: TabsFreezeOutput };
-  /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
+  /** Tab groups (one colored group per agent) with their tab ids. */
+  "tabs.groups": { args: TabsGroupsArgs; output: TabsGroupsOutput };
+  /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId. */
   "tabs.list": { args: TabsListArgs; output: TabsListOutput };
+  /** Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it. */
+  "tabs.lock": { args: TabsLockArgs; output: TabsLockOutput };
   /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
   "tabs.open": { args: TabsOpenArgs; output: TabsOpenOutput };
+  /** Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues). */
+  "tabs.unlock": { args: TabsUnlockArgs; output: TabsUnlockOutput };
   /** Close a terminal (kills its shell). */
   "term.close": { args: TermCloseArgs; output: TermCloseOutput };
   /** List open terminals (id, shell, size, pid, exit code). */
@@ -5837,6 +7479,14 @@ export interface Commands {
   "trigger.remove": { args: TriggerRemoveArgs; output: TriggerRemoveOutput };
   /** Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time. */
   "trigger.set": { args: TriggerSetArgs; output: TriggerSetOutput };
+  /** Internal: behind POST /v1/hooks/{id}. Checks the signature and starts the run. */
+  "trigger.webhook_fire": { args: TriggerWebhookFireArgs; output: TriggerWebhookFireOutput };
+  /** List webhook triggers (path, script, last firing and run id; secrets are not shown). */
+  "trigger.webhook_list": { args: TriggerWebhookListArgs; output: TriggerWebhookListOutput };
+  /** Delete a webhook trigger. */
+  "trigger.webhook_remove": { args: TriggerWebhookRemoveArgs; output: TriggerWebhookRemoveOutput };
+  /** Create or replace a webhook trigger: POST /v1/hooks/<id> with header X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with the secret> runs the script as a one-row run and answers {run_id}. Returns the path and the secret. The API listens on 127.0.0.1 only: outside services need a tunnel that rewrites Host. */
+  "trigger.webhook_set": { args: TriggerWebhookSetArgs; output: TriggerWebhookSetOutput };
   /** UI plumbing: a notification button was pressed. */
   "ui.answer": { args: UiAnswerArgs; output: UiAnswerOutput };
   /** Ask the user a question with answer buttons (browser toast, and Telegram when enabled) and wait for the first answer. Returns {choice, index, via} (via: ui | telegram | timeout; choice null on timeout). */
@@ -5845,6 +7495,16 @@ export interface Commands {
   "ui.layout": { args: UiLayoutArgs; output: UiLayoutOutput };
   /** Show the user a notification (a toast in the browser by default; channels can add os / telegram / webhook). Does not wait for a reply: use ui_ask_user for questions. */
   "ui.notify": { args: UiNotifyArgs; output: UiNotifyOutput };
+  /** Delete a userscript file. */
+  "userscripts.delete": { args: UserscriptsDeleteArgs; output: UserscriptsDeleteOutput };
+  /** Switch a userscript on or off (enabled: false) without deleting it. */
+  "userscripts.enable": { args: UserscriptsEnableArgs; output: UserscriptsEnableOutput };
+  /** Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner. */
+  "userscripts.inject": { args: UserscriptsInjectArgs; output: UserscriptsInjectOutput };
+  /** List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run. */
+  "userscripts.list": { args: UserscriptsListArgs; output: UserscriptsListOutput };
+  /** Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load. */
+  "userscripts.save": { args: UserscriptsSaveArgs; output: UserscriptsSaveOutput };
 }
 
 /** A dotted command name such as `"tabs.list"`. */
@@ -5908,6 +7568,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     wireName: "adblock_update_lists",
     description: "Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list.",
     toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "agents.forget": {
+    wireName: "agents_forget",
+    description: "Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "agents.list": {
+    wireName: "agents_list",
+    description: "List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "ai.handoff": {
+    wireName: "ai_handoff",
+    description: "Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that.",
+    toolset: "core",
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
@@ -6516,10 +8203,37 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "page.dialog": {
+    wireName: "page_dialog",
+    description: "Answer the JavaScript dialog (alert/confirm/prompt/beforeunload) open on a tab: accept (OK; prompts take `text`) or dismiss (Cancel). While a dialog is open, other page_*/input_*/nav_* commands on the tab fail with DIALOG_OPEN, whose candidates[0] describes the dialog. NOT_FOUND when no dialog is open.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
+  "page.dialog_policy": {
+    wireName: "page_dialog_policy",
+    description: "Set how JavaScript dialogs are handled automatically, per tab or `global`: alert/confirm/prompt/beforeunload = accept | dismiss | ask | auto. Default: ask (left open: page_dialog_opened event, DIALOG_OPEN errors), beforeunload = auto (accepted while automation runs). Call without rules to read the policy.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "page.diff": {
     wireName: "page_diff",
     description: "What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists).",
     toolset: "core",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "page.extract": {
+    wireName: "page_extract",
+    description: "Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}.",
+    toolset: "script",
     sensitivity: "read",
     mutatesTab: false,
     palette: null,
@@ -6532,6 +8246,42 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "read",
     mutatesTab: false,
     palette: null,
+    defaultKeys: [],
+  },
+  "page.find_clear": {
+    wireName: "page_find_clear",
+    description: "Remove the find-in-page highlights (page_find_text) from a tab.",
+    toolset: "ui",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "page.find_text": {
+    wireName: "page_find_text",
+    description: "Find text in the page like Ctrl+F: highlight every visible match, scroll to the current one; `next`/`prev` step through them. Returns count, 1-based index and the text around the match.",
+    toolset: "ui",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "page.mhtml": {
+    wireName: "page_mhtml",
+    description: "Save the page as one MHTML file (HTML + images + styles; data/mhtml/ or `path`); returns the path and size.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "page.pdf": {
+    wireName: "page_pdf",
+    description: "Print the page to a PDF file (data/pdf/ or `path`); returns the path and size.",
+    toolset: "data",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: "Save page as PDF",
     defaultKeys: [],
   },
   "page.read": {
@@ -6570,6 +8320,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "page.upload": {
+    wireName: "page_upload",
+    description: "Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
   "passwords.delete": {
     wireName: "passwords_delete",
     description: "Delete a saved login by id. Returns {deleted: true}.",
@@ -6602,6 +8361,87 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     description: "Save a login (stored UNENCRYPTED). Same origin + username updates the password. Returns {id, origin, created}.",
     toolset: "data",
     sensitivity: "secret",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.disable": {
+    wireName: "plugins_disable",
+    description: "Disable a plugin: stop its process and revoke its connection token.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.enable": {
+    wireName: "plugins_enable",
+    description: "Enable a plugin and start its script (remembered across restarts).",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.install": {
+    wireName: "plugins_install",
+    description: "Install a plugin from a folder (plugin.json + main.ts) into data/plugins and start it. The plugin may only call the commands in its manifest's permissions; check `warnings` for permissions that amount to full access.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.list": {
+    wireName: "plugins_list",
+    description: "List installed plugins (data/plugins/<name>) with manifest, permissions, status (running, exited, crashed, disabled, error), pid and restarts.",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.logs": {
+    wireName: "plugins_logs",
+    description: "The last output lines of a plugin's script (console.log/error, crashes, restarts).",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.palette": {
+    wireName: "plugins_palette",
+    description: "Ctrl+K palette entries contributed by enabled plugins (ui.palette in plugin.json). Run one with plugins.palette_run.",
+    toolset: "ui",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.palette_run": {
+    wireName: "plugins_palette_run",
+    description: "Run a plugin's palette entry: sends plugin.command {plugin, id} to that plugin.",
+    toolset: "ui",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.reload": {
+    wireName: "plugins_reload",
+    description: "Re-read plugin.json from disk and restart the plugin (after editing its files); without a name, rescan data/plugins and restart all.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "plugins.remove": {
+    wireName: "plugins_remove",
+    description: "Stop a plugin and delete its folder from data/plugins.",
+    toolset: "script",
+    sensitivity: "act",
     mutatesTab: false,
     palette: null,
     defaultKeys: [],
@@ -6795,9 +8635,45 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "run.heal_accept": {
+    wireName: "run_heal_accept",
+    description: "Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "run.heal_apply": {
     wireName: "run_heal_apply",
     description: "Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_proposals": {
+    wireName: "run_heal_proposals",
+    description: "List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_propose": {
+    wireName: "run_heal_propose",
+    description: "Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "run.heal_reject": {
+    wireName: "run_heal_reject",
+    description: "Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused).",
     toolset: "run",
     sensitivity: "act",
     mutatesTab: false,
@@ -6854,6 +8730,24 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     description: "Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request.",
     toolset: "run",
     sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.debug_cmd": {
+    wireName: "script_debug_cmd",
+    description: "Control a debug session from script_debug_start: continue, step_over, step_into, step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. Pauses arrive as script.debug_paused events.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.debug_start": {
+    wireName: "script_debug_start",
+    description: "Start a saved script (name) or inline TypeScript (code) under the step debugger, stopping at the given TypeScript lines. Returns a session id; then use script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, script.debug_output, script.debug_ended.",
+    toolset: "script",
+    sensitivity: "act",
     mutatesTab: false,
     palette: null,
     defaultKeys: [],
@@ -7029,13 +8923,31 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "tabs.groups": {
+    wireName: "tabs_groups",
+    description: "Tab groups (one colored group per agent) with their tab ids.",
+    toolset: "core",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "tabs.list": {
     wireName: "tabs_list",
-    description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.",
+    description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId.",
     toolset: "core",
     sensitivity: "read",
     mutatesTab: false,
     palette: "List tabs",
+    defaultKeys: [],
+  },
+  "tabs.lock": {
+    wireName: "tabs_lock",
+    description: "Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
     defaultKeys: [],
   },
   "tabs.open": {
@@ -7045,6 +8957,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: false,
     palette: "Open URL in new tab…",
+    defaultKeys: [],
+  },
+  "tabs.unlock": {
+    wireName: "tabs_unlock",
+    description: "Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues).",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
     defaultKeys: [],
   },
   "term.close": {
@@ -7119,6 +9040,42 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "trigger.webhook_fire": {
+    wireName: "trigger_webhook_fire",
+    description: "Internal: behind POST /v1/hooks/{id}. Checks the signature and starts the run.",
+    toolset: "hidden",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "trigger.webhook_list": {
+    wireName: "trigger_webhook_list",
+    description: "List webhook triggers (path, script, last firing and run id; secrets are not shown).",
+    toolset: "run",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "trigger.webhook_remove": {
+    wireName: "trigger_webhook_remove",
+    description: "Delete a webhook trigger.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "trigger.webhook_set": {
+    wireName: "trigger_webhook_set",
+    description: "Create or replace a webhook trigger: POST /v1/hooks/<id> with header X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with the secret> runs the script as a one-row run and answers {run_id}. Returns the path and the secret. The API listens on 127.0.0.1 only: outside services need a tunnel that rewrites Host.",
+    toolset: "run",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "ui.answer": {
     wireName: "ui_answer",
     description: "UI plumbing: a notification button was pressed.",
@@ -7150,6 +9107,51 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     wireName: "ui_notify",
     description: "Show the user a notification (a toast in the browser by default; channels can add os / telegram / webhook). Does not wait for a reply: use ui_ask_user for questions.",
     toolset: "ui",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "userscripts.delete": {
+    wireName: "userscripts_delete",
+    description: "Delete a userscript file.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "userscripts.enable": {
+    wireName: "userscripts_enable",
+    description: "Switch a userscript on or off (enabled: false) without deleting it.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "userscripts.inject": {
+    wireName: "userscripts_inject",
+    description: "Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
+  "userscripts.list": {
+    wireName: "userscripts_list",
+    description: "List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run.",
+    toolset: "script",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "userscripts.save": {
+    wireName: "userscripts_save",
+    description: "Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load.",
+    toolset: "script",
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
@@ -7199,8 +9201,29 @@ export interface Browser {
      */
     update_lists(args?: AdblockUpdateListsArgs, options?: CallOptions): Promise<AdblockUpdateListsOutput>;
   };
+  /** Commands `agents.*`. */
+  agents: {
+    /**
+     * Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call.
+     *
+     * `agents.forget` (MCP: `agents_forget`): toolset `system`, act.
+     */
+    forget(args: AgentsForgetArgs, options?: CallOptions): Promise<AgentsForgetOutput>;
+    /**
+     * List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs.
+     *
+     * `agents.list` (MCP: `agents_list`): toolset `system`, read.
+     */
+    list(args?: AgentsListArgs, options?: CallOptions): Promise<AgentsListOutput>;
+  };
   /** Commands `ai.*`. */
   ai: {
+    /**
+     * Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that.
+     *
+     * `ai.handoff` (MCP: `ai_handoff`): toolset `core`, act.
+     */
+    handoff(args: AiHandoffArgs, options?: CallOptions): Promise<AiHandoffOutput>;
     /**
      * Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider.
      *
@@ -7653,17 +9676,59 @@ export interface Browser {
      */
     ax_tree(args?: PageAxTreeArgs, options?: CallOptions): Promise<PageAxTreeOutput>;
     /**
+     * Answer the JavaScript dialog (alert/confirm/prompt/beforeunload) open on a tab: accept (OK; prompts take `text`) or dismiss (Cancel). While a dialog is open, other page_*\/input_*\/nav_* commands on the tab fail with DIALOG_OPEN, whose candidates[0] describes the dialog. NOT_FOUND when no dialog is open.
+     *
+     * `page.dialog` (MCP: `page_dialog`): toolset `core`, act, mutates the tab.
+     */
+    dialog(args: PageDialogArgs, options?: CallOptions): Promise<PageDialogOutput>;
+    /**
+     * Set how JavaScript dialogs are handled automatically, per tab or `global`: alert/confirm/prompt/beforeunload = accept | dismiss | ask | auto. Default: ask (left open: page_dialog_opened event, DIALOG_OPEN errors), beforeunload = auto (accepted while automation runs). Call without rules to read the policy.
+     *
+     * `page.dialog_policy` (MCP: `page_dialog_policy`): toolset `core`, act.
+     */
+    dialog_policy(args?: PageDialogPolicyArgs, options?: CallOptions): Promise<PageDialogPolicyOutput>;
+    /**
      * What changed on the page since a snapshot (default: the latest), in one line. Use it to watch for results that appear later (messages, loaded lists).
      *
      * `page.diff` (MCP: `page_diff`): toolset `core`, read.
      */
     diff(args?: PageDiffArgs, options?: CallOptions): Promise<PageDiffOutput>;
     /**
+     * Extract structured data matching a JSON Schema from the page. The first time an AI builds a selector plan (cached in data/extract-cache/<cache_key>.json); later calls run the plan without AI and rebuild it once if required fields come back empty. Returns {data, from_cache, plan_id}.
+     *
+     * `page.extract` (MCP: `page_extract`): toolset `script`, read.
+     */
+    extract(args: PageExtractArgs, options?: CallOptions): Promise<PageExtractOutput>;
+    /**
      * Search the whole page (also parts a snapshot collapsed) by role, name, text or regex. Returns matches with refs to use in page_act. Cheaper than a snapshot when you know what you need.
      *
      * `page.find` (MCP: `page_find`): toolset `core`, read.
      */
     find(args?: PageFindArgs, options?: CallOptions): Promise<PageFindOutput>;
+    /**
+     * Remove the find-in-page highlights (page_find_text) from a tab.
+     *
+     * `page.find_clear` (MCP: `page_find_clear`): toolset `ui`, read.
+     */
+    find_clear(args?: PageFindClearArgs, options?: CallOptions): Promise<PageFindClearOutput>;
+    /**
+     * Find text in the page like Ctrl+F: highlight every visible match, scroll to the current one; `next`/`prev` step through them. Returns count, 1-based index and the text around the match.
+     *
+     * `page.find_text` (MCP: `page_find_text`): toolset `ui`, read.
+     */
+    find_text(args: PageFindTextArgs, options?: CallOptions): Promise<PageFindTextOutput>;
+    /**
+     * Save the page as one MHTML file (HTML + images + styles; data/mhtml/ or `path`); returns the path and size.
+     *
+     * `page.mhtml` (MCP: `page_mhtml`): toolset `data`, read.
+     */
+    mhtml(args?: PageMhtmlArgs, options?: CallOptions): Promise<PageMhtmlOutput>;
+    /**
+     * Print the page to a PDF file (data/pdf/ or `path`); returns the path and size.
+     *
+     * `page.pdf` (MCP: `page_pdf`): toolset `data`, read.
+     */
+    pdf(args?: PagePdfArgs, options?: CallOptions): Promise<PagePdfOutput>;
     /**
      * Visible text of the page or of one element (ref), cut to max_chars. Use it to read articles, messages or table contents a snapshot only names.
      *
@@ -7688,6 +9753,12 @@ export interface Browser {
      * `page.text` (MCP: `page_text`): toolset `core`, read.
      */
     text(args?: PageTextArgs, options?: CallOptions): Promise<PageTextOutput>;
+    /**
+     * Upload files into a page: `ref` is the <input type=file> or the button that opens the file chooser (it is clicked and the chooser filled, no OS dialog). Paths are absolute or relative to data/runs/<run_id>/ and must exist.
+     *
+     * `page.upload` (MCP: `page_upload`): toolset `core`, act, mutates the tab.
+     */
+    upload(args: PageUploadArgs, options?: CallOptions): Promise<PageUploadOutput>;
   };
   /** Commands `passwords.*`. */
   passwords: {
@@ -7715,6 +9786,63 @@ export interface Browser {
      * `passwords.save` (MCP: `passwords_save`): toolset `data`, secret.
      */
     save(args: PasswordsSaveArgs, options?: CallOptions): Promise<PasswordsSaveOutput>;
+  };
+  /** Commands `plugins.*`. */
+  plugins: {
+    /**
+     * Disable a plugin: stop its process and revoke its connection token.
+     *
+     * `plugins.disable` (MCP: `plugins_disable`): toolset `script`, act.
+     */
+    disable(args: PluginsDisableArgs, options?: CallOptions): Promise<PluginsDisableOutput>;
+    /**
+     * Enable a plugin and start its script (remembered across restarts).
+     *
+     * `plugins.enable` (MCP: `plugins_enable`): toolset `script`, act.
+     */
+    enable(args: PluginsEnableArgs, options?: CallOptions): Promise<PluginsEnableOutput>;
+    /**
+     * Install a plugin from a folder (plugin.json + main.ts) into data/plugins and start it. The plugin may only call the commands in its manifest's permissions; check `warnings` for permissions that amount to full access.
+     *
+     * `plugins.install` (MCP: `plugins_install`): toolset `script`, act.
+     */
+    install(args: PluginsInstallArgs, options?: CallOptions): Promise<PluginsInstallOutput>;
+    /**
+     * List installed plugins (data/plugins/<name>) with manifest, permissions, status (running, exited, crashed, disabled, error), pid and restarts.
+     *
+     * `plugins.list` (MCP: `plugins_list`): toolset `script`, read.
+     */
+    list(args?: PluginsListArgs, options?: CallOptions): Promise<PluginsListOutput>;
+    /**
+     * The last output lines of a plugin's script (console.log/error, crashes, restarts).
+     *
+     * `plugins.logs` (MCP: `plugins_logs`): toolset `script`, read.
+     */
+    logs(args: PluginsLogsArgs, options?: CallOptions): Promise<PluginsLogsOutput>;
+    /**
+     * Ctrl+K palette entries contributed by enabled plugins (ui.palette in plugin.json). Run one with plugins.palette_run.
+     *
+     * `plugins.palette` (MCP: `plugins_palette`): toolset `ui`, read.
+     */
+    palette(args?: PluginsPaletteArgs, options?: CallOptions): Promise<PluginsPaletteOutput>;
+    /**
+     * Run a plugin's palette entry: sends plugin.command {plugin, id} to that plugin.
+     *
+     * `plugins.palette_run` (MCP: `plugins_palette_run`): toolset `ui`, act.
+     */
+    palette_run(args: PluginsPaletteRunArgs, options?: CallOptions): Promise<PluginsPaletteRunOutput>;
+    /**
+     * Re-read plugin.json from disk and restart the plugin (after editing its files); without a name, rescan data/plugins and restart all.
+     *
+     * `plugins.reload` (MCP: `plugins_reload`): toolset `script`, act.
+     */
+    reload(args?: PluginsReloadArgs, options?: CallOptions): Promise<PluginsReloadOutput>;
+    /**
+     * Stop a plugin and delete its folder from data/plugins.
+     *
+     * `plugins.remove` (MCP: `plugins_remove`): toolset `script`, act.
+     */
+    remove(args: PluginsRemoveArgs, options?: CallOptions): Promise<PluginsRemoveOutput>;
   };
   /** Commands `proxy.*`. */
   proxy: {
@@ -7851,11 +9979,35 @@ export interface Browser {
      */
     export(args: RunExportArgs, options?: CallOptions): Promise<RunExportOutput>;
     /**
+     * Accept a heal proposal: the patched script is saved as the next version (<name>.v2, …), the broken rows are re-queued and the run continues with it.
+     *
+     * `run.heal_accept` (MCP: `run_heal_accept`): toolset `run`, act.
+     */
+    heal_accept(args: RunHealAcceptArgs, options?: CallOptions): Promise<RunHealAcceptOutput>;
+    /**
      * Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version.
      *
      * `run.heal_apply` (MCP: `run_heal_apply`): toolset `run`, act.
      */
     heal_apply(args: RunHealApplyArgs, options?: CallOptions): Promise<RunHealApplyOutput>;
+    /**
+     * List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.
+     *
+     * `run.heal_proposals` (MCP: `run_heal_proposals`): toolset `run`, read.
+     */
+    heal_proposals(args?: RunHealProposalsArgs, options?: CallOptions): Promise<RunHealProposalsOutput>;
+    /**
+     * Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject.
+     *
+     * `run.heal_propose` (MCP: `run_heal_propose`): toolset `run`, act.
+     */
+    heal_propose(args: RunHealProposeArgs, options?: CallOptions): Promise<RunHealProposeOutput>;
+    /**
+     * Reject a heal proposal and get a new one written with your feedback (at most 3 attempts per broken row; then run.heal_failed and the run stays paused).
+     *
+     * `run.heal_reject` (MCP: `run_heal_reject`): toolset `run`, act.
+     */
+    heal_reject(args: RunHealRejectArgs, options?: CallOptions): Promise<RunHealRejectOutput>;
     /**
      * List runs (also from before a browser restart), newest first, with row counts.
      *
@@ -7895,6 +10047,18 @@ export interface Browser {
   };
   /** Commands `script.*`. */
   script: {
+    /**
+     * Control a debug session from script_debug_start: continue, step_over, step_into, step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. Pauses arrive as script.debug_paused events.
+     *
+     * `script.debug_cmd` (MCP: `script_debug_cmd`): toolset `script`, act.
+     */
+    debug_cmd(args: ScriptDebugCmdArgs, options?: CallOptions): Promise<ScriptDebugCmdOutput>;
+    /**
+     * Start a saved script (name) or inline TypeScript (code) under the step debugger, stopping at the given TypeScript lines. Returns a session id; then use script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, script.debug_output, script.debug_ended.
+     *
+     * `script.debug_start` (MCP: `script_debug_start`): toolset `script`, act.
+     */
+    debug_start(args?: ScriptDebugStartArgs, options?: CallOptions): Promise<ScriptDebugStartOutput>;
     /**
      * Delete a saved script file.
      *
@@ -8022,17 +10186,35 @@ export interface Browser {
      */
     freeze(args: TabsFreezeArgs, options?: CallOptions): Promise<TabsFreezeOutput>;
     /**
-     * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.
+     * Tab groups (one colored group per agent) with their tab ids.
+     *
+     * `tabs.groups` (MCP: `tabs_groups`): toolset `core`, read.
+     */
+    groups(args?: TabsGroupsArgs, options?: CallOptions): Promise<TabsGroupsOutput>;
+    /**
+     * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId.
      *
      * `tabs.list` (MCP: `tabs_list`): toolset `core`, read.
      */
     list(args?: TabsListArgs, options?: CallOptions): Promise<TabsListOutput>;
+    /**
+     * Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it.
+     *
+     * `tabs.lock` (MCP: `tabs_lock`): toolset `core`, act.
+     */
+    lock(args: TabsLockArgs, options?: CallOptions): Promise<TabsLockOutput>;
     /**
      * Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`.
      *
      * `tabs.open` (MCP: `tabs_open`): toolset `core`, act.
      */
     open(args?: TabsOpenArgs, options?: CallOptions): Promise<TabsOpenOutput>;
+    /**
+     * Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues).
+     *
+     * `tabs.unlock` (MCP: `tabs_unlock`): toolset `core`, act.
+     */
+    unlock(args: TabsUnlockArgs, options?: CallOptions): Promise<TabsUnlockOutput>;
   };
   /** Commands `term.*`. */
   term: {
@@ -8087,6 +10269,31 @@ export interface Browser {
      * `trigger.set` (MCP: `trigger_set`): toolset `run`, act.
      */
     set(args: TriggerSetArgs, options?: CallOptions): Promise<TriggerSetOutput>;
+    /**
+     * Internal: behind POST /v1/hooks/{id}. Checks the signature and starts the run.
+     *
+     * `trigger.webhook_fire` (MCP: `trigger_webhook_fire`): toolset `hidden`, act.
+     * Internal (hidden toolset): not listed to agents by default.
+     */
+    webhook_fire(args: TriggerWebhookFireArgs, options?: CallOptions): Promise<TriggerWebhookFireOutput>;
+    /**
+     * List webhook triggers (path, script, last firing and run id; secrets are not shown).
+     *
+     * `trigger.webhook_list` (MCP: `trigger_webhook_list`): toolset `run`, read.
+     */
+    webhook_list(args?: TriggerWebhookListArgs, options?: CallOptions): Promise<TriggerWebhookListOutput>;
+    /**
+     * Delete a webhook trigger.
+     *
+     * `trigger.webhook_remove` (MCP: `trigger_webhook_remove`): toolset `run`, act.
+     */
+    webhook_remove(args: TriggerWebhookRemoveArgs, options?: CallOptions): Promise<TriggerWebhookRemoveOutput>;
+    /**
+     * Create or replace a webhook trigger: POST /v1/hooks/<id> with header X-BMCP-Signature: sha256=<hex HMAC-SHA256 of the body with the secret> runs the script as a one-row run and answers {run_id}. Returns the path and the secret. The API listens on 127.0.0.1 only: outside services need a tunnel that rewrites Host.
+     *
+     * `trigger.webhook_set` (MCP: `trigger_webhook_set`): toolset `run`, act.
+     */
+    webhook_set(args: TriggerWebhookSetArgs, options?: CallOptions): Promise<TriggerWebhookSetOutput>;
   };
   /** Commands `ui.*`. */
   ui: {
@@ -8117,6 +10324,39 @@ export interface Browser {
      */
     notify(args: UiNotifyArgs, options?: CallOptions): Promise<UiNotifyOutput>;
   };
+  /** Commands `userscripts.*`. */
+  userscripts: {
+    /**
+     * Delete a userscript file.
+     *
+     * `userscripts.delete` (MCP: `userscripts_delete`): toolset `script`, act.
+     */
+    delete(args: UserscriptsDeleteArgs, options?: CallOptions): Promise<UserscriptsDeleteOutput>;
+    /**
+     * Switch a userscript on or off (enabled: false) without deleting it.
+     *
+     * `userscripts.enable` (MCP: `userscripts_enable`): toolset `script`, act.
+     */
+    enable(args: UserscriptsEnableArgs, options?: CallOptions): Promise<UserscriptsEnableOutput>;
+    /**
+     * Run JavaScript in an isolated world of a tab (shared DOM, separate globals; the page cannot see it) and return its JSON result. Used by userscripts to change pages, e.g. add a banner.
+     *
+     * `userscripts.inject` (MCP: `userscripts_inject`): toolset `script`, act, mutates the tab.
+     */
+    inject(args: UserscriptsInjectArgs, options?: CallOptions): Promise<UserscriptsInjectOutput>;
+    /**
+     * List userscripts (data/userscripts/*.ts and those of running plugins) with their parsed @match/@include/@exclude/@run-at header and last run.
+     *
+     * `userscripts.list` (MCP: `userscripts_list`): toolset `script`, read.
+     */
+    list(args?: UserscriptsListArgs, options?: CallOptions): Promise<UserscriptsListOutput>;
+    /**
+     * Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load.
+     *
+     * `userscripts.save` (MCP: `userscripts_save`): toolset `script`, act.
+     */
+    save(args: UserscriptsSaveArgs, options?: CallOptions): Promise<UserscriptsSaveOutput>;
+  };
 }
 
 /** The typed `browser` object on top of any transport (WebSocket, HTTP, a mock…). */
@@ -8133,7 +10373,12 @@ export function createBrowser(transport: Transport): Browser {
       toggle: (args, options) => call<AdblockToggleOutput>("adblock.toggle", args, options),
       update_lists: (args, options) => call<AdblockUpdateListsOutput>("adblock.update_lists", args, options),
     },
+    agents: {
+      forget: (args, options) => call<AgentsForgetOutput>("agents.forget", args, options),
+      list: (args, options) => call<AgentsListOutput>("agents.list", args, options),
+    },
     ai: {
+      handoff: (args, options) => call<AiHandoffOutput>("ai.handoff", args, options),
       provider_set: (args, options) => call<AiProviderSetOutput>("ai.provider_set", args, options),
       provider_test: (args, options) => call<AiProviderTestOutput>("ai.provider_test", args, options),
       providers: (args, options) => call<AiProvidersOutput>("ai.providers", args, options),
@@ -8233,18 +10478,37 @@ export function createBrowser(transport: Transport): Browser {
       act: (args, options) => call<PageActOutput>("page.act", args, options),
       act_batch: (args, options) => call<PageActBatchOutput>("page.act_batch", args, options),
       ax_tree: (args, options) => call<PageAxTreeOutput>("page.ax_tree", args, options),
+      dialog: (args, options) => call<PageDialogOutput>("page.dialog", args, options),
+      dialog_policy: (args, options) => call<PageDialogPolicyOutput>("page.dialog_policy", args, options),
       diff: (args, options) => call<PageDiffOutput>("page.diff", args, options),
+      extract: (args, options) => call<PageExtractOutput>("page.extract", args, options),
       find: (args, options) => call<PageFindOutput>("page.find", args, options),
+      find_clear: (args, options) => call<PageFindClearOutput>("page.find_clear", args, options),
+      find_text: (args, options) => call<PageFindTextOutput>("page.find_text", args, options),
+      mhtml: (args, options) => call<PageMhtmlOutput>("page.mhtml", args, options),
+      pdf: (args, options) => call<PagePdfOutput>("page.pdf", args, options),
       read: (args, options) => call<PageReadOutput>("page.read", args, options),
       screenshot: (args, options) => call<PageScreenshotOutput>("page.screenshot", args, options),
       snapshot: (args, options) => call<PageSnapshotOutput>("page.snapshot", args, options),
       text: (args, options) => call<PageTextOutput>("page.text", args, options),
+      upload: (args, options) => call<PageUploadOutput>("page.upload", args, options),
     },
     passwords: {
       delete: (args, options) => call<PasswordsDeleteOutput>("passwords.delete", args, options),
       get: (args, options) => call<PasswordsGetOutput>("passwords.get", args, options),
       list: (args, options) => call<PasswordsListOutput>("passwords.list", args, options),
       save: (args, options) => call<PasswordsSaveOutput>("passwords.save", args, options),
+    },
+    plugins: {
+      disable: (args, options) => call<PluginsDisableOutput>("plugins.disable", args, options),
+      enable: (args, options) => call<PluginsEnableOutput>("plugins.enable", args, options),
+      install: (args, options) => call<PluginsInstallOutput>("plugins.install", args, options),
+      list: (args, options) => call<PluginsListOutput>("plugins.list", args, options),
+      logs: (args, options) => call<PluginsLogsOutput>("plugins.logs", args, options),
+      palette: (args, options) => call<PluginsPaletteOutput>("plugins.palette", args, options),
+      palette_run: (args, options) => call<PluginsPaletteRunOutput>("plugins.palette_run", args, options),
+      reload: (args, options) => call<PluginsReloadOutput>("plugins.reload", args, options),
+      remove: (args, options) => call<PluginsRemoveOutput>("plugins.remove", args, options),
     },
     proxy: {
       forward_list: (args, options) => call<ProxyForwardListOutput>("proxy.forward_list", args, options),
@@ -8272,7 +10536,11 @@ export function createBrowser(transport: Transport): Browser {
     run: {
       cancel: (args, options) => call<RunCancelOutput>("run.cancel", args, options),
       export: (args, options) => call<RunExportOutput>("run.export", args, options),
+      heal_accept: (args, options) => call<RunHealAcceptOutput>("run.heal_accept", args, options),
       heal_apply: (args, options) => call<RunHealApplyOutput>("run.heal_apply", args, options),
+      heal_proposals: (args, options) => call<RunHealProposalsOutput>("run.heal_proposals", args, options),
+      heal_propose: (args, options) => call<RunHealProposeOutput>("run.heal_propose", args, options),
+      heal_reject: (args, options) => call<RunHealRejectOutput>("run.heal_reject", args, options),
       list: (args, options) => call<RunListOutput>("run.list", args, options),
       pause: (args, options) => call<RunPauseOutput>("run.pause", args, options),
       results: (args, options) => call<RunResultsOutput>("run.results", args, options),
@@ -8281,6 +10549,8 @@ export function createBrowser(transport: Transport): Browser {
       status: (args, options) => call<RunStatusOutput>("run.status", args, options),
     },
     script: {
+      debug_cmd: (args, options) => call<ScriptDebugCmdOutput>("script.debug_cmd", args, options),
+      debug_start: (args, options) => call<ScriptDebugStartOutput>("script.debug_start", args, options),
       delete: (args, options) => call<ScriptDeleteOutput>("script.delete", args, options),
       get: (args, options) => call<ScriptGetOutput>("script.get", args, options),
       list: (args, options) => call<ScriptListOutput>("script.list", args, options),
@@ -8308,8 +10578,11 @@ export function createBrowser(transport: Transport): Browser {
       activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),
       close: (args, options) => call<TabsCloseOutput>("tabs.close", args, options),
       freeze: (args, options) => call<TabsFreezeOutput>("tabs.freeze", args, options),
+      groups: (args, options) => call<TabsGroupsOutput>("tabs.groups", args, options),
       list: (args, options) => call<TabsListOutput>("tabs.list", args, options),
+      lock: (args, options) => call<TabsLockOutput>("tabs.lock", args, options),
       open: (args, options) => call<TabsOpenOutput>("tabs.open", args, options),
+      unlock: (args, options) => call<TabsUnlockOutput>("tabs.unlock", args, options),
     },
     term: {
       close: (args, options) => call<TermCloseOutput>("term.close", args, options),
@@ -8322,12 +10595,23 @@ export function createBrowser(transport: Transport): Browser {
       list: (args, options) => call<TriggerListOutput>("trigger.list", args, options),
       remove: (args, options) => call<TriggerRemoveOutput>("trigger.remove", args, options),
       set: (args, options) => call<TriggerSetOutput>("trigger.set", args, options),
+      webhook_fire: (args, options) => call<TriggerWebhookFireOutput>("trigger.webhook_fire", args, options),
+      webhook_list: (args, options) => call<TriggerWebhookListOutput>("trigger.webhook_list", args, options),
+      webhook_remove: (args, options) => call<TriggerWebhookRemoveOutput>("trigger.webhook_remove", args, options),
+      webhook_set: (args, options) => call<TriggerWebhookSetOutput>("trigger.webhook_set", args, options),
     },
     ui: {
       answer: (args, options) => call<UiAnswerOutput>("ui.answer", args, options),
       ask_user: (args, options) => call<UiAskUserOutput>("ui.ask_user", args, options),
       layout: (args, options) => call<UiLayoutOutput>("ui.layout", args, options),
       notify: (args, options) => call<UiNotifyOutput>("ui.notify", args, options),
+    },
+    userscripts: {
+      delete: (args, options) => call<UserscriptsDeleteOutput>("userscripts.delete", args, options),
+      enable: (args, options) => call<UserscriptsEnableOutput>("userscripts.enable", args, options),
+      inject: (args, options) => call<UserscriptsInjectOutput>("userscripts.inject", args, options),
+      list: (args, options) => call<UserscriptsListOutput>("userscripts.list", args, options),
+      save: (args, options) => call<UserscriptsSaveOutput>("userscripts.save", args, options),
     },
   };
 }

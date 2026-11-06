@@ -22,7 +22,10 @@ pub fn build_registry() -> Registry {
     bmcp_record::register(&mut registry);
     bmcp_adblock::register(&mut registry);
     bmcp_jobs::register(&mut registry);
+    bmcp_plugins::register(&mut registry);
     bmcp_governor::register(&mut registry);
+    bmcp_pagetools::register(&mut registry);
+    bmcp_heal::register(&mut registry);
     bmcp_notify::register(&mut registry);
     bmcp_hints::register(&mut registry);
     bmcp_system::register(&mut registry);
@@ -43,6 +46,10 @@ mod tests {
             "page.snapshot",
             "page.ax_tree",
             "bookmarks.add",
+            "page.dialog",
+            "page.upload",
+            "page.pdf",
+            "page.find_text",
             "hints.show",
             "bookmarks.update",
             "system.reveal_path",

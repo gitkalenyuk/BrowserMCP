@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page tools – Fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  section { margin: 16px 0; }
+  .drop { display: inline-block; padding: 8px 12px; border: 1px dashed #888; cursor: pointer; }
+  #chooser { display: none; }
+  .bg { background: #e0f2fe; padding: 8px; }
+  .filler { height: 1600px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Page tools</h1>
+
+  <section aria-label="Dialogs">
+    <button id="alert" onclick="alert('Saved!'); log('alert done')">Show alert</button>
+    <button id="confirm" onclick="log('confirm: ' + confirm('Delete the file?'))">Show confirm</button>
+    <button id="prompt" onclick="log('prompt: ' + prompt('Your name?', 'Bob'))">Show prompt</button>
+    <label><input id="dirty" type="checkbox"> Unsaved changes (asks before leaving)</label>
+  </section>
+
+  <section aria-label="Uploads">
+    <label>Avatar <input id="file" type="file"></label>
+    <label>Attachments <input id="files" type="file" multiple></label>
+    <!-- A styled button that opens a hidden input: needs the file chooser path. -->
+    <span class="drop" role="button" tabindex="0" onclick="document.getElementById('chooser').click()">Choose photos</span>
+    <input id="chooser" type="file" multiple>
+  </section>
+
+  <p id="log" role="status">ready</p>
+  <p class="bg">Printed backgrounds are light blue.</p>
+
+  <article aria-label="Long text">
+    <h2>Long text</h2>
+    <p>The quick brown fox jumps over the lazy dog. Needle one is here.</p>
+    <p>Hidden text is not a match: <span style="display:none">needle hidden</span></p>
+    <p>NEEDLE two, in capitals.</p>
+    <div class="filler"></div>
+    <p id="far">Far below the fold sits the last needle three.</p>
+  </article>
+</main>
+<script>
+  function log(text) {
+    document.getElementById('log').textContent = text;
+  }
+  for (const id of ['file', 'files', 'chooser']) {
+    document.getElementById(id).addEventListener('change', (e) => {
+      const names = [...e.target.files].map((f) => f.name + ':' + f.size).join(',');
+      log(id + ': ' + names);
+    });
+  }
+  window.addEventListener('beforeunload', (e) => {
+    if (document.getElementById('dirty').checked) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+</script>
+</body>
+</html>

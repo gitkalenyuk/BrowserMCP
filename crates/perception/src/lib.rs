@@ -24,7 +24,9 @@
 //!      "name": {"type": "computedString", "value": "OK"}, "backendDOMNodeId": 42}
 //! ]});
 //! let tree = AxTree::from_cdp(&cdp_result).unwrap();
-//! let mut registry = RefRegistry::new(); // keep one per tab
+//! // Keep one per tab. With several tabs use `RefRegistry::with_space` and one shared
+//! // `RefSpace`, so refs are unique across tabs.
+//! let mut registry = RefRegistry::new();
 //! let header = PageHeader { tab: 1, title: "Demo".into(), url: "https://demo.test/".into(), ..Default::default() };
 //! let snap = snapshot(&tree, &mut registry, &SnapshotOptions::default(), header).unwrap();
 //! assert_eq!(snap.text, "snap 1 tab=1 \"Demo\" https://demo.test/\n- button \"OK\" @1:e1");
@@ -46,7 +48,10 @@ pub use ax::{AxNode, AxProperty, AxTree, AxValue, NodeLayout, Rect};
 pub use diff::diff;
 pub use error::{PerceptionError, Result};
 pub use find::{Filter, FindResult, Match, find};
-pub use refs::{GroupTarget, ParsedRef, RefKind, RefRegistry, parse_ref, resolve, resolve_group};
+pub use refs::{
+    GroupTarget, ParsedRef, RefKind, RefRegistry, RefSpace, parse_ref, resolve, resolve_group,
+};
 pub use snapshot::{
-    Mode, NodeEntry, PageHeader, RefEntry, Scroll, Snapshot, SnapshotOptions, Viewport, snapshot,
+    MAX_TREE_DEPTH, Mode, NodeEntry, PageHeader, RefEntry, Scroll, Snapshot, SnapshotOptions,
+    Viewport, snapshot,
 };

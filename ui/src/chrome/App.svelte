@@ -2,6 +2,7 @@
   import AgentBanner from '../lib/components/AgentBanner.svelte';
   import BookmarksBar from '../lib/components/BookmarksBar.svelte';
   import CommandPalette from '../lib/components/CommandPalette.svelte';
+  import FindBar from '../lib/components/FindBar.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import NotificationHost from '../lib/components/NotificationHost.svelte';
   import PageSlot from '../lib/components/PageSlot.svelte';
@@ -9,6 +10,7 @@
   import TabSidebar from '../lib/components/TabSidebar.svelte';
   import TabStrip from '../lib/components/TabStrip.svelte';
   import Toolbar from '../lib/components/Toolbar.svelte';
+  import { editorOwnsKey } from '../lib/scripts/logic';
   import { applyTheme, settings } from '../lib/settings.svelte';
   import { provideChrome, type ChromeController } from '../lib/state/chrome.svelte';
 
@@ -26,7 +28,8 @@
   });
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.isComposing) return;
+    // The script editor keeps F5/F10/F11/Ctrl+S (debugger, save) instead of reload & co.
+    if (e.isComposing || editorOwnsKey(e)) return;
     if (chrome.handleKey(e)) {
       e.preventDefault();
       e.stopPropagation();
@@ -46,6 +49,7 @@
     <div class="progress" aria-hidden="true"></div>
   {/if}
   <AgentBanner />
+  <FindBar />
   <NotificationHost />
   <div class="body">
     {#if settings.value.verticalTabs}

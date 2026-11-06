@@ -7,26 +7,37 @@
 //! -> {"jsonrpc":"2.0","id":1,"method":"tabs.list","params":null}
 //! <- {"jsonrpc":"2.0","id":1,"result":{"tabs":[...]}}
 //! <- {"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"...","data":{"code":"TAB_NOT_FOUND",...}}}
-//! <- {"jsonrpc":"2.0","method":"tab.created","params":{...}}   (event; ignored for now)
+//! <- {"jsonrpc":"2.0","method":"tab.created","params":{...}}   (event, see below)
 //! ```
 //!
 //! Design: one background task owns the socket. `call` sends the request to
 //! that task through a channel together with a "reply slot" (a oneshot
 //! channel); the task matches responses to requests by `id` and fills the slot.
 //! Many calls can be in flight at once (e.g. `Promise.all` in a script).
+//!
+//! Events (`browser.on`): notifications (a `method` and no `id`) are dropped until the script
+//! first asks for one with [`CommandSink::next_event`]; from then on the socket task queues
+//! them (at most [`EVENT_QUEUE`], newer ones are dropped when the script falls behind). So a
+//! script that never calls `browser.on` never buffers the default event stream.
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use deno_core::futures::{SinkExt, StreamExt};
 use deno_core::serde_json::{self, Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::sink::{CallFuture, CommandSink, SinkError};
+use crate::sink::{CallFuture, CommandSink, EventFuture, SinkError};
 
 /// Default address of the browser's WebSocket API.
 pub const DEFAULT_WS_URL: &str = "ws://127.0.0.1:47800/v1/ws";
+
+/// How many events may wait for the script before newer ones are dropped.
+pub const EVENT_QUEUE: usize = 1024;
 
 type Reply = oneshot::Sender<Result<Value, SinkError>>;
 
@@ -41,6 +52,11 @@ pub struct WsSink {
     to_socket: mpsc::UnboundedSender<Outgoing>,
     /// Next JSON-RPC id. `Cell` is enough: the sink is used from one thread.
     next_id: Cell<u64>,
+    /// Set by the first `next_event`: from then on the socket task queues events.
+    events_wanted: Arc<AtomicBool>,
+    /// Events queued by the socket task. A tokio `Mutex` because `next_event` holds it across
+    /// an `.await` (a `RefCell` borrow would panic if JS asked twice at once).
+    events: Rc<tokio::sync::Mutex<mpsc::Receiver<(String, Value)>>>,
 }
 
 impl WsSink {
@@ -54,6 +70,9 @@ impl WsSink {
             .map_err(|e| anyhow::anyhow!("cannot connect to browser at {url}: {e}"))?;
         let (mut write, mut read) = socket.split();
         let (to_socket, mut from_calls) = mpsc::unbounded_channel::<Outgoing>();
+        let (events_tx, events_rx) = mpsc::channel::<(String, Value)>(EVENT_QUEUE);
+        let events_wanted = Arc::new(AtomicBool::new(false));
+        let wanted = events_wanted.clone();
 
         tokio::spawn(async move {
             // Requests sent but not answered yet, by id.
@@ -70,7 +89,9 @@ impl WsSink {
                     }
                     incoming = read.next() => {
                         match incoming {
-                            Some(Ok(Message::Text(text))) => handle_response(text.as_str(), &mut waiting),
+                            Some(Ok(Message::Text(text))) => {
+                                handle_message(text.as_str(), &mut waiting, &wanted, &events_tx)
+                            }
                             Some(Ok(_)) => {} // ping/pong/binary: ignore
                             _ => break,       // closed or error
                         }
@@ -81,22 +102,38 @@ impl WsSink {
             for (_, reply) in waiting.drain() {
                 let _ = reply.send(Err(SinkError::new("browser connection closed")));
             }
+            // `events_tx` is dropped here, so `next_event` returns `None` from now on.
         });
 
         Ok(Self {
             to_socket,
             next_id: Cell::new(1),
+            events_wanted,
+            events: Rc::new(tokio::sync::Mutex::new(events_rx)),
         })
     }
 }
 
-/// Parse one JSON-RPC response and complete the matching call.
-fn handle_response(text: &str, waiting: &mut HashMap<u64, Reply>) {
+/// Parse one incoming message: a JSON-RPC response completes the matching call, an event
+/// notification is queued for `browser.on` (once the script wants events).
+fn handle_message(
+    text: &str,
+    waiting: &mut HashMap<u64, Reply>,
+    events_wanted: &AtomicBool,
+    events: &mpsc::Sender<(String, Value)>,
+) {
     let Ok(msg) = serde_json::from_str::<Value>(text) else {
         return; // not JSON: ignore
     };
-    // Messages without an id are notifications (events): not handled yet.
+    // Messages without an id are notifications (events).
     let Some(id) = msg.get("id").and_then(Value::as_u64) else {
+        if let Some(topic) = msg.get("method").and_then(Value::as_str)
+            && events_wanted.load(Ordering::Relaxed)
+        {
+            let data = msg.get("params").cloned().unwrap_or(Value::Null);
+            // Full queue = the script is too slow: drop this event rather than block replies.
+            let _ = events.try_send((topic.to_string(), data));
+        }
         return;
     };
     let Some(reply) = waiting.remove(&id) else {
@@ -138,5 +175,11 @@ impl CommandSink for WsSink {
                 .await
                 .unwrap_or_else(|_| Err(SinkError::new("browser connection closed")))
         })
+    }
+
+    fn next_event(&self) -> EventFuture {
+        self.events_wanted.store(true, Ordering::Relaxed);
+        let events = self.events.clone();
+        Box::pin(async move { events.lock().await.recv().await })
     }
 }

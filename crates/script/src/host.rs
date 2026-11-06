@@ -12,6 +12,7 @@ use deno_core::error::CoreErrorKind;
 use deno_core::serde_json::{Map, Value};
 use deno_core::{JsRuntime, RuntimeOptions};
 
+use crate::debugger::{self, DebugChannel, EndInfo};
 use crate::loader::TsModuleLoader;
 use crate::ops::{Inputs, SinkHandle, bmcp};
 use crate::sink::CommandSink;
@@ -52,6 +53,24 @@ pub async fn run_script(
     opts: RunOptions,
     sink: Rc<dyn CommandSink>,
 ) -> anyhow::Result<(RunOutcome, Timings)> {
+    run(opts, sink, None).await
+}
+
+/// Like [`run_script`], with the step debugger on (`--inspect`): the script is loaded, then
+/// waits for the client on `channel` to start it (see [`crate::debugger`] for the protocol).
+pub async fn run_script_debug(
+    opts: RunOptions,
+    sink: Rc<dyn CommandSink>,
+    channel: DebugChannel,
+) -> anyhow::Result<(RunOutcome, Timings)> {
+    run(opts, sink, Some(channel)).await
+}
+
+async fn run(
+    opts: RunOptions,
+    sink: Rc<dyn CommandSink>,
+    mut debug: Option<DebugChannel>,
+) -> anyhow::Result<(RunOutcome, Timings)> {
     let mut timings = Timings::default();
     let main_module = module_url(&opts.script)?;
 
@@ -63,9 +82,12 @@ pub async fn run_script(
         .map(|(k, v)| (k, Value::String(v)))
         .collect();
     let started = Instant::now();
+    let loader = Rc::new(TsModuleLoader::default());
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        module_loader: Some(Rc::new(TsModuleLoader::default())),
+        module_loader: Some(loader.clone()),
         extensions: vec![bmcp::init(SinkHandle(sink), Inputs(Value::Object(inputs)))],
+        // V8's inspector only when debugging.
+        inspector: debug.is_some(),
         ..Default::default()
     });
     timings.runtime_init = started.elapsed();
@@ -92,9 +114,21 @@ pub async fn run_script(
 
     // 3. Load, transpile, evaluate; then run the event loop until every
     //    pending promise/op is done (this is what makes top-level await work).
+    //    With the debugger: attach between load and evaluate, so breakpoints are set on the
+    //    compiled module before any of it runs.
     let started = Instant::now();
+    let mut attached = None;
     let work = async {
         let id = runtime.load_main_es_module(&main_module).await?;
+        if let Some(channel) = debug.take() {
+            let loader: &TsModuleLoader = &loader;
+            attached = Some(debugger::attach(
+                &mut runtime,
+                loader,
+                &main_module,
+                channel,
+            ));
+        }
         let evaluation = runtime.mod_evaluate(id);
         runtime.run_event_loop(Default::default()).await?;
         evaluation.await
@@ -122,6 +156,22 @@ pub async fn run_script(
         }),
         Some(Ok(())) => RunOutcome::Completed,
     };
+    if let Some(attached) = attached {
+        attached.finish(match &outcome {
+            RunOutcome::Completed => EndInfo {
+                status: "completed",
+                error: None,
+            },
+            RunOutcome::Failed(message) => EndInfo {
+                status: "failed",
+                error: Some(message.clone()),
+            },
+            RunOutcome::TimedOut(_) => EndInfo {
+                status: "timed_out",
+                error: None,
+            },
+        });
+    }
     Ok((outcome, timings))
 }
 

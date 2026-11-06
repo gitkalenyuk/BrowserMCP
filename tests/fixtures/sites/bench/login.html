@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Northbank – sign in</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 480px; }
+  label { display: block; margin: 8px 0; }
+  .error { color: #b00; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<header><h1>Northbank</h1></header>
+<form id="login">
+  <h2>Sign in</h2>
+  <label>Username <input name="user" autocomplete="off"></label>
+  <label>Password <input name="pass" type="password" autocomplete="off"></label>
+  <label><input type="checkbox" name="remember"> Remember me</label>
+  <p id="err" class="error" role="alert"></p>
+  <button type="submit">Sign in</button>
+</form>
+<section id="account" hidden>
+  <h2 id="welcome"></h2>
+  <p>Checking account •••• 4821 — balance $2,310.44</p>
+  <button id="statement">Download October statement</button>
+  <button id="logout">Sign out</button>
+</section>
+<script>
+  // Task "login": sign in as mira / s3cret-Pass! and download the October statement.
+  const form = document.getElementById('login');
+  let user = null;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (form.user.value.trim() === 'mira' && form.pass.value === 's3cret-Pass!') {
+      user = 'mira';
+      form.hidden = true;
+      document.getElementById('account').hidden = false;
+      document.getElementById('welcome').textContent = 'Welcome back, Mira';
+    } else {
+      document.getElementById('err').textContent = 'Invalid username or password.';
+      form.pass.value = '';
+    }
+  });
+  document.getElementById('statement').onclick = () => benchSubmit('login', { user, statement: 'october' });
+  document.getElementById('logout').onclick = () => location.reload();
+</script>
+</body>
+</html>

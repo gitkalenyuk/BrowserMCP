@@ -133,7 +133,7 @@ intercept_error | lagged`. Full params and results are in `src/lib/api/types.ts`
 structs; will be replaced by the generated `@browsermcp/protocol`). `mock-panels.ts` fakes the
 panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic without a backend.
 
-`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*"]}` (a notification) after every
+`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*","record.*","run.*","trigger.*","ui.*","script.*"]}` (a notification) after every
 (re)connect, on top of the server's default topics.
 
 ### Library (bookmarks, history, downloads, passwords, import)
@@ -203,6 +203,17 @@ starts the mock empty (wizard).
   triggers with a local preview of the next firings (`runs/cron.ts` follows the Rust `cron` crate:
   weekdays 1 = Sunday, day-of-month AND weekday). `WsApi` also subscribes `record.*`, `run.*`,
   `trigger.*`.
+* **Scripts** (`ScriptsPanel.svelte`, `MonacoEditor.svelte`, `ScriptConsole`, `DebugVariables`,
+  `scripts/*.ts`; debugger types `api/types-scripts.ts`, debugger mock `api/mock-scripts.ts`):
+  library (`script.list/get/save/delete`, rename = save + delete, unsaved edits kept per script), Monaco
+  (lazy `import('scripts/monaco')`, its own chunks + workers) with IntelliSense from
+  `crates/script/types/browser.d.ts` imported `?raw` at build time (so a UI build always carries
+  the typings `cargo xtask gen-sdk` wrote), Ctrl+S save, Run with an inputs form (`inputs.<name>`
+  inferred from the code) → `script.run`, console with stdout/stderr/result and the error's line
+  as a jump link. Debugger: gutter / F9 breakpoints, F5 debug/continue, F10/F11/Shift+F11 steps,
+  Shift+F5 stop, current-line highlight, variables + call stack from `script.debug_paused`
+  (`script.debug_start/debug_cmd`, events `script.*`). The panel root has `data-own-keys`, so the
+  chrome leaves those keys to it (F5 is reload elsewhere).
 
 `VITE_BMCP_PANEL=traffic pnpm build` opens that panel on a profile without saved settings
 (screenshots of a fresh profile).
