@@ -1,0 +1,25 @@
+[package]
+name = "bmcp-record"
+description = "BrowserMCP recording: action log (API + human), codegen to TypeScript, screencast video via ffmpeg (no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+bmcp-browser.workspace = true
+bmcp-perception.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `process` + `io-util`: the ffmpeg sidecar is a tokio child process fed through its stdin.
+tokio = { workspace = true, features = ["process", "io-util"] }
+tracing.workspace = true
+# Screencast frames arrive as base64 JPEG.
+base64 = "0.22"
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

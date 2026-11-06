@@ -1,0 +1,12 @@
+#1 +0.0s system start http://127.0.0.1:8000/login.html
+#2 +0.5s api command page.snapshot
+#3 +1.0s api fill textbox "Email" = "ann@example.test"
+#4 +1.2s human fill textbox "Email" = "ann@example.test" (dup of #3)
+#5 +2.0s api fill textbox "Password" = "***"
+#6 +2.2s human fill textbox "Password" = "***" (dup of #5)
+#7 +3.0s api check checkbox "Remember me"
+#8 +3.1s human check checkbox "Remember me" (dup of #7)
+#9 +4.0s api click button "Sign in"
+#10 +4.1s human click button "Sign in" (dup of #9)
+#11 +4.5s api click @1:e9 FAILED STALE_REF
+#12 +5.0s api wait for=text = "Welcome"

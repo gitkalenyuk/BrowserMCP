@@ -1,9 +1,11 @@
 [package]
 name = "xtask"
-description = "Project automation: cargo xtask <doctor|build|run|test>"
+description = "Project automation: cargo xtask <doctor|build|run|test|gen-sdk>"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Reads the registry dump for gen-sdk.
+serde_json.workspace = true

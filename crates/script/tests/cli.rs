@@ -115,3 +115,46 @@ fn missing_file_is_usage_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("script not found"));
 }
+
+#[test]
+fn output_prints_result_lines() {
+    let script = repo_root().join("crates/script/tests/fixtures/output.ts");
+    let out = run(script, &["--input", "email=a@x.test"]);
+    assert!(out.status.success(), "stderr:\n{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "##bmcp:result {\"email\":\"a@x.test\",\"step\":1}\nplain log line\n##bmcp:result {\"step\":2}\n"
+    );
+}
+
+/// `--inputs-file`: values far beyond the Windows 32K command-line limit and NUL bytes reach
+/// the script; a later `--input` overrides the file; non-string JSON values become text.
+#[test]
+fn inputs_file_carries_long_values_and_nul_bytes() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let script = repo_root().join("crates/script/tests/fixtures/inputs.ts");
+    let file = dir.join(format!("inputs-{}.json", std::process::id()));
+    let big = format!("{}{}end", "x".repeat(100_000), char::from(0));
+    let json = deno_core::serde_json::json!({ "name": "Ada", "times": 3, "big": big });
+    std::fs::write(&file, json.to_string()).unwrap();
+    let file_arg = file.to_string_lossy().into_owned();
+    let out = run(
+        script.clone(),
+        &["--inputs-file", &file_arg, "--input", "name=Bob"],
+    );
+    let _ = std::fs::remove_file(&file);
+    assert!(out.status.success(), "stderr:\n{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "name=Bob times=3\nbig length=100004 nul=true\n"
+    );
+
+    // Not an object: usage error (exit 2).
+    let bad = dir.join(format!("inputs-bad-{}.json", std::process::id()));
+    std::fs::write(&bad, "[1, 2]").unwrap();
+    let bad_arg = bad.to_string_lossy().into_owned();
+    let out = run(script, &["--inputs-file", &bad_arg]);
+    let _ = std::fs::remove_file(&bad);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("must hold a JSON object"));
+}

@@ -79,12 +79,18 @@ impl Services {
     }
 }
 
-/// Register the commands; identities and proxy pools are stored in `config_dir`
-/// (`data/config`).
-pub fn register(registry: &mut Registry, config_dir: impl Into<PathBuf>) {
+/// Give the commands their storage: identities and proxy pools live in `config_dir`
+/// (normally `data/config`). Called by the app once the data folder is known; without it the
+/// commands fail with a clear error (e.g. inside `bmcp-schema`, which only lists them).
+pub fn install(registry: &Registry, config_dir: impl Into<PathBuf>) {
     registry
         .extensions()
         .insert(Services::new(config_dir.into()));
+}
+
+/// Register the commands (no storage yet: see [`install`]); identities and proxy pools are stored in `config_dir`
+/// (`data/config`).
+pub fn register(registry: &mut Registry) {
     registry
         .add::<commands::Presets>()
         .add::<commands::Generate>()

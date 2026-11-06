@@ -1,16 +1,17 @@
 <script lang="ts">
   import type { Bookmark, BrowserApi } from '../../lib/api';
   import Favicon from '../../lib/components/Favicon.svelte';
+  import { isSafeLinkUrl } from '../../lib/safeurl';
 
   let { api, go }: { api: BrowserApi; go: (e: MouseEvent, url: string) => void } = $props();
   type Link = { title: string; url: string };
   let top = $state<Link[]>([]);
   let marks = $state<Link[]>([]);
-  const links = (items: Bookmark[]): Link[] =>
-    items.filter((b): b is Link => typeof b.url === 'string' && b.url.length > 0);
+  // Only http(s) URLs become links: a javascript: bookmark would run in the privileged origin.
+  const links = (items: Bookmark[]): Link[] => items.filter((b): b is Link => isSafeLinkUrl(b.url));
 
   $effect(() => {
-    Promise.all([api.call('data.top_sites'), api.call('data.bookmarks')])
+    Promise.all([api.call('data.top_sites', {}), api.call('data.bookmarks', {})])
       .then(([t, b]) => {
         top = links(t.sites);
         marks = links(b.bookmarks);

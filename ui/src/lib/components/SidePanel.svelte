@@ -5,6 +5,7 @@
   import AiPanel from './panels/AiPanel.svelte';
   import EmptyPanel from './panels/EmptyPanel.svelte';
   import TerminalPanel from './panels/TerminalPanel.svelte';
+  import TrafficPanel from './panels/TrafficPanel.svelte';
 
   let { panel }: { panel: PanelId } = $props();
 
@@ -40,16 +41,7 @@
     {:else if panel === 'terminal'}
       <TerminalPanel />
     {:else if panel === 'traffic'}
-      <EmptyPanel
-        icon="traffic"
-        title="No requests captured"
-        text="Start a capture to see requests, response bodies and WebSocket frames for the current tab. Rules, breakpoints and HAR export land in phase 6."
-        action="Start capture"
-      >
-        <div class="cols" aria-hidden="true">
-          <span>Method</span><span>URL</span><span>Status</span><span>Size</span>
-        </div>
-      </EmptyPanel>
+      <TrafficPanel />
     {:else if panel === 'recording'}
       <EmptyPanel
         icon="record"
@@ -111,17 +103,5 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
-  }
-  .cols {
-    display: grid;
-    grid-template-columns: 52px 1fr 46px 44px;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-    color: var(--fg-subtle);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    text-align: left;
   }
 </style>

@@ -1,0 +1,44 @@
+[package]
+name = "bmcp-jobs"
+description = "BrowserMCP jobs: script library, mass runs (queue, data, exports), cron triggers, self-healing hook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Test double for `bmcp-script-host` (no V8): runs a tiny line-based DSL so the tests can
+# control exit codes, output, timing and errors. Only the tests use it.
+[[bin]]
+name = "bmcp-fake-script-host"
+path = "src/bin/fake_script_host.rs"
+test = false
+
+[dependencies]
+bmcp-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "fs"] }
+tokio-util.workspace = true
+tracing.workspace = true
+# Run/row/trigger storage in data/db/runs.sqlite (SQLite compiled in: no system library needed).
+rusqlite = { version = "0.41", features = ["bundled", "fallible_uint"] }
+# Input data and exports.
+csv = "1.4"
+calamine = "0.38"
+rust_xlsxwriter = "0.102"
+# Cron triggers (`cron` needs chrono for its date types).
+cron = "0.17"
+chrono = "0.4"
+# Parallelism auto-limit by free RAM.
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+# Webhook export. native-tls = SChannel on Windows (no NASM / aws-lc build).
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+# Parsing the script host's error output.
+regex = "1"
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "fs", "test-util"] }

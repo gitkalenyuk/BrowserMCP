@@ -5,9 +5,13 @@
 //!   build [--release]   build the browser (finds CMake inside Visual Studio if needed)
 //!   run [--release] [-- <browser args>]
 //!   test [--all]        run Rust tests (--all includes the V8 script host)
+//!   gen-sdk [--check]   generate the TypeScript SDK types from the command registry
+//!                       (--check: fail if the committed files are stale; see gen_sdk.rs)
 //!
 //! The first build downloads CEF (~500 MB) into target/ and copies its runtime files
 //! next to browsermcp.exe automatically (done by the `cef-dll-sys` build script).
+
+mod gen_sdk;
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -29,9 +33,10 @@ fn main() -> ExitCode {
         }
         "test" => build_env()
             .and_then(|env| cargo(&["test", "--workspace", "--exclude", "bmcp-script"], &env)),
+        "gen-sdk" => gen_sdk::gen_sdk(has_flag(rest, "--check")),
         _ => {
             eprintln!(
-                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test>"
+                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]>"
             );
             Ok(())
         }

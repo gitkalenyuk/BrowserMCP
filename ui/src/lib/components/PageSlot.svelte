@@ -2,6 +2,7 @@
   import type { Rect } from '../api/types';
   import type { KeyLike } from '../keymap';
   import { useChrome } from '../state/chrome.svelte';
+  import { isLibraryUrl } from '../data/library';
   import { fallbackTitle, isNewTab } from '../urls';
   import Favicon from './Favicon.svelte';
 
@@ -62,6 +63,8 @@
   {#if mock && tab}
     {#if isNewTab(tab.url)}
       <iframe class="newtab" src="./newtab.html" title="New tab"></iframe>
+    {:else if isLibraryUrl(tab.url)}
+      <iframe class="newtab" src="./library.html" title="Library"></iframe>
     {:else}
       <div class="placeholder">
         <Favicon url={tab.url} src={tab.favicon} loading={tab.loading} size={28} />

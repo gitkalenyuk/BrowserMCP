@@ -1,0 +1,16 @@
+{"seq":1,"ts_ms":1793966400000,"source":"system","action":"start","url":"https://shop.test/"}
+{"seq":2,"ts_ms":1793966401000,"source":"human","action":"fill","target":{"role":"searchbox","name":"Search products","css":"#q","tag":"input","input_type":"search","from":"dom"},"value":"red shoes","url":"https://shop.test/"}
+{"seq":3,"ts_ms":1793966401500,"source":"human","action":"press","target":{"role":"searchbox","name":"Search products","css":"#q","tag":"input","input_type":"search","from":"dom"},"value":"Enter","url":"https://shop.test/"}
+{"seq":4,"ts_ms":1793966401700,"source":"human","action":"navigated","url":"https://shop.test/search?q=red+shoes"}
+{"seq":5,"ts_ms":1793966403000,"source":"human","action":"scroll","value":"to","url":"https://shop.test/search?q=red+shoes","extra":{"x":0,"y":800}}
+{"seq":6,"ts_ms":1793966404000,"source":"human","action":"click","target":{"role":"link","name":"Red Running Shoe","text":"Red Running Shoe","nth":1,"css":"main > ul > li:nth-of-type(3) > a","tag":"a","from":"dom"},"url":"https://shop.test/search?q=red+shoes"}
+{"seq":7,"ts_ms":1793966404300,"source":"human","action":"navigated","url":"https://shop.test/p/red-running-shoe"}
+{"seq":9,"ts_ms":1793966405000,"source":"human","action":"select","target":{"role":"combobox","name":"Size","css":"#size","tag":"select","from":"dom"},"value":"42","url":"https://shop.test/p/red-running-shoe","extra":{"label":"EU 42"}}
+{"seq":8,"ts_ms":1793966405500,"source":"human","action":"check","target":{"role":"checkbox","name":"Gift wrap","css":"#gift","tag":"input","input_type":"checkbox","from":"dom"},"url":"https://shop.test/p/red-running-shoe"}
+{"seq":10,"ts_ms":1793966406000,"source":"human","action":"click","target":{"role":"button","name":"Zoom","css":"#zoom","tag":"button","from":"dom"},"url":"https://shop.test/p/red-running-shoe"}
+{"seq":11,"ts_ms":1793966406200,"source":"human","action":"dblclick","target":{"role":"button","name":"Zoom","css":"#zoom","tag":"button","from":"dom"},"url":"https://shop.test/p/red-running-shoe"}
+{"seq":12,"ts_ms":1793966407000,"source":"human","action":"fill","target":{"role":"textbox","name":"Delivery note","css":"#note","tag":"textarea","from":"dom"},"value":"Leave at the door, \"thanks\"","url":"https://shop.test/p/red-running-shoe"}
+{"seq":13,"ts_ms":1793966408000,"source":"human","action":"click","target":{"role":"button","name":"Add to cart – free delivery on orders over…","css":"#add","tag":"button","from":"snapshot"},"url":"https://shop.test/p/red-running-shoe"}
+{"seq":14,"ts_ms":1793966409000,"source":"human","action":"click","target":{"css":"div.overlay > span:nth-of-type(2)","tag":"span","from":"dom"},"url":"https://shop.test/p/red-running-shoe"}
+{"seq":15,"ts_ms":1793966409500,"source":"human","action":"press","value":"Escape","url":"https://shop.test/p/red-running-shoe"}
+{"seq":16,"ts_ms":1793966420000,"source":"human","action":"navigated","url":"https://shop.test/cart"}

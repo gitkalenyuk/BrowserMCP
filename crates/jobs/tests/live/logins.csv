@@ -1,0 +1,11 @@
+email,password
+ada@example.test,hunter2
+bob@example.test,hunter2
+cyd@example.test,wrong
+dan@example.test,hunter2
+eve@example.test,letmein
+fay@example.test,hunter2
+gus@example.test,hunter2
+hal@example.test,nope
+ivy@example.test,hunter2
+jon@example.test,hunter2

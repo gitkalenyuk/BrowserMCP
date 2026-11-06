@@ -2,7 +2,12 @@ import { getContext, setContext } from 'svelte';
 import type { BrowserApi } from '../api/client';
 import type { Agent, ConnectionStatus, TabId, Workspace, WorkspaceId } from '../api/types';
 import { buildKeyIndex, commandForEvent, DEFAULT_KEYMAP, type CommandId, type Keymap, type KeyLike } from '../keymap';
+import { AiStore } from '../ai/store.svelte';
+import { chromeBookmarks } from '../data/chrome-bookmarks.svelte';
+import { openLibrary } from '../data/library';
 import type { NativeHost } from '../native';
+import { NetStore } from '../net/store.svelte';
+import { TerminalStore } from '../term/store.svelte';
 import { settings, type PanelId } from '../settings.svelte';
 import { NEWTAB_URL, resolveOmniboxInput } from '../urls';
 import { activeTab, cycleTab, emptyTabs, reduceTabs, tabByNumber, type TabsAction, type TabsState } from './tabs';
@@ -23,6 +28,10 @@ export class ChromeController {
   readonly api: BrowserApi;
   readonly host: NativeHost | null;
   readonly role: 'chrome' | 'palette';
+  /** Side panel state that outlives the panels (events arrive while they are closed). */
+  readonly ai: AiStore;
+  readonly terms: TerminalStore;
+  readonly net: NetStore;
   tabs = $state<TabsState>(emptyTabs);
   agents = $state<Agent[]>([]);
   workspaces = $state<Workspace[]>([]);
@@ -43,6 +52,9 @@ export class ChromeController {
     this.api = api;
     this.host = opts.host ?? null;
     this.role = opts.role ?? 'chrome';
+    this.ai = new AiStore(api);
+    this.terms = new TerminalStore(api);
+    this.net = new NetStore(api);
   }
 
   async start(): Promise<void> {
@@ -61,12 +73,20 @@ export class ChromeController {
       api.on('agents.updated', ({ agents }) => (this.agents = agents)),
       api.on('workspace.activated', ({ id }) => (this.workspaceId = id)),
     );
+    if (this.role === 'chrome') {
+      this.ai.start();
+      this.terms.start();
+      this.net.start();
+    }
     await this.#guard(api.connect());
   }
 
   stop(): void {
     this.#unsubs.forEach((u) => u());
     this.#unsubs = [];
+    this.ai.stop();
+    this.terms.stop();
+    this.net.stop();
   }
 
   async #refresh(): Promise<void> {
@@ -217,6 +237,13 @@ export class ChromeController {
       case 'panel.scripts': return panel('scripts');
       case 'panel.runs': return panel('runs');
       case 'panel.close': return settings.update({ panel: null });
+      case 'library.bookmarks': return openLibrary(this, 'bookmarks');
+      case 'library.history': return openLibrary(this, 'history');
+      case 'library.downloads': return openLibrary(this, 'downloads');
+      case 'library.passwords': return openLibrary(this, 'passwords');
+      case 'library.import': return openLibrary(this, 'import');
+      case 'bookmark.toggle': return void chromeBookmarks(this.api).toggle(this.active?.url, this.active?.title);
+      case 'ui.toggleBookmarksBar': return settings.update({ bookmarksBar: !settings.value.bookmarksBar });
     }
   }
 
