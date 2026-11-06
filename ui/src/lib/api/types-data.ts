@@ -1,5 +1,6 @@
 // Wire types of the daily-driver data commands (crates/data): bookmarks, history, downloads,
-// passwords and the Chrome import. Copied from sdk/protocol/src/generated/commands.ts (the
+// passwords and the Chrome import, their change events, and system.reveal_path / open_path
+// (crates/system). Copied from sdk/protocol/src/generated/commands.ts (the
 // generated contract); keep them in sync with it. Times are Unix milliseconds.
 //
 // They are merged into RpcMethods (types.ts) by the module augmentation at the bottom, so
@@ -81,6 +82,21 @@ export interface BookmarksMoveOutput {
   position: number;
 }
 
+export interface BookmarksUpdateArgs {
+  /** Bookmark or folder id. */
+  id: number;
+  /** New title (bookmark: empty = the URL; folder: must not be empty). */
+  title?: string | null;
+  /** New URL (bookmarks only; http, https or file). */
+  url?: string | null;
+}
+
+/** What `bookmarks.update` changed: exactly one of the two is set. */
+export interface BookmarksUpdateOutput {
+  bookmark: DataBookmark | null;
+  folder: DataFolder | null;
+}
+
 // ---- history ----------------------------------------------------------------------------
 
 export interface HistoryEntry {
@@ -100,10 +116,23 @@ export interface HistorySearchArgs {
   limit?: number | null;
 }
 
-/** Exactly one of `url` / `before`. */
-export type HistoryDeleteArgs = { url: string; before?: never } | { before: number; url?: never };
+/**
+ * Which visits to delete (at least one field): those of `url` (alone: the URL with all its
+ * visits) and/or in `[since, before)` or on the local `day` (`YYYY-MM-DD`). URLs left without
+ * visits are dropped.
+ */
+export interface HistoryDeleteArgs {
+  url?: string | null;
+  /** Unix ms, inclusive. */
+  since?: number | null;
+  /** Unix ms, exclusive. */
+  before?: number | null;
+  /** Local calendar day `YYYY-MM-DD` (not together with since/before). */
+  day?: string | null;
+}
 
 export interface HistoryDeleteOutput {
+  /** URLs that had no visit left and were dropped. */
   deleted_urls: number;
   deleted_visits: number;
 }
@@ -211,6 +240,27 @@ export interface ImportPartResult {
   error: string | null;
 }
 
+// ---- system (crates/system) ------------------------------------------------------------
+
+/** An absolute path inside the BrowserMCP data folder or the Downloads folder. */
+export interface SystemPathArgs {
+  path: string;
+}
+
+export interface SystemPathOutput {
+  /** The resolved path that was shown. */
+  path: string;
+}
+
+// ---- change events ----------------------------------------------------------------------
+
+/** Pushed by the core after every edit, by any caller (UI, REST, MCP, scripts). */
+export interface DataApiEvents {
+  /** `id`: the bookmark/folder that changed; `null` after an import. */
+  'bookmarks.changed': { op: 'add' | 'add_folder' | 'update' | 'remove' | 'move' | 'import'; id: number | null };
+  'history.changed': { op: 'delete' | 'import' };
+}
+
 /** name -> params / result of every data command. */
 export interface DataRpcMethods {
   'data.bookmarks': { params: DataBookmarksArgs; result: DataBookmarksOutput };
@@ -219,6 +269,7 @@ export interface DataRpcMethods {
   'bookmarks.add_folder': { params: BookmarksAddFolderArgs; result: DataFolder };
   'bookmarks.remove': { params: { id: number }; result: { removed: number } };
   'bookmarks.move': { params: BookmarksMoveArgs; result: BookmarksMoveOutput };
+  'bookmarks.update': { params: BookmarksUpdateArgs; result: BookmarksUpdateOutput };
   'bookmarks.search': { params: { q: string; limit?: number | null }; result: { bookmarks: DataBookmark[] } };
   'history.search': { params: HistorySearchArgs; result: { entries: HistoryEntry[] } };
   'history.delete': { params: HistoryDeleteArgs; result: HistoryDeleteOutput };
@@ -229,9 +280,13 @@ export interface DataRpcMethods {
   'passwords.delete': { params: { id: number }; result: { deleted: boolean } };
   'import.chrome_detect': { params: { user_data_dir?: string | null }; result: ImportChromeDetectOutput };
   'import.chrome': { params: ImportChromeArgs; result: { results: ImportPartResult[] } };
+  'system.reveal_path': { params: SystemPathArgs; result: SystemPathOutput };
+  'system.open_path': { params: SystemPathArgs; result: SystemPathOutput };
 }
 
 declare module './types' {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface RpcMethods extends DataRpcMethods {}
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface ApiEvents extends DataApiEvents {}
 }

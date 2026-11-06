@@ -1,0 +1,24 @@
+[package]
+name = "bmcp-profiles"
+description = "BrowserMCP profiles: per-profile proxy/language/identity settings, cookies, permissions, download paths (no CEF dependency; the CEF crate implements ProfileBackend)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+# Proxy forwarder, identities.json (profile → identity).
+bmcp-identity = { path = "../identity" }
+# pending_cookies from import.chrome.
+bmcp-data = { path = "../data" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

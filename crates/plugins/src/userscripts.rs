@@ -434,6 +434,7 @@ async fn run_one(
             ws_url: &candidate.ws_url,
             script: &candidate.path,
             inputs: &inputs,
+            env: &[],
             timeout,
         },
         &cancel,

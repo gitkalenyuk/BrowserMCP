@@ -229,6 +229,9 @@ pub struct ApplyReport {
     pub js_disabled: bool,
     /// Animations were disabled by the site policy.
     pub animations_disabled: bool,
+    /// Where requests are blocked: "cef" (the browser's network hook, every request incl.
+    /// workers and iframes) or "cdp" (interim `Fetch` interception of this tab).
+    pub network: &'static str,
 }
 
 /// Start intercepting `tab`. The caller checks that no session runs yet.
@@ -263,17 +266,22 @@ pub(crate) async fn start(
         .acquire(&backend, tab, "Page", CLIENT, json!({}))
         .await?;
     let task = tokio::spawn(event_loop(shared.clone(), events));
-    // Registered before the cosmetic calls below: they may wait for a navigation, which
-    // waits for its paused request to be answered.
-    let client = FetchClient {
-        name: CLIENT.to_string(),
-        order: ORDER_ADBLOCK,
-        patterns: vec![json!({ "urlPattern": "*", "requestStage": "Request" })],
-        handler: Arc::new(AdblockFetch(shared.clone())),
-    };
-    if let Err(err) = share.set_fetch(&backend, tab, client).await {
-        task.abort();
-        return Err(err);
+    // With the CEF network hook (`Gate::is_native`) every request is already decided in the
+    // browser's network stack: only the cosmetic part below is needed here, no Fetch client.
+    let native = shared.gate.is_native();
+    if !native {
+        // Registered before the cosmetic calls below: they may wait for a navigation, which
+        // waits for its paused request to be answered.
+        let client = FetchClient {
+            name: CLIENT.to_string(),
+            order: ORDER_ADBLOCK,
+            patterns: vec![json!({ "urlPattern": "*", "requestStage": "Request" })],
+            handler: Arc::new(AdblockFetch(shared.clone())),
+        };
+        if let Err(err) = share.set_fetch(&backend, tab, client).await {
+            task.abort();
+            return Err(err);
+        }
     }
 
     let url = shared.page_url();
@@ -285,6 +293,7 @@ pub(crate) async fn start(
         generic_selectors: generic,
         js_disabled: shared.js_disabled.load(Ordering::Relaxed),
         animations_disabled: shared.reduced_motion.load(Ordering::Relaxed),
+        network: if native { "cef" } else { "cdp" },
     };
     Ok((Session { task, shared }, report))
 }

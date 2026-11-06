@@ -27,9 +27,9 @@ use std::cell::RefCell;
 
 use bmcp_core::{BackendError, NEW_TAB_URL, TabId, TabStrip};
 use cef::*;
-use tokio::sync::oneshot;
 
 use crate::bridge::{PendingTab, ShellContext, next_view_id, post_to_ui, with_ui};
+use crate::profiles::ProfileKey;
 use crate::scheme::{PALETTE_PAGE, UI_PAGE, ui_page_url};
 use protocol::{Bounds, Command, Insets, PaletteAction, Shortcut};
 
@@ -121,7 +121,12 @@ fn cef_rect(b: Bounds) -> Rect {
 
 /// Create a content view for `pending` (the browser itself appears later, see bridge.rs).
 fn create_content_view(ctx: &ShellContext, pending: PendingTab) -> Option<BrowserView> {
-    let view = crate::shell::create_browser_view(&pending.url, ViewKind::Content, ctx)?;
+    let view = crate::shell::create_browser_view(
+        pending.initial_url(),
+        ViewKind::Content,
+        ctx,
+        &pending.profile,
+    )?;
     remember_pending(&view, pending);
     Some(view)
 }
@@ -133,22 +138,26 @@ fn remember_pending(view: &BrowserView, pending: PendingTab) {
     with_ui(|ui| ui.pending.insert(view_id, pending));
 }
 
-/// Open a composed window whose first tab shows `url`.
-pub(crate) fn open_window(url: &str, ctx: &ShellContext, reply: Option<oneshot::Sender<TabId>>) {
+/// Open a composed window whose first tab is `pending`.
+pub(crate) fn open_window(pending: PendingTab, ctx: &ShellContext) {
     let key = next_view_id();
     let pending = PendingTab {
         window: Some(key),
         index: None,
         activate: true,
-        url: url.to_owned(),
-        reply,
+        ..pending
     };
     let Some(first_tab) = create_content_view(ctx, pending) else {
         return;
     };
-    let ui = crate::shell::create_browser_view(&ui_page_url(UI_PAGE), ViewKind::Ui, ctx);
-    let palette =
-        crate::shell::create_browser_view(&ui_page_url(PALETTE_PAGE), ViewKind::Palette, ctx);
+    let ours = ProfileKey::default(); // our own views always use the global context
+    let ui = crate::shell::create_browser_view(&ui_page_url(UI_PAGE), ViewKind::Ui, ctx, &ours);
+    let palette = crate::shell::create_browser_view(
+        &ui_page_url(PALETTE_PAGE),
+        ViewKind::Palette,
+        ctx,
+        &ours,
+    );
     let pages = panel_create(None);
     let (Some(ui), Some(palette), Some(pages)) = (ui, palette, pages) else {
         tracing::error!("could not create the chrome views");
@@ -166,11 +175,7 @@ pub(crate) fn open_window(url: &str, ctx: &ShellContext, reply: Option<oneshot::
 }
 
 /// `tabs.open`: a new tab in the window used last (or a new window if there is none).
-pub(crate) fn open_tab(
-    url: String,
-    background: bool,
-    reply: oneshot::Sender<TabId>,
-) -> Result<(), BackendError> {
+pub(crate) fn open_tab(pending: PendingTab) -> Result<(), BackendError> {
     let ctx = with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
     let key = with_ui(|ui| {
         ui.last_window
@@ -178,33 +183,30 @@ pub(crate) fn open_tab(
             .or_else(|| ui.windows.keys().next_back().copied())
     });
     match key {
-        Some(key) => add_tab(&ctx, key, url, None, !background, Some(reply)),
-        None => open_window(&url, &ctx, Some(reply)),
+        Some(key) => add_tab(&ctx, key, pending),
+        None => open_window(pending, &ctx),
     }
     Ok(())
 }
 
-/// Add a new tab to window `key` at `index` (None = end).
-fn add_tab(
-    ctx: &ShellContext,
-    key: i32,
-    url: String,
-    index: Option<usize>,
-    activate: bool,
-    reply: Option<oneshot::Sender<TabId>>,
-) {
+/// Add `pending` as a new tab of window `key` (at `pending.index`, None = end).
+fn add_tab(ctx: &ShellContext, key: i32, pending: PendingTab) {
     let Some(views) = views(key) else { return };
+    let activate = pending.activate;
     let pending = PendingTab {
         window: Some(key),
-        index,
-        activate,
-        url,
-        reply,
+        ..pending
     };
     let Some(view) = create_content_view(ctx, pending) else {
         return;
     };
     insert_view(&views, &view, activate);
+}
+
+/// Add `pending` to window `key` right after tab `after` (a re-opened popup).
+pub(crate) fn add_tab_after(ctx: &ShellContext, key: i32, after: TabId, pending: PendingTab) {
+    let index = with_ui(|ui| ui.windows.get(&key)?.strip.index_of(after).map(|i| i + 1));
+    add_tab(ctx, key, PendingTab { index, ..pending });
 }
 
 /// Put a content view into the pages panel. Background tabs start hidden; a foreground
@@ -214,6 +216,45 @@ fn insert_view(views: &Views, view: &BrowserView, activate: bool) {
         view.set_visible(0);
     }
     views.pages.add_child_view(Some(&mut View::from(view)));
+    if !activate {
+        // The layout skips hidden views: give the page the real size anyway, so a
+        // background tab has a layout (boxes, scroll sizes) before it is first shown.
+        size_like_panel(views, view);
+    }
+}
+
+/// Bounds of the pages panel (0,0-based) for one of its child views.
+fn size_like_panel(views: &Views, view: &BrowserView) {
+    let panel = views.pages.bounds();
+    if panel.width > 0 && panel.height > 0 {
+        view.set_bounds(Some(&Rect {
+            x: 0,
+            y: 0,
+            width: panel.width,
+            height: panel.height,
+        }));
+    }
+}
+
+/// After a resize: hidden tabs follow the panel size too (see [`insert_view`]).
+fn size_hidden_tabs(key: i32, views: &Views) {
+    let hidden: Vec<TabId> = with_ui(|ui| {
+        let Some(w) = ui.windows.get(&key) else {
+            return Vec::new();
+        };
+        let active = w.strip.active();
+        w.strip
+            .tabs()
+            .iter()
+            .copied()
+            .filter(|id| Some(*id) != active)
+            .collect()
+    });
+    for id in hidden {
+        if let Some(view) = tab_view(id) {
+            size_like_panel(views, &view);
+        }
+    }
 }
 
 /// A page opened a popup (`window.open`, `target=_blank`, middle click): make it a tab
@@ -225,14 +266,17 @@ pub(crate) fn adopt_popup(opener: &Browser, popup: &BrowserView) -> bool {
             .popups
             .remove(&opener.identifier())
             .unwrap_or((false, String::new()));
-        let key = ui.tabs.get(&opener_id)?.window?;
+        let opener_tab = ui.tabs.get(&opener_id)?;
+        let (profile, run) = (opener_tab.profile.clone(), opener_tab.run.clone());
+        let key = opener_tab.window?;
         let w = ui.windows.get(&key)?;
         let index = w.strip.index_of(opener_id).map(|i| i + 1);
-        Some((key, w.views.clone(), index, background, url))
+        Some((key, w.views.clone(), index, background, url, profile, run))
     });
-    let Some((key, views, index, background, url)) = placement else {
+    let Some((key, views, index, background, url, profile, run)) = placement else {
         return false;
     };
+    // The popup already loads its URL in the opener's request context (same profile).
     remember_pending(
         popup,
         PendingTab {
@@ -241,6 +285,9 @@ pub(crate) fn adopt_popup(opener: &Browser, popup: &BrowserView) -> bool {
             activate: !background,
             url,
             reply: None,
+            profile,
+            run,
+            then_load: None,
         },
     );
     insert_view(&views, popup, !background);
@@ -322,13 +369,79 @@ pub(crate) fn tab_title_changed(id: TabId) {
 
 // ------------------------------------------------------------------ closing tabs
 
+/// What `tabs.close` from an automation caller does with a tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeepWindowPlan {
+    /// Close it as usual (other tabs remain, or it has no window: off-screen).
+    Close,
+    /// It is the last tab of a composed window: open the new tab page there first.
+    ReplaceThenClose(i32),
+    /// Single layout (every tab is its own window): show the new tab page instead.
+    ShowNewTabInstead,
+}
+
+/// Decide [`KeepWindowPlan`] (pure): `window` = (key, tabs in it) of a composed window.
+pub(crate) fn keep_window_plan(window: Option<(i32, usize)>, offscreen: bool) -> KeepWindowPlan {
+    match window {
+        Some((key, tabs)) if tabs <= 1 => KeepWindowPlan::ReplaceThenClose(key),
+        Some(_) => KeepWindowPlan::Close,
+        None if offscreen => KeepWindowPlan::Close,
+        None => KeepWindowPlan::ShowNewTabInstead,
+    }
+}
+
+/// The plan for tab `id` (see [`keep_window_plan`]). UI thread.
+pub(crate) fn plan_keep_window(id: TabId) -> Result<KeepWindowPlan, BackendError> {
+    let facts = with_ui(|ui| {
+        let tab = ui.tabs.get(&id)?;
+        let window = tab
+            .window
+            .and_then(|key| ui.windows.get(&key).map(|w| (key, w.strip.tabs().len())));
+        Some((window, tab.offscreen))
+    });
+    let (window, offscreen) = facts.ok_or(BackendError::TabNotFound(id))?;
+    Ok(keep_window_plan(window, offscreen))
+}
+
+/// Open the new tab page as a tab of window `key`; `reply` learns its id once it exists.
+pub(crate) fn open_new_tab_in(
+    key: i32,
+    reply: tokio::sync::oneshot::Sender<TabId>,
+) -> Result<(), BackendError> {
+    let ctx = with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
+    let mut pending = PendingTab::new(NEW_TAB_URL, ProfileKey::default(), None);
+    pending.reply = Some(reply);
+    add_tab(&ctx, key, pending);
+    Ok(())
+}
+
+/// Single layout: load the new tab page in tab `id` instead of closing its window.
+pub(crate) fn show_new_tab(id: TabId) -> Result<(), BackendError> {
+    let browser = with_ui(|ui| ui.tabs.get(&id).map(|t| t.browser.clone()))
+        .ok_or(BackendError::TabNotFound(id))?;
+    if let Some(frame) = browser.main_frame() {
+        frame.load_url(Some(&CefString::from(NEW_TAB_URL)));
+    }
+    Ok(())
+}
+
 /// `tabs.close`: ask the page to close (it may run `beforeunload`). What happens next is
 /// decided in [`do_close`].
 pub(crate) fn close_tab(id: TabId) -> Result<(), BackendError> {
-    let entry = with_ui(|ui| ui.tabs.get(&id).map(|t| (t.browser.clone(), t.window)));
-    let (browser, window) = entry.ok_or(BackendError::TabNotFound(id))?;
+    let entry = with_ui(|ui| {
+        ui.tabs
+            .get(&id)
+            .map(|t| (t.browser.clone(), t.window, t.offscreen))
+    });
+    let (browser, window, offscreen) = entry.ok_or(BackendError::TabNotFound(id))?;
     match window {
+        // Composed window, or a windowless tab (no view, no window: close the browser).
         Some(_) => {
+            if let Some(host) = browser.host() {
+                host.close_browser(0);
+            }
+        }
+        None if offscreen => {
             if let Some(host) = browser.host() {
                 host.close_browser(0);
             }
@@ -367,7 +480,9 @@ pub(crate) fn do_close(browser: &Browser) -> i32 {
         return 0; // single layout or not ours: default behaviour
     };
     if others.is_empty() {
-        return 0; // the last tab: the window goes with it
+        // The last tab: the window goes with it.
+        tracing::info!(%id, window = key, "last tab of the window closed: window closes");
+        return 0;
     }
     let others_ready = || {
         others
@@ -390,14 +505,24 @@ fn detach_tab(key: i32, id: TabId) {
     let state = with_ui(|ui| {
         let w = ui.windows.get_mut(&key)?;
         let next = w.strip.remove(id).and_then(|r| r.new_active);
-        Some((w.views.pages.clone(), next))
+        // Re-checked after every removal: when several tabs close at the same time, each
+        // `do_close` saw the others as "still there" and none let the window close.
+        let empty = w.strip.tabs().is_empty();
+        Some((w.views.pages.clone(), w.views.window.clone(), next, empty))
     });
-    let Some((pages, next)) = state else { return };
+    let Some((pages, window, next, empty)) = state else {
+        return;
+    };
     if let Some(next) = next {
         show_tab(key, next);
     }
     pages.remove_child_view(Some(&mut View::from(&view)));
-    tracing::debug!(%id, "tab view removed");
+    tracing::debug!(%id, empty, "tab view removed");
+    if empty {
+        // No tab left: the window goes too (like closing its last tab).
+        tracing::info!(window = key, "no tab left after a close: window closes");
+        window.close();
+    }
 }
 
 // ------------------------------------------------------------------ UI -> browser
@@ -536,6 +661,7 @@ fn place_views(key: i32) {
     }));
     let page = protocol::page_bounds(width, height, insets);
     views.pages.set_bounds(Some(&cef_rect(page)));
+    size_hidden_tabs(key, &views);
     position_palette(&views, page);
 }
 
@@ -696,6 +822,9 @@ wrap_window_delegate! {
                 )
             });
             let Some(browsers) = browsers else { return 1 };
+            // Who closes windows: the close button / Alt+F4 (a person), `quit`, or the last
+            // tab going away (logged in do_close / detach_tab).
+            tracing::info!(window = self.key, tabs = browsers.len(), "window close requested");
             let mut all = true;
             for browser in browsers {
                 // Returns 1 when that page is ready; otherwise it starts closing and
@@ -732,5 +861,28 @@ wrap_window_delegate! {
         fn window_runtime_style(&self) -> RuntimeStyle {
             self.style
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KeepWindowPlan, keep_window_plan};
+
+    #[test]
+    fn automation_never_closes_the_last_window() {
+        // Last tab of a composed window: the new tab page comes first.
+        assert_eq!(
+            keep_window_plan(Some((7, 1)), false),
+            KeepWindowPlan::ReplaceThenClose(7)
+        );
+        // Other tabs remain: close normally.
+        assert_eq!(keep_window_plan(Some((7, 3)), false), KeepWindowPlan::Close);
+        // Off-screen tabs have no window to keep.
+        assert_eq!(keep_window_plan(None, true), KeepWindowPlan::Close);
+        // Single layout: the tab is the window, so it shows the new tab page instead.
+        assert_eq!(
+            keep_window_plan(None, false),
+            KeepWindowPlan::ShowNewTabInstead
+        );
     }
 }

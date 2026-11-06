@@ -90,7 +90,9 @@
   async function open(path: string, folder: boolean) {
     error = null;
     try {
-      await api.call('tabs.open', { url: fileUrl(path, folder) });
+      // The folder opens in Explorer with the file selected; the file itself plays in a tab.
+      if (folder) await api.call('system.reveal_path', { path });
+      else await api.call('tabs.open', { url: fileUrl(path, false) });
     } catch (err) {
       error = (err as Error).message;
     }
@@ -140,7 +142,7 @@
           <code class="rr-path">{meta.video}</code>
           <div class="rr-row">
             <button class="btn sm" onclick={() => open(meta.video!, false)} title="Play it in a new tab"><Icon name="play" size={12} /> Open video</button>
-            <button class="btn sm" onclick={() => open(meta.video!, true)} title="Show the recording folder in a new tab">Open folder</button>
+            <button class="btn sm" onclick={() => open(meta.video!, true)} title="Show the video in Explorer">Open folder</button>
             <button class="btn sm" onclick={() => copy(meta.video!)}>Copy path</button>
           </div>
         </div>

@@ -1,5 +1,5 @@
-//! Downloads. The table is filled by a later CEF download hook (`OnBeforeDownload` /
-//! `OnDownloadUpdated` → [`upsert_download`]); for now there is only `downloads.list`.
+//! Downloads. The table is filled from the CEF download hook's `download.*` events
+//! ([`spawn_download_recorder`] → [`upsert_download`]); `downloads.list` reads it.
 
 use bmcp_core::{CmdError, Command, Ctx, Meta, Toolset};
 use rusqlite::{Connection, params};
@@ -56,6 +56,80 @@ pub fn upsert_download(conn: &Connection, d: &Download) -> DataResult<i64> {
         )?;
         Ok(d.id)
     }
+}
+
+// ------------------------------------------------------------------ recording from events
+
+/// Topics the CEF download handler emits. Data: `{id (the browser's download id), url, path,
+/// mime, total_bytes, received_bytes, state, started, ended, tab, run}`.
+pub const DOWNLOAD_STARTED: &str = "download.started";
+pub const DOWNLOAD_PROGRESS: &str = "download.progress";
+pub const DOWNLOAD_DONE: &str = "download.done";
+
+/// The row for a download event (`row_id` 0 = new row). `None` if the event has no URL.
+pub fn download_from_event(data: &serde_json::Value, row_id: i64) -> Option<Download> {
+    let s = |k: &str| data[k].as_str().unwrap_or_default().to_string();
+    let url = s("url");
+    if url.is_empty() {
+        return None;
+    }
+    Some(Download {
+        id: row_id,
+        url,
+        path: s("path"),
+        mime: s("mime"),
+        total_bytes: data["total_bytes"].as_i64().filter(|n| *n >= 0),
+        received_bytes: data["received_bytes"].as_i64().unwrap_or(0),
+        state: match data["state"].as_str() {
+            Some(state @ ("complete" | "cancelled" | "interrupted")) => state.to_string(),
+            _ => "in_progress".to_string(),
+        },
+        started: data["started"]
+            .as_i64()
+            .unwrap_or_else(crate::store::now_ms),
+        ended: data["ended"].as_i64(),
+    })
+}
+
+/// Keep the `downloads` table up to date from `download.*` events (one row per browser
+/// download id). Runs until the bus closes.
+pub fn spawn_download_recorder(
+    store: DataStore,
+    events: &bmcp_core::EventBus,
+) -> tokio::task::JoinHandle<()> {
+    let mut rx = events.subscribe();
+    tokio::spawn(async move {
+        // Browser download id → row id.
+        let mut rows: std::collections::HashMap<u64, i64> = std::collections::HashMap::new();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if ![DOWNLOAD_STARTED, DOWNLOAD_PROGRESS, DOWNLOAD_DONE].contains(&event.topic.as_str())
+            {
+                continue;
+            }
+            let Some(key) = event.data["id"].as_u64() else {
+                continue;
+            };
+            let row_id = rows.get(&key).copied().unwrap_or(0);
+            let Some(download) = download_from_event(&event.data, row_id) else {
+                continue;
+            };
+            match store.run(move |c| upsert_download(c, &download)).await {
+                Ok(id) => {
+                    if event.topic == DOWNLOAD_DONE {
+                        rows.remove(&key);
+                    } else {
+                        rows.insert(key, id);
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "download not recorded"),
+            }
+        }
+    })
 }
 
 /// Newest first.
@@ -163,5 +237,45 @@ mod tests {
         assert_eq!(list[0]["started"], 5_000);
         assert_eq!(list[1]["state"], "complete");
         assert_eq!(list[1]["ended"], 2_000);
+    }
+
+    #[tokio::test]
+    async fn events_become_one_row_per_download() {
+        let store = DataStore::open_in_memory().unwrap();
+        let bus = bmcp_core::EventBus::new();
+        let task = spawn_download_recorder(store.clone(), &bus);
+        let base = json!({"id": 7, "url": "https://a.test/f.zip", "path": "D:/dl/f.zip",
+                          "mime": "application/zip", "total_bytes": 100, "started": 1_000});
+        let with = |extra: serde_json::Value| {
+            let mut v = base.clone();
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            v
+        };
+        bus.emit(
+            DOWNLOAD_STARTED,
+            with(json!({"received_bytes": 0, "state": "in_progress"})),
+        );
+        bus.emit(DOWNLOAD_PROGRESS, with(json!({"received_bytes": 50})));
+        bus.emit(
+            DOWNLOAD_DONE,
+            with(json!({"received_bytes": 100, "state": "complete", "ended": 2_000})),
+        );
+        // Let the recorder catch up.
+        for _ in 0..100 {
+            let rows = store.with(|c| list(c, 10)).unwrap();
+            if rows.first().is_some_and(|r| r.state == "complete") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let rows = store.with(|c| list(c, 10)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].received_bytes, 100);
+        assert_eq!(rows[0].ended, Some(2_000));
+        assert_eq!(rows[0].path, "D:/dl/f.zip");
+        task.abort();
+        assert!(download_from_event(&json!({"id": 1}), 0).is_none());
     }
 }

@@ -15,7 +15,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -117,6 +117,13 @@ pub trait ResourceGate: Send + Sync + 'static {
 
     /// An allowed request finished with `received_bytes` of body (for the stats).
     fn on_complete(&self, _tab: Option<TabId>, _received_bytes: u64) {}
+
+    /// The site policy's content settings for a page about to load `page_url`: `(javascript
+    /// allowed, images allowed)`. The CEF crate turns them into `SetContentSetting` calls
+    /// before the navigation commits. `None` = no opinion (leave the defaults).
+    fn content_settings(&self, _page_url: &str) -> Option<(bool, bool)> {
+        None
+    }
 }
 
 /// The engine in its shareable (serialized) form.
@@ -182,6 +189,9 @@ pub struct Gate {
     generation: AtomicU64,
     state: RwLock<Arc<GateState>>,
     pub stats: Stats,
+    /// True once the browser's network stack asks this gate for every request (the CEF
+    /// `OnBeforeResourceLoad` hook). `adblock.apply` then skips its CDP `Fetch` interception.
+    native: AtomicBool,
 }
 
 impl Default for Gate {
@@ -203,7 +213,18 @@ impl Gate {
             generation: AtomicU64::new(state.generation),
             state: RwLock::new(Arc::new(state)),
             stats: Stats::default(),
+            native: AtomicBool::new(false),
         }
+    }
+
+    /// Mark the gate as enforced by the browser itself (see [`Gate::is_native`]).
+    pub fn set_native(&self, on: bool) {
+        self.native.store(on, Ordering::Relaxed);
+    }
+
+    /// Does the browser's network stack already ask this gate for every request?
+    pub fn is_native(&self) -> bool {
+        self.native.load(Ordering::Relaxed)
     }
 
     /// The current configuration snapshot.
@@ -357,6 +378,12 @@ impl ResourceGate for Gate {
 
     fn on_complete(&self, tab: Option<TabId>, received_bytes: u64) {
         self.stats.add_bytes(tab, received_bytes);
+    }
+
+    fn content_settings(&self, page_url: &str) -> Option<(bool, bool)> {
+        let (host, _) = host_and_domain(page_url)?;
+        let policy = self.state().policies.effective(&host).0.resolve();
+        Some((policy.js, policy.images))
     }
 }
 

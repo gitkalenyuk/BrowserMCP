@@ -85,11 +85,22 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         .and_then(|l| l.local_addr().ok())
         .map_or(cli.api_port, |addr| addr.port());
 
+    // Services the browser needs from its first request on: the adblock gate (asked in the
+    // network stack for every request) and the site permission rules. The same instances go
+    // into the command registry later.
+    let adblock = bmcp_adblock::AdblockService::new(data.root());
+    adblock.gate.set_native(true); // adblock.apply then skips its CDP Fetch interception
+    let gate: Arc<dyn bmcp_adblock::ResourceGate> = adblock.gate.clone();
+    let permissions = bmcp_profiles::PermissionStore::load(data.config().join("permissions.json"));
+    let cdp_port = checked_cdp_port(cli.cdp_port, &data);
+
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
         let runtime_dir = data.runtime();
         let events = events.clone();
         let data = data.clone();
+        let permissions = permissions.clone();
+        let profile = profile.to_string();
         Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
             None => {
                 handle.spawn(dump_ax_and_quit(backend));
@@ -97,11 +108,16 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
             Some(listener) => {
                 handle.spawn(start_api(
                     backend,
-                    events,
-                    listener,
-                    shutdown,
-                    runtime_dir,
-                    data,
+                    ApiServices {
+                        events,
+                        listener,
+                        shutdown,
+                        runtime_dir,
+                        data,
+                        adblock,
+                        permissions,
+                        profile,
+                    },
                 ));
             }
         })
@@ -128,6 +144,9 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         },
         events,
         on_ready: Some(on_ready),
+        resource_gate: Some(gate),
+        permissions: Some(permissions),
+        cdp_port,
     })?;
 
     shutdown.cancel();
@@ -147,14 +166,52 @@ fn bind_api(port: u16, data: &DataDir) -> anyhow::Result<std::net::TcpListener> 
     })
 }
 
-async fn start_api(
-    backend: Arc<dyn BrowserBackend>,
+/// `--cdp-port`, unless a profile has a stealth identity: an open debugging port is easy for
+/// sites and local software to detect, so the two are never combined.
+fn checked_cdp_port(port: Option<u16>, data: &DataDir) -> Option<u16> {
+    let port = port?;
+    let identities = bmcp_identity::Services::new(data.config())
+        .identities
+        .read()
+        .map(|f| f.profiles)
+        .unwrap_or_default();
+    if identities.is_empty() {
+        Some(port)
+    } else {
+        let profiles: Vec<&String> = identities.keys().collect();
+        tracing::error!(
+            ?profiles,
+            "--cdp-port refused: these profiles use a stealth identity (identity_assign); \
+             remove the assignment to use the CDP port"
+        );
+        None
+    }
+}
+
+/// Everything `start_api` needs besides the backend.
+struct ApiServices {
     events: bmcp_core::EventBus,
     listener: std::net::TcpListener,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
     data: DataDir,
-) {
+    adblock: bmcp_adblock::AdblockService,
+    permissions: bmcp_profiles::PermissionStore,
+    /// The profile the browser runs with (`--profile`).
+    profile: String,
+}
+
+async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
+    let ApiServices {
+        events,
+        listener,
+        shutdown,
+        runtime_dir,
+        data,
+        adblock,
+        permissions,
+        profile,
+    } = services;
     let port = listener.local_addr().map_or(0, |addr| addr.port());
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
@@ -162,6 +219,17 @@ async fn start_api(
     registry.extensions().insert(data.clone());
     // Identities and proxy pools in data/config.
     bmcp_identity::install(&registry, data.config());
+    // The adblock service whose gate the browser already asks for every request; load the
+    // compiled filter lists (data/filters/engine.dat) now instead of on the first command.
+    let adblock = registry.extensions().insert(adblock);
+    tokio::spawn(async move {
+        if let Err(err) = adblock.ensure_engine(false).await {
+            tracing::warn!(%err, "adblock engine not loaded");
+        }
+    });
+    // Profiles (profile.*, cookies.*, permissions.*) talk to the CEF backend.
+    let profiles = bmcp_profiles::install(&registry, data.root(), &profile, permissions);
+    profiles.set_backend(Arc::new(bmcp_cef::CefBackend));
     // Bookmarks, history, passwords… in data/db/browsermcp.sqlite (used by the data commands).
     let store = match bmcp_data::DataStore::open_in(&data) {
         Ok(store) => {
@@ -216,6 +284,21 @@ async fn start_api(
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
+    // New tabs of a profile with an identity get it before their first navigation.
+    bmcp_cef::set_tab_preparer(
+        Arc::new(bmcp_profiles::IdentityPreparer::new(
+            registry.clone(),
+            backend.clone(),
+            events.clone(),
+        )),
+        tokio::runtime::Handle::current(),
+    );
+    // Profile settings (proxy forwarders, prefs) and imported cookies.
+    tokio::spawn(apply_profiles_and_cookies(
+        registry.clone(),
+        backend.clone(),
+        events.clone(),
+    ));
     // Tab freezing/discarding and automatic limits from RAM (data/config/governor.json).
     bmcp_governor::start(registry.extensions(), backend.clone(), events.clone());
     // Watch every tab for JavaScript dialogs (events, auto-policy, DIALOG_OPEN errors).
@@ -226,8 +309,10 @@ async fn start_api(
     bmcp_heal::attach(&registry, backend.clone(), events.clone());
     // Webhooks start runs through the registry.
     plugins.attach(&registry);
-    // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
+    // Records history from the `tab.updated` / `nav.goto` events on the shared bus, and
+    // downloads from the `download.*` events of the CEF download handler.
     if let Some(store) = store {
+        bmcp_data::downloads::spawn_download_recorder(store.clone(), &events);
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
     // Link hints in every tab (the in-page `f` / `F` keys).
@@ -269,6 +354,50 @@ async fn start_api(
             }
         }
         Err(err) => tracing::error!(%err, "API server not started"),
+    }
+}
+
+/// At startup: apply every stored profile (forwarders, preferences) and move cookies waiting
+/// from `import.chrome` into the cookie jar; then again after every successful import.
+async fn apply_profiles_and_cookies(
+    registry: Arc<bmcp_core::Registry>,
+    backend: Arc<dyn BrowserBackend>,
+    events: bmcp_core::EventBus,
+) {
+    let ctx = || bmcp_core::Ctx::new(bmcp_core::Caller::Ui, backend.clone(), events.clone());
+    let mut ctx_with_ext = ctx();
+    ctx_with_ext.extensions = registry.extensions().clone();
+    bmcp_profiles::apply_stored(&ctx_with_ext).await;
+    let mut finished = events.subscribe();
+    let apply_pending = || async {
+        match registry
+            .call(ctx(), "cookies.apply_pending", serde_json::json!({}))
+            .await
+        {
+            Ok(out)
+                if out["applied"].as_u64().unwrap_or(0) > 0
+                    || out["failed"].as_u64().unwrap_or(0) > 0 =>
+            {
+                tracing::info!(%out, "imported cookies applied");
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!(%err, "imported cookies not applied"),
+        }
+    };
+    apply_pending().await;
+    loop {
+        match finished.recv().await {
+            Ok(event)
+                if event.topic == bmcp_core::events::topics::COMMAND_FINISHED
+                    && event.data["name"] == "import.chrome"
+                    && event.data["ok"] == true =>
+            {
+                apply_pending().await;
+            }
+            Ok(_) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
     }
 }
 

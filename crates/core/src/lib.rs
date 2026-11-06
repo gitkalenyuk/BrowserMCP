@@ -25,7 +25,7 @@ pub mod testing;
 pub use agents::{AgentId, Agents};
 pub use backend::{
     BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, NEW_TAB_URL,
-    TabId, TabInfo,
+    OpenTabOptions, TabId, TabInfo, WindowTarget,
 };
 pub use command::{
     Caller, CmdError, Command, CommandGuard, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta,

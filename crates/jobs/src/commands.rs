@@ -200,7 +200,9 @@ impl Command for ScriptRun {
         let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1));
         // A shutdown of the browser also stops a script started by a call.
         let cancel: CancellationToken = inner.shutdown.child_token();
-        inner.run_script(source, &inputs, timeout, &cancel).await
+        inner
+            .run_script(source, &inputs, &[], timeout, &cancel)
+            .await
     }
 }
 
@@ -313,8 +315,9 @@ pub struct RunStartArgs {
     /// proposes a patch, a person accepts it), "auto" (confident patches that pass a dry run
     /// are applied) or "off". `true` = "ask", `false` = "off".
     pub heal: Option<HealArg>,
-    /// Browser profile for the rows. Only "default" for now (all rows share it); isolated
-    /// per-row profiles come later.
+    /// Browser profile of the rows: "default" (shared, tabs in the browser window), "isolated"
+    /// (each row gets a fresh in-memory profile and off-screen tabs: parallel rows never
+    /// share cookies, focus or keyboard), or a profile id (profile_create; shared by all rows).
     pub profile: Option<String>,
 }
 

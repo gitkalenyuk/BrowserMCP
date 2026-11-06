@@ -14,7 +14,7 @@
 //! | `out <text>` / `err <text>` | print a line to stdout / stderr |
 //! | `result <json>` | print `##bmcp:result <json>` |
 //! | `time <name>` | `result {"<name>": <ms since epoch>}` |
-//! | `args` | `result {"ws": …, "inputs": {…}, "timeout_secs": …}` |
+//! | `args` | `result {"ws": …, "inputs": {…}, "timeout_secs": …, "tab_defaults": BMCP_TAB_DEFAULTS}` |
 //! | `sleep <ms>` | sleep; past `--timeout-secs` it exits 124 like the real host |
 //! | `fail <CODE> <command> <message>` | uncaught failed browser call, exit 1 |
 //! | `throw <message>` | uncaught plain error, exit 1 |
@@ -150,10 +150,16 @@ impl Host {
             }
             "args" => {
                 let inputs: BTreeMap<&String, &String> = self.inputs.iter().collect();
+                // BMCP_TAB_DEFAULTS is JSON already (or absent → null).
+                let tab_defaults: serde_json::Value = std::env::var("BMCP_TAB_DEFAULTS")
+                    .ok()
+                    .and_then(|text| serde_json::from_str(&text).ok())
+                    .unwrap_or(serde_json::Value::Null);
                 let result = serde_json::json!({
                     "ws": self.ws,
                     "inputs": inputs,
                     "timeout_secs": self.timeout.unwrap_or(0.0),
+                    "tab_defaults": tab_defaults,
                 });
                 println!("##bmcp:result {result}");
                 None

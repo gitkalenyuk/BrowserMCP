@@ -361,8 +361,8 @@ impl Command for Assign {
 
     fn meta() -> Meta {
         Meta::new(
-            "Give a profile a saved identity (stored in identities.json; applying it to new \
-             tabs automatically is not wired yet — use stealth_fingerprint_set).",
+            "Give a profile a saved identity (stored in identities.json): every new tab and \
+             popup of that profile gets it before its first navigation, workers included.",
             Toolset::Stealth,
         )
         .act()
