@@ -178,7 +178,20 @@ impl AiService {
 
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("{}-{n}", opts.provider);
-        let color = COLORS[(n as usize - 1) % COLORS.len()].to_string();
+        // The agent registry hands out the tab-group color, so the chat and the tab group
+        // match; its named colors map onto `COLORS` in the same order.
+        let color = match ctx.extensions.get::<bmcp_core::Agents>() {
+            Some(agents) => {
+                let name = format!("{} {n}", resolved.preset.name);
+                let named = agents.ensure(&ctx.events, &id, Some(&name)).color;
+                let index = bmcp_core::agents::COLORS
+                    .iter()
+                    .position(|c| *c == named)
+                    .unwrap_or(0);
+                COLORS[index % COLORS.len()].to_string()
+            }
+            None => COLORS[(n as usize - 1) % COLORS.len()].to_string(),
+        };
         let dir = self.sessions_dir();
         let log = std::fs::create_dir_all(&dir)
             .ok()

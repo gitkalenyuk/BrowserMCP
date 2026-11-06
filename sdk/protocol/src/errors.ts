@@ -56,4 +56,6 @@ export interface CmdError {
   hint?: string;
   /** Possible intended targets (for `AMBIGUOUS_TARGET`, unknown command names, …). */
   candidates?: unknown[];
+  /** `TAB_LOCKED`: agent id holding the tab, or `"user"` after a human took over. */
+  owner?: string;
 }

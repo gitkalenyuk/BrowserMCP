@@ -546,3 +546,74 @@ async fn websocket_refuses_foreign_origin() {
     tokio_tungstenite::connect_async(req).await.unwrap();
     shutdown.cancel();
 }
+
+/// The browser UI (WebSocket with `Origin: bmcp://ui`) is a human: it takes over a tab an
+/// agent holds, and gets the lock fields in `tab.updated`.
+#[tokio::test]
+async fn ui_websocket_takes_over_agent_tabs() {
+    use bmcp_core::{Caller, Ctx};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let shutdown = CancellationToken::new();
+    let backend = FakeBackend::with_tabs(&["https://a.test/"]);
+    let events = EventBus::new();
+    let registry = registry();
+    let server = bmcp_api::serve(
+        backend.clone(),
+        registry.clone(),
+        events.clone(),
+        0,
+        shutdown.clone(),
+    )
+    .await
+    .unwrap();
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut()
+        .insert("origin", "bmcp://ui".parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    // An agent acts on tab 1 and owns it.
+    let agent = Caller::Agent { id: "bot".into() };
+    registry
+        .call(
+            Ctx::new(agent.clone(), backend.clone(), events.clone()),
+            "nav.goto",
+            json!({ "url": "https://b.test/", "tab": 1 }),
+        )
+        .await
+        .unwrap();
+
+    // The user clicks "Take over".
+    send_json(
+        &mut socket,
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "tabs.unlock", "params": { "tab": 1 } }),
+    )
+    .await;
+    let mut seen = Vec::new();
+    let answer = response(&mut socket, 1, &mut seen).await;
+    assert_eq!(answer["result"]["lock"]["state"], "paused");
+    let claimed = seen
+        .iter()
+        .find(|m| m["method"] == "tab.updated" && m["params"]["lockedBy"] == "bot")
+        .expect("tab.updated with the agent lock");
+    assert_eq!(claimed["params"]["groupId"], "agent:bot");
+    assert!(seen.iter().any(|m| m["method"] == "agents.updated"));
+
+    // The agent is now refused; the human may navigate.
+    let err = registry
+        .call(
+            Ctx::new(agent, backend.clone(), events.clone()),
+            "nav.goto",
+            json!({ "url": "https://c.test/", "tab": 1 }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.owner.as_deref(), Some("user"));
+    send_json(
+        &mut socket,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "nav.goto", "params": { "tab": 1, "url": "https://d.test/" } }),
+    )
+    .await;
+    assert!(response(&mut socket, 2, &mut seen).await["result"].is_object());
+    shutdown.cancel();
+}

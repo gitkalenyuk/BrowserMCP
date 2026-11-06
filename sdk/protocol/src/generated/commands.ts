@@ -335,6 +335,99 @@ export interface AdblockUpdateListsOutput {
   }[];
 }
 
+// ---- agents.forget ----
+
+/** Arguments of `agents.forget`. */
+export interface AgentsForgetArgs {
+  /** Agent id from agents_list. */
+  id: string;
+}
+
+/** Result of `agents.forget`. */
+export interface AgentsForgetOutput {
+  /** Tabs that left the agent's group and were unlocked. */
+  released: number[];
+}
+
+// ---- agents.list ----
+
+/**
+ * Arguments of `agents.list`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type AgentsListArgs = Record<string, never>;
+
+/** Result of `agents.list`. */
+export interface AgentsListOutput {
+  /** Known agents, oldest first. */
+  agents: {
+    /** Number of commands it called. */
+    calls: number;
+    /** Group color name: blue | orange | green | purple | pink | cyan | yellow | red. */
+    color: string;
+    /** Its tab group id (`agent:<id>`). */
+    groupId: string;
+    id: string;
+    /** Last call, ms since the Unix epoch. */
+    lastSeenMs: number;
+    /** Display name, e.g. "claude-code" or "Claude Code". */
+    name: string;
+    /**
+     * What an agent is doing, in the UI's words.
+     *
+     * - `"waiting"`: Waiting for the user (a tab in `handoff`).
+     */
+    status: "idle" | "running" | "error" | "waiting";
+    /** Tabs in its group. */
+    tabs: number[];
+    /** What it is doing right now (last command, or the handoff reason). */
+    task: string | null;
+  }[];
+}
+
+// ---- ai.handoff ----
+
+/** Arguments of `ai.handoff`. */
+export interface AiHandoffArgs {
+  /** What the user should do, shown in the browser, e.g. "Solve the CAPTCHA, then click Done". */
+  reason: string;
+  /** Tab the user should work in. Default: your current tab. */
+  tab?: number | null;
+  /**
+   * Wait up to this many seconds for the user to click Done (0 = return at once,
+   * default 0, max 600).
+   */
+  wait_secs?: number | null;
+}
+
+/** Result of `ai.handoff`. */
+export interface AiHandoffOutput {
+  /** Lock of one tab, as listed in `tabs.list` (`lock`) and sent in `tab.updated`. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /** True when the user clicked Done (the tab is yours again). */
+  resolved: boolean;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
 // ---- ai.provider_set ----
 
 /** Arguments of `ai.provider_set`. */
@@ -4003,6 +4096,27 @@ export interface TabsCloseArgs {
  */
 export type TabsCloseOutput = Record<string, never>;
 
+// ---- tabs.groups ----
+
+/**
+ * Arguments of `tabs.groups`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type TabsGroupsArgs = Record<string, never>;
+
+/** Result of `tabs.groups`. */
+export interface TabsGroupsOutput {
+  groups: {
+    /** Set for agent-owned groups. */
+    agentId: string | null;
+    /** grey | blue | red | yellow | green | pink | purple | cyan | orange */
+    color: string;
+    id: string;
+    name: string;
+    tabs: number[];
+  }[];
+}
+
 // ---- tabs.list ----
 
 /**
@@ -4015,7 +4129,7 @@ export type TabsListArgs = Record<string, never>;
 export interface TabsListOutput {
   /** The tab the user is looking at, or null when no tab is open. */
   activeId: number | null;
-  /** Tab groups (always empty for now). */
+  /** Tab groups: one per known agent (`agent:<id>`). */
   groups: {
     /** Set for agent-owned groups. */
     agentId: string | null;
@@ -4024,7 +4138,10 @@ export interface TabsListOutput {
     id: string;
     name: string;
   }[];
-  /** Open tabs in tab-strip order. */
+  /**
+   * Open tabs in tab-strip order; `groupId` / `lockedBy` / `lock` say which agent owns
+   * a tab.
+   */
   tabs: {
     /**
      * True for the tab shown in its window (one per window).
@@ -4055,6 +4172,23 @@ export interface TabsListOutput {
     id: number;
     /** True while the page is still loading. */
     loading: boolean;
+    /** Agent lock of the tab; null when no agent owns it. */
+    lock: {
+      /** Agent whose group the tab is in. */
+      owner: string;
+      /** `handoff`: what the agent asks the user to do. */
+      reason: string | null;
+      /** When the state last changed, ms since the Unix epoch. */
+      sinceMs: number;
+      /**
+       * Who controls an agent-owned tab right now.
+       *
+       * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+       * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+       * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+       */
+      state: "active" | "paused" | "handoff";
+    } | null;
     /**
      * Agent holding the tab lock. Always null for now (agent locks come later).
      * @default null
@@ -4065,6 +4199,48 @@ export interface TabsListOutput {
     /** Current URL. */
     url: string;
   }[];
+}
+
+// ---- tabs.lock ----
+
+/** Arguments of `tabs.lock`. */
+export interface TabsLockArgs {
+  /**
+   * Only for the user / scripts: give the tab to this agent (default: the agent whose
+   * group the tab is in). Agents leave it out and lock for themselves.
+   */
+  agent?: string | null;
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.lock`.
+ * Output of `tabs.lock` / `tabs.unlock`.
+ */
+export interface TabsLockOutput {
+  /** The tab's lock now; null = no agent owns the tab. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- tabs.open ----
@@ -4123,6 +4299,43 @@ export interface TabsOpenOutput {
   title: string;
   /** Current URL. */
   url: string;
+}
+
+// ---- tabs.unlock ----
+
+/** Arguments of `tabs.unlock`. */
+export interface TabsUnlockArgs {
+  /** Tab id from tabs_list. */
+  tab: number;
+}
+
+/**
+ * Result of `tabs.unlock`.
+ * Output of `tabs.lock` / `tabs.unlock`.
+ */
+export interface TabsUnlockOutput {
+  /** The tab's lock now; null = no agent owns the tab. */
+  lock: {
+    /** Agent whose group the tab is in. */
+    owner: string;
+    /** `handoff`: what the agent asks the user to do. */
+    reason: string | null;
+    /** When the state last changed, ms since the Unix epoch. */
+    sinceMs: number;
+    /**
+     * Who controls an agent-owned tab right now.
+     *
+     * - `"active"`: The owner agent drives the tab; everyone else except humans is refused.
+     * - `"paused"`: A human took over; agents are refused until the human gives it back (`tabs.lock`).
+     * - `"handoff"`: The agent handed the tab to the human (`ai.handoff`) and waits for "Done" (`tabs.unlock`), which makes it `active` again.
+     */
+    state: "active" | "paused" | "handoff";
+  } | null;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- term.close ----
@@ -4349,6 +4562,12 @@ export interface Commands {
   "adblock.toggle": { args: AdblockToggleArgs; output: AdblockToggleOutput };
   /** Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list. */
   "adblock.update_lists": { args: AdblockUpdateListsArgs; output: AdblockUpdateListsOutput };
+  /** Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call. */
+  "agents.forget": { args: AgentsForgetArgs; output: AgentsForgetOutput };
+  /** List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs. */
+  "agents.list": { args: AgentsListArgs; output: AgentsListOutput };
+  /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
+  "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
   /** Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider. */
   "ai.provider_set": { args: AiProviderSetArgs; output: AiProviderSetOutput };
   /** Check a provider without spending tokens: API providers list their models (GET /models), CLI providers run --version. Returns ok, models/version or error. */
@@ -4557,10 +4776,16 @@ export interface Commands {
   "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
   /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
   "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
-  /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId. */
+  /** Tab groups (one colored group per agent) with their tab ids. */
+  "tabs.groups": { args: TabsGroupsArgs; output: TabsGroupsOutput };
+  /** List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId. */
   "tabs.list": { args: TabsListArgs; output: TabsListOutput };
+  /** Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it. */
+  "tabs.lock": { args: TabsLockArgs; output: TabsLockOutput };
   /** Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`. */
   "tabs.open": { args: TabsOpenArgs; output: TabsOpenOutput };
+  /** Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues). */
+  "tabs.unlock": { args: TabsUnlockArgs; output: TabsUnlockOutput };
   /** Close a terminal (kills its shell). */
   "term.close": { args: TermCloseArgs; output: TermCloseOutput };
   /** List open terminals (id, shell, size, pid, exit code). */
@@ -4642,6 +4867,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     wireName: "adblock_update_lists",
     description: "Download/update the filter lists (EasyList, EasyPrivacy, optional uBlock filters) with ETag/Last-Modified checks and recompile the adblock engine. Returns the status of each list.",
     toolset: "data",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "agents.forget": {
+    wireName: "agents_forget",
+    description: "Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "agents.list": {
+    wireName: "agents_list",
+    description: "List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs.",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "ai.handoff": {
+    wireName: "ai_handoff",
+    description: "Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that.",
+    toolset: "core",
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
@@ -5583,13 +5835,31 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: "Close tab",
     defaultKeys: [],
   },
+  "tabs.groups": {
+    wireName: "tabs_groups",
+    description: "Tab groups (one colored group per agent) with their tab ids.",
+    toolset: "core",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "tabs.list": {
     wireName: "tabs_list",
-    description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.",
+    description: "List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId.",
     toolset: "core",
     sensitivity: "read",
     mutatesTab: false,
     palette: "List tabs",
+    defaultKeys: [],
+  },
+  "tabs.lock": {
+    wireName: "tabs_lock",
+    description: "Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it.",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
     defaultKeys: [],
   },
   "tabs.open": {
@@ -5599,6 +5869,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: false,
     palette: "Open URL in new tab…",
+    defaultKeys: [],
+  },
+  "tabs.unlock": {
+    wireName: "tabs_unlock",
+    description: "Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues).",
+    toolset: "core",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
     defaultKeys: [],
   },
   "term.close": {
@@ -5726,8 +6005,29 @@ export interface Browser {
      */
     update_lists(args?: AdblockUpdateListsArgs, options?: CallOptions): Promise<AdblockUpdateListsOutput>;
   };
+  /** Commands `agents.*`. */
+  agents: {
+    /**
+     * Forget an agent: unlock its tabs, remove its tab group and color. It is registered again on its next call.
+     *
+     * `agents.forget` (MCP: `agents_forget`): toolset `system`, act.
+     */
+    forget(args: AgentsForgetArgs, options?: CallOptions): Promise<AgentsForgetOutput>;
+    /**
+     * List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs.
+     *
+     * `agents.list` (MCP: `agents_list`): toolset `system`, read.
+     */
+    list(args?: AgentsListArgs, options?: CallOptions): Promise<AgentsListOutput>;
+  };
   /** Commands `ai.*`. */
   ai: {
+    /**
+     * Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that.
+     *
+     * `ai.handoff` (MCP: `ai_handoff`): toolset `core`, act.
+     */
+    handoff(args: AiHandoffArgs, options?: CallOptions): Promise<AiHandoffOutput>;
     /**
      * Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider.
      *
@@ -6417,17 +6717,35 @@ export interface Browser {
      */
     close(args: TabsCloseArgs, options?: CallOptions): Promise<TabsCloseOutput>;
     /**
-     * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active; plus activeId.
+     * Tab groups (one colored group per agent) with their tab ids.
+     *
+     * `tabs.groups` (MCP: `tabs_groups`): toolset `core`, read.
+     */
+    groups(args?: TabsGroupsArgs, options?: CallOptions): Promise<TabsGroupsOutput>;
+    /**
+     * List open tabs in tab-strip order: id, title, url, loading, favicon, canGoBack, canGoForward, active, groupId/lockedBy/lock (agent ownership); plus groups and activeId.
      *
      * `tabs.list` (MCP: `tabs_list`): toolset `core`, read.
      */
     list(args?: TabsListArgs, options?: CallOptions): Promise<TabsListOutput>;
+    /**
+     * Lock a tab for yourself so other agents get TAB_LOCKED (tabs you open or act on are locked automatically). The user can give a taken-over tab back with it.
+     *
+     * `tabs.lock` (MCP: `tabs_lock`): toolset `core`, act.
+     */
+    lock(args: TabsLockArgs, options?: CallOptions): Promise<TabsLockOutput>;
     /**
      * Open a URL in a new tab (background: true keeps the current tab shown). Returns the new tab; its id is in `tab` and `id`.
      *
      * `tabs.open` (MCP: `tabs_open`): toolset `core`, act.
      */
     open(args?: TabsOpenArgs, options?: CallOptions): Promise<TabsOpenOutput>;
+    /**
+     * Agents: release your tab (it leaves your group). The user: take over an agent's tab (its lock pauses), or finish a handoff (the agent continues).
+     *
+     * `tabs.unlock` (MCP: `tabs_unlock`): toolset `core`, act.
+     */
+    unlock(args: TabsUnlockArgs, options?: CallOptions): Promise<TabsUnlockOutput>;
   };
   /** Commands `term.*`. */
   term: {
@@ -6509,7 +6827,12 @@ export function createBrowser(transport: Transport): Browser {
       toggle: (args, options) => call<AdblockToggleOutput>("adblock.toggle", args, options),
       update_lists: (args, options) => call<AdblockUpdateListsOutput>("adblock.update_lists", args, options),
     },
+    agents: {
+      forget: (args, options) => call<AgentsForgetOutput>("agents.forget", args, options),
+      list: (args, options) => call<AgentsListOutput>("agents.list", args, options),
+    },
     ai: {
+      handoff: (args, options) => call<AiHandoffOutput>("ai.handoff", args, options),
       provider_set: (args, options) => call<AiProviderSetOutput>("ai.provider_set", args, options),
       provider_test: (args, options) => call<AiProviderTestOutput>("ai.provider_test", args, options),
       providers: (args, options) => call<AiProvidersOutput>("ai.providers", args, options),
@@ -6656,8 +6979,11 @@ export function createBrowser(transport: Transport): Browser {
     tabs: {
       activate: (args, options) => call<TabsActivateOutput>("tabs.activate", args, options),
       close: (args, options) => call<TabsCloseOutput>("tabs.close", args, options),
+      groups: (args, options) => call<TabsGroupsOutput>("tabs.groups", args, options),
       list: (args, options) => call<TabsListOutput>("tabs.list", args, options),
+      lock: (args, options) => call<TabsLockOutput>("tabs.lock", args, options),
       open: (args, options) => call<TabsOpenOutput>("tabs.open", args, options),
+      unlock: (args, options) => call<TabsUnlockOutput>("tabs.unlock", args, options),
     },
     term: {
       close: (args, options) => call<TermCloseOutput>("term.close", args, options),
