@@ -455,6 +455,7 @@ dependencies = [
 name = "bmcp-browser"
 version = "0.1.0"
 dependencies = [
+ "bmcp-cdpshare",
  "bmcp-core",
  "bmcp-perception",
  "schemars",
@@ -703,6 +704,7 @@ dependencies = [
 name = "bmcp-profiles"
 version = "0.1.0"
 dependencies = [
+ "bmcp-cdpshare",
  "bmcp-core",
  "bmcp-data",
  "bmcp-identity",

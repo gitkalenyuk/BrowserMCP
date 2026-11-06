@@ -1115,6 +1115,51 @@ async fn snapshot_merges_same_and_out_of_process_iframes() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn frame_snapshots_keep_the_worker_pausing_of_identity_tabs() {
+    let h = Harness::new(Page::frames());
+    // An identity tab asked for paused workers (bmcp-profiles does this before the first
+    // navigation) through the shared auto-attach owner.
+    let share = h
+        .registry
+        .extensions()
+        .get_or_insert_with(bmcp_cdpshare::CdpShare::default);
+    let backend: Arc<dyn BrowserBackend> = h.fake.clone();
+    share
+        .hold_auto_attach(&backend, TabId(1), None, "identity", true)
+        .await
+        .unwrap();
+    h.ok("page.snapshot", json!({})).await;
+    h.ok("page.snapshot", json!({})).await;
+    // The first snapshot joined auto-attach on the page session; it was on already, so it had
+    // the frames announced again (off + on) — with the pausing kept (it used to send
+    // waitForDebuggerOnStart: false). The second snapshot sent nothing.
+    let page_calls: Vec<Value> = h
+        .sent("Target.setAutoAttach")
+        .into_iter()
+        .filter(|p| p.get("sessionId").is_none())
+        .collect();
+    assert_eq!(page_calls.len(), 3, "{page_calls:?}");
+    assert_eq!(page_calls[1]["autoAttach"], false);
+    for on in [&page_calls[0], &page_calls[2]] {
+        assert_eq!(on["autoAttach"], true);
+        assert_eq!(on["waitForDebuggerOnStart"], true);
+    }
+    assert_eq!(
+        share.auto_attach_holders(TabId(1), None),
+        ["frames", "identity"]
+    );
+    // The frame's own session still gets plain auto-attach (for frames inside it).
+    assert!(
+        h.sent("Target.setAutoAttach")
+            .iter()
+            .any(|p| p["sessionId"] == "S1" && p["waitForDebuggerOnStart"] == false)
+    );
+    // The out-of-process frame was still merged.
+    let out = h.ok("page.snapshot", json!({})).await;
+    assert!(out["text"].as_str().unwrap().contains("textbox \"Card\""));
+}
+
+#[tokio::test(start_paused = true)]
 async fn act_inside_an_out_of_process_iframe_uses_its_session_and_page_coordinates() {
     let h = Harness::new(Page::frames());
     h.ok("page.snapshot", json!({})).await;

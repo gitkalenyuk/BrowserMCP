@@ -83,16 +83,16 @@ Headless / background tabs and emulation leave tells; `stealth.check` probes the
 
 ## For the `cef` crate (per-profile wiring)
 
-Status (cef crate, `docs/phase2/profiles.md`): per-profile `CefRequestContext`s exist, with
-proxy / WebRTC / Accept-Language prefs set by `bmcp-profiles` (`profile.create {proxy,
-identity, accept_language}`, its own proxy setting through this crate's `Forwarder`); new tabs
-and popups of a profile with an assigned identity start on `about:blank`, get
-`stealth.fingerprint_set`, then load; dedicated workers are auto-attached
-(`waitForDebuggerOnStart`, `flatten`) and get the UA override plus a `navigator` patch (cores,
-memory, languages) before they run — verified live. **Not wired yet** (they arrived in main
-after that work): `profile_proxy_pref` / `proxy.rules_set` routes + `proxy.routes_changed`,
-`cef_prefs::profile_prefs`, `identity_for_profile` and `worker_commands` below; bmcp-profiles
-still uses its own equivalents.
+Status: **wired**, through `bmcp-profiles` (`docs/phase2/profiles.md`), which has no proxy,
+preference, identity or worker logic of its own any more. Per profile it builds its
+`CefRequestContext` preferences from (1) + (2), re-applies them live on
+`proxy.routes_changed` and `identity.assigned` (`bmcp_identity::IDENTITY_ASSIGNED`, emitted
+by `identity.assign` / `identity.remove`), applies the identity of (3) to new tabs and popups
+before their first navigation and sends (4) to every attached worker. `profile.create {proxy}`
+is the default of the profile's routing here (`Services::set_routes`, what `proxy.rules_set`
+stores), so both commands edit one setting. `Target.setAutoAttach` is shared with the OOPIF
+support of `bmcp-browser` through `bmcp-cdpshare` (`hold_auto_attach`): the page session
+pauses new targets while any holder wants it.
 
 All functions are on `bmcp_identity::Services` (`Services::from_ctx(&ctx)` or
 `registry.extensions().get::<Services>()`), CEF-agnostic and tested here:
@@ -108,9 +108,10 @@ All functions are on `bmcp_identity::Services` (`Services::from_ctx(&ctx)` or
 2. **WebRTC + Accept-Language.** `bmcp_identity::cef_prefs::profile_prefs(identity, proxied)`
    → `[(name, value)]` to `SetPreference` on the same context: `webrtc.ip_handling_policy =
    disable_non_proxied_udp`, `webrtc.multiple_routes_enabled = false`,
-   `webrtc.nonproxied_udp_enabled = false` when `proxied` (pref mode is not `direct`), and
-   `intl.accept_languages` from the identity (covers requests outside the tab session, e.g.
-   service worker fetches).
+   `webrtc.nonproxied_udp_enabled = false` when `proxied` (`cef_prefs::is_proxied(pref)`:
+   mode is not `direct`; otherwise the same keys with Chromium's defaults, so removing a proxy
+   resets them), and `intl.accept_languages` from the identity (covers requests outside the
+   tab session, e.g. service worker fetches).
 3. **Auto-apply on new tabs.** `services.identity_for_profile(profile)?` → `Option<Identity>`;
    run `stealth::apply(ctx, tab, &services.tabs, identity, Scope::Fingerprint)` (what
    `stealth.fingerprint_set` does) before the first navigation, or pause the target with
@@ -125,12 +126,17 @@ All functions are on `bmcp_identity::Services` (`Services::from_ctx(&ctx)` or
 
 ## For the `jobs` crate (per-row isolated profiles)
 
-Per row: `proxy.lease {pool, run_id, row}` (or `services.lease(pool, run, row, rotate)`) →
-`proxy_id: "lease:POOL/RUN/ROW"` → `proxy.rules_set {profile: <row profile>, default:
-proxy_id}` (the browser then routes that profile through the leased proxy) and optionally
-`identity.fit_to_proxy {identity_id, proxy_id}`. A retry after a block: `proxy.lease
-{..., rotate: true}` then `rules_set` again. When the run ends: `proxy.release {pool, run_id}`.
-Leases are stored in `proxies.json`, so a resumed run keeps its rows' IPs.
+Wired: `run.start {profile: "isolated", proxy_pool, fit_identity}` (`bmcp_profiles::rows`,
+connected to `bmcp-jobs`' row-profile hook by the app). Per row attempt:
+`services.lease(pool, run, row, rotate)` (rotate on retries) → `services.set_routes(<row
+profile>, {default: "lease:POOL/RUN/ROW"})` → with `fit_identity`
+`services.identity_for_new_profile(profile, seed, via, geo_url)` (generate, geo lookup through
+the proxy, fit, save + assign under the profile's id) → the profile's prefs go to the browser.
+After the attempt `services.forget_profile(profile, true)`; at the row's end
+`services.release(pool, run, Some(row))`; at the run's end `release(pool, run, None)` plus
+cleanup of leftover row profiles. Leases are stored in `proxies.json`, so a resumed run keeps
+its rows' IPs. The same steps by hand: `proxy.lease` → `proxy.rules_set {profile, default:
+proxy_id}` → `identity.fit_to_proxy` → `proxy.release`.
 
 ## Notes from the live run (CEF 156, Windows 11)
 
@@ -143,9 +149,13 @@ Leases are stored in `proxies.json`, so a resumed run keeps its rows' IPs.
 ## Known gaps
 
 * Workers: `Emulation.setHardwareConcurrencyOverride` on the tab does not reach dedicated
-  workers. Tabs of a profile with an assigned identity get the CEF worker patch (cores,
-  memory, UA, languages — verified live); a tab that only got `stealth.fingerprint_set` by hand
-  still shows the real values in its workers. Timezone and WebGL in workers are not patched.
+  workers. Tabs of a profile with an assigned identity get `worker_commands` on every attached
+  worker (UA + client hints, timezone/locale/cores where the engine allows it on workers, and
+  the JS patch: cores, memory, UA, platform, languages, OffscreenCanvas WebGL); a tab that only
+  got `stealth.fingerprint_set` by hand still shows the real values in its workers. The
+  timezone falls back to the real one where `Emulation.setTimezoneOverride` fails on a worker
+  session (not verified live with the new command list yet). Workers inside out-of-process
+  iframes (their child sessions) are not auto-attached.
 * No H.264 in the CEF build (sannysoft `VIDEO_CODECS` warns); real Chrome has it.
 * Camera/microphone are denied unless `permissions.set` allows them for the site, so pages no
   longer get device labels by default.
