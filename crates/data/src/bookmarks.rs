@@ -3,14 +3,20 @@
 //! Two root folders always exist: [`BOOKMARKS_BAR`] (id 1, what the new-tab page shows) and
 //! [`OTHER_BOOKMARKS`] (id 2). Siblings are ordered by `position` (0, 1, 2, … without gaps).
 //!
+//! Only `http`, `https` and `file` URLs can be bookmarked ([`check_url`]): `javascript:`,
+//! `data:` and other schemes are refused when written, so nothing that runs code ever lands in
+//! the bar.
+//!
 //! Commands: `data.bookmarks` (UI listing), `bookmarks.add`, `bookmarks.add_folder`,
-//! `bookmarks.remove`, `bookmarks.move`, `bookmarks.search`.
+//! `bookmarks.update`, `bookmarks.remove`, `bookmarks.move`, `bookmarks.search`. Every edit
+//! emits `bookmarks.changed {op, id}` (see [`crate::events`]).
 
 use bmcp_core::{CmdError, Command, Ctx, Meta, Toolset};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::events::bookmarks_changed;
 use crate::store::{
     BOOKMARKS_BAR, DataError, DataResult, DataStore, OTHER_BOOKMARKS, like_pattern, now_ms,
 };
@@ -166,6 +172,27 @@ pub fn list_folder(
     Ok((bookmarks, folders))
 }
 
+/// The URL schemes a bookmark may have.
+const BOOKMARK_SCHEMES: &[&str] = &["http", "https", "file"];
+
+/// Trim `url` and check that it is an absolute `http(s)://` or `file://` URL. Returns the
+/// trimmed URL (stored as given, not normalized, so the star can compare it with the tab URL).
+pub fn check_url(url: &str) -> DataResult<&str> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(DataError::Invalid("url must not be empty".into()));
+    }
+    let parsed = url::Url::parse(url)
+        .map_err(|e| DataError::Invalid(format!("invalid url {url:?}: {e}")))?;
+    if !BOOKMARK_SCHEMES.contains(&parsed.scheme()) {
+        return Err(DataError::Invalid(format!(
+            "only http, https and file URLs can be bookmarked, not {}:",
+            parsed.scheme()
+        )));
+    }
+    Ok(url)
+}
+
 /// Append a URL bookmark to `folder`. An empty title falls back to the page's title from
 /// history, then to the URL itself.
 pub fn add_bookmark(
@@ -175,11 +202,7 @@ pub fn add_bookmark(
     title: Option<&str>,
     created: i64,
 ) -> DataResult<Bookmark> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(DataError::Invalid("url must not be empty".into()));
-    }
-    url::Url::parse(url).map_err(|e| DataError::Invalid(format!("invalid url {url:?}: {e}")))?;
+    let url = check_url(url)?;
     check_folder(conn, folder)?;
     let title = match title.map(str::trim).filter(|t| !t.is_empty()) {
         Some(title) => title.to_owned(),
@@ -245,6 +268,82 @@ pub fn folder_has_url(conn: &Connection, folder: i64, url: &str) -> DataResult<b
         )
         .optional()?
         .is_some())
+}
+
+/// What `bookmarks.update` changed: exactly one of the two is set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct Updated {
+    /// The bookmark after the edit (when `id` is a bookmark).
+    pub bookmark: Option<Bookmark>,
+    /// The folder after the edit (when `id` is a folder).
+    pub folder: Option<Folder>,
+}
+
+/// Change the title and/or URL of a bookmark, or rename a folder, in place: the id, folder and
+/// position stay. An empty bookmark title becomes the URL; a folder title must not be empty.
+pub fn update(
+    conn: &Connection,
+    id: i64,
+    title: Option<&str>,
+    url: Option<&str>,
+) -> DataResult<Updated> {
+    if title.is_none() && url.is_none() {
+        return Err(DataError::Invalid("give `title` and/or `url`".into()));
+    }
+    let kind: Option<String> = conn
+        .query_row("SELECT kind FROM bookmarks WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    match kind.as_deref() {
+        None => Err(DataError::NotFound(format!("bookmark {id} not found"))),
+        Some("folder") => {
+            if id == BOOKMARKS_BAR || id == OTHER_BOOKMARKS {
+                return Err(DataError::Invalid(format!(
+                    "folder {id} is a root folder and cannot be renamed"
+                )));
+            }
+            if url.is_some() {
+                return Err(DataError::Invalid(format!(
+                    "bookmark {id} is a folder and has no url"
+                )));
+            }
+            let title = title.unwrap_or_default().trim();
+            if title.is_empty() {
+                return Err(DataError::Invalid("folder title must not be empty".into()));
+            }
+            conn.execute(
+                "UPDATE bookmarks SET title = ?2 WHERE id = ?1",
+                params![id, title],
+            )?;
+            Ok(Updated {
+                bookmark: None,
+                folder: get_folder(conn, id)?,
+            })
+        }
+        Some(_) => {
+            // Check the URL before writing anything, so a bad URL changes nothing.
+            let url = url.map(check_url).transpose()?;
+            if let Some(url) = url {
+                conn.execute(
+                    "UPDATE bookmarks SET url = ?2 WHERE id = ?1",
+                    params![id, url],
+                )?;
+            }
+            if let Some(title) = title {
+                // An empty title falls back to the (possibly new) URL, like `bookmarks.add`.
+                conn.execute(
+                    "UPDATE bookmarks SET title = CASE WHEN ?2 = '' THEN url ELSE ?2 END
+                     WHERE id = ?1",
+                    params![id, title.trim()],
+                )?;
+            }
+            Ok(Updated {
+                bookmark: get_bookmark(conn, id)?,
+                folder: None,
+            })
+        }
+    }
 }
 
 /// Remove a bookmark or a folder (with everything inside). Returns how many rows went away.
@@ -439,9 +538,11 @@ impl Command for Add {
 
     async fn run(ctx: Ctx, args: AddArgs) -> Result<Bookmark, CmdError> {
         let folder = args.folder.unwrap_or(BOOKMARKS_BAR);
-        Ok(DataStore::from_ctx(&ctx)?
+        let added = DataStore::from_ctx(&ctx)?
             .run(move |c| add_bookmark(c, folder, &args.url, args.title.as_deref(), now_ms()))
-            .await?)
+            .await?;
+        bookmarks_changed(&ctx, "add", Some(added.id));
+        Ok(added)
     }
 }
 
@@ -472,9 +573,49 @@ impl Command for AddFolder {
 
     async fn run(ctx: Ctx, args: AddFolderArgs) -> Result<Folder, CmdError> {
         let parent = args.parent.unwrap_or(BOOKMARKS_BAR);
-        Ok(DataStore::from_ctx(&ctx)?
+        let added = DataStore::from_ctx(&ctx)?
             .run(move |c| add_folder(c, parent, &args.title, now_ms()))
-            .await?)
+            .await?;
+        bookmarks_changed(&ctx, "add_folder", Some(added.id));
+        Ok(added)
+    }
+}
+
+/// `bookmarks.update`.
+pub struct Update;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateArgs {
+    /// Bookmark or folder id.
+    pub id: i64,
+    /// New title (bookmark: empty = the URL; folder: must not be empty).
+    pub title: Option<String>,
+    /// New URL (bookmarks only; http, https or file).
+    pub url: Option<String>,
+}
+
+impl Command for Update {
+    const NAME: &'static str = "bookmarks.update";
+    type Args = UpdateArgs;
+    type Output = Updated;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and \
+             position stay). Returns {bookmark} or {folder} after the edit.",
+            Toolset::Data,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: UpdateArgs) -> Result<Updated, CmdError> {
+        let id = args.id;
+        let updated = DataStore::from_ctx(&ctx)?
+            .run(move |c| update(c, id, args.title.as_deref(), args.url.as_deref()))
+            .await?;
+        bookmarks_changed(&ctx, "update", Some(id));
+        Ok(updated)
     }
 }
 
@@ -511,6 +652,7 @@ impl Command for Remove {
         let removed = DataStore::from_ctx(&ctx)?
             .run(move |c| remove(c, args.id))
             .await?;
+        bookmarks_changed(&ctx, "remove", Some(args.id));
         Ok(RemoveOutput { removed })
     }
 }
@@ -554,6 +696,7 @@ impl Command for Move {
         let (folder, position) = DataStore::from_ctx(&ctx)?
             .run(move |c| move_node(c, args.id, args.folder, args.position))
             .await?;
+        bookmarks_changed(&ctx, "move", Some(args.id));
         Ok(MoveOutput {
             id: args.id,
             folder,
@@ -815,5 +958,183 @@ mod tests {
         )
         .await;
         assert_eq!(b["title"], "From history");
+    }
+
+    #[tokio::test]
+    async fn update_edits_in_place() {
+        let (registry, ctx) = setup();
+        let mut ids = Vec::new();
+        for n in 0..3 {
+            let b = call(
+                &registry,
+                &ctx,
+                "bookmarks.add",
+                json!({"url": format!("https://{n}.test/"), "title": format!("T{n}")}),
+            )
+            .await;
+            ids.push(b["id"].as_i64().unwrap());
+        }
+        // Title and URL of the middle one: same id, same position.
+        let out = call(
+            &registry,
+            &ctx,
+            "bookmarks.update",
+            json!({"id": ids[1], "title": " New ", "url": "https://new.test/x"}),
+        )
+        .await;
+        assert_eq!(out["folder"], json!(null));
+        let b = &out["bookmark"];
+        assert_eq!(b["id"], ids[1]);
+        assert_eq!(b["position"], 1);
+        assert_eq!(b["folder"], 1);
+        assert_eq!(b["title"], "New");
+        assert_eq!(b["url"], "https://new.test/x");
+
+        // Only the title; empty falls back to the URL.
+        let out = call(
+            &registry,
+            &ctx,
+            "bookmarks.update",
+            json!({"id": ids[0], "title": ""}),
+        )
+        .await;
+        assert_eq!(out["bookmark"]["title"], "https://0.test/");
+        assert_eq!(out["bookmark"]["url"], "https://0.test/");
+
+        // A folder is renamed in place and keeps its children.
+        let folder = call(
+            &registry,
+            &ctx,
+            "bookmarks.add_folder",
+            json!({"title": "Old name"}),
+        )
+        .await["id"]
+            .as_i64()
+            .unwrap();
+        call(
+            &registry,
+            &ctx,
+            "bookmarks.add",
+            json!({"url": "https://inside.test/", "folder": folder}),
+        )
+        .await;
+        let out = call(
+            &registry,
+            &ctx,
+            "bookmarks.update",
+            json!({"id": folder, "title": "New name"}),
+        )
+        .await;
+        assert_eq!(out["bookmark"], json!(null));
+        assert_eq!(out["folder"]["id"], folder);
+        assert_eq!(out["folder"]["title"], "New name");
+        assert_eq!(out["folder"]["position"], 3);
+        assert_eq!(out["folder"]["children"], 1);
+
+        // Refusals.
+        for (args, code) in [
+            (json!({"id": ids[0]}), ErrorCode::InvalidParams),
+            (json!({"id": 999, "title": "x"}), ErrorCode::NotFound),
+            (json!({"id": 1, "title": "Bar"}), ErrorCode::InvalidParams),
+            (
+                json!({"id": folder, "title": "  "}),
+                ErrorCode::InvalidParams,
+            ),
+            (
+                json!({"id": folder, "url": "https://a.test/"}),
+                ErrorCode::InvalidParams,
+            ),
+            (
+                json!({"id": ids[2], "url": "javascript:alert(1)"}),
+                ErrorCode::InvalidParams,
+            ),
+        ] {
+            let err = call_err(&registry, &ctx, "bookmarks.update", args.clone()).await;
+            assert_eq!(err.code, code, "{args}");
+        }
+        // The refused javascript: edit changed nothing.
+        let bar = call(&registry, &ctx, "data.bookmarks", json!({})).await;
+        assert_eq!(bar["bookmarks"][2]["url"], "https://2.test/");
+        assert_eq!(bar["bookmarks"][2]["title"], "T2");
+    }
+
+    #[tokio::test]
+    async fn only_web_and_file_urls_are_written() {
+        let (registry, ctx) = setup();
+        for url in [
+            "javascript:alert(1)",
+            " JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox",
+            "bmcp://ui/library.html",
+            "about:blank",
+        ] {
+            let err = call_err(&registry, &ctx, "bookmarks.add", json!({"url": url})).await;
+            assert_eq!(err.code, ErrorCode::InvalidParams, "{url}");
+        }
+        for url in [
+            "http://a.test/",
+            "HTTPS://b.test/",
+            "file:///C:/Users/me/a.html",
+        ] {
+            call(&registry, &ctx, "bookmarks.add", json!({"url": url})).await;
+        }
+        let bar = call(&registry, &ctx, "data.bookmarks", json!({})).await;
+        assert_eq!(bar["bookmarks"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn edits_emit_bookmarks_changed() {
+        let (registry, ctx) = setup();
+        let mut rx = ctx.events.subscribe();
+        let id = call(
+            &registry,
+            &ctx,
+            "bookmarks.add",
+            json!({"url": "https://a.test/"}),
+        )
+        .await["id"]
+            .as_i64()
+            .unwrap();
+        let folder = call(
+            &registry,
+            &ctx,
+            "bookmarks.add_folder",
+            json!({"title": "F"}),
+        )
+        .await["id"]
+            .as_i64()
+            .unwrap();
+        call(
+            &registry,
+            &ctx,
+            "bookmarks.update",
+            json!({"id": id, "title": "A"}),
+        )
+        .await;
+        call(
+            &registry,
+            &ctx,
+            "bookmarks.move",
+            json!({"id": id, "folder": folder}),
+        )
+        .await;
+        call(&registry, &ctx, "bookmarks.remove", json!({"id": folder})).await;
+        // Reads and failed edits emit nothing.
+        call(&registry, &ctx, "data.bookmarks", json!({})).await;
+        call_err(&registry, &ctx, "bookmarks.remove", json!({"id": 999})).await;
+
+        let events = crate::tests::drain_events(&mut rx, "bookmarks.");
+        let expected: Vec<(String, serde_json::Value)> = [
+            ("add", id),
+            ("add_folder", folder),
+            ("update", id),
+            ("move", id),
+            ("remove", folder),
+        ]
+        .into_iter()
+        .map(|(op, id)| ("bookmarks.changed".into(), json!({"op": op, "id": id})))
+        .collect();
+        assert_eq!(events, expected);
     }
 }

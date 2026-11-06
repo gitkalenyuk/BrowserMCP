@@ -82,10 +82,9 @@ export const CLEAR_RANGES: { id: ClearRange; label: string }[] = [
 const HOUR = 3_600_000;
 
 /**
- * How to clear a range with the core's `history.delete`, which can forget every visit
- * *before* a time or one URL with all its visits:
- *   `before` — one call (`older_month`, `all`);
- *   `since`  — the pages visited since then are removed one by one (with all their visits).
+ * The `history.delete` arguments that clear a range: the visits *since* a time ("last hour" …
+ * "last 4 weeks") or *before* one ("older than 4 weeks", "all time"). Only the visits in the
+ * range go; a page keeps its visits outside it.
  */
 export function clearPlan(range: ClearRange, now: number): { before: number } | { since: number } {
   switch (range) {
@@ -102,26 +101,4 @@ export function clearPlan(range: ClearRange, now: number): { before: number } | 
     case 'all':
       return { before: now + 1 };
   }
-}
-
-/** Run `fn` over `items` with at most `limit` in flight; resolves with the settled results. */
-export async function eachLimited<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
-  const out: PromiseSettledResult<R>[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      try {
-        out[i] = { status: 'fulfilled', value: await fn(items[i]) };
-      } catch (reason) {
-        out[i] = { status: 'rejected', reason };
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }

@@ -266,7 +266,10 @@ export class MockApi implements BrowserApi {
       this.#emitRuns();
       return { runId };
     },
-    ...createDataMocks({ empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1' }),
+    ...createDataMocks({
+      empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1',
+      emit: (event, payload) => this.#emit(event, payload),
+    }),
     ...createPanelMocks(
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,

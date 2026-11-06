@@ -1,11 +1,12 @@
 // Fakes for the data commands (crates/data): a bookmark tree, history, downloads, passwords and
 // the Chrome import, used by MockApi so `pnpm dev` demos the library page, the bookmarks bar
 // and the import wizard without a backend. Semantics follow the Rust store (positions shared by
-// folders and bookmarks, move index without the moved node, cascade remove, password reveal);
-// it is plausible, not a spec.
+// folders and bookmarks, move index without the moved node, cascade remove, http/https/file URLs
+// only, history kept as visits and deleted by visit, password reveal, `bookmarks.changed` /
+// `history.changed` after edits); it is plausible, not a spec.
 
 import { RpcError } from './client';
-import type { Params, Result } from './types';
+import type { ApiEvents, EventName, Params, Result } from './types';
 import {
   BOOKMARKS_BAR,
   OTHER_BOOKMARKS,
@@ -19,6 +20,7 @@ import {
 } from './types-data';
 
 type DataMethod = keyof DataRpcMethods;
+type DataEmit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
 export type DataHandlers = { [M in DataMethod]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
 
 interface Node {
@@ -34,6 +36,29 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
+/** Like the core: an absolute http, https or file URL (trimmed), else INVALID_PARAMS. */
+function checkUrl(url: string): string {
+  const u = url.trim();
+  let protocol: string;
+  try {
+    protocol = new URL(u).protocol;
+  } catch {
+    throw new RpcError('INVALID_PARAMS', `invalid url ${JSON.stringify(u)}`);
+  }
+  if (!['http:', 'https:', 'file:'].includes(protocol)) {
+    throw new RpcError('INVALID_PARAMS', `only http, https and file URLs can be bookmarked, not ${protocol}`);
+  }
+  return u;
+}
+
+/** `[start, end)` of the local day `YYYY-MM-DD`. */
+function localDay(day: string): [number, number] {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day.trim());
+  if (!m) throw new RpcError('INVALID_PARAMS', `\`day\` must be YYYY-MM-DD, got ${JSON.stringify(day)}`);
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  return [new Date(y, mo, d).getTime(), new Date(y, mo, d + 1).getTime()];
+}
+
 function originOf(input: string): string {
   try {
     const u = new URL(input.includes('://') ? input : `https://${input}`);
@@ -47,15 +72,25 @@ export interface DataMockOptions {
   /** Start with an empty database (first run: the import wizard is offered). */
   empty?: boolean;
   now?: () => number;
+  /** Delivers `bookmarks.changed` / `history.changed` (MockApi passes its emitter). */
+  emit?: DataEmit;
 }
 
 export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
   const now = opts.now ?? Date.now;
+  const emit: DataEmit = opts.emit ?? (() => {});
   const t0 = now();
   const nodes = new Map<number, Node>();
   const order = new Map<number, number[]>();
   let nextId = 3;
-  const history = new Map<string, HistoryEntry>();
+  /** url -> title and visit times (like the core's `urls` + `visits`). */
+  const history = new Map<string, { title: string; visits: number[] }>();
+  const toEntry = (url: string, h: { title: string; visits: number[] }): HistoryEntry => ({
+    url,
+    title: h.title,
+    visit_count: h.visits.length,
+    last_visit: Math.max(...h.visits),
+  });
   let passwords: PasswordEntry[] = [];
   let nextPassword = 1;
   let downloads: Download[] = [];
@@ -135,8 +170,9 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
       ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'A video - YouTube', 1, 4 * DAY + 2 * HOUR],
       ['https://github.com/', 'GitHub', 40, 5 * DAY],
     ];
-    for (const [url, title, visit_count, ago] of visits) {
-      history.set(url, { url, title, visit_count, last_visit: t0 - ago });
+    // The newest visit `ago` ago, the older ones every 7 hours before it.
+    for (const [url, title, count, ago] of visits) {
+      history.set(url, { title, visits: Array.from({ length: count }, (_, i) => t0 - ago - i * 7 * HOUR) });
     }
 
     passwords = [
@@ -182,7 +218,8 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
       };
     },
     'data.top_sites': ({ limit }) => ({
-      sites: [...history.values()]
+      sites: [...history]
+        .map(([url, h]) => toEntry(url, h))
         .map((e) => ({ ...e, score: e.visit_count * 100 - (t0 - e.last_visit) / HOUR }))
         .sort((a, b) => b.score - a.score)
         .slice(0, limit ?? 8),
@@ -190,27 +227,44 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
     'bookmarks.add': ({ folder, title, url }) => {
       const parent = folder ?? BOOKMARKS_BAR;
       folderOf(parent);
-      const u = url.trim();
-      try {
-        new URL(u);
-      } catch {
-        throw new RpcError('INVALID_PARAMS', `invalid url ${JSON.stringify(u)}`);
-      }
+      const u = checkUrl(url);
       const t = title?.trim() || history.get(u)?.title || u;
-      return toBookmark(insert(parent, 'url', t, u));
+      const node = insert(parent, 'url', t, u);
+      emit('bookmarks.changed', { op: 'add', id: node.id });
+      return toBookmark(node);
     },
     'bookmarks.add_folder': ({ parent, title }) => {
       const p = parent ?? BOOKMARKS_BAR;
       folderOf(p);
       if (!title.trim()) throw new RpcError('INVALID_PARAMS', 'folder title must not be empty');
-      return toFolder(insert(p, 'folder', title.trim(), null));
+      const node = insert(p, 'folder', title.trim(), null);
+      emit('bookmarks.changed', { op: 'add_folder', id: node.id });
+      return toFolder(node);
+    },
+    'bookmarks.update': ({ id, title, url }) => {
+      if (title == null && url == null) throw new RpcError('INVALID_PARAMS', 'give `title` and/or `url`');
+      const n = nodes.get(id);
+      if (!n) throw new RpcError('NOT_FOUND', `bookmark ${id} not found`);
+      if (n.kind === 'folder') {
+        if (n.parent === null) throw new RpcError('INVALID_PARAMS', `folder ${id} is a root folder and cannot be renamed`);
+        if (url != null) throw new RpcError('INVALID_PARAMS', `bookmark ${id} is a folder and has no url`);
+        if (!title?.trim()) throw new RpcError('INVALID_PARAMS', 'folder title must not be empty');
+        n.title = title.trim();
+      } else {
+        if (url != null) n.url = checkUrl(url);
+        if (title != null) n.title = title.trim() || n.url!;
+      }
+      emit('bookmarks.changed', { op: 'update', id });
+      return n.kind === 'folder' ? { bookmark: null, folder: toFolder(n) } : { bookmark: toBookmark(n), folder: null };
     },
     'bookmarks.remove': ({ id }) => {
       if (id === BOOKMARKS_BAR || id === OTHER_BOOKMARKS) {
         throw new RpcError('INVALID_PARAMS', `folder ${id} is a root folder and cannot be removed`);
       }
       if (!nodes.has(id)) throw new RpcError('NOT_FOUND', `bookmark ${id} not found`);
-      return { removed: removeNode(id) };
+      const removed = removeNode(id);
+      emit('bookmarks.changed', { op: 'remove', id });
+      return { removed };
     },
     'bookmarks.move': ({ id, folder, position: pos }) => {
       if (id === BOOKMARKS_BAR || id === OTHER_BOOKMARKS) {
@@ -228,6 +282,7 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
       const index = Math.min(pos ?? sibs.length, sibs.length);
       sibs.splice(index, 0, id);
       n.parent = target;
+      emit('bookmarks.changed', { op: 'move', id });
       return { id, folder: target, position: index };
     },
     'bookmarks.search': ({ q, limit }) => ({
@@ -238,29 +293,34 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
         .map(toBookmark),
     }),
     'history.search': ({ q, since, limit }) => ({
-      entries: [...history.values()]
+      entries: [...history]
+        .map(([url, h]) => toEntry(url, h))
         .filter((e) => e.last_visit >= (since ?? 0) && matches(q, e.url, e.title))
         .sort((a, b) => b.last_visit - a.last_visit)
         .slice(0, Math.min(limit ?? 100, 5000)),
     }),
-    'history.delete': (args) => {
-      if ((args.url === undefined) === (args.before === undefined)) {
-        throw new RpcError('INVALID_PARAMS', 'give exactly one of `url` or `before`');
+    'history.delete': ({ url, since, before, day }) => {
+      if (url == null && since == null && before == null && day == null) {
+        throw new RpcError('INVALID_PARAMS', 'give `url`, `since`, `before` and/or `day`');
       }
-      if (args.url !== undefined) {
-        const e = history.get(args.url);
-        history.delete(args.url);
-        return { deleted_urls: e ? 1 : 0, deleted_visits: e?.visit_count ?? 0 };
+      if (day != null && (since != null || before != null)) {
+        throw new RpcError('INVALID_PARAMS', '`day` cannot be combined with `since`/`before`');
       }
+      const [from, to] = day != null ? localDay(day) : [since ?? -Infinity, before ?? Infinity];
+      if (from >= to) throw new RpcError('INVALID_PARAMS', '`since` must be before `before`');
       let urls = 0;
       let visits = 0;
-      for (const [url, e] of history) {
-        if (e.last_visit < args.before!) {
-          history.delete(url);
+      for (const [u, h] of history) {
+        if (url != null && u !== url) continue;
+        const kept = h.visits.filter((t) => t < from || t >= to);
+        visits += h.visits.length - kept.length;
+        h.visits = kept;
+        if (!kept.length) {
+          history.delete(u);
           urls++;
-          visits += e.visit_count;
         }
       }
+      if (visits + urls) emit('history.changed', { op: 'delete' });
       return { deleted_urls: urls, deleted_visits: visits };
     },
     'downloads.list': ({ limit }) => ({ downloads: downloads.slice(0, limit ?? 100) }),
@@ -316,10 +376,12 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
             const folder = insert(BOOKMARKS_BAR, 'folder', 'Imported from Chrome', null);
             insert(folder.id, 'url', 'Gmail', 'https://mail.google.com/');
             insert(folder.id, 'url', 'Google Drive', 'https://drive.google.com/');
+            emit('bookmarks.changed', { op: 'import', id: null });
             return { part, ok: true, imported: 2, skipped: 0, source: `${profile}\\Bookmarks`, error: null };
           }
           case 'history':
-            history.set('https://www.google.com/', { url: 'https://www.google.com/', title: 'Google', visit_count: 120, last_visit: now() - 6 * DAY });
+            history.set('https://www.google.com/', { title: 'Google', visits: [now() - 6 * DAY, now() - 9 * DAY] });
+            emit('history.changed', { op: 'import' });
             return { part, ok: true, imported: 1, skipped: 0, source: `${profile}\\History`, error: null };
           case 'passwords_csv': {
             const path = args.passwords_csv_path!;
@@ -334,6 +396,15 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
         }
       });
       return { results };
+    },
+    // Nothing to open in the browser-less demo: answer like the core would.
+    'system.reveal_path': ({ path }) => {
+      console.info('[mock] system.reveal_path', path);
+      return { path };
+    },
+    'system.open_path': ({ path }) => {
+      console.info('[mock] system.open_path', path);
+      return { path };
     },
   };
 }

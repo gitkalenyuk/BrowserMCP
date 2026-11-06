@@ -731,6 +731,48 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- bookmarks.update ----
+
+  /** Arguments of `bookmarks.update`. */
+  export interface BookmarksUpdateArgs {
+    /** Bookmark or folder id. */
+    id: number;
+    /** New title (bookmark: empty = the URL; folder: must not be empty). */
+    title?: string | null;
+    /** New URL (bookmarks only; http, https or file). */
+    url?: string | null;
+  }
+
+  /**
+   * Result of `bookmarks.update`.
+   * What `bookmarks.update` changed: exactly one of the two is set.
+   */
+  export interface BookmarksUpdateOutput {
+    /** The bookmark after the edit (when `id` is a bookmark). */
+    bookmark: {
+      /** Unix ms. */
+      created: number;
+      /** Id of the folder it is in. */
+      folder: number;
+      id: number;
+      /** Index among its siblings (folders and bookmarks share one order). */
+      position: number;
+      title: string;
+      url: string;
+    } | null;
+    /** The folder after the edit (when `id` is a folder). */
+    folder: {
+      /** Number of direct children (folders + bookmarks). */
+      children: number;
+      created: number;
+      id: number;
+      /** Parent folder; `null` for the two root folders. */
+      parent: number | null;
+      position: number;
+      title: string;
+    } | null;
+  }
+
   // ---- clipboard.write ----
 
   /** Arguments of `clipboard.write`. */
@@ -1320,14 +1362,22 @@ declare namespace BrowserMCP {
 
   /** Arguments of `history.delete`. */
   export interface HistoryDeleteArgs {
-    /** Forget every visit before this time (Unix ms). Use the current time to clear everything. */
+    /** Only visits before this time (Unix ms). Use the current time to clear everything. */
     before?: number | null;
-    /** Forget this exact URL (all its visits). */
+    /**
+     * Only visits on this local calendar day, `YYYY-MM-DD` (not together with
+     * `since`/`before`).
+     */
+    day?: string | null;
+    /** Only visits at or after this time (Unix ms). */
+    since?: number | null;
+    /** Only the visits of this exact URL (alone: the URL with all its visits). */
     url?: string | null;
   }
 
   /** Result of `history.delete`. */
   export interface HistoryDeleteOutput {
+    /** URLs that had no visit left and were dropped. */
     deleted_urls: number;
     deleted_visits: number;
   }
@@ -4972,6 +5022,20 @@ declare namespace BrowserMCP {
     warnings: string[];
   }
 
+  // ---- system.open_path ----
+
+  /** Arguments of `system.open_path`. */
+  export interface SystemOpenPathArgs {
+    /** Absolute path inside the BrowserMCP data folder or the Downloads folder. */
+    path: string;
+  }
+
+  /** Result of `system.open_path`. */
+  export interface SystemOpenPathOutput {
+    /** The resolved path that was shown. */
+    path: string;
+  }
+
   // ---- system.ping ----
 
   /**
@@ -4986,6 +5050,20 @@ declare namespace BrowserMCP {
     name: string;
     /** BrowserMCP version, e.g. "0.1.0". */
     version: string;
+  }
+
+  // ---- system.reveal_path ----
+
+  /** Arguments of `system.reveal_path`. */
+  export interface SystemRevealPathArgs {
+    /** Absolute path inside the BrowserMCP data folder or the Downloads folder. */
+    path: string;
+  }
+
+  /** Result of `system.reveal_path`. */
+  export interface SystemRevealPathOutput {
+    /** The resolved path that was shown. */
+    path: string;
   }
 
   // ---- tabs.activate ----
@@ -5523,6 +5601,8 @@ declare namespace BrowserMCP {
     "bookmarks.remove": { args: BookmarksRemoveArgs; output: BookmarksRemoveOutput };
     /** Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first. */
     "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
+    /** Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit. */
+    "bookmarks.update": { args: BookmarksUpdateArgs; output: BookmarksUpdateOutput };
     /** Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused). */
     "clipboard.write": { args: ClipboardWriteArgs; output: ClipboardWriteOutput };
     /** List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}. */
@@ -5549,7 +5629,7 @@ declare namespace BrowserMCP {
     "hints.hide": { args: HintsHideArgs; output: HintsHideOutput };
     /** Show Vim-style link hints: a short label (as, sd…) next to every interactive element in view. Typing a label in the page clicks it (or opens it in a new tab, focuses it, copies its link — see mode); Esc cancels. Returns the labels with the elements they point at. */
     "hints.show": { args: HintsShowArgs; output: HintsShowOutput };
-    /** Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed. */
+    /** Delete history visits: in a time window (`since` and/or `before`, Unix ms), on a local day (`day`, YYYY-MM-DD) and/or of one URL (`url`; alone it forgets the URL completely). URLs left without visits are dropped. Returns how many visits and URLs were removed. */
     "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
     /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
     "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
@@ -5731,8 +5811,12 @@ declare namespace BrowserMCP {
     "stealth.fingerprint_clear": { args: StealthFingerprintClearArgs; output: StealthFingerprintClearOutput };
     /** Apply a fingerprint identity to a tab: user agent + client hints, Accept-Language, timezone, locale, screen/DPR, touch, geolocation, CPU cores and (by a minimal patch script) deviceMemory, webdriver and WebGL GPU strings. Give identity_id, identity or preset. Check the result with stealth_check. */
     "stealth.fingerprint_set": { args: StealthFingerprintSetArgs; output: StealthFingerprintSetOutput };
+    /** Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}. */
+    "system.open_path": { args: SystemOpenPathArgs; output: SystemOpenPathOutput };
     /** Check that BrowserMCP is running. Returns its name and version. */
     "system.ping": { args: SystemPingArgs; output: SystemPingOutput };
+    /** Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}. */
+    "system.reveal_path": { args: SystemRevealPathArgs; output: SystemRevealPathOutput };
     /** Switch the window to this tab (make it the active, visible tab). */
     "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
     /** Close a tab. Closing the last tab of a window closes the window (and the last window quits the browser). */
@@ -5889,6 +5973,12 @@ declare namespace BrowserMCP {
        * `bookmarks.search` (MCP: `bookmarks_search`): toolset `data`, read.
        */
       search(args: BookmarksSearchArgs): Promise<BookmarksSearchOutput>;
+      /**
+       * Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit.
+       *
+       * `bookmarks.update` (MCP: `bookmarks_update`): toolset `data`, act.
+       */
+      update(args: BookmarksUpdateArgs): Promise<BookmarksUpdateOutput>;
     };
     /** Commands `clipboard.*`. */
     clipboard: {
@@ -5992,7 +6082,7 @@ declare namespace BrowserMCP {
     /** Commands `history.*`. */
     history: {
       /**
-       * Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed.
+       * Delete history visits: in a time window (`since` and/or `before`, Unix ms), on a local day (`day`, YYYY-MM-DD) and/or of one URL (`url`; alone it forgets the URL completely). URLs left without visits are dropped. Returns how many visits and URLs were removed.
        *
        * `history.delete` (MCP: `history_delete`): toolset `data`, act.
        */
@@ -6584,11 +6674,23 @@ declare namespace BrowserMCP {
     /** Commands `system.*`. */
     system: {
       /**
+       * Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}.
+       *
+       * `system.open_path` (MCP: `system_open_path`): toolset `system`, act.
+       */
+      open_path(args: SystemOpenPathArgs): Promise<SystemOpenPathOutput>;
+      /**
        * Check that BrowserMCP is running. Returns its name and version.
        *
        * `system.ping` (MCP: `system_ping`): toolset `core`, read.
        */
       ping(args?: SystemPingArgs): Promise<SystemPingOutput>;
+      /**
+       * Show a file or folder in Windows Explorer, selected in its folder. Only paths inside the BrowserMCP data folder or Downloads. Returns {path}.
+       *
+       * `system.reveal_path` (MCP: `system_reveal_path`): toolset `system`, act.
+       */
+      reveal_path(args: SystemRevealPathArgs): Promise<SystemRevealPathOutput>;
     };
     /** Commands `tabs.*`. */
     tabs: {

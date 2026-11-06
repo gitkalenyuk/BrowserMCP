@@ -148,12 +148,14 @@ after 15 s). Without one it reopens the last section, Bookmarks the first time.
 * **Bookmarks**: folder tree (`data.bookmarks` per folder, level by level, `tree.ts`), list of the
   selected folder in the shared folder/bookmark order, drag rows to reorder or onto a folder (tree
   or row middle) to move (`bookmarks.move`, index without the moved node), add / edit / delete,
-  search (`bookmarks.search`). There is no rename command: edits are add + move + remove
-  (`edit.ts`), so an edited node gets a new id.
-* **History**: search, grouped by local day, remove one page (`history.delete {url}`), remove a
-  day, clear a range: "older than 4 weeks" / "all time" use `{before}`; recent ranges remove each
-  page visited since then (with all its visits, the core has no "visits after" delete).
-* **Downloads**: `downloads.list`, polled while one is in progress. "Show in folder" is a stub.
+  search (`bookmarks.search`). Edits and folder renames use `bookmarks.update` (in place: id and
+  position stay; only http/https/file URLs, the core refuses `javascript:` / `data:`).
+* **History**: search, grouped by local day, remove one page (`history.delete {url}`: all its
+  visits), remove a day (`{day: 'YYYY-MM-DD'}`: that day's visits only), clear a range (`{since}`
+  for the last hour … 4 weeks, `{before}` for older than 4 weeks / all time). Deletes remove
+  *visits*; a page keeps its visits outside the range.
+* **Downloads**: `downloads.list`, polled while one is in progress. "Show in folder" calls
+  `system.reveal_path` (Explorer with the file selected; data folder and Downloads only).
 * **Passwords**: listed without passwords; the eye asks for confirmation, then reads that one
   login with `passwords.list {origin, reveal:true}` and hides it again after 30 s. Add, edit (empty
   password field keeps the current one), delete with confirmation.
@@ -164,9 +166,11 @@ after 15 s). Without one it reopens the last section, Bookmarks the first time.
 
 Chrome side: the omnibox star (`BookmarkStar`, Ctrl+D) adds the page to the bookmarks bar or
 removes all its bookmarks; the bookmarks bar (`BookmarksBar`, Ctrl+Shift+B, on by default) shows
-folder 1, its folders open in the library (a dropdown would be covered by the page). The core
-sends no data events, so pages bump `bmcp.data.rev` in localStorage after edits and the bar/star
-re-read on it (and on window focus). `VITE_BMCP_EMPTY_DATA=1` starts the mock empty (wizard).
+folder 1, its folders open in the library (a dropdown would be covered by the page). Every edit
+in the core (by the UI, an agent over REST/MCP, a script, an import) emits `bookmarks.changed
+{op, id}` / `history.changed {op}`; the bar, the star and the library re-read on them
+(`onDataChanged` in `data/library.ts`, debounced) and on reconnect. `VITE_BMCP_EMPTY_DATA=1`
+starts the mock empty (wizard).
 
 ### Side panels
 
