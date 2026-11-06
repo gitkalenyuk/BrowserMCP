@@ -13,6 +13,9 @@
     | { kind: 'tab'; key: string; text: string; tab: TabInfo }
     | { kind: 'workspace'; key: string; text: string; ws: Workspace };
 
+  /** `standalone`: the page is only the palette (the browser's Ctrl+K overlay view). */
+  let { standalone = false }: { standalone?: boolean } = $props();
+
   const chrome = useChrome();
   let query = $state('');
   let selected = $state(0);
@@ -114,9 +117,12 @@
 </script>
 
 {#if chrome.paletteOpen}
-  <div class="scrim" role="presentation" onpointerdown={close}></div>
+  {#if !standalone}
+    <div class="scrim" role="presentation" onpointerdown={close}></div>
+  {/if}
   <div
     class="palette"
+    class:standalone
     role="dialog"
     aria-modal="true"
     aria-label="Command palette"
@@ -214,6 +220,19 @@
     transform: translateX(-50%);
     animation: drop 160ms var(--ease-out);
     overflow: hidden;
+  }
+  /* The overlay view is exactly the palette's size: fill it, no shadow or animation
+     (a native view cannot be transparent around rounded corners). */
+  .palette.standalone {
+    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+    animation: none;
   }
   .search {
     display: flex;

@@ -1,8 +1,14 @@
-export const NEWTAB_URL = 'bmcp://newtab/';
+/** The new tab page (served by the browser, see crates/core NEW_TAB_URL). */
+export const NEWTAB_URL = 'bmcp://ui/newtab.html';
 export const DEFAULT_SEARCH = 'https://www.google.com/search?q=%s';
 
 export function isNewTab(url: string): boolean {
-  return url === '' || url === 'about:blank' || url.startsWith('bmcp://newtab');
+  return (
+    url === '' ||
+    url === 'about:blank' ||
+    url.startsWith('bmcp://newtab') ||
+    url.startsWith(NEWTAB_URL)
+  );
 }
 
 const WITH_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\//i;

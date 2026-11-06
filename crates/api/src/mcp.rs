@@ -95,6 +95,16 @@ fn requested_toolsets(cx: &RequestContext<RoleServer>) -> Vec<Toolset> {
     }
 }
 
+/// `?agent=claude-code-1`: the built-in AI's agent id, set on the MCP URL it gives CLI agents.
+fn requested_agent(cx: &RequestContext<RoleServer>) -> Option<String> {
+    let query = http_parts(cx).and_then(|p| p.uri.query()).unwrap_or("");
+    query
+        .split('&')
+        .filter_map(|pair| pair.strip_prefix("agent="))
+        .find(|agent| !agent.is_empty())
+        .map(str::to_owned)
+}
+
 fn session_id(cx: &RequestContext<RoleServer>) -> String {
     http_parts(cx)
         .and_then(|p| p.headers.get("mcp-session-id"))
@@ -138,7 +148,7 @@ impl ServerHandler for BrowserMcp {
     ) -> Result<CallToolResponse, McpError> {
         let caller = Caller::Mcp {
             session: session_id(&cx),
-            agent: None,
+            agent: requested_agent(&cx),
         };
         let ctx = Ctx::new(caller, self.backend.clone(), self.events.clone());
         let args = request.arguments.map(Value::Object).unwrap_or(Value::Null);

@@ -22,6 +22,52 @@ pub mod topics {
     pub const COMMAND_FINISHED: &str = "command.finished";
     /// A call was refused before running: unknown command, invalid arguments or tab locked.
     pub const COMMAND_REJECTED: &str = "command.rejected";
+    /// A tab was created: [`super::tab::created`].
+    pub const TAB_CREATED: &str = "tab.created";
+    /// Title, URL, loading, favicon or history of a tab changed: [`super::tab::updated`].
+    pub const TAB_UPDATED: &str = "tab.updated";
+    /// A tab is gone: [`super::tab::closed`].
+    pub const TAB_CLOSED: &str = "tab.closed";
+    /// A tab became the shown one in its window: [`super::tab::activated`].
+    pub const TAB_ACTIVATED: &str = "tab.activated";
+}
+
+/// Payloads of the `tab.*` events. The shapes are fixed by the UI
+/// (`ui/src/lib/api/types.ts`, `ApiEvents`), so they are built here, in one place, and
+/// unit-tested. The CEF crate emits them; the WS server forwards them unchanged.
+pub mod tab {
+    use serde_json::{Value, json};
+
+    use crate::backend::{TabId, TabInfo};
+
+    /// `tab.created {tab: TabInfo, index}` — `index` = position in the window's tab strip.
+    pub fn created(tab: &TabInfo, index: usize) -> Value {
+        json!({ "tab": tab, "index": index })
+    }
+
+    /// `tab.updated {id, title, url, loading, favicon, canGoBack, canGoForward}` — always
+    /// the full set of changeable fields (no debouncing, no diffing).
+    pub fn updated(tab: &TabInfo) -> Value {
+        json!({
+            "id": tab.id,
+            "title": tab.title,
+            "url": tab.url,
+            "loading": tab.loading,
+            "favicon": tab.favicon,
+            "canGoBack": tab.can_go_back,
+            "canGoForward": tab.can_go_forward,
+        })
+    }
+
+    /// `tab.closed {id}`
+    pub fn closed(id: TabId) -> Value {
+        json!({ "id": id })
+    }
+
+    /// `tab.activated {id}`
+    pub fn activated(id: TabId) -> Value {
+        json!({ "id": id })
+    }
 }
 
 /// One event on the bus.
@@ -125,6 +171,38 @@ mod tests {
         for expected in 1..=200 {
             assert_eq!(rx.recv().await.unwrap().seq, expected);
         }
+    }
+
+    #[test]
+    fn tab_event_payloads_match_the_ui_contract() {
+        use crate::backend::{TabId, TabInfo};
+        let mut info = TabInfo::new(TabId(7), "https://a.test/");
+        info.title = "A".into();
+        info.loading = true;
+        info.favicon = Some("https://a.test/favicon.ico".into());
+        info.can_go_back = true;
+        info.active = true;
+
+        assert_eq!(
+            tab::created(&info, 2),
+            json!({
+                "index": 2,
+                "tab": {
+                    "id": 7, "title": "A", "url": "https://a.test/", "loading": true,
+                    "favicon": "https://a.test/favicon.ico", "canGoBack": true,
+                    "canGoForward": false, "active": true, "groupId": null, "lockedBy": null,
+                }
+            })
+        );
+        assert_eq!(
+            tab::updated(&info),
+            json!({
+                "id": 7, "title": "A", "url": "https://a.test/", "loading": true,
+                "favicon": "https://a.test/favicon.ico", "canGoBack": true, "canGoForward": false,
+            })
+        );
+        assert_eq!(tab::closed(TabId(7)), json!({ "id": 7 }));
+        assert_eq!(tab::activated(TabId(7)), json!({ "id": 7 }));
     }
 
     #[test]

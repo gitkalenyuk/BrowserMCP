@@ -146,6 +146,29 @@ CDP `Network.ResourceType` (interim path, `ResourceType::from_cdp`): `Document` 
 * Overhead is measured per session (`adblock.stats` → `interception`: decision µs, round trip
   ms, lagged events).
 
+## Live numbers (2026-11-06, interim CDP path, EasyList + EasyPrivacy)
+
+`simplify.measure` (HTTP cache off, 5 s settle), dev build with `adblock`/`regex` deps at
+opt-level 3, two rounds each:
+
+| Page | Run | Requests | Blocked | Bytes | Load event | DOMContentLoaded |
+|---|---|---|---|---|---|---|
+| theverge.com | without | 236 / 241 | 0 | 5.34 / 5.43 MB | >45 s (timeout) / 21.0 s | 6.5 / 0.9 s |
+| theverge.com | `adblock.apply` | 184 / 183 | 10 / 10 | 3.01 / 3.01 MB (−44%) | 22.9 / 12.4 s | 1.1 / 1.1 s |
+| edition.cnn.com | without | 103 / 102 | 0 | 23.3 / 23.5 MB | 4.4 / 2.1 s | 2.8 / 1.3 s |
+| edition.cnn.com | `adblock.apply` | 98 / 94 | 9 / 8 | 22.9 / 22.9 MB (−2%) | 2.1 / 2.1 s | 1.4 / 1.4 s |
+| edition.cnn.com | + `simplify.site cnn.com {images,media,fonts: false}` | 106 | 71 | 5.2 MB (−78%) | 2.4 s | 1.8 s |
+
+Interception overhead (`adblock.stats` → `interception`): decision avg 0.4–0.5 ms (max 10 ms
+incl. building the per-thread engine), answer round trip avg 1.5–12 ms, max 40 ms, 0 lost
+events, 0 errors. Blocking the ad scripts also prevents the requests they would have made, so
+"requests" drops by more than "blocked". In a plain dev build (adblock unoptimized) the
+decision averaged 31 ms — the workspace should add
+`[profile.dev.package.adblock] opt-level = 3` (and for `regex*`).
+
+Reader mode on https://en.wikipedia.org/wiki/Ad_blocking: 790 ms, title "Ad blocking",
+45 635 chars of text; `apply: true` renders the clean dark/light page.
+
 ## Known gaps
 
 * No redirect/scriptlet resources (uBlock `resources.json`) are loaded yet, so `$redirect`
@@ -153,6 +176,7 @@ CDP `Network.ResourceType` (interim path, `ResourceType::from_cdp`): `Document` 
 * Procedural cosmetic filters (`:has-text`, `:upward`, …) are not applied (only plain hide
   selectors).
 * Interim path: only the page target is intercepted — OOPIF iframes and service workers are
-  not; another component enabling `Fetch` on the same tab would conflict.
+  not; another component enabling `Fetch` on the same tab (e.g. `bmcp-net` rules/breakpoints)
+  would conflict: both would answer the same paused requests.
 * A strict page CSP (`style-src` without `'unsafe-inline'`) can block the injected `<style>`;
   reader mode additionally uses a constructable stylesheet for that case.

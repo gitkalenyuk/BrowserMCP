@@ -16,6 +16,9 @@ bmcp-cef.workspace = true
 bmcp-api.workspace = true
 bmcp-browser.workspace = true
 bmcp-adblock = { path = "../adblock" }
+bmcp-ai = { path = "../ai" }
+bmcp-net = { path = "../net" }
+bmcp-data = { path = "../data" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

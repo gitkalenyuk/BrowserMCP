@@ -1,0 +1,26 @@
+[package]
+name = "bmcp-data"
+description = "BrowserMCP daily-driver data: bookmarks, history, downloads, passwords, Chrome import (SQLite, no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+# `bundled`: compile SQLite in, so there is no system library to ship or find.
+rusqlite = { version = "0.41", features = ["bundled"] }
+csv = "1.4"
+url = "2.5"
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The Chrome `History` file is copied to a temp folder before reading (Chrome locks it).
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
