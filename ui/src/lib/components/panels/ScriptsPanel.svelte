@@ -221,7 +221,11 @@
           {#if store.running}<span class="spinner" aria-hidden="true"></span>{:else}<Icon name="play" size={12} stroke={2.25} />{/if}
           Run
         </button>
-        <button class="btn" disabled={store.running} onclick={() => void store.debugStart()} title="Debug: stop at breakpoints (F5)">
+        <button class="btn" disabled={store.running} onclick={() => {
+          // Keys (F10/F11/F5) go to the editor right away.
+          editor?.focus();
+          void store.debugStart();
+        }} title="Debug: stop at breakpoints (F5)">
           <Icon name="breakpoint" size={12} stroke={2.25} /> Debug
         </button>
       {:else}

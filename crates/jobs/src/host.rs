@@ -1,9 +1,13 @@
 //! Running one script in a `bmcp-script-host` process and reading what it printed.
 //!
 //! ```text
-//! bmcp-script-host run <file.ts> --ws ws://127.0.0.1:<port>/v1/ws --input k=v ... --timeout-secs N
+//! bmcp-script-host run <file.ts> --ws ws://127.0.0.1:<port>/v1/ws --inputs-file <tmp.json> --timeout-secs N
 //! exit codes: 0 ok, 1 uncaught script error, 2 usage/setup error, 124 timeout
 //! ```
+//!
+//! Inputs go through a temporary JSON file (`{"key": "value", …}`, removed after the run), not
+//! `--input k=v` arguments: a long value (an article, a JSON blob) would exceed the 32K
+//! command-line limit on Windows, and a NUL byte cannot be passed as an argument at all.
 //!
 //! **Structured results.** A script reports data with `browser.output({...})`, which prints
 //! one stdout line `##bmcp:result {json}`. Several lines are merged: object keys are combined
@@ -18,6 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bmcp_core::{CmdError, ErrorCode};
@@ -173,6 +178,36 @@ pub struct HostRun<'a> {
     pub timeout: Duration,
 }
 
+/// A run's inputs as a temporary JSON object file for `--inputs-file`; deleted on drop.
+pub struct InputsFile(PathBuf);
+
+impl InputsFile {
+    /// Write `inputs` to a new file in the system temp folder.
+    pub fn write(inputs: &[(String, String)]) -> std::io::Result<InputsFile> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("bmcp-inputs-{}-{n}.json", std::process::id()));
+        // Later pairs win, like repeated `--input` flags.
+        let object: serde_json::Map<String, Value> = inputs
+            .iter()
+            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+            .collect();
+        std::fs::write(&path, Value::Object(object).to_string())?;
+        Ok(InputsFile(path))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for InputsFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Start the host, wait for it (or for `cancel`), collect output. Never returns `Err`: a
 /// process that cannot even start is reported as a failed outcome with code `HOST_ERROR`.
 pub async fn run_host(run: HostRun<'_>, cancel: &CancellationToken) -> HostOutcome {
@@ -184,9 +219,29 @@ pub async fn run_host(run: HostRun<'_>, cancel: &CancellationToken) -> HostOutco
         .arg(run.ws_url)
         .arg("--timeout-secs")
         .arg(run.timeout.as_secs_f64().max(0.001).to_string());
-    for (key, value) in run.inputs {
-        cmd.arg("--input").arg(format!("{key}={value}"));
-    }
+    // Kept alive until this function returns (the host has exited by then), then deleted.
+    let _inputs_file = if run.inputs.is_empty() {
+        None
+    } else {
+        match InputsFile::write(run.inputs) {
+            Ok(file) => {
+                cmd.arg("--inputs-file").arg(file.path());
+                Some(file)
+            }
+            Err(err) => {
+                let message = format!("cannot write the inputs file: {err}");
+                return HostOutcome {
+                    ok: false,
+                    exit_code: None,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    result: Value::Null,
+                    stdout: String::new(),
+                    stderr: message.clone(),
+                    error: Some(ScriptFailure::new("HOST_ERROR", message)),
+                };
+            }
+        }
+    };
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -419,6 +474,23 @@ error: Uncaught Error: browser.page.find failed: NOT_FOUND: no element matches n
         assert_eq!(acc, json!({"a": 3, "b": 2}));
         merge_result(&mut acc, json!("text"));
         assert_eq!(acc, json!("text"));
+    }
+
+    #[test]
+    fn inputs_file_holds_a_json_object_and_is_removed_on_drop() {
+        let long = "z".repeat(50_000);
+        let inputs = [
+            ("a".to_string(), "1".to_string()),
+            ("a".to_string(), "2".to_string()),
+            ("long".to_string(), long.clone()),
+        ];
+        let file = InputsFile::write(&inputs).unwrap();
+        let path = file.path().to_path_buf();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["a"], "2"); // later pairs win, like repeated --input
+        assert_eq!(v["long"], long.as_str());
+        drop(file);
+        assert!(!path.exists());
     }
 
     #[test]

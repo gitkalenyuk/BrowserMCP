@@ -8,12 +8,14 @@
 
 import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
+import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import browserTypes from '../../../../crates/script/types/browser.d.ts?raw';
 
-// The editor's own worker. (The TypeScript worker Monaco 0.57 starts by itself with
-// `new Worker(new URL('ts.worker.js', import.meta.url))`, which Vite bundles too.)
+// Workers: once MonacoEnvironment.getWorker exists Monaco asks it for EVERY worker, so the
+// TypeScript language service must get its own (Vite bundles each `?worker` import).
 self.MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
+  getWorker: (_id: string, label: string) =>
+    label === 'typescript' || label === 'javascript' ? new TsWorker() : new EditorWorker(),
 };
 
 const ts = monaco.typescript;

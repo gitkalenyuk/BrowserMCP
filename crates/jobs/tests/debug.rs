@@ -69,12 +69,14 @@ async fn inline_code_errors_end_with_a_parsed_failure() {
     let started = env
         .ok(
             "script.debug_start",
-            json!({"code": "out one\nthrow boom", "inputs": {"k": "v"}}),
+            json!({"code": "args\nthrow boom", "inputs": {"k": "v"}}),
         )
         .await;
     let id = started["id"].as_str().unwrap().to_string();
     let ended = wait_event(&mut rx, "script.debug_ended", |d| d["id"] == id).await;
     assert_eq!(ended.data["ok"], false);
+    // Inputs reach the host (through the --inputs-file).
+    assert_eq!(ended.data["result"]["inputs"], json!({"k": "v"}));
     assert_eq!(ended.data["error"]["code"], "SCRIPT_ERROR");
     assert_eq!(ended.data["error"]["line"], 2);
     assert!(

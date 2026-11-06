@@ -3009,6 +3009,12 @@ declare namespace BrowserMCP {
      * relative path is inside data/runs/<id>/.
      */
     path?: string | null;
+    /**
+     * csv/xlsx: write cells exactly as stored. By default a cell starting with = + - @ tab
+     * or CR (a spreadsheet formula) gets a leading ' in CSV and the quote-prefix flag in
+     * XLSX, so opening the file cannot run formulas planted by a web page.
+     */
+    raw?: boolean | null;
     /** Only rows with this status (e.g. ok or failed). */
     status?: "pending" | "running" | "ok" | "failed" | "needs_heal" | "cancelled" | null;
     /**
@@ -4661,6 +4667,8 @@ declare namespace BrowserMCP {
   export interface Browser {
     /** Low level: `browser.call("tabs.list", {})`. Also accepts wire names (`tabs_list`). */
     call<N extends keyof Commands>(name: N, args?: Commands[N]["args"]): Promise<Commands[N]["output"]>;
+    /** Report a structured result (`##bmcp:result` line; several calls merge object keys). */
+    output(value: unknown): void;
     /** Commands `adblock.*`. */
     adblock: {
       /**

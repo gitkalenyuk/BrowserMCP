@@ -35,7 +35,9 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::Inner;
-use crate::host::{RESULT_PREFIX, ScriptFailure, locate_host, merge_result, parse_failure};
+use crate::host::{
+    InputsFile, RESULT_PREFIX, ScriptFailure, locate_host, merge_result, parse_failure,
+};
 
 /// Prefix of a debugger protocol line on the host's stdout (same as
 /// `bmcp_script::DEBUG_PREFIX`; that crate is not a dependency, it pulls in V8).
@@ -225,9 +227,17 @@ impl Inner {
             .arg(self.ws_url())
             .arg("--inspect")
             .arg("pipe");
-        for (key, value) in &inputs {
-            cmd.arg("--input").arg(format!("{key}={value}"));
-        }
+        // Inputs go through a temporary JSON file (no command-line length limit), kept until
+        // the process has ended (the driver task below owns it).
+        let inputs_file = if inputs.is_empty() {
+            None
+        } else {
+            let file = InputsFile::write(&inputs).map_err(|err| {
+                CmdError::internal(format!("cannot write the inputs file: {err}"))
+            })?;
+            cmd.arg("--inputs-file").arg(file.path());
+            Some(file)
+        };
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -277,6 +287,7 @@ impl Inner {
             let id = id.clone();
             let session = session.clone();
             tokio::spawn(async move {
+                let _inputs_file = inputs_file;
                 let started = Instant::now();
                 let status = tokio::select! {
                     status = child.wait() => status.ok(),

@@ -2,7 +2,8 @@
 //! milliseconds). Same command line:
 //!
 //! ```text
-//! bmcp-fake-script-host run <file> [--ws <url>] [--input k=v]... [--timeout-secs N]
+//! bmcp-fake-script-host run <file> [--ws <url>] [--input k=v]... [--inputs-file <json>]
+//!                       [--timeout-secs N]
 //! ```
 //!
 //! The "script" is a list of lines, run top to bottom. `{{key}}` is replaced by the input
@@ -24,7 +25,7 @@
 //! `waiting`, answers every command, "pauses" at each breakpoint line in turn (one fake variable
 //! `line`), and runs the script once no breakpoint is left.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -49,6 +50,18 @@ fn main() -> ExitCode {
                 let pair = args.next().unwrap_or_default();
                 let (k, v) = pair.split_once('=').unwrap_or((&pair, ""));
                 inputs.insert(k.to_string(), v.to_string());
+            }
+            "--inputs-file" => {
+                // A JSON object of strings, like the real host reads.
+                let path = args.next().unwrap_or_default();
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                match serde_json::from_str::<HashMap<String, String>>(&text) {
+                    Ok(map) => inputs.extend(map),
+                    Err(err) => {
+                        eprintln!("error: bad --inputs-file {path}: {err}");
+                        return ExitCode::from(2);
+                    }
+                }
             }
             "--timeout-secs" => {
                 timeout = args.next().and_then(|s| s.parse::<f64>().ok());
@@ -136,18 +149,13 @@ impl Host {
                 None
             }
             "args" => {
-                let mut inputs: Vec<_> = self.inputs.iter().collect();
-                inputs.sort();
-                let inputs: Vec<String> = inputs
-                    .iter()
-                    .map(|(k, v)| format!("{k:?}: {v:?}"))
-                    .collect();
-                println!(
-                    "##bmcp:result {{\"ws\": {:?}, \"inputs\": {{{}}}, \"timeout_secs\": {}}}",
-                    self.ws,
-                    inputs.join(", "),
-                    self.timeout.unwrap_or(0.0)
-                );
+                let inputs: BTreeMap<&String, &String> = self.inputs.iter().collect();
+                let result = serde_json::json!({
+                    "ws": self.ws,
+                    "inputs": inputs,
+                    "timeout_secs": self.timeout.unwrap_or(0.0),
+                });
+                println!("##bmcp:result {result}");
                 None
             }
             "sleep" => {
