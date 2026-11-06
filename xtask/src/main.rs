@@ -24,11 +24,11 @@ fn main() -> ExitCode {
         "build" => build(has_flag(rest, "--release")),
         "run" => run(has_flag(rest, "--release"), after_double_dash(rest)),
         // bmcp-script embeds V8 (212 MB download, ~6 min clean build): opt in with --all.
-        "test" if has_flag(rest, "--all") => cargo(&["test", "--workspace"], &build_env()?),
-        "test" => cargo(
-            &["test", "--workspace", "--exclude", "bmcp-script"],
-            &build_env()?,
-        ),
+        "test" if has_flag(rest, "--all") => {
+            build_env().and_then(|env| cargo(&["test", "--workspace"], &env))
+        }
+        "test" => build_env()
+            .and_then(|env| cargo(&["test", "--workspace", "--exclude", "bmcp-script"], &env)),
         _ => {
             eprintln!(
                 "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test>"
