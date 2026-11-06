@@ -64,6 +64,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::{BrowserBackend, TabId};
 use crate::events::EventBus;
+use crate::extensions::Extensions;
 
 pub use error::{CmdError, ErrorCode, Retry};
 pub use lock::{AllowAll, LockPolicy};
@@ -276,6 +277,9 @@ pub struct Ctx {
     pub caller: Caller,
     pub backend: Arc<dyn BrowserBackend>,
     pub events: EventBus,
+    /// Shared services that live longer than one call (see [`Extensions`]). The registry
+    /// sets this to its own map for every call, so state survives between calls.
+    pub extensions: Arc<Extensions>,
     // Set by the registry for each call.
     lock: Arc<dyn LockPolicy>,
     mutates_tab: bool,
@@ -290,6 +294,7 @@ impl Ctx {
             caller,
             backend,
             events,
+            extensions: Arc::new(Extensions::new()),
             lock: Arc::new(AllowAll),
             mutates_tab: false,
             call_id: 0,

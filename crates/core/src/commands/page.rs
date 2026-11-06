@@ -1,7 +1,7 @@
 //! `page.*` commands.
 //!
-//! TODO(perception): `page.snapshot` / `page.ax_tree` come from the perception crate that is
-//! being built in parallel; the raw `Accessibility.getFullAXTree` passthrough is not ported.
+//! `page.snapshot` and the other perception-based commands live in the `bmcp-browser` crate;
+//! the raw `Accessibility.getFullAXTree` passthrough is not ported.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

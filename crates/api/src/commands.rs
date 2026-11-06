@@ -1,7 +1,8 @@
 //! Commands that live in the API crate until their real home exists.
 //!
-//! `page.ax_tree` is the spike-era accessibility preview; the `perception`-based
-//! `page.snapshot` / `page.find` / `page.act` replace it.
+//! `page.ax_tree` is the spike-era accessibility preview, now in the hidden toolset: the
+//! `perception`-based `page.snapshot` / `page.find` / `page.act` (crate `bmcp-browser`)
+//! replace it.
 
 use bmcp_core::{CmdError, Command, Ctx, Meta, Registry, TabId, Toolset};
 use schemars::JsonSchema;
@@ -38,9 +39,10 @@ impl Command for PageAxTree {
 
     fn meta() -> Meta {
         Meta::new(
-            "Accessibility tree of the page as an indented list of roles and names. Use it to \
-             understand the page without a screenshot.",
-            Toolset::Core,
+            "Accessibility tree of the page as an indented list of roles and names (debug \
+             preview; agents should use page_snapshot).",
+            // Superseded by `page.snapshot` (bmcp-browser); kept for debugging only.
+            Toolset::Hidden,
         )
     }
 

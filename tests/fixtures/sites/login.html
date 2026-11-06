@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in – Fixture</title>
+<style>
+  body { font-family: sans-serif; max-width: 420px; margin: 40px auto; }
+  label { display: block; margin: 12px 0 4px; }
+  input[type=email], input[type=password] { width: 100%; padding: 6px; }
+  #result { margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign in</h1>
+  <!-- Correct login: any email + password "hunter2". -->
+  <form id="login" aria-label="Login">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required autocomplete="off">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required>
+    <label><input id="remember" type="checkbox"> Remember me</label>
+    <p><button type="submit">Sign in</button></p>
+  </form>
+  <div id="result"></div>
+</main>
+<script>
+  document.getElementById('login').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    const result = document.getElementById('result');
+    result.innerHTML = '';
+    if (password === 'hunter2') {
+      const h = document.createElement('h2');
+      h.textContent = 'Welcome ' + email;
+      result.appendChild(h);
+      document.getElementById('login').hidden = true;
+    } else {
+      const p = document.createElement('p');
+      p.setAttribute('role', 'alert');
+      p.textContent = 'Wrong password';
+      result.appendChild(p);
+    }
+  });
+</script>
+</body>
+</html>

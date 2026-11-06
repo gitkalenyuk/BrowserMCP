@@ -18,7 +18,7 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<tabs::Open>()
         .add::<nav::Goto>()
         .add::<page::Text>();
-    // TODO(perception): page.snapshot / page.find / page.act once the perception crate lands.
+    // page.snapshot / page.find / page.act ... live in the `bmcp-browser` crate.
 }
 
 #[cfg(test)]

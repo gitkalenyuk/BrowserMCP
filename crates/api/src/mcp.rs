@@ -53,6 +53,28 @@ fn to_tool(info: &CommandInfo) -> Tool {
     )
 }
 
+/// Command output → MCP result. Outputs with `mime_type: "image/..."` + base64 `data` (like
+/// `page.screenshot`) become an image the model can see, instead of base64 text.
+fn to_tool_result(output: Value) -> CallToolResult {
+    let image = output["mime_type"]
+        .as_str()
+        .filter(|m| m.starts_with("image/"))
+        .zip(output["data"].as_str());
+    let Some((mime_type, data)) = image else {
+        return CallToolResult::structured(output);
+    };
+    let mut summary = output.clone();
+    if let Some(object) = summary.as_object_mut() {
+        object.remove("data");
+    }
+    let mut result = CallToolResult::success(vec![
+        ContentBlock::text(summary.to_string()),
+        ContentBlock::image(data, mime_type),
+    ]);
+    result.structured_content = Some(output);
+    result
+}
+
 fn http_parts(cx: &RequestContext<RoleServer>) -> Option<&axum::http::request::Parts> {
     cx.extensions.get::<axum::http::request::Parts>()
 }
@@ -86,9 +108,10 @@ impl ServerHandler for BrowserMcp {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("browsermcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "BrowserMCP controls a real Chromium browser. Read pages with page_ax_tree or \
-                 page_text instead of screenshots. Tabs are addressed by the ids from tabs_list. \
-                 Errors come back as JSON {code, message, retry, hint}."
+                "BrowserMCP controls a real Chromium browser. Use page_snapshot (refs @N:eM), \
+                 page_find, then page_act with a ref; actions return a diff; take \
+                 page_screenshot only if the snapshot is insufficient. Tabs are addressed by \
+                 the ids from tabs_list. Errors come back as JSON {code, message, retry, hint}."
                     .to_string(),
             )
     }
@@ -120,7 +143,7 @@ impl ServerHandler for BrowserMcp {
         let ctx = Ctx::new(caller, self.backend.clone(), self.events.clone());
         let args = request.arguments.map(Value::Object).unwrap_or(Value::Null);
         let result = match self.registry.call(ctx, &request.name, args).await {
-            Ok(output) => CallToolResult::structured(output),
+            Ok(output) => to_tool_result(output),
             // {code, message, retry, hint, candidates}: readable by the model, not a protocol error.
             Err(err) => {
                 CallToolResult::structured_error(serde_json::to_value(&err).unwrap_or_default())

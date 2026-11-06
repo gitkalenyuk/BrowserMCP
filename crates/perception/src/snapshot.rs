@@ -204,6 +204,12 @@ impl<'a> Builder<'a> {
         if name.is_empty() && (interactive || always) {
             // e.g. `<div role=alert>Wrong password</div>` has no name, only text.
             name = descendant_text(tree, index);
+            // Full mode: the text children now only repeat that name.
+            children.retain(|c| !(is_text_leaf(c) && contains_ci(&name, &c.name)));
+        }
+        if interactive && matches!(role, "textbox" | "searchbox" | "combobox" | "spinbutton") {
+            // Text inside a field is its value (`•••••` for passwords): states show it.
+            children.retain(|c| !is_text_leaf(c));
         }
         let has_content = !name.is_empty() || !children.is_empty();
 
@@ -749,6 +755,31 @@ mod tests {
         };
         let t = t.with_layout(HashMap::from([(2, layout)]));
         assert_eq!(text_of(&t), "- button \"Below the fold\" @1:e1 offscreen");
+    }
+
+    #[test]
+    fn full_mode_drops_field_values_and_repeated_alert_text() {
+        let t = tree(&[
+            ("1", "", "RootWebArea", "", "", 1),
+            ("2", "1", "textbox", "Password", "", 2),
+            ("3", "2", "StaticText", "•••••", "", 3),
+            ("4", "1", "alert", "", "", 4),
+            ("5", "4", "StaticText", "Wrong password", "", 5),
+        ]);
+        let mut registry = RefRegistry::new();
+        let options = SnapshotOptions {
+            mode: Mode::Full,
+            ..SnapshotOptions::default()
+        };
+        let snap = snapshot(&t, &mut registry, &options, PageHeader::default()).unwrap();
+        let body: Vec<&str> = snap.text.lines().skip(1).collect();
+        assert_eq!(
+            body,
+            [
+                "- textbox \"Password\" @1:e1 pwd",
+                "- alert \"Wrong password\""
+            ]
+        );
     }
 
     #[test]
