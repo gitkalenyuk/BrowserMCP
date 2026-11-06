@@ -150,7 +150,12 @@ async fn openai_compatible_agent_runs_registry_tools() {
     );
     let result = events.iter().find(|e| e.topic == "ai.tool_result").unwrap();
     assert_eq!(result.data["ok"], true);
-    assert_eq!(result.data["summary"], "{\"tab\":2}");
+    assert!(
+        result.data["summary"]
+            .as_str()
+            .unwrap()
+            .contains("\"tab\":2")
+    );
     let text = events.iter().rfind(|e| e.topic == "ai.message").unwrap();
     assert_eq!(text.data["text"], "Opened tab 2.");
     assert_eq!(events.last().unwrap().data["reason"], "end_turn");

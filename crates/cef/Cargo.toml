@@ -10,6 +10,8 @@ publish.workspace = true
 bmcp-core.workspace = true
 bmcp-cdp.workspace = true
 cef.workspace = true
+# Embeds the Svelte UI build (ui/dist) into the executable, see src/ui_files.rs.
+include_dir = "0.7"
 serde_json.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

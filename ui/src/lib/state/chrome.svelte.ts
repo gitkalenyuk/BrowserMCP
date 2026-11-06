@@ -2,16 +2,27 @@ import { getContext, setContext } from 'svelte';
 import type { BrowserApi } from '../api/client';
 import type { Agent, ConnectionStatus, TabId, Workspace, WorkspaceId } from '../api/types';
 import { buildKeyIndex, commandForEvent, DEFAULT_KEYMAP, type CommandId, type Keymap, type KeyLike } from '../keymap';
+import type { NativeHost } from '../native';
 import { settings, type PanelId } from '../settings.svelte';
 import { NEWTAB_URL, resolveOmniboxInput } from '../urls';
 import { activeTab, cycleTab, emptyTabs, reduceTabs, tabByNumber, type TabsAction, type TabsState } from './tabs';
 
+export interface ChromeOptions {
+  /** The browser window around this page (null in the dev mock / a normal browser). */
+  host?: NativeHost | null;
+  /** `palette`: this controller runs the Ctrl+K overlay page, not the chrome itself. */
+  role?: 'chrome' | 'palette';
+}
+
 /**
  * Reactive chrome state + every user intent. Components read state and call methods;
- * all side effects go through the BrowserApi.
+ * all side effects go through the BrowserApi (and, inside the real browser, the
+ * window-local NativeHost for palette / focus / layout).
  */
 export class ChromeController {
   readonly api: BrowserApi;
+  readonly host: NativeHost | null;
+  readonly role: 'chrome' | 'palette';
   tabs = $state<TabsState>(emptyTabs);
   agents = $state<Agent[]>([]);
   workspaces = $state<Workspace[]>([]);
@@ -28,8 +39,10 @@ export class ChromeController {
 
   active = $derived(activeTab(this.tabs));
 
-  constructor(api: BrowserApi) {
+  constructor(api: BrowserApi, opts: ChromeOptions = {}) {
     this.api = api;
+    this.host = opts.host ?? null;
+    this.role = opts.role ?? 'chrome';
   }
 
   async start(): Promise<void> {
@@ -57,15 +70,22 @@ export class ChromeController {
   }
 
   async #refresh(): Promise<void> {
-    const [snapshot, agents, ws] = await Promise.all([
+    // allSettled: the core may not implement agents/workspaces yet; tabs must still show.
+    const [snapshot, agents, ws] = await Promise.allSettled([
       this.api.call('tabs.list'),
       this.api.call('agents.list'),
       this.api.call('workspaces.list'),
     ]);
-    this.tabs = reduceTabs(this.tabs, { type: 'reset', snapshot });
-    this.agents = agents;
-    this.workspaces = ws.workspaces;
-    this.workspaceId = ws.activeId;
+    if (snapshot.status === 'fulfilled') {
+      this.tabs = reduceTabs(this.tabs, { type: 'reset', snapshot: snapshot.value });
+    } else {
+      this.lastError = snapshot.reason instanceof Error ? snapshot.reason.message : String(snapshot.reason);
+    }
+    if (agents.status === 'fulfilled') this.agents = agents.value;
+    if (ws.status === 'fulfilled') {
+      this.workspaces = ws.value.workspaces;
+      this.workspaceId = ws.value.activeId;
+    }
   }
 
   async #guard<T>(p: Promise<T>): Promise<T | undefined> {
@@ -83,7 +103,7 @@ export class ChromeController {
   // ---- tabs ------------------------------------------------------------------
 
   newTab(url: string = NEWTAB_URL): void {
-    void this.#guard(this.api.call('tabs.open', { url, activate: true }));
+    void this.#guard(this.api.call('tabs.open', { url, background: false }));
     if (url === NEWTAB_URL) this.focusOmnibox();
   }
 
@@ -133,7 +153,11 @@ export class ChromeController {
     if (!url) return false;
     const tab = this.tabs.activeId;
     if (tab === null) this.newTab(url);
-    else void this.#guard(this.api.call('nav.goto', { tab, url }));
+    else {
+      void this.#guard(this.api.call('nav.goto', { tab, url }));
+      // Like Chrome: after Enter the keyboard belongs to the page.
+      this.host?.focusContent();
+    }
     return true;
   }
 
@@ -148,7 +172,9 @@ export class ChromeController {
   stopLoading = () => this.#onActive('nav.stop');
 
   focusOmnibox(): void {
-    this.omniboxFocusTick++;
+    // The palette page has no omnibox: ask the window to focus the chrome's.
+    if (this.role === 'palette' && this.host) this.host.focusOmnibox();
+    else this.omniboxFocusTick++;
   }
 
   // ---- workspaces ------------------------------------------------------------------
@@ -177,7 +203,11 @@ export class ChromeController {
       case 'nav.reload': return this.active?.loading ? this.stopLoading() : this.reload();
       case 'nav.stop': return this.stopLoading();
       case 'omnibox.focus': return this.focusOmnibox();
-      case 'palette.open': this.paletteOpen = !this.paletteOpen; return;
+      case 'palette.open':
+        // In the browser the palette is a separate overlay view (palette.html).
+        if (this.host) this.host.palette(this.role === 'palette' ? 'hide' : 'toggle');
+        else this.paletteOpen = !this.paletteOpen;
+        return;
       case 'ui.toggleVerticalTabs': return settings.update({ verticalTabs: !settings.value.verticalTabs });
       case 'ui.toggleTheme': return settings.toggleTheme();
       case 'panel.traffic': return panel('traffic');

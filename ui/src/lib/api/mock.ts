@@ -173,13 +173,13 @@ export class MockApi implements BrowserApi {
 
   #handlers: Handlers = {
     'tabs.list': () => this.#snapshot(),
-    'tabs.open': ({ url, activate }) => {
+    'tabs.open': ({ url, background }) => {
       const tab = this.#createTab(url ?? NEWTAB_URL, null);
       const ws = this.#ws;
       const index = ws.activeId === null ? ws.tabs.length : this.#indexOf(ws.activeId) + 1;
       ws.tabs.splice(index, 0, tab);
       this.#emit('tab.created', { tab: { ...tab }, index });
-      if (activate ?? true) this.#activate(tab.id);
+      if (!background) this.#activate(tab.id);
       if (!isNewTab(tab.url)) this.#load(tab.id);
       return tab;
     },

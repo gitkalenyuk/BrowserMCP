@@ -71,17 +71,29 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         .context("starting tokio")?;
     let handle = runtime.handle().clone();
     let shutdown = CancellationToken::new();
+    // One bus for everything: the CEF layer emits `tab.*` on it, the API forwards them.
+    let events = bmcp_core::EventBus::new();
+    // The UI pages need the real API port before the server starts, so pick it now.
+    let api_port = resolve_port(cli.api_port);
 
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
         let runtime_dir = data.runtime();
-        let data_root = data.root().to_path_buf();
-        let (dump_ax, api_port) = (cli.dump_ax, cli.api_port);
+        let events = events.clone();
+        let data = data.clone();
+        let dump_ax = cli.dump_ax;
         Box::new(move |backend: Arc<dyn BrowserBackend>| {
             if dump_ax {
                 handle.spawn(dump_ax_and_quit(backend));
             } else {
-                handle.spawn(start_api(backend, api_port, shutdown, runtime_dir, data_root));
+                handle.spawn(start_api(
+                    backend,
+                    events,
+                    api_port,
+                    shutdown,
+                    runtime_dir,
+                    data,
+                ));
             }
         })
     };
@@ -100,6 +112,12 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         } else {
             bmcp_cef::WindowLayout::Chrome
         },
+        ui: bmcp_cef::UiOptions {
+            api_ws: Some(format!("ws://127.0.0.1:{api_port}/v1/ws")),
+            dir: cli.ui_dir.clone(),
+            dev_url: cli.ui_dev.clone(),
+        },
+        events,
         on_ready: Some(on_ready),
     })?;
 
@@ -109,29 +127,57 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `--api-port 0` means "any free port": ask the OS for one now (the UI pages are told the
+/// port before the server starts). Another program could grab it in between; then the
+/// server logs a bind error.
+fn resolve_port(port: u16) -> u16 {
+    if port != 0 {
+        return port;
+    }
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .map_or(cli::DEFAULT_API_PORT, |addr| addr.port())
+}
+
 async fn start_api(
     backend: Arc<dyn BrowserBackend>,
+    events: bmcp_core::EventBus,
     port: u16,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
-    data_root: std::path::PathBuf,
+    data: DataDir,
 ) {
     // One registry for every API surface: built-in commands + API-crate commands.
     let mut registry = bmcp_core::Registry::new();
     bmcp_core::commands::register_builtin(&mut registry);
     bmcp_api::commands::register(&mut registry);
     bmcp_browser::register(&mut registry);
+    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite.
+    let store = match bmcp_data::DataStore::open_in(&data) {
+        Ok(store) => {
+            registry.extensions().insert(store.clone());
+            Some(store)
+        }
+        Err(err) => {
+            tracing::error!(%err, "cannot open browsermcp.sqlite; data commands disabled");
+            None
+        }
+    };
+    bmcp_data::register(&mut registry);
     // Built-in AI: agents reach the browser through this same registry (API providers) or the
     // MCP endpoint (Claude Code / Codex).
     let ai = registry.extensions().insert(bmcp_ai::AiService::new(
-        data_root,
+        data.root(),
         format!("http://127.0.0.1:{port}/mcp"),
     ));
     bmcp_ai::register(&mut registry);
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
-    let events = bmcp_core::EventBus::new();
+    // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
+    if let Some(store) = store {
+        bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
+    }
     match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
@@ -163,7 +209,11 @@ async fn dump_ax_and_quit(backend: Arc<dyn BrowserBackend>) {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         let tab = loop {
             let tabs = backend.list_tabs().await?;
-            if let Some(tab) = tabs.into_iter().find(|t| !t.loading && !t.url.is_empty()) {
+            // A new tab reports its requested URL at once, so wait for the page's title.
+            if let Some(tab) = tabs
+                .into_iter()
+                .find(|t| !t.loading && !t.url.is_empty() && !t.title.is_empty())
+            {
                 break tab;
             }
             anyhow::ensure!(
