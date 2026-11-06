@@ -25,7 +25,13 @@ bmcp-governor = { path = "crates/governor" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order`: JSON objects keep their key order (insertion / file order) instead of
+# being sorted. On for the whole workspace on purpose: deno_core (bmcp-script) turns it on
+# anyway, and feature unification made results differ between `cargo test` with and without
+# the script host. It also gives nicer output: input columns of JSON data files and result
+# columns of run exports keep the order the user / script wrote, schemas and API answers
+# list fields in declaration order. Every crate must use `serde_json.workspace = true`.
+serde_json = { version = "1", features = ["preserve_order"] }
 schemars = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 tokio-util = "0.7"

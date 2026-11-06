@@ -221,7 +221,9 @@ async fn a_missing_script_host_is_reported() {
         .unwrap();
     env.service.start("ws://127.0.0.1:1/v1/ws");
     let mut status = Value::Null;
-    for _ in 0..50 {
+    // Condition wait; the deadline only catches a real hang (busy machines are slow).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         let list = env.call("plugins.list", json!({})).await.unwrap();
         status = list["plugins"][0].clone();
         if status["status"] == "error" {

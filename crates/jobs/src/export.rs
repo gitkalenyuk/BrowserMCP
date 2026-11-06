@@ -535,10 +535,10 @@ mod tests {
                 "status",
                 "email",
                 "extra",
-                // Result keys: sorted within an object (JSON has no order), then first seen.
+                // Result keys in the order the script wrote them, then first seen.
+                "welcome",
                 "result.email",
                 "n",
-                "welcome",
                 "tags",
                 "error_code",
                 "error",
@@ -548,7 +548,7 @@ mod tests {
         );
         assert_eq!(
             t.rows[0],
-            ["0", "ok", "a", "", "x", "1", "hi a", "", "", "", "1", "5"]
+            ["0", "ok", "a", "", "hi a", "x", "1", "", "", "", "1", "5"]
         );
         assert_eq!(
             t.rows[1],
@@ -589,11 +589,11 @@ mod tests {
                 "input.status",
                 "input.Row",
                 "name",
-                // Result keys are sorted (JSON objects have no order): Name, name, result, status.
+                // Result keys in the script's order: Name, name, status, result.
                 "result.Name",
                 "result.name_2",
-                "result.result",
                 "result.status",
+                "result.result",
                 "error_code",
                 "error",
                 "attempts",
@@ -602,7 +602,7 @@ mod tests {
         );
         assert_eq!(
             &t.rows[0][..9],
-            ["0", "ok", "vip", "7", "n", "A", "b", "1", "s"]
+            ["0", "ok", "vip", "7", "n", "A", "b", "s", "1"]
         );
         let lower: std::collections::HashSet<String> =
             t.columns.iter().map(|c| c.to_lowercase()).collect();

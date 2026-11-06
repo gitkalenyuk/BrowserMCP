@@ -90,9 +90,10 @@ impl Env {
         self.fake.cdp_calls().into_iter().map(|(m, _)| m).collect()
     }
 
-    /// Wait (real time, up to 2 s) until a CDP call matches.
+    /// Wait (real time, up to 30 s: only a real hang gets there) until a CDP call matches.
     async fn wait_call(&self, method: &str, pred: impl Fn(&Value) -> bool) -> Value {
-        for _ in 0..400 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
             if let Some((_, params)) = self
                 .fake
                 .cdp_calls()

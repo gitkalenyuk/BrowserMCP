@@ -148,6 +148,9 @@ impl Env {
                 retry_backoff: Duration::from_millis(10),
                 auto_limit: false,
                 max_parallel: 8,
+                // Long: the fake host honours its own timeout; a slow start on a busy
+                // machine must not turn that into a kill.
+                kill_grace: Duration::from_secs(60),
             },
             events.clone(),
         )

@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 use crate::service::{BINDING, HintsService, PICKED_EVENT, WORLD};
 
 const TAB: TabId = TabId(1);
+/// Upper bound for waits: only a real hang gets there, never a busy machine.
+const PATIENCE: Duration = Duration::from_secs(30);
 /// Backend node id of every element in the fake page.
 const NODE: i64 = 42;
 
@@ -133,9 +135,10 @@ impl Env {
         );
     }
 
-    /// Wait (real time, up to 2 s) until a CDP call matches `pred`.
+    /// Wait (real time, up to [`PATIENCE`]) until a CDP call matches `pred`.
     async fn wait_for(&self, what: &str, pred: impl Fn(&str, &Value) -> bool) -> usize {
-        for _ in 0..400 {
+        let deadline = std::time::Instant::now() + PATIENCE;
+        while std::time::Instant::now() < deadline {
             if let Some(i) = self.position(&pred) {
                 return i;
             }
@@ -155,7 +158,7 @@ fn evaluates(expression_part: &str) -> impl Fn(&str, &Value) -> bool + '_ {
 }
 
 async fn next_event(rx: &mut tokio::sync::broadcast::Receiver<Event>, topic: &str) -> Event {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(PATIENCE, async {
         loop {
             let event = rx.recv().await.expect("bus open");
             if event.topic == topic {
@@ -334,7 +337,8 @@ async fn the_trigger_key_in_the_page_shows_hints() {
         .await;
     // Keys typed right after the trigger are handled after the hints are up.
     env.page_says(json!({ "type": "key", "key": "a" }));
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < deadline {
         if env
             .fake
             .calls()

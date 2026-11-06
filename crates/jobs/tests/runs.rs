@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use bmcp_core::ErrorCode;
 use bmcp_jobs::topics;
-use common::{Env, WS_URL, id_rows, wait_event};
+use common::{Env, WS_URL, id_rows, script_path, wait_event, wait_file};
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -125,15 +125,27 @@ async fn missing_host_binary_is_reported() {
     assert!(err.message.contains("script host"), "{err:?}");
 }
 
+/// `touch <root>/started-{{id}}` (the row's process is running) then `waitfile <root>/gate`
+/// (it blocks until the test creates the gate file), then `rest`.
+fn gated_script(env: &Env, rest: &str) -> String {
+    let root = script_path(env.root());
+    format!("touch {root}/started-{{{{id}}}}\nwaitfile {root}/gate\n{rest}")
+}
+
+fn started(env: &Env, row: usize) -> std::path::PathBuf {
+    env.root().join(format!("started-{row}"))
+}
+
+fn open_gate(env: &Env) {
+    std::fs::write(env.root().join("gate"), b"").unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rows_run_in_parallel_slots() {
     let env = Env::new();
     let mut rx = env.events.subscribe();
-    env.save(
-        "job",
-        "time start\nsleep 400\ntime end\nresult {\"id\": \"{{id}}\"}",
-    )
-    .await;
+    env.save("job", &gated_script(&env, "result {\"id\": \"{{id}}\"}"))
+        .await;
     let run = env
         .ok(
             "run.start",
@@ -144,33 +156,32 @@ async fn rows_run_in_parallel_slots() {
     assert_eq!(run["options"]["parallel"], 3);
     assert_eq!(run["total"], 6);
 
+    // Three rows run at the same time (all three processes are up and blocked on the gate)…
+    for row in 0..3 {
+        wait_file(&started(&env, row)).await;
+    }
+    // …and no fourth starts while the slots are full.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let status = env.ok("run.status", json!({"id": id})).await;
+    assert_eq!(status["counts"]["running"], 3, "{status:#}");
+    assert_eq!(status["counts"]["pending"], 3, "{status:#}");
+    for row in 3..6 {
+        assert!(!started(&env, row).exists(), "row {row} started early");
+    }
+    open_gate(&env);
+
     let finished = wait_event(&mut rx, topics::RUN_FINISHED, |d| d["id"] == id.as_str()).await;
     assert_eq!(finished.data["status"], "finished");
     assert_eq!(finished.data["ok"], 6);
 
     let rows = env.rows(&id).await;
     assert_eq!(rows.len(), 6);
-    let mut spans: Vec<(u64, u64)> = Vec::new();
     for (i, row) in rows.iter().enumerate() {
         assert_eq!(row["status"], "ok");
         assert_eq!(row["result"]["id"], i.to_string());
         assert_eq!(row["inputs"]["id"], i.to_string());
         assert_eq!(row["attempts"], 1);
-        spans.push((
-            row["result"]["start"].as_u64().unwrap(),
-            row["result"]["end"].as_u64().unwrap(),
-        ));
     }
-    // At most 3 at once, and more than 1 (they really overlapped).
-    let max_overlap = spans
-        .iter()
-        .map(|(s, _)| spans.iter().filter(|(s2, e2)| s2 <= s && s < e2).count())
-        .max()
-        .unwrap();
-    assert!(
-        (2..=3).contains(&max_overlap),
-        "overlap {max_overlap}: {spans:?}"
-    );
 
     let status = env.ok("run.status", json!({"id": id})).await;
     assert_eq!(status["done"], 6);
@@ -246,7 +257,10 @@ async fn stop_on_error_cancels_the_rest() {
 async fn cancel_kills_running_scripts() {
     let env = Env::new();
     let mut rx = env.events.subscribe();
-    env.save("slow", "sleep 20000").await;
+    // The gate never opens: without a kill, rows 0 and 1 would block until the 300 s row
+    // timeout. `wait_event` gives up after PATIENCE (60 s), so finishing at all proves the
+    // processes were killed.
+    env.save("slow", &gated_script(&env, "out never")).await;
     let run = env
         .ok(
             "run.start",
@@ -254,13 +268,20 @@ async fn cancel_kills_running_scripts() {
         )
         .await;
     let id = run["id"].as_str().unwrap().to_string();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let started = std::time::Instant::now();
+    assert_eq!(run["options"]["timeout_secs"], 300);
+    // Both slots really have a running script process.
+    wait_file(&started(&env, 0)).await;
+    wait_file(&started(&env, 1)).await;
     env.ok("run.cancel", json!({"id": id})).await;
     let finished = wait_event(&mut rx, topics::RUN_FINISHED, |d| d["id"] == id.as_str()).await;
-    assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(finished.data["status"], "cancelled");
     assert_eq!(finished.data["cancelled"], 4);
+    let rows = env.rows(&id).await;
+    for row in &rows[..2] {
+        assert_eq!(row["status"], "cancelled", "{row:#}");
+        assert_eq!(row["error"]["code"], "CANCELLED", "{row:#}");
+    }
+    assert!(!started(&env, 2).exists() && !started(&env, 3).exists());
     // Cancelling again is a no-op.
     let again = env.ok("run.cancel", json!({"id": id})).await;
     assert_eq!(again["status"], "cancelled");
@@ -272,7 +293,8 @@ async fn cancel_kills_running_scripts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_and_resume() {
     let env = Env::new();
-    env.save("s", "sleep 150\nresult {\"r\": \"{{id}}\"}").await;
+    env.save("s", &gated_script(&env, "result {\"r\": \"{{id}}\"}"))
+        .await;
     let run = env
         .ok(
             "run.start",
@@ -280,24 +302,29 @@ async fn pause_and_resume() {
         )
         .await;
     let id = run["id"].as_str().unwrap();
+    // Pause while row 0 is certainly running (blocked on the gate).
+    wait_file(&started(&env, 0)).await;
     env.ok("run.pause", json!({"id": id})).await;
+    open_gate(&env);
     // The row already running finishes…
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + common::PATIENCE;
     let status = loop {
         let status = env.ok("run.status", json!({"id": id})).await;
         if status["counts"]["running"] == 0 {
             break status;
         }
-        assert!(std::time::Instant::now() < deadline, "{status:#}");
+        assert!(tokio::time::Instant::now() < deadline, "{status:#}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     assert_eq!(status["status"], "paused");
-    assert!(status["done"].as_u64().unwrap() <= 1, "{status:#}");
-    // …and nothing new starts.
+    assert_eq!(status["done"], 1, "{status:#}");
+    assert_eq!(status["counts"]["ok"], 1, "{status:#}");
+    // …and nothing new starts (with the gate open a new row would finish at once).
     tokio::time::sleep(Duration::from_millis(500)).await;
     let later = env.ok("run.status", json!({"id": id})).await;
-    assert_eq!(later["done"], status["done"]);
+    assert_eq!(later["done"], 1, "{later:#}");
     assert_eq!(later["counts"]["running"], 0);
+    assert!(!started(&env, 1).exists(), "row 1 started while paused");
 
     env.ok("run.resume", json!({"id": id})).await;
     let status = env.wait_status(id, &["finished"]).await;
@@ -307,7 +334,8 @@ async fn pause_and_resume() {
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_survive_a_restart() {
     let env = Env::new();
-    env.save("s", "sleep 300\nresult {\"r\": \"{{id}}\"}").await;
+    env.save("s", &gated_script(&env, "result {\"r\": \"{{id}}\"}"))
+        .await;
     let run = env
         .ok(
             "run.start",
@@ -315,10 +343,11 @@ async fn runs_survive_a_restart() {
         )
         .await;
     let id = run["id"].as_str().unwrap().to_string();
-    tokio::time::sleep(Duration::from_millis(100)).await;
     // "Quit the browser" in the middle of row 0.
+    wait_file(&started(&env, 0)).await;
     env.jobs.shutdown();
     tokio::time::sleep(Duration::from_millis(300)).await;
+    open_gate(&env);
 
     let env = env.reopen();
     let status = env.ok("run.status", json!({"id": id})).await;
@@ -725,7 +754,9 @@ async fn isolated_rows_lease_a_proxy_per_row_and_rotate_on_retry() {
         .unwrap();
     assert!(profile.ends_with("-r0-a2"), "{profile}");
 
-    for _ in 0..100 {
+    // Condition wait; the 30 s bound only catches a real hang (busy machines are slow).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if rows.log().iter().any(|l| l.starts_with("finished")) {
             break;
         }

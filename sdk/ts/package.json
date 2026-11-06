@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "pnpm run typecheck && vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json && tsc -p test/types/tsconfig.json && tsc -p test/types/script/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.check.json &&tsc -p test/tsconfig.json && tsc -p test/types/tsconfig.json && tsc -p test/types/script/tsconfig.json"
   },
   "dependencies": {
     "@browsermcp/protocol": "workspace:*"

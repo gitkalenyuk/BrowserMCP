@@ -203,6 +203,7 @@ impl Inner {
                 inputs,
                 env,
                 timeout,
+                kill_grace: self.config.kill_grace,
             },
             cancel,
         )

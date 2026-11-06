@@ -15,8 +15,11 @@ afterEach(async () => {
   await mock.stop();
 });
 
+/** Generous upper bound for waits: only reached when something is really broken. */
+const PATIENCE = 30_000;
+
 /** Wait until `check()` is true (polling; the mock answers asynchronously). */
-async function until(check: () => boolean, ms = 2000): Promise<void> {
+async function until(check: () => boolean, ms = PATIENCE): Promise<void> {
   const end = Date.now() + ms;
   while (!check()) {
     if (Date.now() > end) throw new Error("condition not met in time");
@@ -115,7 +118,7 @@ describe("WebSocket transport", () => {
     browser = await connect({ url: mock.wsUrl, minBackoff: 10, maxBackoff: 20 });
     const port = mock.port;
     await mock.stop();
-    const call = browser.tabs.list({}, { timeout: 5_000 });
+    const call = browser.tabs.list({}, { timeout: PATIENCE });
     await new Promise((r) => setTimeout(r, 150)); // several failed reconnect attempts
     mock = await MockBrowser.start(port);
     expect((await call).tabs).toHaveLength(2);

@@ -1,0 +1,14 @@
+{
+  // Type-checks src/ against the protocol *sources* (like vitest.config.ts and the test
+  // tsconfigs do), so `pnpm test` works on a fresh checkout without building
+  // @browsermcp/protocol first and never checks against a stale dist/.
+  // `pnpm build` (tsconfig.json) still compiles against the built package.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "paths": {
+      "@browsermcp/protocol": ["../protocol/src/index.ts"]
+    }
+  }
+}

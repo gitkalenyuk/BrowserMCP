@@ -101,7 +101,7 @@ pub fn spawn(cmd: &mut tokio::process::Command) -> std::io::Result<(Child, Proce
 /// Tests use a much longer grace so "finished quickly" can only mean "the process tree was
 /// killed and stdout closed", never "the grace period ran out" — robust on a loaded machine.
 const READER_GRACE: Duration = if cfg!(test) {
-    Duration::from_secs(20)
+    Duration::from_secs(60)
 } else {
     Duration::from_secs(3)
 };

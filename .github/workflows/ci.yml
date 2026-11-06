@@ -1,5 +1,15 @@
 name: CI
 
+# What runs here is what developers run locally (see README.md, "Contributing"):
+#   rust:   cargo fmt --check, clippy -D warnings, cargo xtask test, cargo xtask gen-sdk --check
+#           (+ no tracked file is gitignored)
+#   node:   pnpm install, pnpm -r build, pnpm -r test, pnpm -C ui check
+#   script: cargo test -p bmcp-script (V8, slow) — only when the script host can be affected
+#   e2e:    cargo xtask e2e --all (tests/e2e against browsermcp --headless, incl. the script
+#           host and ffmpeg), after rust
+#   release: cargo xtask dist (portable zip) on v* tags and manual runs, after rust + node
+# The jobs run in parallel.
+
 on:
   push:
     branches: [main]
@@ -13,13 +23,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows:
+  rust:
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
       # Shared CEF download, cached between runs (keyed by the pinned `cef` crate version).
       CEF_PATH: ${{ github.workspace }}/.cef
     steps:
       - uses: actions/checkout@v7
+
+      - name: No tracked file is gitignored
+        shell: bash
+        run: |
+          ignored=$(git ls-files --cached --ignored --exclude-standard)
+          if [ -n "$ignored" ]; then
+            echo "tracked files matched by .gitignore (fix the pattern):"; echo "$ignored"; exit 1
+          fi
 
       - name: Install Ninja
         run: choco install ninja -y --no-progress
@@ -44,15 +63,98 @@ jobs:
       - name: Generated SDK types are up to date
         run: cargo xtask gen-sdk --check
 
+      # The release build (LTO) is slow: only on main (release tags: the `release` job). It
+      # embeds ui/dist, so build the UI first.
+      - uses: pnpm/action-setup@v6
+        if: github.ref == 'refs/heads/main'
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        if: github.ref == 'refs/heads/main'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build UI for embedding
+        if: github.ref == 'refs/heads/main'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C ui build
       - name: Build release
+        if: github.ref == 'refs/heads/main'
         run: cargo xtask build --release
+
+  node:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      # Caches the pnpm store (keyed by pnpm-lock.yaml).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Check UI (svelte-check)
+        run: pnpm -C ui check
+
+  # Decides whether the V8 script host job is needed.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      script: ${{ steps.filter.outputs.script }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            script:
+              - 'crates/script/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+
+  script:
+    needs: changes
+    if: needs.changes.outputs.script == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Its own cache (the job name is part of the key): the V8 build artifacts are large.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (script host)
+        run: cargo clippy -p bmcp-script --all-targets -- -D warnings
+
+      - name: Test (script host)
+        run: cargo test -p bmcp-script
 
   # Portable Windows package (cargo xtask dist) on release tags and manual runs. Uploads the zip
   # as a workflow artifact only: nothing is published as a GitHub release.
   release:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     # Only package what passed fmt, clippy and the tests.
-    needs: windows
+    needs: [rust, node]
     runs-on: windows-latest
     env:
       CEF_PATH: ${{ github.workspace }}/.cef
@@ -73,18 +175,20 @@ jobs:
           key: release
 
       # ui/dist is embedded into browsermcp.exe: dist runs `pnpm install` + `pnpm -C ui build`.
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-
-      - name: Install pnpm
-        run: npm install -g pnpm@11.7.0
+          cache: pnpm
 
       - name: Build the portable package
         run: cargo xtask dist
 
       - name: Upload the zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BrowserMCP-${{ github.ref_name }}-win64
           path: dist/BrowserMCP-*-win64.zip
@@ -92,19 +196,21 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # End-to-end suite (tests/e2e): builds the debug browser, then vitest + the SDK against
-  # `browsermcp --headless` on local fixture sites (no windows, no network). The V8 script
-  # host is not built here, so the record→script and mass-run tests are skipped.
+  # End-to-end suite (tests/e2e): builds the debug browser and the V8 script host (--all), then
+  # vitest + the SDK against `browsermcp --headless` on local fixture sites (no windows, no
+  # network). ffmpeg is installed for the video test; BMCP_E2E_REQUIRE makes the suite fail
+  # instead of silently skipping when the script host or ffmpeg is missing.
   e2e:
-    needs: windows
+    needs: rust
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       CEF_PATH: ${{ github.workspace }}/.cef
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Ninja
-        run: choco install ninja -y --no-progress
+      - name: Install Ninja and ffmpeg
+        run: choco install ninja ffmpeg -y --no-progress
 
       - name: Cache CEF binaries
         uses: actions/cache@v6
@@ -114,15 +220,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-
-      - name: Install pnpm
-        run: npm install -g pnpm@11.7.0
+          cache: pnpm
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: E2E (headless)
-        run: cargo xtask e2e
+      - name: E2E (headless, with the script host)
+        env:
+          BMCP_E2E_REQUIRE: script-host,ffmpeg
+        run: cargo xtask e2e --all

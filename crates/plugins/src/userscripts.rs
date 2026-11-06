@@ -448,6 +448,7 @@ async fn run_one(
             inputs: &inputs,
             env: &[],
             timeout,
+            kill_grace: bmcp_jobs::host::DEFAULT_KILL_GRACE,
         },
         &cancel,
     )
