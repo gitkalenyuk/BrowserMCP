@@ -13,6 +13,9 @@ use crate::profiles::ProfileKey;
 
 /// Open DevTools for `browser`, inspecting the element at `point` (view coordinates).
 pub(crate) fn show(browser: &Browser, point: (i32, i32)) {
+    if crate::osr::headless() {
+        return; // no windows at all in headless mode
+    }
     let Some(ctx) = with_ui(|ui| ui.shell.clone()) else {
         return;
     };

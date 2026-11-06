@@ -9,6 +9,8 @@
 //!                       (--check: fail if the committed files are stale; see gen_sdk.rs)
 //!   bench --agent claude-code|codex --tasks all|<id,id>
 //!                       MVP benchmark: 10 tasks on local fixture sites (see bench.rs)
+//!   e2e [--filter <name>] [--all] [--no-build]
+//!                       build, then run tests/e2e against browsermcp --headless (see e2e.rs)
 //!   dist [--skip-script-host] [--out <dir>] [--locales en-US,uk|all] [--no-build] [--no-zip]
 //!                       portable Windows package dist/BrowserMCP-<version>-win64(.zip)
 //!                       (see dist.rs)
@@ -21,6 +23,7 @@
 mod bench;
 mod bump_cef;
 mod dist;
+mod e2e;
 mod gen_sdk;
 
 use std::env;
@@ -47,9 +50,10 @@ fn main() -> ExitCode {
         "bench" => bench::bench(rest),
         "dist" => dist::dist(rest),
         "bump-cef" => bump_cef::bump_cef(rest),
+        "e2e" => e2e::e2e(rest),
         _ => {
             eprintln!(
-                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all|dist [--skip-script-host] [--out <dir>]|bump-cef <version> [--dry-run]>"
+                "usage: cargo xtask <doctor|build [--release]|run [--release] [-- args]|test|gen-sdk [--check]|bench --agent claude-code|codex --tasks all|dist [--skip-script-host] [--out <dir>]|bump-cef <version> [--dry-run]|e2e [--filter <name>] [--all]>"
             );
             Ok(())
         }

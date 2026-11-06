@@ -67,9 +67,20 @@ impl BrowserBackend for CefBackend {
     fn open_tab_with(
         &self,
         url: String,
-        options: OpenTabOptions,
+        mut options: OpenTabOptions,
     ) -> BoxFuture<'_, BackendResult<TabId>> {
         Box::pin(async move {
+            // Headless: every tab is off-screen, and the new tab page (a chrome page) is blank.
+            let url = if crate::osr::headless() {
+                options.window = WindowTarget::Offscreen;
+                if url.starts_with("bmcp:") {
+                    "about:blank".to_owned()
+                } else {
+                    url
+                }
+            } else {
+                url
+            };
             // Our own pages (the new tab page) make no sense without a window.
             if options.window == WindowTarget::Offscreen && url.starts_with("bmcp:") {
                 return Err(BackendError::Invalid(
@@ -161,6 +172,18 @@ impl BrowserBackend for CefBackend {
         params: Value,
     ) -> BoxFuture<'_, BackendResult<Value>> {
         Box::pin(async move {
+            // Off-screen tabs: a dialog held by `osr::dialog_handler` is answered through its
+            // CEF callback (the same path as a click in a window's dialog).
+            if method == "Page.handleJavaScriptDialog" {
+                let accept = params["accept"].as_bool().unwrap_or(false);
+                let text = params["promptText"].as_str().map(str::to_owned);
+                let answered =
+                    run_on_ui(move || crate::osr::answer_dialog(tab.0, accept, text.as_deref()))
+                        .await?;
+                if answered {
+                    return Ok(Value::Object(Default::default()));
+                }
+            }
             let client = self.tab_cdp(tab).await?;
             client
                 .call(&method, params)
@@ -228,6 +251,11 @@ impl BrowserBackend for CefBackend {
     fn quit(&self) -> BoxFuture<'_, BackendResult<()>> {
         Box::pin(run_on_ui(|| {
             tracing::info!("quit requested: closing every window");
+            if crate::osr::headless() {
+                // Set before closing: the last tab closing then ends the loop (or now, if none).
+                let open = with_ui(|ui| ui.shell.as_ref().map_or(0, |s| s.browsers.open_count()));
+                crate::osr::begin_quit(open);
+            }
             // Views-hosted browsers must be closed through their window; closing only
             // the browser leaves an empty window and cef::shutdown() then never returns.
             let mut windows: Vec<Window> = with_ui(|ui| {

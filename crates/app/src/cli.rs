@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub const DEFAULT_URL: &str = "https://example.com/";
 pub const DEFAULT_API_PORT: u16 = 47800;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cli {
     pub url: String,
     pub data_dir: Option<PathBuf>,
@@ -30,6 +30,12 @@ pub struct Cli {
     pub cdp_port: Option<u16>,
     /// `--no-restore`: start with the start page instead of the last session.
     pub no_restore: bool,
+    /// `--headless`: no window at all; every tab is an off-screen (windowless) page.
+    pub headless: bool,
+    /// `--window-size <W>x<H>`: page size of headless tabs (default 1280x800).
+    pub window_size: Option<(u32, u32)>,
+    /// `--device-scale <F>`: device pixel ratio of headless tabs (default 1).
+    pub device_scale: Option<f32>,
 }
 
 impl Default for Cli {
@@ -47,14 +53,18 @@ impl Default for Cli {
             ui_dev: None,
             cdp_port: None,
             no_restore: false,
+            headless: false,
+            window_size: None,
+            device_scale: None,
         }
     }
 }
 
 pub const HELP: &str = "\
 browsermcp [OPTIONS] [URL]
-browsermcp mcp-stdio [--data-dir <PATH>] [--api-port <PORT>]
-    MCP over stdio; starts the browser in the background if needed.
+browsermcp mcp-stdio [--data-dir <PATH>] [--api-port <PORT>] [--headless ...]
+    MCP over stdio; starts the browser in the background if needed (the headless
+    options below are passed on to it).
 
 Options:
   --url <URL>          Page to open (default: https://example.com/)
@@ -73,6 +83,12 @@ Options:
                        (connectOverCDP http://127.0.0.1:<PORT>). Off by default; refused
                        while any profile has a stealth identity
   --no-restore         Do not re-open the last session's tabs (data/runtime/session.json)
+  --headless           No window at all: the first tab and every later tab are
+                       off-screen pages (screenshots, video, CDP input work); the
+                       process stays up after the last tab closes, until system.quit
+  --window-size <W>x<H>
+                       Page size of headless tabs (default 1280x800)
+  --device-scale <F>   Device pixel ratio of headless tabs, 0.5-4 (default 1)
   --dump-ax            Print the page's accessibility tree and exit
   -h, --help           Show this help
 
@@ -127,6 +143,15 @@ impl Cli {
                         .and_then(|v| v.parse().ok())
                         .filter(|p: &u16| *p != 0);
                 }
+                "--headless" => cli.headless = true,
+                "--window-size" => {
+                    cli.window_size = value(&mut args).and_then(|v| parse_size(&v));
+                }
+                "--device-scale" => {
+                    cli.device_scale = value(&mut args)
+                        .and_then(|v| v.parse().ok())
+                        .filter(|f: &f32| (0.5..=4.0).contains(f));
+                }
                 "--api-port" => {
                     if let Some(port) = value(&mut args).and_then(|v| v.parse().ok()) {
                         cli.api_port = port;
@@ -141,6 +166,29 @@ impl Cli {
         }
         cli
     }
+
+    /// Browser options `mcp-stdio` passes on when it has to start the browser itself.
+    pub fn headless_args(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.headless {
+            out.push("--headless".to_owned());
+        }
+        if let Some((w, h)) = self.window_size {
+            out.push(format!("--window-size={w}x{h}"));
+        }
+        if let Some(scale) = self.device_scale {
+            out.push(format!("--device-scale={scale}"));
+        }
+        out
+    }
+}
+
+/// `1280x800` (also `1280,800`, Chromium's own `--window-size` syntax).
+fn parse_size(text: &str) -> Option<(u32, u32)> {
+    let (w, h) = text.split_once(['x', 'X', ','])?;
+    let (w, h): (u32, u32) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+    let ok = |n: u32| (100..=8192).contains(&n);
+    (ok(w) && ok(h)).then_some((w, h))
 }
 
 #[cfg(test)]
@@ -222,6 +270,37 @@ mod tests {
         assert!(Cli::parse(["--layout", "single"]).single_layout);
         assert!(Cli::parse(["--layout=single"]).single_layout);
         assert!(!Cli::parse(["--layout=chrome"]).single_layout);
+    }
+
+    #[test]
+    fn headless_flags() {
+        let cli = Cli::parse(Vec::<String>::new());
+        assert!(!cli.headless);
+        assert!(cli.headless_args().is_empty());
+        let cli = Cli::parse([
+            "--headless",
+            "--window-size",
+            "1024x768",
+            "--device-scale=2",
+            "--url",
+            "about:blank",
+        ]);
+        assert!(cli.headless);
+        assert_eq!(cli.window_size, Some((1024, 768)));
+        assert_eq!(cli.device_scale, Some(2.0));
+        assert_eq!(cli.url, "about:blank");
+        assert_eq!(
+            cli.headless_args(),
+            ["--headless", "--window-size=1024x768", "--device-scale=2"]
+        );
+        // Chromium's comma syntax works; nonsense is ignored (defaults apply).
+        assert_eq!(
+            Cli::parse(["--window-size=800,600"]).window_size,
+            Some((800, 600))
+        );
+        assert_eq!(Cli::parse(["--window-size", "big"]).window_size, None);
+        assert_eq!(Cli::parse(["--window-size=10x10"]).window_size, None);
+        assert_eq!(Cli::parse(["--device-scale", "9"]).device_scale, None);
     }
 
     #[test]

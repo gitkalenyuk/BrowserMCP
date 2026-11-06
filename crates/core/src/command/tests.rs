@@ -86,6 +86,7 @@ fn list_is_sorted_and_filters_by_toolset() {
             "page.text",
             "page.zoom",
             "system.ping",
+            "system.quit",
             "tabs.activate",
             "tabs.close",
             "tabs.groups",

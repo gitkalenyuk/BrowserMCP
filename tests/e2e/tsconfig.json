@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@browsermcp/sdk": ["../../sdk/ts/src/index.ts"],
+      "@browsermcp/protocol": ["../../sdk/protocol/src/index.ts"]
+    }
+  },
+  "include": ["*.ts", "setup/**/*.ts", "tests/**/*.ts", "lib/**/*.ts"]
+}
