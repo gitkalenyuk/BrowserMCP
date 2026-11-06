@@ -3,14 +3,17 @@
   import Favicon from '../../lib/components/Favicon.svelte';
 
   let { api, go }: { api: BrowserApi; go: (e: MouseEvent, url: string) => void } = $props();
-  let top = $state<Bookmark[]>([]);
-  let marks = $state<Bookmark[]>([]);
+  type Link = { title: string; url: string };
+  let top = $state<Link[]>([]);
+  let marks = $state<Link[]>([]);
+  const links = (items: Bookmark[]): Link[] =>
+    items.filter((b): b is Link => typeof b.url === 'string' && b.url.length > 0);
 
   $effect(() => {
-    Promise.all([api.call('data.topSites'), api.call('data.bookmarks')])
+    Promise.all([api.call('data.top_sites'), api.call('data.bookmarks')])
       .then(([t, b]) => {
-        top = t;
-        marks = b;
+        top = links(t.sites);
+        marks = links(b.bookmarks);
       })
       .catch(() => {});
   });

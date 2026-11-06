@@ -251,23 +251,39 @@ impl Session {
             step.target.as_ref().and_then(|t| t.ref_.clone())
         };
         let (ctx, tab, log) = (self.ctx.clone(), self.tab, self.log.clone());
+        let id = self.id();
         self.resolving.spawn(async move {
             let resolved = match &reference {
                 Some(r) => api::resolve_target(&ctx, tab, r).await,
                 None => None,
             };
-            apply_resolution(&log, seq, resolved);
+            if let Some(step) = apply_resolution(&log, seq, resolved) {
+                emit_step(&ctx.events, &id, &step);
+            }
         });
+    }
+
+    /// The recording id (for events).
+    fn id(&self) -> String {
+        lock(&self.meta).id.clone()
     }
 }
 
+/// `record.step {id, step}` on the event bus (the UI's Recording panel shows it live).
+fn emit_step(events: &bmcp_core::EventBus, id: &str, step: &Step) {
+    events.emit("record.step", json!({ "id": id, "step": step }));
+}
+
 /// Second half of [`Session::finalize_api_step`]: store the locator, redact, un-pend, save.
-fn apply_resolution(log: &Mutex<Log>, seq: u64, resolved: Option<(crate::model::Target, bool)>) {
+/// Returns the finished step.
+fn apply_resolution(
+    log: &Mutex<Log>,
+    seq: u64,
+    resolved: Option<(crate::model::Target, bool)>,
+) -> Option<Step> {
     {
         let mut log = lock(log);
-        let Some(step) = log.get_mut(seq) else {
-            return;
-        };
+        let step = log.get_mut(seq)?;
         let mut pwd = false;
         if let Some((mut target, is_pwd)) = resolved {
             pwd = is_pwd;
@@ -279,9 +295,11 @@ fn apply_resolution(log: &Mutex<Log>, seq: u64, resolved: Option<(crate::model::
         }
         api::redact_if_secret(step, pwd);
         step.pending = false;
+        let step = step.clone();
         if let Err(err) = log.save() {
             tracing::warn!(%err, "recorder: cannot write actions.jsonl");
         }
+        Some(step)
     }
 }
 
@@ -404,7 +422,11 @@ impl Session {
                 }
             }
         }
-        log.push(step);
+        let seq = log.push(step);
+        drop(log);
+        if let Some(step) = lock(&self.log).get_mut(seq).cloned() {
+            emit_step(&self.ctx.events, &self.id(), &step);
+        }
     }
 
     // ------------------------------------------------------------ housekeeping

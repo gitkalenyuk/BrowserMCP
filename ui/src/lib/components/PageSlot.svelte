@@ -21,11 +21,13 @@
       frame = requestAnimationFrame(() => {
         const r = slot.getBoundingClientRect();
         const next: Rect = { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-        const key = `${next.x},${next.y},${next.w},${next.h},${devicePixelRatio}`;
+        const key = `${next.x},${next.y},${next.w},${next.h},${devicePixelRatio},${window.innerWidth},${window.innerHeight}`;
         if (key === last) return;
         last = key;
         rect = next;
-        void chrome.api.call('ui.layout', { ...next, dpr: devicePixelRatio }).catch(() => {});
+        // Inside the browser the window places the page (it knows which window we are).
+        if (chrome.host) chrome.host.layout(next, { w: window.innerWidth, h: window.innerHeight });
+        else void chrome.api.call('ui.layout', { ...next, dpr: devicePixelRatio }).catch(() => {});
       });
     };
     const ro = new ResizeObserver(report);

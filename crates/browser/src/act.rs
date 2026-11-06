@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::cdp::{self, BoxRect, perception_error};
+use crate::human;
 use crate::keys;
 use crate::page;
 use crate::state::TabState;
@@ -309,7 +310,7 @@ pub async fn perform(
         return match step.action {
             Action::Press => {
                 let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
-                keys::press(ctx, tab, &chords).await?;
+                press_keys(ctx, tab, state, &chords).await?;
                 Ok(format!("pressed {}", value.unwrap_or_default()))
             }
             Action::Scroll => {
@@ -326,7 +327,11 @@ pub async fn perform(
                 )
                 .await?
                 .ok_or_else(|| CmdError::internal("the page has no document element"))?;
-                let pos = cdp::call_function(ctx, tab, &page, SCROLL_JS, &[json!(dir)]).await?;
+                let pos = if state.human.is_some() && matches!(dir, "up" | "down") {
+                    wheel_scroll(ctx, tab, state, &page, None, dir).await?
+                } else {
+                    cdp::call_function(ctx, tab, &page, SCROLL_JS, &[json!(dir)]).await?
+                };
                 Ok(format!("scrolled page {dir} {}", scroll_position(&pos)))
             }
             _ => Err(
@@ -343,9 +348,9 @@ pub async fn perform(
             let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
             match step.action {
-                Action::Hover => mouse_move(ctx, tab, x, y).await?,
-                Action::Dblclick => mouse_click(ctx, tab, x, y, 2).await?,
-                _ => mouse_click(ctx, tab, x, y, 1).await?,
+                Action::Hover => mouse_move(ctx, tab, state, x, y).await?,
+                Action::Dblclick => mouse_click(ctx, tab, state, x, y, 2).await?,
+                _ => mouse_click(ctx, tab, state, x, y, 1).await?,
             }
             Ok(done)
         }
@@ -371,7 +376,7 @@ pub async fn perform(
             }
             let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
-            mouse_click(ctx, tab, x, y, 1).await?;
+            mouse_click(ctx, tab, state, x, y, 1).await?;
             let after = probe_element(ctx, tab, &target).await?;
             if after.checked != Some(want) {
                 return Err(not_interactable(
@@ -399,8 +404,7 @@ pub async fn perform(
                 }
             }
             if !text.is_empty() {
-                // Trusted text input: fires beforeinput/input like real typing.
-                cdp::call(ctx, tab, "Input.insertText", json!({ "text": text })).await?;
+                type_text(ctx, tab, state, text).await?;
             }
             if step.action == Action::Fill {
                 cdp::call_function(ctx, tab, &target.object_id, CHANGE_JS, &[]).await?;
@@ -442,7 +446,7 @@ pub async fn perform(
         Action::Press => {
             let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
             focus(ctx, tab, &target).await?;
-            keys::press(ctx, tab, &chords).await?;
+            press_keys(ctx, tab, state, &chords).await?;
             Ok(format!(
                 "pressed {} on {}",
                 value.unwrap_or_default(),
@@ -455,8 +459,13 @@ pub async fn perform(
                 scroll_into_view(ctx, tab, target.backend_node_id).await;
                 return Ok(format!("scrolled {} into view", target.label));
             }
-            let pos =
-                cdp::call_function(ctx, tab, &target.object_id, SCROLL_JS, &[json!(dir)]).await?;
+            let pos = if state.human.is_some() && matches!(dir, "up" | "down") {
+                let object_id = target.object_id.clone();
+                let backend = Some(target.backend_node_id);
+                wheel_scroll(ctx, tab, state, &object_id, backend, dir).await?
+            } else {
+                cdp::call_function(ctx, tab, &target.object_id, SCROLL_JS, &[json!(dir)]).await?
+            };
             Ok(format!(
                 "scrolled {dir} at {} {}",
                 target.label,
@@ -858,8 +867,20 @@ async fn covered_error(
     ))
 }
 
-/// Move the mouse to (x, y).
-async fn mouse_move(ctx: &Ctx, tab: TabId, x: f64, y: f64) -> Result<(), CmdError> {
+// ---------------------------------------------------------------- input: fast or human-like
+//
+// Each helper sends the minimal events on the fast path (default) and the human-like
+// sequence when `input.humanlike` is on for the tab (see `crate::human`).
+
+/// Sleep about `mean_ms` in human mode; nothing on the fast path.
+async fn human_pause(state: &mut TabState, mean_ms: f64, spread: f64) {
+    if let Some(h) = &mut state.human {
+        let pause = h.rng.millis(mean_ms, spread);
+        tokio::time::sleep(pause).await;
+    }
+}
+
+async fn send_mouse_moved(ctx: &Ctx, tab: TabId, x: f64, y: f64) -> Result<(), CmdError> {
     cdp::call(
         ctx,
         tab,
@@ -870,11 +891,60 @@ async fn mouse_move(ctx: &Ctx, tab: TabId, x: f64, y: f64) -> Result<(), CmdErro
     Ok(())
 }
 
+/// Move the mouse to (x, y): one event, or a human-like path from the last position.
+async fn mouse_move(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    x: f64,
+    y: f64,
+) -> Result<(), CmdError> {
+    let last = state.mouse;
+    state.mouse = Some((x, y));
+    let Some(h) = &mut state.human else {
+        return send_mouse_moved(ctx, tab, x, y).await;
+    };
+    let from = match last {
+        Some(point) => point,
+        None => {
+            // First move in this tab: come from somewhere plausible in the viewport.
+            let layout = cdp::layout(ctx, tab).await?;
+            let viewport = (layout.viewport_width, layout.viewport_height);
+            human::entry_point((x, y), viewport, &mut h.rng)
+        }
+    };
+    for step in human::mouse_path(from, (x, y), &h.profile, &mut h.rng) {
+        tokio::time::sleep(step.delay).await;
+        send_mouse_moved(ctx, tab, step.x, step.y).await?;
+    }
+    Ok(())
+}
+
 /// Move there, then press and release the left button `clicks` times (2 = double click).
-async fn mouse_click(ctx: &Ctx, tab: TabId, x: f64, y: f64, clicks: u32) -> Result<(), CmdError> {
-    mouse_move(ctx, tab, x, y).await?;
+async fn mouse_click(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    x: f64,
+    y: f64,
+    clicks: u32,
+) -> Result<(), CmdError> {
+    // People do not hit the exact centre (stays within 1.5 px, so small targets still work).
+    let (x, y) = match &mut state.human {
+        Some(h) => human::aim((x, y), 1.5, &h.profile, &mut h.rng),
+        None => (x, y),
+    };
+    mouse_move(ctx, tab, state, x, y).await?;
     for count in 1..=clicks {
+        // Dwell before the first press; the gap between the clicks of a double click.
+        human_pause(state, if count == 1 { 90.0 } else { 110.0 }, 0.4).await;
         for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            if kind == "mouseReleased"
+                && let Some(h) = &mut state.human
+            {
+                let hold = human::hold_time(&mut h.rng);
+                tokio::time::sleep(hold).await;
+            }
             cdp::call(
                 ctx,
                 tab,
@@ -888,6 +958,111 @@ async fn mouse_click(ctx: &Ctx, tab: TabId, x: f64, y: f64, clicks: u32) -> Resu
         }
     }
     Ok(())
+}
+
+/// Type text into the focused field: one trusted `Input.insertText` (fast path), or key
+/// events per character with typing delays (human-like). Characters without a key on a US
+/// keyboard (accents, emoji, newlines) are inserted as text.
+async fn type_text(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    text: &str,
+) -> Result<(), CmdError> {
+    if state.human.is_none() {
+        // Trusted text input: fires beforeinput/input like real typing.
+        cdp::call(ctx, tab, "Input.insertText", json!({ "text": text })).await?;
+        return Ok(());
+    }
+    let mut prev = None;
+    for c in text.chars() {
+        let Some(h) = &mut state.human else { break };
+        let delay = human::key_delay(prev, &h.profile, &mut h.rng);
+        let hold = human::hold_time(&mut h.rng);
+        tokio::time::sleep(delay).await;
+        match keys::char_chord(c) {
+            Some(chord) => {
+                let release = chord.modifier_keys.len() + 1;
+                for (i, event) in keys::chord_events(&chord).into_iter().enumerate() {
+                    if i == release {
+                        tokio::time::sleep(hold).await;
+                    }
+                    cdp::call(ctx, tab, "Input.dispatchKeyEvent", event).await?;
+                }
+            }
+            None => {
+                cdp::call(
+                    ctx,
+                    tab,
+                    "Input.insertText",
+                    json!({ "text": c.to_string() }),
+                )
+                .await?;
+            }
+        }
+        prev = Some(c);
+    }
+    Ok(())
+}
+
+/// Press chords; in human mode with a pause before each.
+async fn press_keys(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    chords: &[keys::Chord],
+) -> Result<(), CmdError> {
+    for chord in chords {
+        human_pause(state, 140.0, 0.4).await;
+        keys::press(ctx, tab, std::slice::from_ref(chord)).await?;
+    }
+    Ok(())
+}
+
+/// Human-like scroll up/down: move the mouse over the element (or keep it over the page) and
+/// turn the wheel in notches. `object_id` is the element (or the page's scrolling element)
+/// used to read the scroll position, like [`SCROLL_JS`] does.
+async fn wheel_scroll(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    object_id: &str,
+    backend_node_id: Option<i64>,
+    dir: &str,
+) -> Result<Value, CmdError> {
+    let before = cdp::call_function(ctx, tab, object_id, SCROLL_JS, &[json!("none")]).await?;
+    let view = before["view"].as_f64().unwrap_or(600.0).max(50.0);
+    let layout = cdp::layout(ctx, tab).await?;
+    let vw = layout.viewport_width.max(1.0);
+    let vh = layout.viewport_height.max(1.0);
+    // Where the wheel turns: over the element, else where the mouse is (or the middle).
+    let element = match backend_node_id {
+        Some(id) => cdp::content_box(ctx, tab, id)
+            .await?
+            .and_then(|r| clip_to_viewport(r, vw, vh))
+            .map(|r| r.center()),
+        None => None,
+    };
+    let (x, y) = element.or(state.mouse).unwrap_or((vw / 2.0, vh / 2.0));
+    mouse_move(ctx, tab, state, x, y).await?;
+    let total = if dir == "up" { -0.8 * view } else { 0.8 * view };
+    let steps = match &mut state.human {
+        Some(h) => human::wheel_steps(total, &h.profile, &mut h.rng),
+        None => vec![(total, Duration::ZERO)],
+    };
+    for (delta, pause) in steps {
+        tokio::time::sleep(pause).await;
+        cdp::call(
+            ctx,
+            tab,
+            "Input.dispatchMouseEvent",
+            json!({ "type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": delta }),
+        )
+        .await?;
+    }
+    // Smooth scrolling needs a moment before the position is final.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    cdp::call_function(ctx, tab, object_id, SCROLL_JS, &[json!("none")]).await
 }
 
 #[cfg(test)]

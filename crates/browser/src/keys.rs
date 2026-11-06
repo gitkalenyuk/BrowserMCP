@@ -110,6 +110,78 @@ fn character(c: char, shift: bool) -> Key {
     key(&text, "", 0, Some(&text))
 }
 
+/// US-keyboard key for a punctuation character: (code, virtual key code, needs Shift).
+fn punctuation_key(c: char) -> Option<(&'static str, u32, bool)> {
+    Some(match c {
+        '.' => ("Period", 190, false),
+        ',' => ("Comma", 188, false),
+        '-' => ("Minus", 189, false),
+        '=' => ("Equal", 187, false),
+        '/' => ("Slash", 191, false),
+        ';' => ("Semicolon", 186, false),
+        '\'' => ("Quote", 222, false),
+        '[' => ("BracketLeft", 219, false),
+        ']' => ("BracketRight", 221, false),
+        '\\' => ("Backslash", 220, false),
+        '`' => ("Backquote", 192, false),
+        '>' => ("Period", 190, true),
+        '<' => ("Comma", 188, true),
+        '_' => ("Minus", 189, true),
+        '+' => ("Equal", 187, true),
+        '?' => ("Slash", 191, true),
+        ':' => ("Semicolon", 186, true),
+        '"' => ("Quote", 222, true),
+        '{' => ("BracketLeft", 219, true),
+        '}' => ("BracketRight", 221, true),
+        '|' => ("Backslash", 220, true),
+        '~' => ("Backquote", 192, true),
+        '!' => ("Digit1", 49, true),
+        '@' => ("Digit2", 50, true),
+        '#' => ("Digit3", 51, true),
+        '$' => ("Digit4", 52, true),
+        '%' => ("Digit5", 53, true),
+        '^' => ("Digit6", 54, true),
+        '&' => ("Digit7", 55, true),
+        '*' => ("Digit8", 56, true),
+        '(' => ("Digit9", 57, true),
+        ')' => ("Digit0", 48, true),
+        _ => return None,
+    })
+}
+
+/// The chord a person presses to type `c` on a US keyboard (`A` = Shift+KeyA, `!` =
+/// Shift+Digit1), or `None` for characters without a key (accents, emoji, newline): those are
+/// inserted as text instead.
+pub fn char_chord(c: char) -> Option<Chord> {
+    let shift_key = || {
+        modifier("shift")
+            .map(|(_, k)| k)
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    if c == ' ' {
+        return Some(Chord {
+            modifiers: 0,
+            modifier_keys: Vec::new(),
+            key: named("space")?,
+        });
+    }
+    if c.is_ascii_alphanumeric() {
+        let shift = c.is_ascii_uppercase();
+        return Some(Chord {
+            modifiers: if shift { SHIFT } else { 0 },
+            modifier_keys: if shift { shift_key() } else { Vec::new() },
+            key: character(c, shift),
+        });
+    }
+    let (code, key_code, shift) = punctuation_key(c)?;
+    Some(Chord {
+        modifiers: if shift { SHIFT } else { 0 },
+        modifier_keys: if shift { shift_key() } else { Vec::new() },
+        key: key(&c.to_string(), code, key_code, Some(&c.to_string())),
+    })
+}
+
 /// Parse one chord such as `"Control+Shift+K"`.
 pub fn parse_chord(input: &str) -> Result<Chord, CmdError> {
     let bad = |why: &str| {
@@ -291,6 +363,45 @@ mod tests {
         assert_eq!(events[1]["commands"], json!(["selectAll"]));
         assert!(events[1].get("text").is_none());
         assert_eq!(events[3]["modifiers"], 0);
+    }
+
+    #[test]
+    fn characters_map_to_us_keyboard_chords() {
+        let events = chord_events(&char_chord('A').unwrap());
+        let summary: Vec<(String, String, i64)> = events
+            .iter()
+            .map(|e| {
+                (
+                    e["type"].as_str().unwrap().to_string(),
+                    e["key"].as_str().unwrap().to_string(),
+                    e["modifiers"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("rawKeyDown".to_string(), "Shift".to_string(), 8),
+                ("keyDown".to_string(), "A".to_string(), 8),
+                ("keyUp".to_string(), "A".to_string(), 8),
+                ("keyUp".to_string(), "Shift".to_string(), 0),
+            ]
+        );
+        assert_eq!(events[1]["text"], "A");
+        assert_eq!(events[1]["code"], "KeyA");
+
+        let a = chord_events(&char_chord('a').unwrap());
+        assert_eq!(a.len(), 2);
+        assert_eq!(
+            (a[0]["code"].clone(), a[0]["windowsVirtualKeyCode"].clone()),
+            (json!("KeyA"), json!(65))
+        );
+        let bang = char_chord('!').unwrap();
+        assert_eq!((bang.key.code.as_str(), bang.modifiers), ("Digit1", SHIFT));
+        assert_eq!(char_chord('.').unwrap().key.key_code, 190);
+        assert_eq!(char_chord(' ').unwrap().key.code, "Space");
+        assert!(char_chord('é').is_none());
+        assert!(char_chord('\n').is_none());
     }
 
     #[test]

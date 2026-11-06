@@ -210,6 +210,7 @@ async fn start_installs_recorder_in_isolated_world_without_runtime_enable() {
 #[tokio::test]
 async fn human_events_and_navigations_are_logged() {
     let h = Harness::new();
+    let mut bus = h.events.subscribe();
     let id = h.ok("record.start", json!({})).await["id"]
         .as_str()
         .unwrap()
@@ -246,6 +247,16 @@ async fn human_events_and_navigations_are_logged() {
     assert_eq!(binds, 2, "bound at start and after the navigation");
     let stop = h.ok("record.stop", json!({})).await;
     assert_eq!(stop["human_capture"], "binding");
+    // The Recording panel gets the steps live (`record.*` is a default WS topic).
+    let mut topics = Vec::new();
+    while let Ok(event) = bus.try_recv() {
+        if event.topic.starts_with("record.") {
+            topics.push(event.topic);
+        }
+    }
+    assert_eq!(topics.first().map(String::as_str), Some("record.started"));
+    assert_eq!(topics.last().map(String::as_str), Some("record.stopped"));
+    assert_eq!(topics.iter().filter(|t| *t == "record.step").count(), 4);
 
     let steps = h.steps(&id);
     let actions: Vec<&str> = steps.iter().map(|s| s.action.as_str()).collect();

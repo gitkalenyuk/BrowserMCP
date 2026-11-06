@@ -28,7 +28,13 @@ impl fmt::Display for TabId {
     }
 }
 
+/// URL of the browser's own new tab page (served by the CEF crate from `bmcp://ui/`).
+pub const NEW_TAB_URL: &str = "bmcp://ui/newtab.html";
+
+/// One tab as every API surface sees it. On the wire the fields are camelCase
+/// (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     /// Tab id, used as `tab` argument by other commands.
     pub id: TabId,
@@ -38,6 +44,43 @@ pub struct TabInfo {
     pub url: String,
     /// True while the page is still loading.
     pub loading: bool,
+    /// Favicon URL; null until the page reports one.
+    #[serde(default)]
+    pub favicon: Option<String>,
+    /// True when `nav.back` would do something.
+    #[serde(default)]
+    pub can_go_back: bool,
+    /// True when `nav.forward` would do something.
+    #[serde(default)]
+    pub can_go_forward: bool,
+    /// True for the tab shown in its window (one per window).
+    #[serde(default)]
+    pub active: bool,
+    /// Tab group id. Always null for now (tab groups are not implemented yet).
+    #[serde(default)]
+    pub group_id: Option<String>,
+    /// Agent holding the tab lock. Always null for now (agent locks come later).
+    #[serde(default)]
+    pub locked_by: Option<String>,
+}
+
+impl TabInfo {
+    /// A tab with just an id and a URL (title = URL), everything else empty/false.
+    pub fn new(id: TabId, url: impl Into<String>) -> Self {
+        let url = url.into();
+        TabInfo {
+            id,
+            title: url.clone(),
+            url,
+            loading: false,
+            favicon: None,
+            can_go_back: false,
+            can_go_forward: false,
+            active: false,
+            group_id: None,
+            locked_by: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -69,11 +112,22 @@ pub struct CdpEvent {
 pub type CdpEvents = tokio::sync::broadcast::Receiver<CdpEvent>;
 
 pub trait BrowserBackend: Send + Sync + 'static {
-    /// All open tabs, oldest first.
+    /// All open tabs, window by window, each window in tab-strip order.
     fn list_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<TabInfo>>>;
 
-    /// Open a new tab and return its id once the browser exists.
-    fn open_tab(&self, url: String) -> BoxFuture<'_, BackendResult<TabId>>;
+    /// Open a new tab in the current window and return its id once the browser exists.
+    /// `background = false` also makes it the active tab.
+    fn open_tab(&self, url: String, background: bool) -> BoxFuture<'_, BackendResult<TabId>>;
+
+    /// Close a tab (its page may still run `beforeunload`). Closing the last tab of a
+    /// window closes the window; closing the last window quits.
+    fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>>;
+
+    /// Show this tab in its window (and hide the one that was shown).
+    fn activate_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>>;
+
+    /// Stop loading the page.
+    fn stop_loading(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>>;
 
     /// Navigate and wait until the page finished loading (or `timeout`).
     fn navigate(

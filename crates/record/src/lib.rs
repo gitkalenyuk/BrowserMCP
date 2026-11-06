@@ -13,6 +13,10 @@
 //! * `record.codegen` — the log as a TypeScript script for `bmcp-script-host` (see [`codegen`]).
 //! * `record.video_start` / `record.video_stop` — CDP screencast → ffmpeg (see [`video`]).
 //!
+//! Events on the bus (a default WS topic, for the UI's Recording panel):
+//! `record.started {id, tab, name, start_url}`, `record.step {id, step}` (each finished step,
+//! secrets already redacted), `record.stopped {id, steps, video}`.
+//!
 //! No CEF dependency: everything goes through `BrowserBackend::cdp` / `cdp_events` and is
 //! tested with `bmcp_core::testing::FakeBackend`.
 

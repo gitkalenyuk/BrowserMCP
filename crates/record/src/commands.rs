@@ -197,6 +197,10 @@ impl Command for Start {
             stop: Mutex::new(Some(stop)),
             task: Mutex::new(Some(task)),
         }));
+        ctx.events.emit(
+            "record.started",
+            json!({ "id": id, "tab": tab, "name": meta.name, "start_url": meta.start_url }),
+        );
         Ok(StartOutput {
             id,
             tab,
@@ -260,6 +264,10 @@ impl Command for Stop {
                 .map_err(|e| CmdError::internal(format!("recording task failed: {e}")))?,
             None => lock(&active.meta).clone(),
         };
+        ctx.events.emit(
+            "record.stopped",
+            json!({ "id": meta.id, "steps": meta.steps, "video": meta.video }),
+        );
         Ok(StopOutput {
             id: meta.id.clone(),
             steps: meta.steps,
