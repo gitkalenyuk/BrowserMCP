@@ -198,7 +198,6 @@ async fn start_api(
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
     }
-    // Serve on the socket bound before CEF started (binding the port again would fail).
     match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`

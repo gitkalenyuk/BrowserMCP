@@ -1,9 +1,9 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
+import { createDataMocks } from './mock-data';
 import { createPanelMocks } from './mock-panels';
 import type {
   Agent,
   ApiEvents,
-  Bookmark,
   CallArgs,
   ConnectionStatus,
   EventName,
@@ -264,24 +264,7 @@ export class MockApi implements BrowserApi {
       this.#emitRuns();
       return { runId };
     },
-    'data.bookmarks': (): { bookmarks: Bookmark[] } => ({ bookmarks: [
-      { title: 'GitHub', url: 'https://github.com/' },
-      { title: 'MDN', url: 'https://developer.mozilla.org/' },
-      { title: 'Svelte', url: 'https://svelte.dev/docs' },
-      { title: 'docs.rs', url: 'https://docs.rs/' },
-      { title: 'crates.io', url: 'https://crates.io/' },
-      { title: 'CEF forum', url: 'https://magpcss.org/ceforum/' },
-    ] }),
-    'data.top_sites': (): { sites: Bookmark[] } => ({ sites: [
-      { title: 'Hacker News', url: 'https://news.ycombinator.com/' },
-      { title: 'YouTube', url: 'https://www.youtube.com/' },
-      { title: 'Gmail', url: 'https://mail.google.com/' },
-      { title: 'Reddit', url: 'https://www.reddit.com/' },
-      { title: 'Wikipedia', url: 'https://en.wikipedia.org/' },
-      { title: 'Claude', url: 'https://claude.ai/' },
-      { title: 'OpenAI', url: 'https://chatgpt.com/' },
-      { title: 'Linear', url: 'https://linear.app/' },
-    ] }),
+    ...createDataMocks({ empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1' }),
     ...createPanelMocks(
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,

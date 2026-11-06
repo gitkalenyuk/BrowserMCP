@@ -1,26 +1,32 @@
 //! `bmcp-script-host`: command-line entry point of the script sidecar.
 //!
 //! ```text
-//! bmcp-script-host run <file.ts> [--input key=value]... [--mock | --ws <url>]
-//!                      [--timeout-secs N] [--timings]
+//! bmcp-script-host run <file.ts> [--input key=value]... [--inputs-file <file.json>]
+//!                      [--mock | --ws <url>] [--timeout-secs N] [--timings]
 //! ```
+//!
+//! `--inputs-file` reads a JSON object (`{"key": "value", …}`); programs that start the host
+//! use it instead of `--input` so long values or NUL bytes never hit the command-line limit.
 //!
 //! Exit codes: 0 ok, 1 uncaught script error, 2 usage/setup error, 124 timeout
 //! (same number GNU `timeout` uses).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use bmcp_script::{CommandSink, MockSink, RunOptions, RunOutcome, WsSink, run_script};
+use deno_core::serde_json::Value;
 
 const USAGE: &str = "\
 usage: bmcp-script-host run <file.ts> [options]
 
 options:
   --input key=value   expose `inputs.key = \"value\"` to the script (repeatable)
+  --inputs-file F     read inputs from a JSON object file {\"key\": \"value\", ...}
+                      (applied before --input; non-string values become JSON text)
   --mock              answer browser.* calls with canned data (default)
   --ws <url>          send browser.* calls as JSON-RPC to a WebSocket
                       of the running browser (e.g. ws://127.0.0.1:47800/v1/ws)
@@ -58,6 +64,7 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
         timings: false,
     };
     let mut script = None;
+    let mut file_inputs = Vec::new();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--input" => {
@@ -66,6 +73,10 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
                     .split_once('=')
                     .with_context(|| format!("--input `{pair}` is not key=value"))?;
                 cli.inputs.push((key.to_string(), value.to_string()));
+            }
+            "--inputs-file" => {
+                let path = args.next().context("--inputs-file needs a path")?;
+                file_inputs.extend(read_inputs_file(Path::new(&path))?);
             }
             "--mock" => cli.sink = SinkChoice::Mock,
             "--ws" => cli.sink = SinkChoice::Ws(args.next().context("--ws needs a URL")?),
@@ -87,7 +98,31 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
         }
     }
     cli.script = script.with_context(|| format!("missing <file.ts>\n\n{USAGE}"))?;
+    // File inputs first, so a later `--input` with the same key wins.
+    file_inputs.append(&mut cli.inputs);
+    cli.inputs = file_inputs;
     Ok(cli)
+}
+
+/// `--inputs-file`: a JSON object; string values as-is, other values as JSON text.
+fn read_inputs_file(path: &Path) -> anyhow::Result<Vec<(String, String)>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read --inputs-file {}", path.display()))?;
+    let value: Value = deno_core::serde_json::from_str(&text)
+        .with_context(|| format!("--inputs-file {} is not JSON", path.display()))?;
+    let Value::Object(map) = value else {
+        bail!(
+            "--inputs-file {} must hold a JSON object {{\"key\": \"value\"}}",
+            path.display()
+        );
+    };
+    Ok(map
+        .into_iter()
+        .map(|(key, value)| match value {
+            Value::String(s) => (key, s),
+            other => (key, other.to_string()),
+        })
+        .collect())
 }
 
 fn main() -> ExitCode {
