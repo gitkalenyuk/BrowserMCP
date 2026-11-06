@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::bookmarks::{add_bookmark, find_or_create_folder, folder_has_url};
+use crate::events::{bookmarks_changed, history_changed};
 use crate::history::{self, is_recordable};
 use crate::passwords;
 use crate::store::{BOOKMARKS_BAR, DataError, DataResult, DataStore, OTHER_BOOKMARKS, now_ms};
@@ -637,6 +638,18 @@ impl Command for Import {
                 Ok(results)
             })
             .await?;
+        // Tell the UI to re-read what the import added.
+        let imported = |part: Part| {
+            results
+                .iter()
+                .any(|r| r.part == part && r.ok && r.imported > 0)
+        };
+        if imported(Part::Bookmarks) {
+            bookmarks_changed(&ctx, "import", None);
+        }
+        if imported(Part::History) {
+            history_changed(&ctx, "import");
+        }
         Ok(ImportOutput { results })
     }
 }

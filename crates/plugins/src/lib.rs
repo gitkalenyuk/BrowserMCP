@@ -210,6 +210,7 @@ pub fn register(registry: &mut Registry) {
         .add::<PluginsPaletteRun>()
         .add::<UserscriptsList>()
         .add::<UserscriptsSave>()
+        .add::<UserscriptsGet>()
         .add::<UserscriptsDelete>()
         .add::<UserscriptsEnable>()
         .add::<UserscriptsInject>()

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TabInfo, Workspace } from '../api/types';
+  import type { PluginPaletteEntry, TabInfo, Workspace } from '../api/types';
   import { COMMANDS, type CommandMeta } from '../commands';
   import { fuzzyFilter, highlight, type FuzzyMatch } from '../fuzzy';
   import { chordLabels } from '../keymap';
@@ -11,7 +11,8 @@
   type Item =
     | { kind: 'command'; key: string; text: string; cmd: CommandMeta }
     | { kind: 'tab'; key: string; text: string; tab: TabInfo }
-    | { kind: 'workspace'; key: string; text: string; ws: Workspace };
+    | { kind: 'workspace'; key: string; text: string; ws: Workspace }
+    | { kind: 'plugin'; key: string; text: string; entry: PluginPaletteEntry };
 
   /** `standalone`: the page is only the palette (the browser's Ctrl+K overlay view). */
   let { standalone = false }: { standalone?: boolean } = $props();
@@ -22,6 +23,8 @@
   let input = $state<HTMLInputElement>();
   let list = $state<HTMLDivElement>();
   let restoreFocus: HTMLElement | null = null;
+  /** Entries contributed by running plugins (`plugins.palette`), re-read whenever it opens. */
+  let pluginEntries = $state<PluginPaletteEntry[]>([]);
 
   const items = $derived.by<Item[]>(() => [
     ...chrome.tabs.tabs.map((tab) => ({
@@ -36,6 +39,12 @@
       text: cmd.title,
       cmd,
     })),
+    ...pluginEntries.map((entry) => ({
+      kind: 'plugin' as const,
+      key: `plugin-${entry.plugin}-${entry.id}`,
+      text: entry.title,
+      entry,
+    })),
     ...chrome.workspaces
       .filter((w) => w.id !== chrome.workspaceId)
       .map((ws) => ({ kind: 'workspace' as const, key: `ws-${ws.id}`, text: `Switch to workspace ${ws.name}`, ws })),
@@ -44,13 +53,15 @@
   const results = $derived.by<{ item: Item; match: FuzzyMatch }[]>(() => {
     if (!query.trim()) {
       // No query: commands first, then tabs (Chrome-style tab search via typing).
-      const order = { command: 0, tab: 1, workspace: 2 };
+      const order = { command: 0, plugin: 1, tab: 2, workspace: 3 };
       return [...items]
         .sort((a, b) => order[a.kind] - order[b.kind])
         .map((item) => ({ item, match: { score: 0, indices: [] } }));
     }
     // Tabs also match on their URL host.
-    return fuzzyFilter(query, items, (i) => (i.kind === 'tab' ? `${i.text} ${hostOf(i.tab.url)}` : i.text)).slice(0, 50);
+    return fuzzyFilter(query, items, (i) =>
+      i.kind === 'tab' ? `${i.text} ${hostOf(i.tab.url)}` : i.kind === 'plugin' ? `${i.text} ${i.entry.plugin}` : i.text,
+    ).slice(0, 50);
   });
 
   $effect(() => {
@@ -63,8 +74,26 @@
       window.focus(); // pull focus back from an embedded frame (dev new tab page)
       input?.focus();
       requestAnimationFrame(() => input?.focus());
+      void loadPluginEntries();
     }
   });
+
+  async function loadPluginEntries() {
+    try {
+      pluginEntries = (await chrome.api.call('plugins.palette')).commands;
+    } catch {
+      pluginEntries = []; // no plugin service in this core
+    }
+  }
+
+  async function runPlugin(entry: PluginPaletteEntry) {
+    try {
+      const { delivered } = await chrome.api.call('plugins.palette_run', { plugin: entry.plugin, id: entry.id });
+      if (!delivered) chrome.lastError = `Plugin ${entry.plugin} is not running`;
+    } catch (err) {
+      chrome.lastError = (err as Error).message;
+    }
+  }
 
   $effect(() => {
     void query;
@@ -86,6 +115,7 @@
     close();
     if (item.kind === 'command') chrome.run(item.cmd.id);
     else if (item.kind === 'tab') chrome.activate(item.tab.id);
+    else if (item.kind === 'plugin') void runPlugin(item.entry);
     else chrome.switchWorkspace(item.ws.id);
   }
 
@@ -113,7 +143,7 @@
     }
   }
 
-  const KIND_LABEL = { tab: 'Tab', command: 'Command', workspace: 'Workspace' } as const;
+  const KIND_LABEL = { tab: 'Tab', command: 'Command', workspace: 'Workspace', plugin: 'Plugin' } as const;
 </script>
 
 {#if chrome.paletteOpen}
@@ -163,6 +193,8 @@
               <Favicon url={item.tab.url} src={item.tab.favicon} loading={item.tab.loading} />
             {:else if item.kind === 'workspace'}
               <span class="ws-dot" style:--c="var(--g-{item.ws.color})"></span>
+            {:else if item.kind === 'plugin'}
+              <Icon name="layers" size={14} stroke={2} />
             {:else}
               <Icon name="chevron-right" size={14} stroke={2} />
             {/if}
@@ -176,6 +208,8 @@
             <span class="sub">{hostOf(item.tab.url)}</span>
           {:else if item.kind === 'workspace'}
             <span class="sub">{item.ws.profile} · {item.ws.proxy}</span>
+          {:else if item.kind === 'plugin'}
+            <span class="sub">{item.entry.plugin}</span>
           {/if}
           {#if item.kind === 'command' && chrome.keymap[item.cmd.id]?.[0]}
             <span class="keys">

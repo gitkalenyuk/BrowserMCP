@@ -9,8 +9,9 @@ an in-memory mock of the Rust core.
 
 ```bash
 pnpm install            # once, from the repo root or ui/
-pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page; /library.html — library
-pnpm build              # -> ui/dist (index.html + palette.html + newtab.html + library.html, relative paths)
+pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page; /library.html — library;
+                        # /settings.html — settings
+pnpm build              # -> ui/dist (index.html + palette.html + newtab.html + library.html + settings.html)
 pnpm check              # svelte-check, fails on warnings
 pnpm test               # vitest: fuzzy matcher, keymap, tab reducer, omnibox input, AI stream
                         # folding, net text parsers, request filter, rule/resume payloads,
@@ -52,11 +53,13 @@ ui/
 ├─ palette.html          Ctrl+K palette alone (the browser shows it in an overlay view)
 ├─ newtab.html           new tab page entry (Vite multi-page)
 ├─ library.html          bookmarks / history / downloads / passwords / Chrome import (full tab)
+├─ settings.html         settings: general, AI, notifications, performance, privacy, hints, plugins, keys
 └─ src/
    ├─ chrome/            App.svelte + main.ts for the chrome
    ├─ palette/           PaletteApp.svelte + main.ts for the overlay palette
    ├─ newtab/            NewTab.svelte, widgets/ (prompt, agents & runs, quick launch, sites)
    ├─ library/           Library.svelte + one component per section, FolderTree, ImportWizard, Dialog
+   ├─ settings/          Settings.svelte + one component per section, Toggle, settings.css
    └─ lib/
       ├─ api/            types.ts (wire types + RpcMethods/ApiEvents), client.ts (BrowserApi),
       │                  mock.ts (MockApi), ws.ts (WsApi), index.ts (createApi)
@@ -148,12 +151,14 @@ after 15 s). Without one it reopens the last section, Bookmarks the first time.
 * **Bookmarks**: folder tree (`data.bookmarks` per folder, level by level, `tree.ts`), list of the
   selected folder in the shared folder/bookmark order, drag rows to reorder or onto a folder (tree
   or row middle) to move (`bookmarks.move`, index without the moved node), add / edit / delete,
-  search (`bookmarks.search`). There is no rename command: edits are add + move + remove
-  (`edit.ts`), so an edited node gets a new id.
-* **History**: search, grouped by local day, remove one page (`history.delete {url}`), remove a
-  day, clear a range: "older than 4 weeks" / "all time" use `{before}`; recent ranges remove each
-  page visited since then (with all its visits, the core has no "visits after" delete).
-* **Downloads**: `downloads.list`, polled while one is in progress. "Show in folder" is a stub.
+  search (`bookmarks.search`). Edits and folder renames use `bookmarks.update` (in place: id and
+  position stay; only http/https/file URLs, the core refuses `javascript:` / `data:`).
+* **History**: search, grouped by local day, remove one page (`history.delete {url}`: all its
+  visits), remove a day (`{day: 'YYYY-MM-DD'}`: that day's visits only), clear a range (`{since}`
+  for the last hour … 4 weeks, `{before}` for older than 4 weeks / all time). Deletes remove
+  *visits*; a page keeps its visits outside the range.
+* **Downloads**: `downloads.list`, polled while one is in progress. "Show in folder" calls
+  `system.reveal_path` (Explorer with the file selected; data folder and Downloads only).
 * **Passwords**: listed without passwords; the eye asks for confirmation, then reads that one
   login with `passwords.list {origin, reveal:true}` and hides it again after 30 s. Add, edit (empty
   password field keeps the current one), delete with confirmation.
@@ -164,9 +169,11 @@ after 15 s). Without one it reopens the last section, Bookmarks the first time.
 
 Chrome side: the omnibox star (`BookmarkStar`, Ctrl+D) adds the page to the bookmarks bar or
 removes all its bookmarks; the bookmarks bar (`BookmarksBar`, Ctrl+Shift+B, on by default) shows
-folder 1, its folders open in the library (a dropdown would be covered by the page). The core
-sends no data events, so pages bump `bmcp.data.rev` in localStorage after edits and the bar/star
-re-read on it (and on window focus). `VITE_BMCP_EMPTY_DATA=1` starts the mock empty (wizard).
+folder 1, its folders open in the library (a dropdown would be covered by the page). Every edit
+in the core (by the UI, an agent over REST/MCP, a script, an import) emits `bookmarks.changed
+{op, id}` / `history.changed {op}`; the bar, the star and the library re-read on them
+(`onDataChanged` in `data/library.ts`, debounced) and on reconnect. `VITE_BMCP_EMPTY_DATA=1`
+starts the mock empty (wizard).
 
 ### Side panels
 
@@ -195,7 +202,12 @@ re-read on it (and on window focus). `VITE_BMCP_EMPTY_DATA=1` starts the mock em
   parametrize) shown with Prism (lazy chunk), an inputs form inferred from `inputs.<name>` /
   `need("name")` and *Save & run* (`script.save` + `script.run`); runs with progress bars from
   `run.progress`, a paged results table (`run.results` cursors, status filter), pause / resume /
-  cancel, export, the heal flow (`run.heal_needed` → patch editor → `run.heal_apply`) and cron
+  cancel, export, the heal flow (`run.heal_needed` → AI proposal from `run.heal_proposed` with
+  diff, explanation, confidence and checks → *Accept* `run.heal_accept` / *Reject…* with feedback
+  `run.heal_reject` / *Propose* `run.heal_propose`; outcome from `run.heal_applied` /
+  `run.heal_failed`; `HealProposals.svelte`, `DiffView.svelte`, state in `runs/heal.ts`; or by
+  hand: patch editor → `run.heal_apply`), the *On selector errors* choice ask / auto / off of
+  `run.start {heal}`, and cron
   triggers with a local preview of the next firings (`runs/cron.ts` follows the Rust `cron` crate:
   weekdays 1 = Sunday, day-of-month AND weekday). `WsApi` also subscribes `record.*`, `run.*`,
   `trigger.*`.
@@ -210,6 +222,43 @@ re-read on it (and on window focus). `VITE_BMCP_EMPTY_DATA=1` starts the mock em
   Shift+F5 stop, current-line highlight, variables + call stack from `script.debug_paused`
   (`script.debug_start/debug_cmd`, events `script.*`). The panel root has `data-own-keys`, so the
   chrome leaves those keys to it (F5 is reload elsewhere).
+
+### Settings page
+
+`bmcp://ui/settings.html` is a full-tab page like the library (content tabs may load exactly this
+URL; `crates/cef/src/scheme.rs` allow-list). Opened by Ctrl+, (`settings.open`), the palette
+("Settings") or *All settings…* in the menu; a section request travels through localStorage
+(`bmcp.settings.request`, `lib/settings/open.ts`). Sections (`src/settings/`):
+
+* **General**: theme, accent, density (compact = shorter strip / toolbar / tabs, `data-density` on
+  `:root`), vertical tabs, bookmarks bar, new tab widgets (all `settings.svelte.ts`, localStorage).
+* **AI**: `AiSettings.svelte` from the AI panel with its own `AiStore` (keys / base URLs / models /
+  CLI path, Test, *Use for new chats*, *Make default for background AI* = `ai.provider_set
+  {default: true}`, `is_default` badge).
+* **Notifications**: `notify.config_get/config_set/test`; channels UI / Windows / Telegram (token
+  masked as `…abcd` by the core, sending it back keeps it) / webhook with *Test* (*Save & test*
+  with unsaved changes), the per-topic rules table (order = priority, channels, when, bundle;
+  unreachable rules flagged; "which rule handles <topic>"), anti-spam limits. Drafts are saved
+  with only the changed fields (`lib/settings/notify.ts`).
+* **Performance**: `governor.config/status`; on/off, profile (fills in its times), freeze /
+  discard after N minutes, most live tabs, reset to profile defaults; live memory and tab table
+  (`governor.status` every 3 s) with recent decisions.
+* **Privacy & blocking**: `adblock.toggle/update_lists/stats`, `simplify.list/site/get`; global
+  switch, update lists (per-list result), counters, allowlist (sites where ads are allowed),
+  site policies as a table cycling inherited → blocked → allowed, a site check.
+* **Link hints**: `hints.config`; trigger keys per mode, label letters, sites with the keys off.
+* **Plugins & userscripts**: `plugins.list/enable/disable/reload/logs/install`,
+  `userscripts.list/get/save/delete/enable`; logs poll every 2 s while open; the userscript editor
+  is a plain textarea (`userscripts.get` was added to crates/plugins for it).
+* **Keyboard**: every command of `keymap.ts` with search (words or an exact `ctrl+shift+t`),
+  add a shortcut by pressing it, remove, reset, conflicts in red. Overrides are kept in
+  localStorage (`bmcp.keymap.overrides`, keymap.json shape) and the chrome merges them
+  (`ChromeController.keymap`, follows the storage event).
+
+The Ctrl+K palette also lists the entries of running plugins (`plugins.palette`, read whenever it
+opens) and runs them with `plugins.palette_run`. Types: `api/types-settings.ts` (generated
+protocol + the `run.heal_*` event payloads); fakes: `api/mock-settings.ts` (a heal proposal
+arrives by itself for a paused mock run; no network for Telegram / webhook tests).
 
 `VITE_BMCP_PANEL=traffic pnpm build` opens that panel on a profile without saved settings
 (screenshots of a fresh profile).

@@ -31,6 +31,39 @@ closes until `system.quit` (`--device-scale <f>` sets the pixel ratio; `browserm
 
 The first build downloads CEF (~500 MB) and copies its runtime next to `target/debug/browsermcp.exe`.
 
+## Portable release
+
+```bash
+cargo xtask dist                      # -> dist/BrowserMCP-<version>-win64/ and .zip
+cargo xtask dist --skip-script-host   # without bmcp-script-host.exe (no V8 build)
+cargo xtask dist --out D:\builds --locales en-US,uk,de   # or --locales all
+cargo xtask dist --no-build           # repackage the existing target/release build
+```
+
+`dist` builds the UI (`pnpm -C ui build`, embedded into the exe), the release `browsermcp.exe` and
+`bmcp-script-host.exe`, and assembles one folder: the two executables, the CEF runtime (DLLs,
+`*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/` — en-US + uk by default), an empty
+`data/`, `README.txt`, `THIRD_PARTY.txt` and `LICENSES/`. Unzip it anywhere and run
+`browsermcp.exe`; everything it stores stays in `data/` next to it. Video recording needs
+`ffmpeg.exe` next to the exe or on `PATH` (not bundled). CI builds the zip on `v*` tags and manual
+runs (artifact only). Details, sizes and the sandbox status: [docs/release.md](docs/release.md).
+
+## Updating Chromium
+
+The `cef` crate is pinned exactly in the root `Cargo.toml`; every crate release tracks one CEF
+build. Once a month, by hand:
+
+```bash
+cargo xtask bump-cef 157.0.0 --dry-run   # what would change
+cargo xtask bump-cef 157.0.0             # re-pin + cargo update -p cef -p cef-dll-sys
+```
+
+It updates the pin and the CEF build noted above it, restores `Cargo.toml`/`Cargo.lock` if the
+update fails, and prints the next steps: read the cef-rs changelog, `cargo xtask build` (downloads
+the new CEF), `cargo xtask test` + clippy, a smoke run, `cargo xtask bench`, `cargo xtask dist`, and
+— when the Chromium major changes — `ENGINE_CHROME_MAJOR` in `crates/identity`. Commit
+`Cargo.toml` + `Cargo.lock` (the CI CEF cache is keyed by `Cargo.lock`).
+
 ## Connect an AI agent
 
 While the browser runs, MCP is served at `http://127.0.0.1:47800/mcp` (local only; requests from

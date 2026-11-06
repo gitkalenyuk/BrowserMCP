@@ -40,10 +40,25 @@ pub async fn call_err(registry: &Registry, ctx: &Ctx, name: &str, args: Value) -
     }
 }
 
+/// The `{topic, data}` of every event received so far whose topic starts with `prefix`
+/// (skips the registry's own `command.*` events).
+pub fn drain_events(
+    rx: &mut tokio::sync::broadcast::Receiver<bmcp_core::Event>,
+    prefix: &str,
+) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if event.topic.starts_with(prefix) {
+            out.push((event.topic, event.data));
+        }
+    }
+    out
+}
+
 #[test]
 fn every_command_is_in_the_data_toolset() {
     let (registry, _) = setup();
-    assert_eq!(registry.len(), 16);
+    assert_eq!(registry.len(), 17);
     for info in registry.list(None) {
         assert_eq!(info.toolset, Toolset::Data, "{}", info.name);
     }
@@ -170,8 +185,24 @@ async fn import_chrome_from_fixtures() {
     let tmp = tempfile::tempdir().unwrap();
     write_fixtures(tmp.path());
     let (registry, ctx) = setup();
+    let mut rx = ctx.events.subscribe();
 
     let out = call(&registry, &ctx, "import.chrome", import_args(tmp.path())).await;
+    // The UI is told to re-read bookmarks and history.
+    let events: Vec<(String, Value)> = drain_events(&mut rx, "")
+        .into_iter()
+        .filter(|(topic, _)| !topic.starts_with("command."))
+        .collect();
+    assert_eq!(
+        events,
+        [
+            (
+                "bookmarks.changed".to_string(),
+                json!({"op": "import", "id": null})
+            ),
+            ("history.changed".to_string(), json!({"op": "import"})),
+        ]
+    );
     let counts: Vec<(Value, Value, Value, Value)> = out["results"]
         .as_array()
         .unwrap()

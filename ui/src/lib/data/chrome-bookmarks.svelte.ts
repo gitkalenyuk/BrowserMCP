@@ -4,7 +4,7 @@
 import type { BrowserApi } from '../api/client';
 import { BOOKMARKS_BAR, type DataBookmark, type DataFolder } from '../api/types-data';
 import { isSafeLinkUrl } from '../safeurl';
-import { bumpDataRev, onDataRev, onReconnect } from './library';
+import { onDataChanged, onReconnect } from './library';
 import { mergeChildren } from './tree';
 
 export type BarItem = ({ kind: 'url' } & DataBookmark) | ({ kind: 'folder' } & DataFolder);
@@ -34,15 +34,9 @@ export class ChromeBookmarks {
         void this.refreshBar();
         if (this.checkedUrl) void this.check(this.checkedUrl);
       };
-      this.#off.push(
-        onDataRev(refresh),
-        onReconnect(this.api, refresh),
-      );
+      // The core reports every bookmark edit (also an agent's); a reconnect may have missed some.
+      this.#off.push(onDataChanged(this.api, 'bookmarks.changed', refresh), onReconnect(this.api, refresh));
       queueMicrotask(refresh);
-      if (typeof window !== 'undefined') {
-        window.addEventListener('focus', refresh);
-        this.#off.push(() => window.removeEventListener('focus', refresh));
-      }
     }
     return () => {
       if (--this.#users === 0) {
@@ -92,7 +86,6 @@ export class ChromeBookmarks {
       }
     } finally {
       this.busy = false;
-      bumpDataRev();
       await Promise.all([this.check(url), this.refreshBar()]);
     }
   }

@@ -1,14 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { BrowserApi } from '../lib/api';
-  import type { HistoryEntry } from '../lib/api/types-data';
+  import type { HistoryDeleteArgs, HistoryEntry } from '../lib/api/types-data';
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
-  import { bumpDataRev, onReconnect } from '../lib/data/library';
+  import { onDataChanged, onReconnect } from '../lib/data/library';
   import {
     CLEAR_RANGES,
     clearPlan,
-    eachLimited,
     groupByDay,
     timeOfDay,
     type ClearRange,
@@ -48,19 +47,27 @@
     return () => clearTimeout(t);
   });
   $effect(() => onReconnect(api, () => tick++));
+  // Deletes and imports by anyone (an agent, another library tab) arrive as history.changed.
+  $effect(() => onDataChanged(api, 'history.changed', () => tick++));
 
-  async function removeUrls(urls: string[]): Promise<number> {
-    const res = await eachLimited(urls, 6, (url) => api.call('history.delete', { url }));
-    const failed = res.filter((r) => r.status === 'rejected');
-    if (failed.length) fail((failed[0] as PromiseRejectedResult).reason);
-    return res.length - failed.length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const deletedText = (r: { deleted_visits: number; deleted_urls: number }) =>
+    `Deleted ${plural(r.deleted_visits, 'visit')}` + (r.deleted_urls ? `; ${plural(r.deleted_urls, 'page')} left history` : '');
+
+  /** One `history.delete`, then re-read the list. */
+  async function remove(args: HistoryDeleteArgs, done?: boolean) {
+    try {
+      const r = await api.call('history.delete', args);
+      if (done) notify(deletedText(r));
+    } catch (err) {
+      fail(err);
+    }
+    tick++;
   }
 
   async function removeEntry(e: HistoryEntry) {
     entries = entries.filter((x) => x.url !== e.url);
-    await removeUrls([e.url]);
-    bumpDataRev();
-    tick++;
+    await remove({ url: e.url });
   }
 
   let dayToRemove = $state<DayGroup | null>(null);
@@ -69,10 +76,8 @@
     const g = dayToRemove;
     dayOpen = false;
     if (!g) return;
-    const n = await removeUrls(g.entries.map((e) => e.url));
-    notify(`Removed ${n} page${n === 1 ? '' : 's'} from history`);
-    bumpDataRev();
-    tick++;
+    // Only that day's visits; a page also visited on other days stays under those days.
+    await remove({ day: g.key }, true);
   }
 
   let clearOpen = $state(false);
@@ -81,24 +86,9 @@
   const plan = $derived(clearPlan(range, Date.now()));
   async function clear() {
     clearing = true;
-    try {
-      const p = clearPlan(range, Date.now());
-      if ('before' in p) {
-        const r = await api.call('history.delete', { before: p.before });
-        notify(`Deleted ${r.deleted_visits} visit${r.deleted_visits === 1 ? '' : 's'} of ${r.deleted_urls} page${r.deleted_urls === 1 ? '' : 's'}`);
-      } else {
-        const { entries: recent } = await api.call('history.search', { since: p.since, limit: 5000 });
-        const n = await removeUrls(recent.map((e) => e.url));
-        notify(`Removed ${n} page${n === 1 ? '' : 's'} from history`);
-      }
-    } catch (err) {
-      fail(err);
-    } finally {
-      clearing = false;
-      clearOpen = false;
-      bumpDataRev();
-      tick++;
-    }
+    await remove(clearPlan(range, Date.now()), true);
+    clearing = false;
+    clearOpen = false;
   }
 </script>
 
@@ -155,8 +145,8 @@
 
 <Dialog bind:open={dayOpen} title="Remove {dayToRemove?.label ?? 'this day'}?" onsubmit={removeDay}>
   <p>
-    {dayToRemove?.entries.length} page{dayToRemove?.entries.length === 1 ? '' : 's'} will be removed from history, each with all
-    of its visits (also those on other days).
+    The visits of this day are deleted ({dayToRemove?.entries.length} page{dayToRemove?.entries.length === 1 ? '' : 's'}). Visits
+    on other days stay.
   </p>
   {#snippet actions()}
     <button type="button" class="btn" onclick={() => (dayOpen = false)}>Cancel</button>
@@ -175,7 +165,7 @@
     {#if 'before' in plan}
       {range === 'all' ? 'Every visit is deleted.' : 'Visits older than four weeks are deleted; newer ones stay.'}
     {:else}
-      Pages visited in this range are removed from history, each with all of its visits.
+      Visits in this range are deleted; older visits of the same pages stay.
     {/if}
     Bookmarks, passwords and cookies are not touched.
   </p>

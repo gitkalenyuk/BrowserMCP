@@ -1,29 +1,20 @@
-// Edits the core has no single command for (yet): renaming / re-pointing a bookmark, renaming a
-// folder, changing a login's site or username. They are composed from add + move + remove (or
-// save + delete), keeping the node's place. Note: the edited node gets a new id.
+// Library edits. Bookmarks and folders are edited in place with `bookmarks.update` (the id and
+// position stay). A login's site or username has no update command: it is saved anew and the
+// old login deleted.
 
 import type { BrowserApi } from '../api/client';
-import type { DataBookmark, PasswordEntry } from '../api/types-data';
+import type { DataBookmark, DataFolder, PasswordEntry } from '../api/types-data';
 
 type Api = Pick<BrowserApi, 'call'>;
 
-/** Replace bookmark `b` by one with the new title/url at the same place. */
-export async function editBookmark(api: Api, b: { id: number; folder: number; position: number }, title: string, url: string): Promise<DataBookmark> {
-  const created = await api.call('bookmarks.add', { folder: b.folder, title, url });
-  await api.call('bookmarks.move', { id: created.id, folder: b.folder, position: b.position });
-  await api.call('bookmarks.remove', { id: b.id });
-  return created;
+/** Give bookmark `id` a new title and URL (the core accepts http, https and file URLs only). */
+export async function editBookmark(api: Api, id: number, title: string, url: string): Promise<DataBookmark | null> {
+  return (await api.call('bookmarks.update', { id, title, url })).bookmark;
 }
 
-/** Rename a folder: a new folder at the same place takes over the children in order. */
-export async function renameFolder(api: Api, f: { id: number; parent: number; position: number }, title: string): Promise<number> {
-  const created = await api.call('bookmarks.add_folder', { parent: f.parent, title });
-  const listing = await api.call('data.bookmarks', { folder: f.id, limit: 5000 });
-  const children = [...listing.bookmarks, ...listing.folders].sort((a, b) => a.position - b.position || a.id - b.id);
-  for (const c of children) await api.call('bookmarks.move', { id: c.id, folder: created.id });
-  await api.call('bookmarks.move', { id: created.id, folder: f.parent, position: f.position });
-  await api.call('bookmarks.remove', { id: f.id });
-  return created.id;
+/** Rename folder `id` in place; its contents and position stay. */
+export async function renameFolder(api: Api, id: number, title: string): Promise<DataFolder | null> {
+  return (await api.call('bookmarks.update', { id, title })).folder;
 }
 
 /**

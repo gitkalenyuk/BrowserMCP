@@ -13,6 +13,7 @@
 //!   },
 //!   "rules": [
 //!     { "topic": "run.finished", "channels": ["ui", "os", "telegram", "webhook"] },
+//!     { "topic": "run.heal_proposed", "channels": ["ui", "os", "telegram", "webhook"] },
 //!     { "topic": "ai.done", "channels": ["os", "telegram"], "when": "unfocused" }
 //!   ],
 //!   "limits": { "dedup_secs": 10, "aggregate_secs": 60, "max_per_minute": 20 }
@@ -191,6 +192,20 @@ impl Default for NotifyConfig {
                 ),
                 rule(
                     "run.heal_needed",
+                    &[Ui, Os, Telegram, Webhook],
+                    When::Always,
+                    false,
+                ),
+                // The AI's patch for it (Accept / Reject), and how that ended.
+                rule(
+                    "run.heal_proposed",
+                    &[Ui, Os, Telegram, Webhook],
+                    When::Always,
+                    false,
+                ),
+                rule("run.heal_applied", &[Ui, Telegram], When::Always, false),
+                rule(
+                    "run.heal_failed",
                     &[Ui, Os, Telegram, Webhook],
                     When::Always,
                     false,

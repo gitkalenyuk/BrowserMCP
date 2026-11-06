@@ -20,6 +20,7 @@
   import { untrack } from 'svelte';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
+  import HealProposals from './HealProposals.svelte';
 
   let { run, onclose }: { run: RunInfo; onclose: () => void } = $props();
 
@@ -228,6 +229,7 @@
         : ''} · retries {run.options.retries} · timeout {run.options.timeout_secs} s{run.options.stop_on_error ? ' · stops on error' : ''}
     </p>
     {#if run.note && !heal}<p class="rr-hint">{run.note}</p>{/if}
+    {#if !heal}<HealProposals {run} paused={false} onedit={() => {}} />{/if}
   </div>
 
   {#if exportOpen}
@@ -272,9 +274,10 @@
       {#if heal.error}
         <p class="err-line"><b>{heal.error.code}</b> {heal.error.message}</p>
       {/if}
+      <HealProposals {run} paused onedit={(code, script) => ((patch = code), (patchFor = script))} />
       {#if patch === null}
         <div class="rr-row">
-          <button class="btn primary" disabled={busy} onclick={startPatch}><Icon name="code" size={13} /> Write a patch</button>
+          <button class="btn" disabled={busy} onclick={startPatch}><Icon name="code" size={13} /> Write a patch yourself</button>
           <button class="btn" disabled={busy} onclick={() => control('resume')} title="Rows waiting for a patch count as failed">Skip and resume</button>
         </div>
       {:else}

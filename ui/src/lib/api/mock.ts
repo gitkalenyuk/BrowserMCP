@@ -3,6 +3,7 @@ import { createDataMocks } from './mock-data';
 import { createPanelMocks } from './mock-panels';
 import { createRecordRunsMocks } from './mock-record-runs';
 import { createScriptMocks } from './mock-scripts';
+import { createSettingsMocks } from './mock-settings';
 import type {
   Agent,
   ApiEvents,
@@ -310,7 +311,10 @@ export class MockApi implements BrowserApi {
       this.#emitRuns();
       return { runId };
     },
-    ...createDataMocks({ empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1' }),
+    ...createDataMocks({
+      empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1',
+      emit: (event, payload) => this.#emit(event, payload),
+    }),
     ...createScriptMocks((event, payload) => this.#emit(event, payload), {
       getCode: async (name) => (await this.#handlers['script.get']({ name })).code,
     }),
@@ -319,6 +323,7 @@ export class MockApi implements BrowserApi {
       () => this.#ws.activeId,
     ),
     ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
+    ...createSettingsMocks((e, p) => this.#emit(e, p), (e, h) => this.on(e, h), async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },

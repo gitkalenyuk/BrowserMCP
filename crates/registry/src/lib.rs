@@ -29,6 +29,7 @@ pub fn build_registry() -> Registry {
     bmcp_heal::register(&mut registry);
     bmcp_notify::register(&mut registry);
     bmcp_hints::register(&mut registry);
+    bmcp_system::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }
@@ -51,6 +52,8 @@ mod tests {
             "page.pdf",
             "page.find_text",
             "hints.show",
+            "bookmarks.update",
+            "system.reveal_path",
         ] {
             assert!(registry.get(name).is_some(), "{name} missing");
         }
