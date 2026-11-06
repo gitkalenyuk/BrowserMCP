@@ -54,10 +54,12 @@ impl Command for Goto {
             )));
         }
         let tab = ctx.resolve_tab(args.tab).await?;
-        let info = ctx
+        let mut info = ctx
             .backend
             .navigate(tab, args.url, Duration::from_secs(timeout_secs))
             .await?;
+        // groupId / lockedBy from the agent registry (the backend does not know them).
+        crate::agents::Agents::from_ctx(&ctx).decorate(&mut info);
         Ok(info)
     }
 }

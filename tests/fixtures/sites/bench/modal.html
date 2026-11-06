@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Projects</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 560px; }
+  li { margin: 6px 0; }
+  .backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 40%); display: grid; place-items: center; }
+  .dialog { background: white; padding: 18px; border-radius: 8px; width: 360px; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Projects</h1>
+<ul id="projects"></ul>
+<div id="modal" class="backdrop" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+    <h2 id="dlg-title"></h2>
+    <p>This cannot be undone. Type the project name to confirm.</p>
+    <label>Project name <input id="confirm-name" autocomplete="off"></label>
+    <p>
+      <button id="cancel">Cancel</button>
+      <button id="confirm" disabled>Delete project</button>
+    </p>
+  </div>
+</div>
+<script>
+  // Task "modal": delete "Old Site" through the confirmation dialog; keep the others.
+  let projects = ['Marketing', 'Old Site', 'Docs'];
+  let pending = null;
+  const $ = (id) => document.getElementById(id);
+  function render() {
+    $('projects').replaceChildren(
+      ...projects.map((name) => {
+        const li = document.createElement('li');
+        li.textContent = name + ' ';
+        const del = document.createElement('button');
+        del.textContent = 'Delete';
+        del.setAttribute('aria-label', `Delete ${name}`);
+        del.onclick = () => open(name);
+        li.append(del);
+        return li;
+      }),
+    );
+  }
+  function open(name) {
+    pending = name;
+    $('dlg-title').textContent = `Delete project "${name}"?`;
+    $('confirm-name').value = '';
+    $('confirm').disabled = true;
+    $('modal').hidden = false;
+    $('confirm-name').focus();
+  }
+  $('confirm-name').oninput = () => ($('confirm').disabled = $('confirm-name').value !== pending);
+  $('cancel').onclick = () => ($('modal').hidden = true);
+  $('confirm').onclick = () => {
+    projects = projects.filter((p) => p !== pending);
+    $('modal').hidden = true;
+    render();
+    benchSubmit('modal', { deleted: pending, remaining: projects });
+  };
+  render();
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compare laptops</title>
+<style>body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 560px; }</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Compare laptops</h1>
+<p>The specs are on each laptop's own page:</p>
+<ul>
+  <li><a href="laptop-aurora.html" target="_blank">Aurora 14</a></li>
+  <li><a href="laptop-borealis.html" target="_blank">Borealis 15</a></li>
+</ul>
+<fieldset>
+  <legend>Which laptop has the longer battery life?</legend>
+  <label><input type="radio" name="pick" value="aurora-14"> Aurora 14</label>
+  <label><input type="radio" name="pick" value="borealis-15"> Borealis 15</label>
+</fieldset>
+<button id="send">Submit choice</button>
+<script>
+  // Task "compare": Borealis 15 (14 h) beats Aurora 14 (11 h); both pages must be open in tabs.
+  document.getElementById('send').onclick = () => {
+    const pick = document.querySelector('input[name=pick]:checked');
+    benchSubmit('compare', { choice: pick ? pick.value : null });
+  };
+</script>
+</body>
+</html>

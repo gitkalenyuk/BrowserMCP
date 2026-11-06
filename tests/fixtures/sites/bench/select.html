@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout – shipping</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 560px; }
+  label { display: block; margin: 10px 0; }
+  [role=listbox] { border: 1px solid #999; list-style: none; padding: 4px; margin: 4px 0; width: 220px; }
+  [role=option] { padding: 3px 6px; cursor: pointer; }
+  [role=option][aria-selected=true] { background: #dde; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Shipping</h1>
+<label>Country
+  <select id="country">
+    <option value="">Choose…</option>
+    <option>Germany</option><option>Poland</option><option>Spain</option>
+    <option>Ukraine</option><option>United Kingdom</option><option>United States</option>
+  </select>
+</label>
+<label>Shipping speed
+  <select id="speed">
+    <option value="standard">Standard (5–7 days)</option>
+    <option value="express">Express (2 days)</option>
+    <option value="overnight">Overnight</option>
+  </select>
+</label>
+<label>Quantity
+  <select id="qty"></select>
+</label>
+<div>
+  <span id="color-label">Color</span>
+  <button id="color" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="color-label color">Graphite</button>
+  <ul id="colors" role="listbox" aria-labelledby="color-label" hidden></ul>
+</div>
+<label><input type="checkbox" id="gift"> Gift wrap</label>
+<button id="order">Place order</button>
+<script>
+  // Task "select": Ukraine, Express, quantity 3, color Forest green (custom listbox), gift wrap.
+  const $ = (id) => document.getElementById(id);
+  for (let i = 1; i <= 10; i++) $('qty').add(new Option(String(i), String(i)));
+  const COLORS = ['Graphite', 'Silver', 'Forest green', 'Ocean blue', 'Sunset orange'];
+  let color = 'Graphite';
+  function renderColors() {
+    $('colors').replaceChildren(
+      ...COLORS.map((c) => {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(c === color));
+        li.textContent = c;
+        li.onclick = () => {
+          color = c;
+          $('color').textContent = c;
+          $('colors').hidden = true;
+          $('color').setAttribute('aria-expanded', 'false');
+        };
+        return li;
+      }),
+    );
+  }
+  // The color list only exists while it is open (like most custom dropdowns).
+  $('color').onclick = () => {
+    const open = $('colors').hidden;
+    if (open) renderColors();
+    else $('colors').replaceChildren();
+    $('colors').hidden = !open;
+    $('color').setAttribute('aria-expanded', String(open));
+  };
+  $('order').onclick = () =>
+    benchSubmit('select', {
+      country: $('country').value,
+      speed: $('speed').value,
+      quantity: Number($('qty').value),
+      color,
+      gift: $('gift').checked,
+    });
+</script>
+</body>
+</html>

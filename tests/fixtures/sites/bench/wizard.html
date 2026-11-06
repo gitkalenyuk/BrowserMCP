@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign up – step by step</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px; max-width: 560px; }
+  fieldset { margin: 12px 0; }
+  label { display: block; margin: 8px 0; }
+  .error { color: #b00; }
+</style>
+<script src="bench.js"></script>
+</head>
+<body>
+<h1>Create your account</h1>
+<p id="progress" aria-live="polite">Step 1 of 3</p>
+
+<section id="step1">
+  <h2>Your details</h2>
+  <label>Full name <input id="name" autocomplete="off"></label>
+  <label>Email <input id="email" type="email" autocomplete="off"></label>
+  <p id="err1" class="error" role="alert"></p>
+  <button id="next1">Next</button>
+</section>
+
+<section id="step2" hidden>
+  <h2>Choose a plan</h2>
+  <fieldset>
+    <legend>Plan</legend>
+    <label><input type="radio" name="plan" value="basic" checked> Basic</label>
+    <label><input type="radio" name="plan" value="pro"> Pro</label>
+    <label><input type="radio" name="plan" value="team"> Team</label>
+  </fieldset>
+  <label>Billing
+    <select id="billing">
+      <option value="monthly">Monthly</option>
+      <option value="yearly">Yearly (save 20%)</option>
+    </select>
+  </label>
+  <button id="back2">Back</button>
+  <button id="next2">Next</button>
+</section>
+
+<section id="step3" hidden>
+  <h2>Review</h2>
+  <dl id="review"></dl>
+  <label><input type="checkbox" id="agree"> I agree to the terms of service</label>
+  <button id="back3">Back</button>
+  <button id="submit" disabled>Create account</button>
+</section>
+
+<p id="done" role="status"></p>
+<script>
+  // Task "wizard": Dana Reed, dana@example.test, Pro plan, billed yearly, terms accepted.
+  const $ = (id) => document.getElementById(id);
+  const show = (n) => {
+    for (const i of [1, 2, 3]) $('step' + i).hidden = i !== n;
+    $('progress').textContent = `Step ${n} of 3`;
+  };
+  const plan = () => document.querySelector('input[name=plan]:checked').value;
+  $('next1').onclick = () => {
+    if (!$('name').value.trim()) return ($('err1').textContent = 'Please enter your name.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test($('email').value)) return ($('err1').textContent = 'Please enter a valid email.');
+    $('err1').textContent = '';
+    show(2);
+  };
+  $('back2').onclick = () => show(1);
+  $('next2').onclick = () => {
+    $('review').innerHTML =
+      `<dt>Name</dt><dd>${$('name').value}</dd><dt>Email</dt><dd>${$('email').value}</dd>` +
+      `<dt>Plan</dt><dd>${plan()}</dd><dt>Billing</dt><dd>${$('billing').value}</dd>`;
+    show(3);
+  };
+  $('back3').onclick = () => show(2);
+  $('agree').onchange = () => ($('submit').disabled = !$('agree').checked);
+  $('submit').onclick = () => {
+    $('step3').hidden = true;
+    $('done').textContent = 'Account created. Welcome!';
+    benchSubmit('wizard', {
+      name: $('name').value.trim(),
+      email: $('email').value.trim(),
+      plan: plan(),
+      billing: $('billing').value,
+      agreed: $('agree').checked,
+    });
+  };
+</script>
+</body>
+</html>
