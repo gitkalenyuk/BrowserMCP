@@ -34,20 +34,27 @@
 //! New connections start subscribed to [`DEFAULT_TOPICS`] (the browser-state events the UI
 //! renders); `command.*` must be asked for. If this connection falls too far behind the bus it
 //! gets `{"method":"bus.lagged","params":{"missed":N}}` and should re-read state (e.g. `tabs.list`).
+//!
+//! Plugin connections (`/v1/ws?plugin=<name>&token=<token>`, see [`crate::access`]) are
+//! restricted: only the commands and events their grant allows, no default subscriptions.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, header};
 use axum::response::Response;
 use axum::routing::get;
 use bmcp_core::events::{Event, topics};
 use bmcp_core::{Agents, Caller, CmdError, ErrorCode, TabId};
+use axum::extract::{Query, State};
+use bmcp_core::events::Event;
+use bmcp_core::{Caller, CmdError, ErrorCode};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::access::{PluginAuthHandle, PluginGrant};
 use crate::state::ApiState;
 
 /// Topics every new connection is subscribed to (what the UI needs without asking).
@@ -100,6 +107,35 @@ async fn upgrade(
         Caller::Ws { conn }
     };
     ws.on_upgrade(move |socket| run_connection(state, conn, caller, socket))
+/// `?plugin=<name>&token=<token>` of a plugin connection; other query parameters are ignored.
+#[derive(Debug, Default, Deserialize)]
+struct WsQuery {
+    plugin: Option<String>,
+    token: Option<String>,
+
+    Query(query): Query<WsQuery>,
+    // A plugin connection must prove who it is; a bad token is refused, never "downgraded" to
+    // an unrestricted connection.
+    let grant = match query.plugin.as_deref() {
+        None => None,
+        Some(plugin) => {
+            let auth = state.registry.extensions().get::<PluginAuthHandle>();
+            let token = query.token.as_deref().unwrap_or_default();
+            match auth.and_then(|auth| auth.0.authenticate(plugin, token)) {
+                Some(grant) => Some(Arc::new(grant)),
+                None => {
+                    tracing::warn!(plugin, "plugin WebSocket refused: bad token");
+                    return crate::rest::error_response(
+                        CmdError::new(
+                            ErrorCode::NeedsApproval,
+                            format!("plugin '{plugin}': unknown plugin or wrong token"),
+                        )
+                        .with_retry(bmcp_core::Retry::No),
+                    );
+                }
+            }
+        }
+    ws.on_upgrade(move |socket| run_connection(state, conn, grant, socket))
 }
 
 /// One connection. This task owns the socket: it reads requests and writes everything that
@@ -107,11 +143,28 @@ async fn upgrade(
 async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: WebSocket) {
     tracing::debug!(conn, "WebSocket connected");
     let subs = Arc::new(Mutex::new(Subscriptions::with_defaults()));
+/// `grant` is set for a plugin connection.
+async fn run_connection(
+    state: ApiState,
+    conn: u64,
+    grant: Option<Arc<PluginGrant>>,
+    mut socket: WebSocket,
+    tracing::debug!(
+        conn,
+        plugin = grant.as_ref().map(|g| g.name.as_str()),
+        "WebSocket connected"
+    );
+    // Plugins start with no subscriptions: they get only what they ask for (and may see).
+    let subs = Arc::new(Mutex::new(match grant {
+        Some(_) => Subscriptions::default(),
+        None => Subscriptions::with_defaults(),
+    }));
     let (outbox, mut outgoing) = mpsc::channel::<String>(OUTBOX);
     // Subscribe to the bus right away so no event is missed between connect and subscribe.
     let forwarder = tokio::spawn(forward_events(
         state.events.subscribe(),
         subs.clone(),
+        grant.clone(),
         outbox.clone(),
         state.registry.extensions().get::<Agents>(),
     ));
@@ -128,6 +181,7 @@ async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: 
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
                 handle_message(&state, &caller, &subs, &outbox, &text);
+                handle_message(&state, conn, grant.as_deref(), &subs, &outbox, &text);
             }
             Some(message) = outgoing.recv() => {
                 if socket.send(Message::Text(message.into())).await.is_err() {
@@ -149,6 +203,8 @@ async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: 
 fn handle_message(
     state: &ApiState,
     caller: &Caller,
+    conn: u64,
+    grant: Option<&PluginGrant>,
     subs: &Arc<Mutex<Subscriptions>>,
     outbox: &mpsc::Sender<String>,
     text: &str,
@@ -171,6 +227,7 @@ fn handle_message(
             }
         }
         _ => spawn_call(state, caller, outbox, request),
+        _ => spawn_call(state, conn, grant, outbox, request),
     }
 }
 
@@ -178,6 +235,44 @@ fn handle_message(
 fn spawn_call(state: &ApiState, caller: &Caller, outbox: &mpsc::Sender<String>, request: Request) {
     let unknown_method = state.registry.get(&request.method).is_none();
     let ctx = state.ctx(caller.clone());
+fn spawn_call(
+    state: &ApiState,
+    conn: u64,
+    grant: Option<&PluginGrant>,
+    outbox: &mpsc::Sender<String>,
+    request: Request,
+    let info = state.registry.get(&request.method);
+    let unknown_method = info.is_none();
+    let (caller, denied) = match grant {
+        None => (Caller::Ws { conn }, None),
+        Some(grant) => {
+            // Check the dotted name, so `page_find` cannot dodge a `page.*` rule.
+            let name = info.map_or(request.method.as_str(), |i| i.name);
+            let denied = (!unknown_method && !grant.allows_command(name)).then(|| {
+                CmdError::new(
+                    ErrorCode::NeedsApproval,
+                    format!("plugin '{}' may not call {name}", grant.name),
+                )
+                .with_retry(bmcp_core::Retry::No)
+                .with_hint(format!(
+                    "Add \"{name}\" (or a glob like \"{}.*\") to \"permissions\" in the \
+                     plugin's plugin.json and reload it.",
+                    name.split('.').next().unwrap_or(name)
+                ))
+            });
+            let caller = Caller::Plugin {
+                name: grant.name.clone(),
+            };
+            (caller, denied)
+        }
+    };
+    if let Some(err) = denied {
+        if let Some(id) = request.id {
+            send_later(outbox, error_response(id, COMMAND_FAILED, &err));
+        }
+        return;
+    }
+    let ctx = state.ctx(caller);
     let call = state.registry.call(ctx, &request.method, request.params);
     let outbox = outbox.clone();
     let method = request.method;
@@ -219,6 +314,7 @@ fn send_later(outbox: &mpsc::Sender<String>, message: String) {
 async fn forward_events(
     mut events: broadcast::Receiver<Event>,
     subs: Arc<Mutex<Subscriptions>>,
+    grant: Option<Arc<PluginGrant>>,
     outbox: mpsc::Sender<String>,
     agents: Option<Arc<Agents>>,
 ) {
@@ -233,6 +329,13 @@ async fn forward_events(
                     None => event.data,
                 };
                 notification(&event.topic, with_seq(data, event.seq))
+                // A plugin sees only the topics its plugin.json lists.
+                if let Some(grant) = &grant
+                    && !grant.allows_event(&event.topic, &event.data)
+                {
+                    continue;
+                }
+                notification(&event.topic, with_seq(event.data, event.seq))
             }
             Err(broadcast::error::RecvError::Lagged(missed)) => {
                 if lock(&subs).is_empty() {

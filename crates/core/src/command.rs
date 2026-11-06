@@ -271,6 +271,11 @@ pub enum Caller {
     },
     /// A keyboard shortcut.
     Keymap,
+    /// A plugin (`data/plugins/<name>`), over its own restricted WebSocket connection: the API
+    /// only lets it run the commands its `plugin.json` asks for (see `bmcp_api::access`).
+    Plugin {
+        name: String,
+    },
 }
 
 impl Caller {

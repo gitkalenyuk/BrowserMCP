@@ -12,7 +12,8 @@ export type Caller =
   | { kind: "script"; id: string }
   | { kind: "agent"; id: string }
   | { kind: "job"; run: string; step: number }
-  | { kind: "keymap" };
+  | { kind: "keymap" }
+  | { kind: "plugin"; name: string };
 
 /** Every event payload carries the bus sequence number (grows by one per event). */
 export interface EventBase {

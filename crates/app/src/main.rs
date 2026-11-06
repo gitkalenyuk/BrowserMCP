@@ -197,6 +197,14 @@ async fn start_api(
         .insert(bmcp_heal::HealService::new(bmcp_heal::HealConfig::new(
             &data,
         )));
+    // Plugins, userscripts and webhook triggers (data/plugins, data/userscripts,
+    // data/config/webhooks.json). The auth handle lets the API restrict plugin connections.
+    let plugins = bmcp_plugins::PluginsService::open(
+        bmcp_plugins::PluginsConfig::new(&data, port),
+        events.clone(),
+    );
+    registry.extensions().insert(plugins.clone());
+    registry.extensions().insert(plugins.auth_handle());
     // Notifications: UI toasts, Windows toasts, Telegram bot, webhook (data/config/notify.json).
     // Routes bus events (run.finished, run.heal_needed, …) by its rules; serves ui.ask_user.
     let notify = registry
@@ -216,6 +224,8 @@ async fn start_api(
     bmcp_notify::attach(&registry, backend.clone());
     // Watches run.heal_needed (proposes patches) and takes the page snapshot of broken rows.
     bmcp_heal::attach(&registry, backend.clone(), events.clone());
+    // Webhooks start runs through the registry.
+    plugins.attach(&registry);
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.
     if let Some(store) = store {
         bmcp_data::spawn_history_recorder(store, &events, Some(backend.clone()));
@@ -233,7 +243,9 @@ async fn start_api(
             if let Some(jobs) = &jobs {
                 jobs.set_ws_url(server.ws_url());
             }
-            // Kill agent, terminal and script child processes when the browser quits.
+            // Plugin processes connect to the API, so they start once it listens.
+            plugins.start(server.ws_url());
+            // Kill agent, terminal, script and plugin child processes when the browser quits.
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
@@ -241,6 +253,7 @@ async fn start_api(
                 if let Some(jobs) = jobs {
                     jobs.shutdown();
                 }
+                plugins.shutdown();
             });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

@@ -22,6 +22,7 @@ pub fn build_registry() -> Registry {
     bmcp_record::register(&mut registry);
     bmcp_adblock::register(&mut registry);
     bmcp_jobs::register(&mut registry);
+    bmcp_plugins::register(&mut registry);
     bmcp_governor::register(&mut registry);
     bmcp_pagetools::register(&mut registry);
     bmcp_heal::register(&mut registry);

@@ -18,11 +18,23 @@ use deno_core::serde_json::{Value, json};
 /// that owns the V8 isolate.
 pub type CallFuture = Pin<Box<dyn Future<Output = Result<Value, SinkError>>>>;
 
+/// The future [`CommandSink::next_event`] returns: `Some((topic, data))` or `None` when no
+/// more events will ever come.
+pub type EventFuture = Pin<Box<dyn Future<Output = Option<(String, Value)>>>>;
+
 /// Anything that can execute a browser command by name.
 pub trait CommandSink {
     /// Run command `name` (e.g. `"tabs.list"`) with JSON `args`
     /// (`null` when the script passed nothing) and return its JSON result.
     fn call(&self, name: String, args: Value) -> CallFuture;
+
+    /// Wait for the next event the browser pushed (what `browser.on(topic, handler)` in a
+    /// script listens to). `None` means "no more events, ever" (this sink has no events, or
+    /// the connection closed); the script's event loop then stops and the script can end.
+    /// The default sink has no events.
+    fn next_event(&self) -> EventFuture {
+        Box::pin(async { None })
+    }
 }
 
 /// A failed command. Mirrors a JSON-RPC error object (`code` + `message`).
