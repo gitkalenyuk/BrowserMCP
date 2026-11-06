@@ -2154,6 +2154,343 @@ declare namespace BrowserMCP {
     total: number;
   }
 
+  // ---- notify.config_get ----
+
+  /**
+   * Arguments of `notify.config_get`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type NotifyConfigGetArgs = Record<string, never>;
+
+  /**
+   * Result of `notify.config_get`.
+   * The whole configuration file.
+   */
+  export interface NotifyConfigGetOutput {
+    /** @default {"os":true,"telegram":{"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false},"ui":true,"webhook":{"enabled":false,"url":""}} */
+    channels: {
+      /**
+       * Windows toast notifications.
+       * @default true
+       */
+      os: boolean;
+      /** @default {"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false} */
+      telegram: {
+        /**
+         * Bot API base URL; only changed for tests or a self-hosted Bot API server.
+         * @default "https://api.telegram.org"
+         */
+        api_base: string;
+        /**
+         * Token from @BotFather (`123456:ABC…`). Stored as plain text.
+         * @default ""
+         */
+        bot_token: string;
+        /**
+         * Your chat with the bot (a number like `"123456789"`), or `"@channel"`. Button presses
+         * from any other chat are ignored.
+         * @default ""
+         */
+        chat_id: string;
+        /** @default false */
+        enabled: boolean;
+      };
+      /**
+       * Toasts in the browser UI.
+       * @default true
+       */
+      ui: boolean;
+      /** @default {"enabled":false,"url":""} */
+      webhook: {
+        /** @default false */
+        enabled: boolean;
+        /**
+         * Receives `POST` with `{id, title, body, level, topic, data, actions, ts_ms}`.
+         * @default ""
+         */
+        url: string;
+      };
+    };
+    /**
+     * Anti-spam knobs.
+     * @default {"aggregate_secs":60,"dedup_secs":10,"max_per_minute":20}
+     */
+    limits: {
+      /**
+       * Window of `aggregate` rules.
+       * @default 60
+       */
+      aggregate_secs: number;
+      /**
+       * The same title + text again within this many seconds is dropped.
+       * @default 10
+       */
+      dedup_secs: number;
+      /**
+       * Per channel; extra notifications are dropped and counted ("+N suppressed").
+       * Questions (with buttons) are never dropped.
+       * @default 20
+       */
+      max_per_minute: number;
+    };
+    /**
+     * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
+     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+     */
+    rules: {
+      /**
+       * Collect bursts of this event (per run / session) into one summary per
+       * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+       * @default false
+       */
+      aggregate: boolean;
+      /** Where matching events go (only the channels that are enabled are used). */
+      channels: ("ui" | "os" | "telegram" | "webhook")[];
+      /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
+      topic: string;
+      /**
+       * Extra condition; default `always`.
+       *
+       * - `"unfocused"`: Only when the browser window is not the foreground window.
+       * - `"failed"`: Only when the event reports a failure (`ok: false`, `status: "failed"` or `failed > 0`).
+       * @default "always"
+       */
+      when: "always" | "unfocused" | "failed";
+    }[];
+  }
+
+  // ---- notify.config_set ----
+
+  /**
+   * Arguments of `notify.config_set`.
+   * Only the given fields change.
+   */
+  export interface NotifyConfigSetArgs {
+    /** Anti-spam knobs. */
+    limits?: {
+      /**
+       * Window of `aggregate` rules.
+       * @default 60
+       */
+      aggregate_secs?: number;
+      /**
+       * The same title + text again within this many seconds is dropped.
+       * @default 10
+       */
+      dedup_secs?: number;
+      /**
+       * Per channel; extra notifications are dropped and counted ("+N suppressed").
+       * Questions (with buttons) are never dropped.
+       * @default 20
+       */
+      max_per_minute?: number;
+    } | null;
+    /** Windows toast notifications. */
+    os?: boolean | null;
+    /** Replaces all rules. Topic: exact, "prefix.*" or "*"; first match wins. */
+    rules?: {
+      /**
+       * Collect bursts of this event (per run / session) into one summary per
+       * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+       * @default false
+       */
+      aggregate?: boolean;
+      /** Where matching events go (only the channels that are enabled are used). */
+      channels: ("ui" | "os" | "telegram" | "webhook")[];
+      /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
+      topic: string;
+      /**
+       * Extra condition; default `always`.
+       *
+       * - `"unfocused"`: Only when the browser window is not the foreground window.
+       * - `"failed"`: Only when the event reports a failure (`ok: false`, `status: "failed"` or `failed > 0`).
+       * @default "always"
+       */
+      when?: "always" | "unfocused" | "failed";
+    }[] | null;
+    telegram?: {
+      api_base?: string | null;
+      /** Bot token from @BotFather. The masked value from config_get ("…abcd") keeps the stored one. */
+      bot_token?: string | null;
+      /** Your chat id with the bot (number) or "@channel". */
+      chat_id?: string | null;
+      enabled?: boolean | null;
+    } | null;
+    /** Toasts in the browser UI. */
+    ui?: boolean | null;
+    webhook?: {
+      enabled?: boolean | null;
+      url?: string | null;
+    } | null;
+  }
+
+  /**
+   * Result of `notify.config_set`.
+   * The whole configuration file.
+   */
+  export interface NotifyConfigSetOutput {
+    /** @default {"os":true,"telegram":{"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false},"ui":true,"webhook":{"enabled":false,"url":""}} */
+    channels: {
+      /**
+       * Windows toast notifications.
+       * @default true
+       */
+      os: boolean;
+      /** @default {"api_base":"https://api.telegram.org","bot_token":"","chat_id":"","enabled":false} */
+      telegram: {
+        /**
+         * Bot API base URL; only changed for tests or a self-hosted Bot API server.
+         * @default "https://api.telegram.org"
+         */
+        api_base: string;
+        /**
+         * Token from @BotFather (`123456:ABC…`). Stored as plain text.
+         * @default ""
+         */
+        bot_token: string;
+        /**
+         * Your chat with the bot (a number like `"123456789"`), or `"@channel"`. Button presses
+         * from any other chat are ignored.
+         * @default ""
+         */
+        chat_id: string;
+        /** @default false */
+        enabled: boolean;
+      };
+      /**
+       * Toasts in the browser UI.
+       * @default true
+       */
+      ui: boolean;
+      /** @default {"enabled":false,"url":""} */
+      webhook: {
+        /** @default false */
+        enabled: boolean;
+        /**
+         * Receives `POST` with `{id, title, body, level, topic, data, actions, ts_ms}`.
+         * @default ""
+         */
+        url: string;
+      };
+    };
+    /**
+     * Anti-spam knobs.
+     * @default {"aggregate_secs":60,"dedup_secs":10,"max_per_minute":20}
+     */
+    limits: {
+      /**
+       * Window of `aggregate` rules.
+       * @default 60
+       */
+      aggregate_secs: number;
+      /**
+       * The same title + text again within this many seconds is dropped.
+       * @default 10
+       */
+      dedup_secs: number;
+      /**
+       * Per channel; extra notifications are dropped and counted ("+N suppressed").
+       * Questions (with buttons) are never dropped.
+       * @default 20
+       */
+      max_per_minute: number;
+    };
+    /**
+     * Event topic → channels. The first rule whose topic matches and whose `when` holds wins.
+     * @default [{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.finished","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"run.heal_needed","when":"always"},{"aggregate":true,"channels":["ui"],"topic":"run.row_failed","when":"always"},{"aggregate":false,"channels":["os","telegram"],"topic":"ai.done","when":"unfocused"},{"aggregate":false,"channels":["ui","os"],"topic":"download.done","when":"always"},{"aggregate":false,"channels":["ui","os","telegram","webhook"],"topic":"trigger.fired","when":"failed"}]
+     */
+    rules: {
+      /**
+       * Collect bursts of this event (per run / session) into one summary per
+       * `limits.aggregate_secs`: the first one is sent at once, the rest are counted.
+       * @default false
+       */
+      aggregate: boolean;
+      /** Where matching events go (only the channels that are enabled are used). */
+      channels: ("ui" | "os" | "telegram" | "webhook")[];
+      /** Exact topic (`run.finished`), a prefix pattern (`run.*`) or `*`. */
+      topic: string;
+      /**
+       * Extra condition; default `always`.
+       *
+       * - `"unfocused"`: Only when the browser window is not the foreground window.
+       * - `"failed"`: Only when the event reports a failure (`ok: false`, `status: "failed"` or `failed > 0`).
+       * @default "always"
+       */
+      when: "always" | "unfocused" | "failed";
+    }[];
+  }
+
+  // ---- notify.send ----
+
+  /** Arguments of `notify.send`. */
+  export interface NotifySendArgs {
+    /** @default "" */
+    body?: string;
+    /** Default: every enabled channel. */
+    channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
+    /**
+     * How important a notification is (UI color, Telegram prefix, toast sound).
+     * @default "info"
+     */
+    level?: "info" | "success" | "warning" | "error";
+    title: string;
+  }
+
+  /**
+   * Result of `notify.send`.
+   * What happened to one notification, per channel.
+   */
+  export interface NotifySendOutput {
+    delivered: ("ui" | "os" | "telegram" | "webhook")[];
+    failed: {
+      /**
+       * Where a notification can go.
+       *
+       * - `"ui"`: A toast in the browser UI (`ui.notification` event).
+       * - `"os"`: A Windows toast notification.
+       * - `"telegram"`: A Telegram bot message (with answer buttons for questions).
+       * - `"webhook"`: `POST <url>` with the notification as JSON.
+       */
+      channel: "ui" | "os" | "telegram" | "webhook";
+      error: string;
+    }[];
+    /** Notification id (`n3`). */
+    id: string;
+    /** Not sent: channel switched off / not configured, or over the rate limit. */
+    skipped: ("ui" | "os" | "telegram" | "webhook")[];
+  }
+
+  // ---- notify.test ----
+
+  /** Arguments of `notify.test`. */
+  export interface NotifyTestArgs {
+    /**
+     * Where a notification can go.
+     *
+     * - `"ui"`: A toast in the browser UI (`ui.notification` event).
+     * - `"os"`: A Windows toast notification.
+     * - `"telegram"`: A Telegram bot message (with answer buttons for questions).
+     * - `"webhook"`: `POST <url>` with the notification as JSON.
+     */
+    channel: "ui" | "os" | "telegram" | "webhook";
+  }
+
+  /** Result of `notify.test`. */
+  export interface NotifyTestOutput {
+    /**
+     * Where a notification can go.
+     *
+     * - `"ui"`: A toast in the browser UI (`ui.notification` event).
+     * - `"os"`: A Windows toast notification.
+     * - `"telegram"`: A Telegram bot message (with answer buttons for questions).
+     * - `"webhook"`: `POST <url>` with the notification as JSON.
+     */
+    channel: "ui" | "os" | "telegram" | "webhook";
+    error: string | null;
+    ok: boolean;
+  }
+
   // ---- page.act ----
 
   /** Arguments of `page.act`. */
@@ -4330,6 +4667,54 @@ declare namespace BrowserMCP {
     spec: string;
   }
 
+  // ---- ui.answer ----
+
+  /** Arguments of `ui.answer`. */
+  export interface UiAnswerArgs {
+    /** The pressed action's id. */
+    choice: string;
+    /** Notification id from ui.notification. */
+    id: string;
+  }
+
+  /** Result of `ui.answer`. */
+  export interface UiAnswerOutput {
+    id: string;
+    /** The pressed button's text. */
+    label: string;
+  }
+
+  // ---- ui.ask_user ----
+
+  /** Arguments of `ui.ask_user`. */
+  export interface UiAskUserArgs {
+    /** Default: ui, plus telegram and os when they are enabled (os only shows the question). */
+    channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
+    /** 1–8 answer buttons, e.g. ["Yes", "No"]. */
+    choices: string[];
+    /**
+     * Optional details under the question.
+     * @default ""
+     */
+    details?: string;
+    question: string;
+    /** How long to wait (default 300, max 3600). No answer → choice null, via "timeout". */
+    timeout_secs?: number | null;
+  }
+
+  /**
+   * Result of `ui.ask_user`.
+   * Answer to a question.
+   */
+  export interface UiAskUserOutput {
+    /** The chosen choice text; `null` when nobody answered in time. */
+    choice: string | null;
+    /** Its position in `choices` (0-based). */
+    index: number | null;
+    /** `ui`, `telegram` or `timeout`. */
+    via: string;
+  }
+
   // ---- ui.layout ----
 
   /** Arguments of `ui.layout`. */
@@ -4348,6 +4733,47 @@ declare namespace BrowserMCP {
    * Arguments/output for commands that take or return nothing: `{}`.
    */
   export type UiLayoutOutput = Record<string, never>;
+
+  // ---- ui.notify ----
+
+  /** Arguments of `ui.notify`. */
+  export interface UiNotifyArgs {
+    /** Default ["ui"]; add "os" / "telegram" to reach the user away from the browser. */
+    channels?: ("ui" | "os" | "telegram" | "webhook")[] | null;
+    /**
+     * How important a notification is (UI color, Telegram prefix, toast sound).
+     * @default "info"
+     */
+    level?: "info" | "success" | "warning" | "error";
+    /** Message for the user. */
+    text: string;
+    /** Short heading; default "BrowserMCP". */
+    title?: string | null;
+  }
+
+  /**
+   * Result of `ui.notify`.
+   * What happened to one notification, per channel.
+   */
+  export interface UiNotifyOutput {
+    delivered: ("ui" | "os" | "telegram" | "webhook")[];
+    failed: {
+      /**
+       * Where a notification can go.
+       *
+       * - `"ui"`: A toast in the browser UI (`ui.notification` event).
+       * - `"os"`: A Windows toast notification.
+       * - `"telegram"`: A Telegram bot message (with answer buttons for questions).
+       * - `"webhook"`: `POST <url>` with the notification as JSON.
+       */
+      channel: "ui" | "os" | "telegram" | "webhook";
+      error: string;
+    }[];
+    /** Notification id (`n3`). */
+    id: string;
+    /** Not sent: channel switched off / not configured, or over the rate limit. */
+    skipped: ("ui" | "os" | "telegram" | "webhook")[];
+  }
 
   /** Every command by dotted name, with its argument and result types. */
   export interface Commands {
@@ -4463,6 +4889,14 @@ declare namespace BrowserMCP {
     "net.search": { args: NetSearchArgs; output: NetSearchOutput };
     /** Messages of a captured WebSocket (id from net_list), one line each with direction, size, time and payload (cut). Paginated with cursor. */
     "net.ws_frames": { args: NetWsFramesArgs; output: NetWsFramesOutput };
+    /** Notification settings (data/config/notify.json): channels ui/os/telegram/webhook, rules (event topic → channels, when: always|unfocused|failed, aggregate) and anti-spam limits. The Telegram bot token is masked. */
+    "notify.config_get": { args: NotifyConfigGetArgs; output: NotifyConfigGetOutput };
+    /** Change notification settings (only the fields given). Returns the new settings (token masked). Test a channel afterwards with notify_test. */
+    "notify.config_set": { args: NotifyConfigSetArgs; output: NotifyConfigSetOutput };
+    /** Send a notification (default: to every enabled channel: ui, os, telegram, webhook). Returns which channels got it. */
+    "notify.send": { args: NotifySendArgs; output: NotifySendOutput };
+    /** Send a test notification to one channel (even if it is switched off) and report whether it worked. */
+    "notify.test": { args: NotifyTestArgs; output: NotifyTestOutput };
     /** Act on an element by ref: click, dblclick, fill, type, select, check, uncheck, hover, press, scroll, focus. Checks the element is visible, enabled and not covered (else NOT_INTERACTABLE naming what is in the way), uses real input events, waits for the page, and returns a one-line diff of what changed. */
     "page.act": { args: PageActArgs; output: PageActOutput };
     /** Run several page_act steps in one call (e.g. fill email, fill password, click submit). Returns a result per step and one diff at the end. */
@@ -4589,8 +5023,14 @@ declare namespace BrowserMCP {
     "trigger.remove": { args: TriggerRemoveArgs; output: TriggerRemoveOutput };
     /** Create or replace a cron trigger that runs a saved script on a schedule. Returns the trigger with its next firing time. */
     "trigger.set": { args: TriggerSetArgs; output: TriggerSetOutput };
+    /** UI plumbing: a notification button was pressed. */
+    "ui.answer": { args: UiAnswerArgs; output: UiAnswerOutput };
+    /** Ask the user a question with answer buttons (browser toast, and Telegram when enabled) and wait for the first answer. Returns {choice, index, via} (via: ui | telegram | timeout; choice null on timeout). */
+    "ui.ask_user": { args: UiAskUserArgs; output: UiAskUserOutput };
     /** Internal: the browser UI reports its page area. No effect over the API. */
     "ui.layout": { args: UiLayoutArgs; output: UiLayoutOutput };
+    /** Show the user a notification (a toast in the browser by default; channels can add os / telegram / webhook). Does not wait for a reply: use ui_ask_user for questions. */
+    "ui.notify": { args: UiNotifyArgs; output: UiNotifyOutput };
   }
 
   /** The global `browser`: `browser.<group>.<action>(args)` sends that command. */
@@ -4971,6 +5411,33 @@ declare namespace BrowserMCP {
        * `net.ws_frames` (MCP: `net_ws_frames`): toolset `net`, read.
        */
       ws_frames(args: NetWsFramesArgs): Promise<NetWsFramesOutput>;
+    };
+    /** Commands `notify.*`. */
+    notify: {
+      /**
+       * Notification settings (data/config/notify.json): channels ui/os/telegram/webhook, rules (event topic → channels, when: always|unfocused|failed, aggregate) and anti-spam limits. The Telegram bot token is masked.
+       *
+       * `notify.config_get` (MCP: `notify_config_get`): toolset `ui`, read.
+       */
+      config_get(args?: NotifyConfigGetArgs): Promise<NotifyConfigGetOutput>;
+      /**
+       * Change notification settings (only the fields given). Returns the new settings (token masked). Test a channel afterwards with notify_test.
+       *
+       * `notify.config_set` (MCP: `notify_config_set`): toolset `ui`, secret.
+       */
+      config_set(args?: NotifyConfigSetArgs): Promise<NotifyConfigSetOutput>;
+      /**
+       * Send a notification (default: to every enabled channel: ui, os, telegram, webhook). Returns which channels got it.
+       *
+       * `notify.send` (MCP: `notify_send`): toolset `ui`, act.
+       */
+      send(args: NotifySendArgs): Promise<NotifySendOutput>;
+      /**
+       * Send a test notification to one channel (even if it is switched off) and report whether it worked.
+       *
+       * `notify.test` (MCP: `notify_test`): toolset `ui`, act.
+       */
+      test(args: NotifyTestArgs): Promise<NotifyTestOutput>;
     };
     /** Commands `page.*`. */
     page: {
@@ -5390,12 +5857,31 @@ declare namespace BrowserMCP {
     /** Commands `ui.*`. */
     ui: {
       /**
+       * UI plumbing: a notification button was pressed.
+       *
+       * `ui.answer` (MCP: `ui_answer`): toolset `hidden`, act.
+       * Internal (hidden toolset): not listed to agents by default.
+       */
+      answer(args: UiAnswerArgs): Promise<UiAnswerOutput>;
+      /**
+       * Ask the user a question with answer buttons (browser toast, and Telegram when enabled) and wait for the first answer. Returns {choice, index, via} (via: ui | telegram | timeout; choice null on timeout).
+       *
+       * `ui.ask_user` (MCP: `ui_ask_user`): toolset `ui`, act.
+       */
+      ask_user(args: UiAskUserArgs): Promise<UiAskUserOutput>;
+      /**
        * Internal: the browser UI reports its page area. No effect over the API.
        *
        * `ui.layout` (MCP: `ui_layout`): toolset `hidden`, read.
        * Internal (hidden toolset): not listed to agents by default.
        */
       layout(args: UiLayoutArgs): Promise<UiLayoutOutput>;
+      /**
+       * Show the user a notification (a toast in the browser by default; channels can add os / telegram / webhook). Does not wait for a reply: use ui_ask_user for questions.
+       *
+       * `ui.notify` (MCP: `ui_notify`): toolset `ui`, act.
+       */
+      notify(args: UiNotifyArgs): Promise<UiNotifyOutput>;
     };
   }
 }

@@ -186,6 +186,8 @@ export interface RpcMethods {
   'net.resume': { params: NetResume; result: { pause_id: string; done: string; text: string } };
   /** Reports the page area's bounds (CSS px, relative to the UI view) so the core can place the content view. */
   'ui.layout': { params: Rect & { dpr: number }; result: void };
+  /** A notification button was pressed (crates/notify). */
+  'ui.answer': { params: { id: string; choice: string }; result: { id: string; label: string } };
 }
 
 /** Server -> client notifications. */
@@ -214,6 +216,23 @@ export interface ApiEvents {
   'net.lagged': { tab: TabId; missed: number; warning: string };
   /** WS only: this connection fell behind the bus. */
   'bus.lagged': { missed: number };
+  // ui.* (crates/notify): toasts and questions
+  'ui.notification': UiNotification;
+  /** Answered (in the UI or on Telegram), expired or resolved elsewhere: hide it. */
+  'ui.notification_closed': { id: string; choice: string | null; label: string; via: string };
+}
+
+export type NotifyLevel = 'info' | 'success' | 'warning' | 'error';
+
+/** `ui.notification`: a toast; with `actions` it is a question that stays until answered. */
+export interface UiNotification {
+  id: string;
+  title: string;
+  body: string;
+  level: NotifyLevel;
+  actions: { id: string; label: string }[];
+  sticky: boolean;
+  topic: string | null;
 }
 
 /** `Empty` output of the core (`{}`). */
