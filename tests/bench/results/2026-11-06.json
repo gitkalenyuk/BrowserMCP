@@ -1,0 +1,319 @@
+{
+  "claude-code": {
+    "agent": "claude-code",
+    "cost_usd": 2.2709992,
+    "date": "2026-11-06",
+    "output_tokens": 15431,
+    "passed": 9,
+    "tasks": [
+      {
+        "agent_error": null,
+        "cost_usd": 0.18686300000000003,
+        "final_text": "I searched \"wireless keyboard\" and added KeyCo's K7 Wireless Keyboard ($59.00) to the cart; its button now reads \"In cart\".",
+        "id": "search",
+        "kind": "search results page",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 15071,
+          "cache_read": 239415,
+          "input": 18,
+          "output": 917,
+          "total": 255421
+        },
+        "tool_calls": 8,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act": 3,
+          "page_snapshot": 3,
+          "tabs_open": 1
+        },
+        "turns": 9,
+        "wall_ms": 85238
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.1803226,
+        "final_text": "I created Dana Reed's account (dana@example.test) on the Pro plan billed yearly and accepted the terms; the page says \"Account created. Welcome!\"",
+        "id": "wizard",
+        "kind": "multi-step form wizard",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 15976,
+          "cache_read": 178793,
+          "input": 14,
+          "output": 835,
+          "total": 195618
+        },
+        "tool_calls": 7,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act_batch": 3,
+          "page_snapshot": 2,
+          "tabs_open": 1
+        },
+        "turns": 8,
+        "wall_ms": 18368
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.22301820000000003,
+        "final_text": "I found SKU Q-4417 (Pressure valve V2) on page 4 of 5 and submitted its price, $63.10, which the page confirmed as \"Submitted.\"",
+        "id": "pagination",
+        "kind": "pagination list",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 15877,
+          "cache_read": 340231,
+          "input": 24,
+          "output": 1393,
+          "total": 357525
+        },
+        "tool_calls": 13,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act": 5,
+          "page_find": 3,
+          "page_snapshot": 1,
+          "page_text": 2,
+          "tabs_open": 1
+        },
+        "turns": 14,
+        "wall_ms": 45664
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.28051919999999997,
+        "final_text": "Both spec pages are open in their own tabs, and I submitted Borealis 15 on the compare page because its battery lasts up to 14 hours versus 11 for Aurora 14 (the page shows \"Submitted.\").",
+        "id": "compare",
+        "kind": "multi-tab compare",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 17694,
+          "cache_read": 518116,
+          "input": 36,
+          "output": 1760,
+          "total": 537606
+        },
+        "tool_calls": 18,
+        "tools": {
+          "ToolSearch": 2,
+          "page_act": 5,
+          "page_find": 2,
+          "page_snapshot": 1,
+          "page_text": 3,
+          "tabs_activate": 2,
+          "tabs_list": 2,
+          "tabs_open": 1
+        },
+        "turns": 19,
+        "wall_ms": 158668
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.2070912,
+        "final_text": "I added up the five Shipped orders, entered 566.00 in the report box and submitted it; the page showed \"Submitted.\" Clicking Submit failed because the tab's viewport was 0×0, so I sent it by pressing Enter on the button.",
+        "id": "table",
+        "kind": "table extraction",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 14924,
+          "cache_read": 303056,
+          "input": 22,
+          "output": 1350,
+          "total": 319352
+        },
+        "tool_calls": 10,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act": 6,
+          "page_snapshot": 1,
+          "page_text": 1,
+          "tabs_open": 1
+        },
+        "turns": 11,
+        "wall_ms": 110862
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.2355082,
+        "final_text": "I deleted \"Old Site\" after typing its name to confirm, using the keyboard because the browser reported a 0×0 view and clicks failed; Marketing and Docs are still there.",
+        "id": "modal",
+        "kind": "modal dialog",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 16197,
+          "cache_read": 369701,
+          "input": 28,
+          "output": 1594,
+          "total": 387520
+        },
+        "tool_calls": 12,
+        "tools": {
+          "ToolSearch": 2,
+          "nav_wait": 1,
+          "page_act": 5,
+          "page_snapshot": 2,
+          "tabs_activate": 1,
+          "tabs_open": 1
+        },
+        "turns": 13,
+        "wall_ms": 103559
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.412663,
+        "final_text": "The order isn't placed: everything is set except the color, which I couldn't change in this browser. Country is Ukraine, shipping is Express (2 days), quantity is 3, gift wrap is on, and the color is still Graphite. I didn't click \"Place order\", so nothing went out with the wrong color.  **Why the c…",
+        "id": "select",
+        "kind": "dropdowns (native + custom listbox)",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": false,
+        "reason": "the page reported nothing (task not completed)",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 22074,
+          "cache_read": 790515,
+          "input": 52,
+          "output": 3888,
+          "total": 816529
+        },
+        "tool_calls": 22,
+        "tools": {
+          "ToolSearch": 3,
+          "input_keys": 1,
+          "page_act": 12,
+          "page_act_batch": 1,
+          "page_snapshot": 2,
+          "tabs_activate": 1,
+          "tabs_list": 1,
+          "tabs_open": 1
+        },
+        "turns": 23,
+        "wall_ms": 200407
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.26411500000000004,
+        "final_text": "I scrolled the feed until post #42 loaded and liked it; it's the only post marked \"Liked\". Clicking failed because the browser reported a 0x0 viewport, so I pressed Enter on the button instead.",
+        "id": "scroll",
+        "kind": "infinite scroll",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 16201,
+          "cache_read": 473295,
+          "input": 32,
+          "output": 1986,
+          "total": 491514
+        },
+        "tool_calls": 16,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act": 9,
+          "page_find": 4,
+          "page_snapshot": 1,
+          "tabs_open": 1
+        },
+        "turns": 17,
+        "wall_ms": 174195
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.19102579999999997,
+        "final_text": "I signed in as mira and triggered \"Download October statement\", and the page showed \"Submitted.\" but I didn't confirm the file was saved (mouse clicks failed on the 0×0 tab, so I used Enter).",
+        "id": "login",
+        "kind": "login (no iframe)",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": false,
+        "tokens": {
+          "cache_creation": 15351,
+          "cache_read": 243129,
+          "input": 18,
+          "output": 976,
+          "total": 259474
+        },
+        "tool_calls": 7,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act": 3,
+          "page_act_batch": 1,
+          "page_snapshot": 1,
+          "tabs_open": 1
+        },
+        "turns": 8,
+        "wall_ms": 124262
+      },
+      {
+        "agent_error": null,
+        "cost_usd": 0.08987300000000001,
+        "final_text": "I sent the support message \"Order 1042 arrived damaged\" as Sam Ortiz: the first try failed with a 503 error, so I filled it in again and the page confirmed \"Thanks! Your message was sent.\"",
+        "id": "recovery",
+        "kind": "error recovery",
+        "mcp_status": "connected",
+        "model": "claude-opus-5-5",
+        "owned_tabs": 1,
+        "pass": true,
+        "reason": "",
+        "retried": true,
+        "tokens": {
+          "cache_creation": 4742,
+          "cache_read": 186205,
+          "input": 14,
+          "output": 732,
+          "total": 191693
+        },
+        "tool_calls": 5,
+        "tools": {
+          "ToolSearch": 1,
+          "page_act_batch": 2,
+          "page_snapshot": 1,
+          "tabs_open": 1
+        },
+        "turns": 6,
+        "wall_ms": 60468
+      }
+    ],
+    "tokens": 3812252,
+    "tool_calls": 118,
+    "total": 10
+  }
+}

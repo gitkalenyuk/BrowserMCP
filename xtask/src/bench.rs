@@ -134,8 +134,12 @@ impl Browser {
             ));
         }
         std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-        let log =
-            std::fs::File::create(data_dir.join("bench-browser.log")).map_err(|e| e.to_string())?;
+        // Appended: a restarted browser must not erase why the previous one went away.
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(data_dir.join("bench-browser.log"))
+            .map_err(|e| e.to_string())?;
         let child = Command::new(exe)
             .arg("--api-port")
             .arg(port.to_string())
@@ -220,6 +224,8 @@ struct TaskResult {
     run: AgentRun,
     /// Tabs the `bench` agent owned at the end (REST `tabs.list`, `lockedBy`).
     owned_tabs: usize,
+    /// The first attempt was lost because the browser went away.
+    retried: bool,
 }
 
 struct Report {
@@ -246,60 +252,91 @@ fn run_tasks(
     let base = format!("{}/bench", fixtures.base());
     let mut results = Vec::new();
     for task in &opts.tasks {
-        // A task may have closed the browser (e.g. its last tab): start a new one.
-        if !healthy(opts.port) {
-            println!("[{}] the browser is gone; restarting it", task.id);
-            browser.stop();
-            *browser = Browser::start(&browser.exe.clone(), opts.port, &browser.data_dir.clone())?;
-        }
-        reset_browser(opts.port)?;
-        fixtures.reset();
-        let prompt = format!("{} {}", task.prompt.replace("{base}", &base), tasks::RULES);
-        println!("[{}] running {} …", task.id, opts.agent.name());
-        let run = agent::run(&agent_opts, &prompt);
-        let log: String = run.events.iter().map(|e| format!("{e}\n")).collect();
-        let _ = std::fs::write(agent_opts.cwd.join(format!("{}.jsonl", task.id)), log);
-
-        let reported = fixtures.results(task.id);
-        // The browser may be gone (the agent closed the last tab): check without tabs then.
-        let tabs = rest(opts.port, "tabs.list", json!({})).unwrap_or(Value::Null);
-        let owned_tabs = tabs["tabs"]
-            .as_array()
-            .map(|t| t.iter().filter(|t| t["lockedBy"] == AGENT_ID).count())
-            .unwrap_or(0);
-        let checked = (task.check)(&Outcome {
-            results: &reported,
-            tabs: &tabs,
-        });
-        let (pass, reason) = match (&checked, &run.error) {
-            (Ok(()), _) => (true, String::new()),
-            (Err(why), Some(err)) => (false, format!("{why} (agent: {err})")),
-            (Err(why), None) => (false, why.clone()),
+        let mut attempt = 1;
+        let result = loop {
+            // The browser can disappear (its window closed, the agent closed the last tab):
+            // then start a new one.
+            if !healthy(opts.port) {
+                println!("[{}] the browser is gone; restarting it", task.id);
+                browser.stop();
+                *browser =
+                    Browser::start(&browser.exe.clone(), opts.port, &browser.data_dir.clone())?;
+            }
+            let result = run_task(task, &agent_opts, &base, opts.port, fixtures)?;
+            // A failure because the browser went away says nothing about the agent: retry once.
+            if !result.pass && !healthy(opts.port) && attempt == 1 {
+                println!(
+                    "[{}] the browser went away during the run; retrying",
+                    task.id
+                );
+                attempt += 1;
+                continue;
+            }
+            break TaskResult {
+                retried: attempt > 1,
+                ..result
+            };
         };
         println!(
             "[{}] {} — {} tool calls, {} tokens{}",
             task.id,
-            if pass { "PASS" } else { "FAIL" },
-            run.tool_calls(),
-            run.total_tokens(),
-            if pass {
+            if result.pass { "PASS" } else { "FAIL" },
+            result.run.tool_calls(),
+            result.run.total_tokens(),
+            if result.pass {
                 String::new()
             } else {
-                format!(": {reason}")
+                format!(": {}", result.reason)
             }
         );
-        results.push(TaskResult {
-            task,
-            pass,
-            reason,
-            run,
-            owned_tabs,
-        });
+        results.push(result);
     }
     Ok(Report {
         agent: opts.agent,
         date: today(),
         results,
+    })
+}
+
+/// One attempt at one task: reset, run the agent, check the outcome.
+fn run_task(
+    task: &'static Task,
+    agent_opts: &AgentOptions,
+    base: &str,
+    port: u16,
+    fixtures: &Fixtures,
+) -> Result<TaskResult> {
+    reset_browser(port)?;
+    fixtures.reset();
+    let prompt = format!("{} {}", task.prompt.replace("{base}", base), tasks::RULES);
+    println!("[{}] running {} …", task.id, agent_opts.kind.name());
+    let run = agent::run(agent_opts, &prompt);
+    let log: String = run.events.iter().map(|e| format!("{e}\n")).collect();
+    let _ = std::fs::write(agent_opts.cwd.join(format!("{}.jsonl", task.id)), log);
+
+    let reported = fixtures.results(task.id);
+    // The browser may be gone: check without tabs then.
+    let tabs = rest(port, "tabs.list", json!({})).unwrap_or(Value::Null);
+    let owned_tabs = tabs["tabs"]
+        .as_array()
+        .map(|t| t.iter().filter(|t| t["lockedBy"] == AGENT_ID).count())
+        .unwrap_or(0);
+    let checked = (task.check)(&Outcome {
+        results: &reported,
+        tabs: &tabs,
+    });
+    let (pass, reason) = match (&checked, &run.error) {
+        (Ok(()), _) => (true, String::new()),
+        (Err(why), Some(err)) => (false, format!("{why} (agent: {err})")),
+        (Err(why), None) => (false, why.clone()),
+    };
+    Ok(TaskResult {
+        task,
+        pass,
+        reason,
+        run,
+        owned_tabs,
+        retried: false,
     })
 }
 
@@ -316,6 +353,7 @@ fn report_json(report: &Report) -> Value {
             v["pass"] = json!(r.pass);
             v["reason"] = json!(r.reason);
             v["owned_tabs"] = json!(r.owned_tabs);
+            v["retried"] = json!(r.retried);
             v["final_text"] = json!(cut(&r.run.final_text, 300));
             v
         })
@@ -477,6 +515,7 @@ mod tests {
                     ..AgentRun::default()
                 },
                 owned_tabs: 1,
+                retried: false,
             }],
         };
         let md = markdown(&report);
