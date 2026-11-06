@@ -222,10 +222,13 @@ dependencies = [
 name = "bmcp-core"
 version = "0.1.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

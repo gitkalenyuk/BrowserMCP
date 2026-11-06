@@ -8,13 +8,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Stable id of a tab for the lifetime of the process (CEF browser identifier).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// On the wire it is a plain number: `3`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct TabId(pub i32);
 
@@ -24,11 +28,15 @@ impl fmt::Display for TabId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TabInfo {
+    /// Tab id, used as `tab` argument by other commands.
     pub id: TabId,
+    /// Page title.
     pub title: String,
+    /// Current URL.
     pub url: String,
+    /// True while the page is still loading.
     pub loading: bool,
 }
 
