@@ -407,6 +407,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-registry"
+version = "0.1.0"
+dependencies = [
+ "bmcp-api",
+ "bmcp-browser",
+ "bmcp-core",
+]
+
+[[package]]
+name = "bmcp-schema-dump"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "bmcp-registry",
+ "serde_json",
+]
+
+[[package]]
 name = "bmcp-script"
 version = "0.1.0"
 dependencies = [
@@ -434,9 +452,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmcp-api",
- "bmcp-browser",
  "bmcp-cef",
  "bmcp-core",
+ "bmcp-registry",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -4271,6 +4289,9 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "yoke"

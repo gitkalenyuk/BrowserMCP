@@ -1,0 +1,16 @@
+[package]
+name = "bmcp-schema-dump"
+description = "bmcp-schema: prints every command of the registry (name, schemas, ...) as JSON for the SDK generator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "bmcp-schema"
+path = "src/main.rs"
+
+[dependencies]
+bmcp-core.workspace = true
+bmcp-registry.workspace = true
+serde_json.workspace = true

@@ -114,11 +114,8 @@ async fn start_api(
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
 ) {
-    // One registry for every API surface: built-in commands + API-crate commands.
-    let mut registry = bmcp_core::Registry::new();
-    bmcp_core::commands::register_builtin(&mut registry);
-    bmcp_api::commands::register(&mut registry);
-    bmcp_browser::register(&mut registry);
+    // One registry for every API surface; command crates are registered in `bmcp-registry`.
+    let registry = bmcp_registry::build_registry();
     tracing::info!(commands = registry.len(), "command registry ready");
     let events = bmcp_core::EventBus::new();
     match bmcp_api::serve(backend, Arc::new(registry), events, port, shutdown).await {
