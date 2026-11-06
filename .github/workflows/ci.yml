@@ -16,13 +16,13 @@ jobs:
       # Shared CEF download, cached between runs (keyed by the pinned `cef` crate version).
       CEF_PATH: ${{ github.workspace }}/.cef
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Ninja
         run: choco install ninja -y --no-progress
 
       - name: Cache CEF binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cef
           key: cef-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
