@@ -1,0 +1,34 @@
+{
+  "name": "@browsermcp/sdk",
+  "version": "0.1.0",
+  "description": "BrowserMCP TypeScript SDK: a typed browser.* object over WebSocket JSON-RPC (or HTTP)",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run typecheck && vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json && tsc -p test/types/tsconfig.json && tsc -p test/types/script/tsconfig.json"
+  },
+  "dependencies": {
+    "@browsermcp/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.2",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0",
+    "ws": "^8.22.1"
+  }
+}

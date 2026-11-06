@@ -147,13 +147,13 @@ async fn start_api(
     runtime_dir: std::path::PathBuf,
     data: DataDir,
 ) {
-    // One registry for every API surface: built-in commands + API-crate commands.
-    let mut registry = bmcp_core::Registry::new();
-    bmcp_core::commands::register_builtin(&mut registry);
-    bmcp_api::commands::register(&mut registry);
-    bmcp_browser::register(&mut registry);
-    bmcp_net::register(&mut registry);
-    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite.
+    // One registry for every API surface; command crates are registered in `bmcp-registry`.
+    let registry = bmcp_registry::build_registry();
+    // Command crates that keep files (filter lists, site policies…) find the data folder here.
+    registry.extensions().insert(data.clone());
+    // Identities and proxy pools in data/config.
+    bmcp_identity::install(&registry, data.config());
+    // Bookmarks, history, passwords… in data/db/browsermcp.sqlite (used by the data commands).
     let store = match bmcp_data::DataStore::open_in(&data) {
         Ok(store) => {
             registry.extensions().insert(store.clone());
@@ -164,14 +164,24 @@ async fn start_api(
             None
         }
     };
-    bmcp_data::register(&mut registry);
     // Built-in AI: agents reach the browser through this same registry (API providers) or the
     // MCP endpoint (Claude Code / Codex).
     let ai = registry.extensions().insert(bmcp_ai::AiService::new(
         data.root(),
         format!("http://127.0.0.1:{port}/mcp"),
     ));
-    bmcp_ai::register(&mut registry);
+    // Recordings and generated scripts live in the data folder.
+    registry
+        .extensions()
+        .insert(bmcp_record::DataDirExt(data.clone()));
+    // Scripts, mass runs, triggers (data/scripts, data/db/runs.sqlite).
+    let jobs =
+        bmcp_jobs::JobsService::start(bmcp_jobs::JobsConfig::new(&data, port), events.clone())
+            .inspect_err(|err| tracing::error!(%err, "jobs service not started"))
+            .ok();
+    if let Some(jobs) = &jobs {
+        registry.extensions().insert(jobs.clone());
+    }
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
@@ -182,10 +192,16 @@ async fn start_api(
     match bmcp_api::serve(backend, registry, events, port, shutdown.clone()).await {
         Ok(server) => {
             ai.set_mcp_url(server.mcp_url()); // the real port when `--api-port 0`
-            // Kill agent and terminal child processes when the browser quits.
+            if let Some(jobs) = &jobs {
+                jobs.set_ws_url(server.ws_url());
+            }
+            // Kill agent, terminal and script child processes when the browser quits.
             tokio::spawn(async move {
                 shutdown.cancelled().await;
                 ai.shutdown();
+                if let Some(jobs) = jobs {
+                    jobs.shutdown();
+                }
             });
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({

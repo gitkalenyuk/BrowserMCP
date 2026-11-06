@@ -1,6 +1,6 @@
 //! The commands: `page.snapshot`, `page.find`, `page.act`, `page.act_batch`, `page.diff`,
 //! `page.read`, `page.screenshot`, `nav.back`, `nav.forward`, `nav.reload`, `nav.wait`,
-//! `input.keys`.
+//! `input.keys`, `input.humanlike`.
 //!
 //! Every command that reads or changes refs locks the tab's [`TabState`] for its whole run, so
 //! two calls on one tab never interleave.
@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::act::{self, Action, Step};
 use crate::cdp::{self, perception_error};
+use crate::human::{self, Human, HumanProfile};
 use crate::keys;
 use crate::page;
 use crate::state::{PerceptionState, TabState};
@@ -1027,6 +1028,70 @@ impl Command for Keys {
         Ok(KeysOutput {
             tab,
             pressed: chords.len(),
+        })
+    }
+}
+
+// ------------------------------------------------------------------ input.humanlike
+
+pub struct Humanlike;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HumanlikeArgs {
+    /// Tab id from tabs_list. Default: the most recently opened tab.
+    pub tab: Option<TabId>,
+    /// true = human-like input for page_act in this tab; false = the fast path (default).
+    pub on: bool,
+    /// Speeds and irregularity: {mouse_speed (px/s, 1200), typing_wpm (55), jitter (0-1,
+    /// 0.35)}. Missing fields keep their defaults.
+    pub profile: Option<HumanProfile>,
+    /// Seed for the random paths and delays (for reproducible runs). Default: random.
+    pub seed: Option<u64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct HumanlikeOutput {
+    pub tab: TabId,
+    pub on: bool,
+    /// The profile in use (after clamping to sane ranges).
+    pub profile: Option<HumanProfile>,
+}
+
+impl Command for Humanlike {
+    const NAME: &'static str = "input.humanlike";
+    type Args = HumanlikeArgs;
+    type Output = HumanlikeOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Switch a tab between fast input (default) and human-like input: page_act then \
+             moves the mouse on curved paths with easing and slight overshoot, types \
+             character by character with natural delays and scrolls with wheel notches. \
+             Slower, but looks like a person.",
+            Toolset::Stealth,
+        )
+        .mutates_tab()
+        .act()
+    }
+
+    fn target_tab(args: &HumanlikeArgs) -> Option<TabId> {
+        args.tab
+    }
+
+    async fn run(ctx: Ctx, args: HumanlikeArgs) -> Result<HumanlikeOutput, CmdError> {
+        let tab = ctx.resolve_tab(args.tab).await?;
+        let mut state = lock_tab(&ctx, tab).await;
+        state.human = args.on.then(|| {
+            let seed = args
+                .seed
+                .unwrap_or_else(|| human::Rng::from_time().next_u64());
+            Human::new(args.profile.unwrap_or_default(), seed)
+        });
+        Ok(HumanlikeOutput {
+            tab,
+            on: args.on,
+            profile: state.human.as_ref().map(|h| h.profile),
         })
     }
 }
