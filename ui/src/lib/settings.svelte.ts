@@ -10,6 +10,7 @@ export interface Settings {
   theme: ThemePref;
   accent: string;
   verticalTabs: boolean;
+  bookmarksBar: boolean;
   sidebarWidth: number;
   panel: PanelId | null;
   panelWidth: number;
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   accent: '#3b82f6',
   verticalTabs: false,
+  bookmarksBar: true,
   sidebarWidth: 240,
   panel: import.meta.env.VITE_BMCP_PANEL ?? null,
   panelWidth: 380,

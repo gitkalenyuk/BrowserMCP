@@ -9,11 +9,12 @@ an in-memory mock of the Rust core.
 
 ```bash
 pnpm install            # once, from the repo root or ui/
-pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page
-pnpm build              # -> ui/dist (index.html + palette.html + newtab.html, relative paths)
+pnpm dev                # http://localhost:5173 — chrome; /newtab.html — new tab page; /library.html — library
+pnpm build              # -> ui/dist (index.html + palette.html + newtab.html + library.html, relative paths)
 pnpm check              # svelte-check, fails on warnings
 pnpm test               # vitest: fuzzy matcher, keymap, tab reducer, omnibox input, AI stream
-                        # folding, net text parsers, request filter, rule/resume payloads
+                        # folding, net text parsers, request filter, rule/resume payloads,
+                        # bookmark tree / drop positions, history day grouping, import wizard
 ```
 
 From the repo root: `pnpm ui:dev`, `pnpm ui:build`, `pnpm ui:check`, `pnpm ui:test`.
@@ -50,14 +51,19 @@ ui/
 ├─ index.html            chrome entry
 ├─ palette.html          Ctrl+K palette alone (the browser shows it in an overlay view)
 ├─ newtab.html           new tab page entry (Vite multi-page)
+├─ library.html          bookmarks / history / downloads / passwords / Chrome import (full tab)
 └─ src/
    ├─ chrome/            App.svelte + main.ts for the chrome
    ├─ palette/           PaletteApp.svelte + main.ts for the overlay palette
    ├─ newtab/            NewTab.svelte, widgets/ (prompt, agents & runs, quick launch, sites)
+   ├─ library/           Library.svelte + one component per section, FolderTree, ImportWizard, Dialog
    └─ lib/
       ├─ api/            types.ts (wire types + RpcMethods/ApiEvents), client.ts (BrowserApi),
       │                  mock.ts (MockApi), ws.ts (WsApi), index.ts (createApi)
       ├─ state/          tabs.ts (pure reducer + helpers), chrome.svelte.ts (ChromeController)
+      ├─ data/           tree.ts (bookmark tree), history.ts (day groups, clear ranges), wizard.ts
+      │                  (import state machine), library.ts (open/section/first run), edit.ts,
+      │                  chrome-bookmarks.svelte.ts (bookmarks bar + omnibox star)
       ├─ components/     TabStrip, TabSidebar, TabItem, GroupLabel, Toolbar, Omnibox, WorkspaceSwitcher,
       │                  CommandPalette, SidePanel, panels/, AgentBanner, PageSlot, SettingsMenu, Icon…
       ├─ native.ts       window-local plumbing inside the browser (bmcp://cmd/: layout, palette, focus)
@@ -115,7 +121,9 @@ interface BrowserApi {
 
 Methods: `tabs.list | open | close | activate | unlock`, `nav.goto | back | forward | reload | stop`,
 `agents.list`, `workspaces.list | activate`, `runs.list | patch.approve | patch.reject`,
-`scripts.list | run`, `data.bookmarks | top_sites`, `ui.layout`, and for the side panels
+`scripts.list | run`, `data.bookmarks | top_sites`, `bookmarks.add | add_folder | remove | move | search`,
+`history.search | delete`, `downloads.list`, `passwords.list | get | save | delete`,
+`import.chrome_detect | chrome` (`types-data.ts`, mocked statefully in `mock-data.ts`), `ui.layout`, and for the side panels
 `ai.providers | provider_set | provider_test | session_start | session_send | session_stop |
 sessions_list | session_transcript`, `term.open | write | resize | close | list`,
 `net.capture | list | get | search | ws_frames | har_export | rule_add | rule_list | rule_remove |
@@ -127,6 +135,38 @@ panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic wit
 
 `WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*"]}` (a notification) after every
 (re)connect, on top of the server's default topics.
+
+### Library (bookmarks, history, downloads, passwords, import)
+
+`bmcp://ui/library.html` is a full-tab page (content tabs may load exactly this URL, no query).
+The chrome opens it with Ctrl+Shift+O (bookmarks), Ctrl+H (history), Ctrl+J (downloads), the
+toolbar's folder button, the menu or the palette. The URL carries no section: the chrome writes
+`bmcp.library.request` `{section, folder?, at}` to localStorage (same origin) and opens or
+activates the library tab; the page takes the request on load or on the `storage` event (stale
+after 15 s). Without one it reopens the last section, Bookmarks the first time.
+
+* **Bookmarks**: folder tree (`data.bookmarks` per folder, level by level, `tree.ts`), list of the
+  selected folder in the shared folder/bookmark order, drag rows to reorder or onto a folder (tree
+  or row middle) to move (`bookmarks.move`, index without the moved node), add / edit / delete,
+  search (`bookmarks.search`). There is no rename command: edits are add + move + remove
+  (`edit.ts`), so an edited node gets a new id.
+* **History**: search, grouped by local day, remove one page (`history.delete {url}`), remove a
+  day, clear a range: "older than 4 weeks" / "all time" use `{before}`; recent ranges remove each
+  page visited since then (with all its visits, the core has no "visits after" delete).
+* **Downloads**: `downloads.list`, polled while one is in progress. "Show in folder" is a stub.
+* **Passwords**: listed without passwords; the eye asks for confirmation, then reads that one
+  login with `passwords.list {origin, reveal:true}` and hides it again after 30 s. Add, edit (empty
+  password field keeps the current one), delete with confirmation.
+* **Import from Chrome** (`ImportWizard.svelte`, state machine in `wizard.ts`): profiles from
+  `import.chrome_detect`, parts bookmarks+history / passwords CSV (with export instructions) /
+  cookies JSON / nothing, per-part results of `import.chrome`. On first launch the chrome opens it
+  once (`bmcp.import.offered` flag) when bookmarks and history are empty.
+
+Chrome side: the omnibox star (`BookmarkStar`, Ctrl+D) adds the page to the bookmarks bar or
+removes all its bookmarks; the bookmarks bar (`BookmarksBar`, Ctrl+Shift+B, on by default) shows
+folder 1, its folders open in the library (a dropdown would be covered by the page). The core
+sends no data events, so pages bump `bmcp.data.rev` in localStorage after edits and the bar/star
+re-read on it (and on window focus). `VITE_BMCP_EMPTY_DATA=1` starts the mock empty (wizard).
 
 ### Side panels
 
