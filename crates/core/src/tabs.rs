@@ -88,11 +88,7 @@ impl TabStrip {
         let mut new_active = None;
         if self.active == Some(id) {
             // After the remove, `index` points at the right neighbour (if any).
-            self.active = self
-                .order
-                .get(index)
-                .or_else(|| self.order.last())
-                .copied();
+            self.active = self.order.get(index).or_else(|| self.order.last()).copied();
             new_active = self.active;
         }
         Some(Removed { index, new_active })

@@ -22,6 +22,10 @@ pub struct Cli {
     pub api_port: u16,
     /// Spike S2: print the page's accessibility tree, then quit.
     pub dump_ax: bool,
+    /// `--ui-dir <PATH>`: serve `bmcp://ui/` from this folder instead of the embedded build.
+    pub ui_dir: Option<PathBuf>,
+    /// `--ui-dev <URL>`: load the chrome from a Vite dev server (hot reload).
+    pub ui_dev: Option<String>,
 }
 
 impl Default for Cli {
@@ -35,6 +39,8 @@ impl Default for Cli {
             help: false,
             api_port: DEFAULT_API_PORT,
             dump_ax: false,
+            ui_dir: None,
+            ui_dev: None,
         }
     }
 }
@@ -53,6 +59,10 @@ Options:
                        Window layout: UI strip + page + Ctrl+K palette (default),
                        or the page alone (Phase 0)
   --api-port <PORT>    Local API port, MCP at http://127.0.0.1:<PORT>/mcp (default: 47800)
+  --ui-dir <PATH>      Serve the browser UI (bmcp://ui/) from this folder, e.g. ui/dist,
+                       instead of the copy built into the executable
+  --ui-dev <URL>       Load the UI from a Vite dev server, e.g. http://localhost:5173
+                       (hot reload; also set BMCP_DEV_UI=1 so the API accepts it)
   --dump-ax            Print the page's accessibility tree and exit
   -h, --help           Show this help
 
@@ -99,6 +109,8 @@ impl Cli {
                     }
                 }
                 "--dump-ax" => cli.dump_ax = true,
+                "--ui-dir" => cli.ui_dir = value(&mut args).map(PathBuf::from),
+                "--ui-dev" => cli.ui_dev = value(&mut args),
                 "--api-port" => {
                     if let Some(port) = value(&mut args).and_then(|v| v.parse().ok()) {
                         cli.api_port = port;
@@ -165,6 +177,13 @@ mod tests {
             Cli::parse(["--api-port", "nope"]).api_port,
             DEFAULT_API_PORT
         );
+    }
+
+    #[test]
+    fn ui_flags() {
+        let cli = Cli::parse(["--ui-dir", "ui/dist", "--ui-dev=http://localhost:5173"]);
+        assert_eq!(cli.ui_dir, Some(PathBuf::from("ui/dist")));
+        assert_eq!(cli.ui_dev.as_deref(), Some("http://localhost:5173"));
     }
 
     #[test]

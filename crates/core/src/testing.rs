@@ -153,7 +153,9 @@ impl FakeState {
     }
 
     fn tab_mut(&mut self, tab: TabId) -> BackendResult<&mut TabInfo> {
-        self.tabs.get_mut(&tab).ok_or(BackendError::TabNotFound(tab))
+        self.tabs
+            .get_mut(&tab)
+            .ok_or(BackendError::TabNotFound(tab))
     }
 }
 

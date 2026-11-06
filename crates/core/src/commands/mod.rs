@@ -111,7 +111,8 @@ mod tests {
 
     #[tokio::test]
     async fn tabs_activate_close_and_stop() {
-        let fake = FakeBackend::with_tabs(&["https://a.test/", "https://b.test/", "https://c.test/"]);
+        let fake =
+            FakeBackend::with_tabs(&["https://a.test/", "https://b.test/", "https://c.test/"]);
         call(&fake, "tabs.activate", json!({ "tab": 2 })).await;
         assert_eq!(call(&fake, "tabs.list", json!({})).await["activeId"], 2);
 
