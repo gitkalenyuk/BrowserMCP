@@ -213,6 +213,12 @@ export interface RpcMethods {
   /** `p3 b2 tab 1 request POST https://… (42s left)` per line; see `parsePausedLines`. */
   'net.paused_list': { params: { tab?: TabId }; result: NetLinesOutput };
   'net.resume': { params: NetResume; result: { pause_id: string; done: string; text: string } };
+  // ---- find in page (crates/pagetools) ------------------------------------------------------
+  'page.find_text': {
+    params: { tab?: TabId; query: string; case?: boolean; next?: boolean; prev?: boolean };
+    result: { tab: TabId; count: number; index: number; context: string };
+  };
+  'page.find_clear': { params: { tab?: TabId }; result: { tab: TabId } };
   /** Reports the page area's bounds (CSS px, relative to the UI view) so the core can place the content view. */
   'ui.layout': { params: Rect & { dpr: number }; result: void };
   /** A notification button was pressed (crates/notify). */

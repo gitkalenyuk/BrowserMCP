@@ -21,7 +21,7 @@ The running browser writes the URLs to `<data>/runtime/endpoint.json`:
 Body: `{"code":"TAB_NOT_FOUND","message":"tab 99 not found","retry":"no","hint":"…","candidates":[…]}`.
 Status by code (`rest::status_for`): `INVALID_PARAMS` 400 · `NEEDS_APPROVAL`, `BLOCKED_IN_STEALTH` 403 ·
 `NOT_FOUND`, `TAB_NOT_FOUND` 404 · `STALE_REF`, `AMBIGUOUS_TARGET`, `NO_TABS`,
-`NAVIGATION_INTERRUPTED` 409 · `TAB_CLOSED` 410 · `NOT_INTERACTABLE` 422 · `TAB_LOCKED` 423 ·
+`NAVIGATION_INTERRUPTED`, `DIALOG_OPEN` 409 · `TAB_CLOSED` 410 · `NOT_INTERACTABLE` 422 · `TAB_LOCKED` 423 ·
 `INTERNAL` 500 · `NOT_IMPLEMENTED` 501 · `PAGE_CRASHED` 502 · `SHUTTING_DOWN` 503 · `TIMEOUT` 504.
 
 ## WebSocket (JSON-RPC 2.0)
@@ -66,6 +66,14 @@ Emitted by `crates/net` (subscribe with `events.subscribe {"topics":["net.*"]}`)
 | `net.pause_timeout` | `{pause_id, tab, url, warning}` — not resumed within 60 s, continued unchanged |
 | `net.intercept_error` | `{tab, request_id, call, error, warning}` — a rule/resume change failed; the request was continued unchanged |
 | `net.lagged` | `{tab, missed, warning}` — the capture fell behind and lost CDP events |
+
+Emitted by `crates/pagetools` (subscribe with `events.subscribe {"topics":["page.*"]}`):
+
+| Topic | Data |
+|---|---|
+| `page.dialog_opened` | `{tab, type, message, default_prompt, url, handling}` — `handling: "ask"` = left open: answer with `page.dialog`; meanwhile `page.*`/`input.*`/`nav.*` on that tab fail with `DIALOG_OPEN` (`candidates[0]` = the dialog) |
+| `page.dialog_closed` | `{tab, accepted, user_input}` — answered by the policy, an agent or the human |
+| `page.dialog_error` | `{tab, error}` — the policy said accept/dismiss but answering failed; the dialog stays open |
 
 Tab lifecycle events come from the CEF layer (`crates/cef/src/bridge.rs`) on the same
 `EventBus` (created in `crates/app/src/main.rs` and passed to both CEF and `serve`); the WS

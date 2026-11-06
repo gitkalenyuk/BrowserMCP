@@ -204,6 +204,8 @@ async fn start_api(
     bmcp_ai::attach(&registry);
     // Tab freezing/discarding and automatic limits from RAM (data/config/governor.json).
     bmcp_governor::start(registry.extensions(), backend.clone(), events.clone());
+    // Watch every tab for JavaScript dialogs (events, auto-policy, DIALOG_OPEN errors).
+    bmcp_pagetools::start(&registry, backend.clone(), events.clone());
     // Notification buttons (heal: Skip row / Stop run) run commands through the registry.
     bmcp_notify::attach(&registry, backend.clone());
     // Records history from the `tab.updated` / `nav.goto` events on the shared bus.

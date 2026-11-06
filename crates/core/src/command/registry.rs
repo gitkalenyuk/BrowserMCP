@@ -7,6 +7,7 @@
 //! 3. lock check through the [`LockPolicy`] if the command mutates a tab (→ `TAB_LOCKED`;
 //!    `LockPolicy::acquire` may also claim the tab for an agent);
 //! 4. emit `command.started`, run, emit `command.finished` (with `duration_ms` and the error code).
+//!    While it runs, the [`CommandGuard`]s may cancel it (e.g. `DIALOG_OPEN`).
 //!
 //! A call refused in steps 1–3 emits a single `command.rejected` event instead.
 
@@ -21,8 +22,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
-    AllowAll, CmdError, Command, Ctx, ErrorCode, LockPolicy, Sensitivity, Toolset, args_schema,
-    output_schema, wire_name,
+    AllowAll, CmdError, Command, CommandGuard, Ctx, ErrorCode, LockPolicy, Sensitivity, Toolset,
+    args_schema, output_schema, wire_name,
 };
 use crate::backend::BoxFuture;
 use crate::events::topics;
@@ -62,6 +63,8 @@ pub struct Registry {
     /// Wire name → dotted name.
     by_wire: HashMap<String, &'static str>,
     lock: Arc<dyn LockPolicy>,
+    /// Watchers that may cancel a running command (see [`CommandGuard`]).
+    guards: Arc<Vec<Arc<dyn CommandGuard>>>,
     /// Shared services handed to every call as `ctx.extensions`.
     extensions: Arc<Extensions>,
     next_call_id: AtomicU64,
@@ -75,6 +78,7 @@ impl Registry {
             commands: BTreeMap::new(),
             by_wire: HashMap::new(),
             lock: Arc::new(AllowAll),
+            guards: Arc::new(Vec::new()),
             extensions: Arc::new(Extensions::new()),
             next_call_id: AtomicU64::new(0),
         }
@@ -128,6 +132,11 @@ impl Registry {
     /// Replace the tab-lock policy (default: [`AllowAll`]).
     pub fn set_lock_policy(&mut self, policy: Arc<dyn LockPolicy>) {
         self.lock = policy;
+    }
+
+    /// Add a [`CommandGuard`]; it sees every call from now on.
+    pub fn add_guard(&mut self, guard: Arc<dyn CommandGuard>) {
+        Arc::make_mut(&mut self.guards).push(guard);
     }
 
     /// The services map every call gets as `ctx.extensions`. Command crates put their
@@ -191,6 +200,7 @@ impl Registry {
             return Box::pin(std::future::ready(Err(err)));
         }
         ctx.lock = self.lock.clone();
+        ctx.guards = self.guards.clone();
         ctx.extensions = self.extensions.clone();
         ctx.mutates_tab = entry.info.mutates_tab;
         (entry.handler)(ctx, args)
@@ -278,7 +288,25 @@ async fn invoke_checked<C: Command>(ctx: Ctx, raw_args: Value) -> Result<Value, 
     );
 
     let started = Instant::now();
-    let result = match C::run(ctx, args).await {
+    // Ask the guards before running: their futures may cancel the command (see `CommandGuard`).
+    let watches: Vec<_> = ctx
+        .guards
+        .iter()
+        .filter_map(|guard| guard.watch(&ctx, C::NAME, &raw_args))
+        .collect();
+    let run = C::run(ctx, args);
+    let outcome = if watches.is_empty() {
+        run.await
+    } else {
+        tokio::select! {
+            // `biased`: the guards are polled first, so one that already fires stops the
+            // command before it does anything.
+            biased;
+            err = first_of(watches) => Err(err),
+            out = run => out,
+        }
+    };
+    let result = match outcome {
         Ok(output) => serde_json::to_value(output).map_err(|e| {
             CmdError::internal(format!("cannot serialize output of {}: {e}", C::NAME))
         }),
@@ -297,6 +325,19 @@ async fn invoke_checked<C: Command>(ctx: Ctx, raw_args: Value) -> Result<Value, 
         }),
     );
     result
+}
+
+/// Resolves with the error of whichever watch future finishes first.
+async fn first_of(mut watches: Vec<BoxFuture<'static, CmdError>>) -> CmdError {
+    std::future::poll_fn(move |cx| {
+        for watch in &mut watches {
+            if let std::task::Poll::Ready(err) = watch.as_mut().poll(cx) {
+                return std::task::Poll::Ready(err);
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await
 }
 
 /// JSON → `T`, with the path of the bad field in the message, e.g.

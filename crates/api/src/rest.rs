@@ -41,7 +41,8 @@ pub fn status_for(code: ErrorCode) -> StatusCode {
         ErrorCode::StaleRef
         | ErrorCode::AmbiguousTarget
         | ErrorCode::NoTabs
-        | ErrorCode::NavigationInterrupted => StatusCode::CONFLICT,
+        | ErrorCode::NavigationInterrupted
+        | ErrorCode::DialogOpen => StatusCode::CONFLICT,
         ErrorCode::TabClosed => StatusCode::GONE,
         ErrorCode::NotInteractable => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::TabLocked => StatusCode::LOCKED,

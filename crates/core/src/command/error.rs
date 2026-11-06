@@ -51,6 +51,9 @@ pub enum ErrorCode {
     ShuttingDown,
     /// The command exists but this option is not built yet (see `hint`).
     NotImplemented,
+    /// A JavaScript dialog (alert/confirm/prompt/beforeunload) is open and blocks the page;
+    /// `candidates[0]` describes it. Answer it with `page_dialog`, then retry.
+    DialogOpen,
     /// A bug or an unexpected failure.
     Internal,
 }
@@ -75,6 +78,7 @@ impl ErrorCode {
             ErrorCode::InvalidParams => "INVALID_PARAMS",
             ErrorCode::ShuttingDown => "SHUTTING_DOWN",
             ErrorCode::NotImplemented => "NOT_IMPLEMENTED",
+            ErrorCode::DialogOpen => "DIALOG_OPEN",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -98,6 +102,8 @@ impl ErrorCode {
             | ErrorCode::InvalidParams
             | ErrorCode::ShuttingDown
             | ErrorCode::NotImplemented
+            // The dialog stays until someone answers it (page_dialog); retrying does not help.
+            | ErrorCode::DialogOpen
             | ErrorCode::Internal => Retry::No,
         }
     }
