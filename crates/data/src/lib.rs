@@ -4,7 +4,7 @@
 //! * [`bookmarks`] — `data.bookmarks`, `bookmarks.add|add_folder|remove|move|search`;
 //! * [`history`] — `history.search|delete`, `data.top_sites` (frecency); visits are recorded
 //!   automatically by [`recorder`] from `tab.updated` / `nav.goto` events;
-//! * [`downloads`] — `downloads.list` (filled by a later CEF hook);
+//! * [`downloads`] — `downloads.list` (filled from the CEF download events by [`downloads::spawn_download_recorder`]);
 //! * [`passwords`] — `passwords.list|get|save|delete`. **Stored unencrypted** by the user's
 //!   choice (see the module docs);
 //! * [`import`] — `import.chrome`, `import.chrome_detect`.
