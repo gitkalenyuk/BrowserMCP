@@ -1,7 +1,8 @@
 //! Browser shell: process handler, per-browser client and handlers, windows.
 //!
 //! Two window layouts (see [`crate::WindowLayout`]):
-//! * `Chrome` (spike S1, default): UI strip + page + Ctrl+K overlay, see [`crate::chrome`].
+//! * `Chrome` (default): the Svelte UI around the tabs' pages + Ctrl+K overlay, see
+//!   [`crate::chrome`].
 //! * `Single` (Phase 0): one BrowserView per top-level window, title follows the page.
 //!
 //! The app quits when the last browser (of any kind) closes.
@@ -10,10 +11,11 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bmcp_core::BrowserBackend;
+use bmcp_core::{BackendError, BrowserBackend, TabId};
 use cef::*;
+use tokio::sync::oneshot;
 
-use crate::bridge::{self, LoadState, ShellContext};
+use crate::bridge::{self, LoadState, PendingTab, ShellContext};
 use crate::chrome::{self, ViewKind, protocol};
 use crate::{Style, WindowLayout};
 
@@ -46,6 +48,14 @@ wrap_app! {
     }
 
     impl App {
+        fn on_before_command_line_processing(
+            &self,
+            process_type: Option<&CefString>,
+            command_line: Option<&mut CommandLine>,
+        ) {
+            crate::switches::apply(process_type, command_line);
+        }
+
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
             crate::scheme::register_custom_schemes(registrar);
         }
@@ -71,7 +81,7 @@ wrap_browser_process_handler! {
                 browsers: Arc::new(Browsers::default()),
             };
             bridge::with_ui(|ui| ui.shell = Some(ctx.clone()));
-            open_window(&self.config.url, &ctx);
+            open_window(&self.config.url, &ctx, None);
 
             let ready = self.config.on_ready.lock().unwrap_or_else(|e| e.into_inner()).take();
             if let Some(ready) = ready {
@@ -81,14 +91,41 @@ wrap_browser_process_handler! {
     }
 }
 
-/// Open a new top-level window showing `url`, in the configured layout.
-pub(crate) fn open_window(url: &str, ctx: &ShellContext) {
+/// Open a new top-level window showing `url`, in the configured layout. `reply` learns
+/// the id of its (first) tab.
+pub(crate) fn open_window(url: &str, ctx: &ShellContext, reply: Option<oneshot::Sender<TabId>>) {
     match ctx.layout {
-        WindowLayout::Chrome => chrome::open_window(url, ctx),
+        WindowLayout::Chrome => chrome::open_window(url, ctx, reply),
         WindowLayout::Single => {
             if let Some(view) = create_browser_view(url, ViewKind::Content, ctx) {
+                let view_id = bridge::next_view_id();
+                view.set_id(view_id);
+                let pending = PendingTab {
+                    window: None,
+                    index: None,
+                    activate: true,
+                    url: url.to_owned(),
+                    reply,
+                };
+                bridge::with_ui(|ui| ui.pending.insert(view_id, pending));
                 open_single_window(view, ctx.style);
             }
+        }
+    }
+}
+
+/// `tabs.open`: a tab in the current window (composed layout) or a new window (single).
+pub(crate) fn open_tab(
+    url: String,
+    background: bool,
+    reply: oneshot::Sender<TabId>,
+) -> Result<(), BackendError> {
+    let ctx = bridge::with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
+    match ctx.layout {
+        WindowLayout::Chrome => chrome::open_tab(url, background, reply),
+        WindowLayout::Single => {
+            open_window(&url, &ctx, Some(reply));
+            Ok(())
         }
     }
 }
@@ -190,16 +227,14 @@ wrap_browser_view_delegate! {
     impl ViewDelegate {
         fn preferred_size(&self, _view: Option<&mut View>) -> Size {
             // Pitfall: a size with a 0 width OR height counts as "empty" and CEF falls
-            // back to the BrowserView default (which made the UI strip fill the window).
-            // Only the heights matter here: the box layout stretches the width.
+            // back to the BrowserView default. UI and pages are placed explicitly by
+            // `chrome::place_views`; only the palette size matters here.
             match self.kind {
-                ViewKind::Ui => Size { width: 1, height: chrome::UI_HEIGHT },
                 ViewKind::Palette => {
                     let (width, height) = protocol::PALETTE_SIZE;
                     Size { width, height }
                 }
-                // Flex 1 gives the page all remaining space.
-                ViewKind::Content => Size { width: 1, height: 1 },
+                ViewKind::Ui | ViewKind::Content => Size { width: 1, height: 1 },
             }
         }
     }
@@ -218,15 +253,17 @@ wrap_browser_view_delegate! {
 
         fn on_popup_browser_view_created(
             &self,
-            _browser_view: Option<&mut BrowserView>,
+            browser_view: Option<&mut BrowserView>,
             popup_browser_view: Option<&mut BrowserView>,
             is_devtools: i32,
         ) -> i32 {
             let Some(popup) = popup_browser_view.cloned() else { return 0 };
-            // Spike: a popup gets a window of its own. Phase 2 turns popups into tabs.
-            if self.ctx.layout == WindowLayout::Chrome && is_devtools == 0 {
-                chrome::open_window_with(popup, &self.ctx);
-            } else {
+            let opener = browser_view.and_then(|v| v.browser());
+            // Phase 2: a page's popup becomes a tab of the same window.
+            let adopted = self.ctx.layout == WindowLayout::Chrome
+                && is_devtools == 0
+                && opener.is_some_and(|opener| chrome::adopt_popup(&opener, &popup));
+            if !adopted {
                 open_single_window(popup, self.ctx.style);
             }
             1
@@ -262,7 +299,7 @@ wrap_client! {
         }
 
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
-            Some(ShellKeyboardHandler::new())
+            Some(ShellKeyboardHandler::new(self.kind))
         }
 
         fn request_handler(&self) -> Option<RequestHandler> {
@@ -272,6 +309,51 @@ wrap_client! {
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             Some(ShellContextMenuHandler::new(self.kind))
         }
+
+        fn permission_handler(&self) -> Option<PermissionHandler> {
+            Some(ShellPermissionHandler::new())
+        }
+    }
+}
+
+wrap_permission_handler! {
+    struct ShellPermissionHandler;
+
+    impl PermissionHandler {
+        /// Alloy shows no permission UI, and an unanswered prompt waits forever — e.g.
+        /// every connection from a page to 127.0.0.1 (Local Network Access) hung, so the
+        /// UI could never reach the API. Answer at once: see `scheme::allow_permission`.
+        fn on_show_permission_prompt(
+            &self,
+            _browser: Option<&mut Browser>,
+            _prompt_id: u64,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut PermissionPromptCallback>,
+        ) -> i32 {
+            let Some(callback) = callback else { return 0 };
+            let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
+            let allow = crate::scheme::allow_permission(&origin, requested_permissions);
+            tracing::debug!(origin, requested_permissions, allow, "permission prompt");
+            callback.cont(if allow {
+                PermissionRequestResult::ACCEPT
+            } else {
+                PermissionRequestResult::DENY
+            });
+            1
+        }
+    }
+}
+
+/// Scheme + host + port of a URL (`https://a.test:8080`), to notice a new site.
+fn origin_of(url: &str) -> &str {
+    match url.find("://") {
+        Some(i) => {
+            let rest = &url[i + 3..];
+            let end = rest.find(['/', '?', '#']).map_or(url.len(), |e| i + 3 + e);
+            &url[..end]
+        }
+        None => url,
     }
 }
 
@@ -290,8 +372,14 @@ wrap_display_handler! {
             let (Some(browser), Some(frame)) = (browser, frame) else { return };
             if self.kind == ViewKind::Content && frame.is_main() == 1 {
                 let url = url.map(CefString::to_string).unwrap_or_default();
-                bridge::update_tab(browser, |tab| tab.url = url);
-                chrome::push_state(browser);
+                bridge::update_tab(browser, |tab| {
+                    // A new site: its favicon is unknown until it reports one.
+                    if origin_of(&tab.url) != origin_of(&url) {
+                        tab.favicon = None;
+                    }
+                    tab.url = url;
+                    true
+                });
             }
         }
 
@@ -299,24 +387,67 @@ wrap_display_handler! {
             if self.kind != ViewKind::Content {
                 return; // our own pages must not rename the window
             }
+            let Some(browser) = browser else { return };
             let title = title.map(CefString::to_string).unwrap_or_default();
-            if let Some(browser) = browser.as_deref() {
-                let title = title.clone();
-                bridge::update_tab(browser, |tab| tab.title = title);
-                chrome::push_state(browser);
+            bridge::update_tab(browser, |tab| {
+                tab.title = title;
+                true
+            });
+            let id = TabId(browser.identifier());
+            chrome::tab_title_changed(id);
+            // Single layout: the window shows just this page.
+            let is_single = bridge::with_ui(|ui| ui.tabs.get(&id).is_some_and(|t| t.window.is_none()));
+            if is_single {
+                let mut b = browser.clone();
+                if let Some(window) = browser_view_get_for_browser(Some(&mut b)).and_then(|v| v.window()) {
+                    let title = bridge::tab_info(id).map(|t| t.title).unwrap_or_default();
+                    let title = if title.is_empty() { "BrowserMCP".to_owned() } else { format!("{title} — BrowserMCP") };
+                    window.set_title(Some(&CefString::from(title.as_str())));
+                }
             }
-            let mut browser = browser.cloned();
-            let Some(window) =
-                browser_view_get_for_browser(browser.as_mut()).and_then(|view| view.window())
-            else {
+        }
+
+        /// Console output of our own UI/palette pages goes to our log (web pages' does not).
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            level: LogSeverity,
+            message: Option<&CefString>,
+            source: Option<&CefString>,
+            line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            if self.kind != ViewKind::Content {
+                let message = message.map(CefString::to_string).unwrap_or_default();
+                let source = source.map(CefString::to_string).unwrap_or_default();
+                let kind = self.kind;
+                if level == LogSeverity::ERROR || level == LogSeverity::WARNING {
+                    tracing::warn!(?kind, source, line, "console: {message}");
+                } else {
+                    tracing::debug!(?kind, source, line, "console: {message}");
+                }
+            }
+            0
+        }
+
+        fn on_favicon_urlchange(
+            &self,
+            browser: Option<&mut Browser>,
+            icon_urls: Option<&mut CefStringList>,
+        ) {
+            if self.kind != ViewKind::Content {
                 return;
-            };
-            let title = if title.is_empty() {
-                "BrowserMCP".to_owned()
-            } else {
-                format!("{title} — BrowserMCP")
-            };
-            window.set_title(Some(&CefString::from(title.as_str())));
+            }
+            let (Some(browser), Some(icon_urls)) = (browser, icon_urls) else { return };
+            // The page's candidates, best first; we take the first one. Pitfall: cef-rs'
+            // `CefStringList::clone()` makes a copy that iterates as empty, so move the
+            // borrowed list out (leaving an empty list of our own behind, freed on drop).
+            let list = std::mem::take(icon_urls);
+            let first = list.into_iter().next();
+            bridge::update_tab(browser, |tab| {
+                let changed = tab.favicon != first;
+                tab.favicon = first;
+                changed
+            });
         }
     }
 }
@@ -330,12 +461,12 @@ wrap_life_span_handler! {
     impl LifeSpanHandler {
         fn on_before_popup(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             _popup_id: i32,
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
-            _target_disposition: WindowOpenDisposition,
+            target_disposition: WindowOpenDisposition,
             _user_gesture: i32,
             _popup_features: Option<&PopupFeatures>,
             _window_info: Option<&mut WindowInfo>,
@@ -344,11 +475,17 @@ wrap_life_span_handler! {
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut i32>,
         ) -> i32 {
+            let url = target_url.map(CefString::to_string).unwrap_or_default();
             if self.kind == ViewKind::Content {
-                return 0; // allowed; see on_popup_browser_view_created
+                // Allowed; it becomes a tab in on_popup_browser_view_created. Remember
+                // whether it should open in the background (Ctrl+click, middle click).
+                if let Some(opener) = browser {
+                    let background = target_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB;
+                    bridge::with_ui(|ui| ui.popups.insert(opener.identifier(), (background, url)));
+                }
+                return 0;
             }
             // Our chrome pages never open windows.
-            let url = target_url.map(CefString::to_string).unwrap_or_default();
             tracing::warn!(url, "popup from a chrome view blocked");
             1
         }
@@ -362,6 +499,13 @@ wrap_life_span_handler! {
             }
             let open = self.browsers.open.fetch_add(1, Ordering::SeqCst) + 1;
             tracing::debug!(open, kind = ?self.kind, "browser created");
+        }
+
+        fn do_close(&self, browser: Option<&mut Browser>) -> i32 {
+            match (self.kind, browser) {
+                (ViewKind::Content, Some(browser)) => chrome::do_close(browser),
+                _ => 0,
+            }
         }
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
@@ -390,8 +534,8 @@ wrap_load_handler! {
             &self,
             browser: Option<&mut Browser>,
             is_loading: ::std::os::raw::c_int,
-            _can_go_back: ::std::os::raw::c_int,
-            _can_go_forward: ::std::os::raw::c_int,
+            can_go_back: ::std::os::raw::c_int,
+            can_go_forward: ::std::os::raw::c_int,
         ) {
             let Some(browser) = browser else { return };
             if self.kind != ViewKind::Content {
@@ -405,17 +549,22 @@ wrap_load_handler! {
                     }
                     s.loading = loading;
                 });
+                tab.can_go_back = can_go_back == 1;
+                tab.can_go_forward = can_go_forward == 1;
+                true
             });
-            chrome::push_state(browser);
         }
     }
 }
 
 wrap_keyboard_handler! {
-    struct ShellKeyboardHandler;
+    struct ShellKeyboardHandler {
+        kind: ViewKind,
+    }
 
     impl KeyboardHandler {
-        /// Runs before the page (or our UI) sees the key, whichever view has focus.
+        /// Runs before the page sees the key. Pages and the palette forward browser
+        /// shortcuts; the UI view handles its own keys (its keymap sees them anyway).
         fn on_pre_key_event(
             &self,
             browser: Option<&mut Browser>,
@@ -424,13 +573,7 @@ wrap_keyboard_handler! {
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
             let (Some(browser), Some(event)) = (browser, event) else { return 0 };
-            tracing::trace!(
-                kind = ?event.type_,
-                code = event.windows_key_code,
-                modifiers = event.modifiers,
-                "pre key event"
-            );
-            if event.type_ != KeyEventType::RAWKEYDOWN {
+            if self.kind == ViewKind::Ui || event.type_ != KeyEventType::RAWKEYDOWN {
                 return 0;
             }
             let flag = |f: sys::cef_event_flags_t| event.modifiers & f.0 as u32 != 0;
@@ -461,18 +604,24 @@ wrap_request_handler! {
             _user_gesture: i32,
             _is_redirect: i32,
         ) -> i32 {
-            if self.kind == ViewKind::Content {
-                return 0;
-            }
             let (Some(browser), Some(frame), Some(request)) = (browser, frame, request) else {
                 return 0;
             };
             let url = CefString::from(&request.url()).to_string();
-            if frame.is_main() == 0 || url.starts_with("bmcp://ui/") {
+            if self.kind == ViewKind::Content {
+                // A tab may show our new tab page, but never the chrome/palette pages
+                // (they have full API access) nor send bmcp://cmd navigations.
+                if crate::scheme::is_allowed_in_content(&url) {
+                    return 0;
+                }
+                tracing::warn!(url, "blocked bmcp:// page in a tab");
+                return 1;
+            }
+            if frame.is_main() == 0 || crate::scheme::is_chrome_url(&url) {
                 return 0;
             }
-            // Our chrome pages stay put. A link dropped on the UI strip (or any other
-            // attempt to leave bmcp://ui/) opens in the page instead.
+            // Our chrome pages stay put. A link dropped on the UI (or any other attempt
+            // to leave bmcp://ui/) opens in the shown tab instead.
             chrome::open_in_content(browser, &url);
             1
         }
@@ -502,5 +651,19 @@ wrap_context_menu_handler! {
                 model.clear();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_of;
+
+    #[test]
+    fn origins() {
+        assert_eq!(origin_of("https://a.test/x?y"), "https://a.test");
+        assert_eq!(origin_of("https://a.test:8080"), "https://a.test:8080");
+        assert_eq!(origin_of("bmcp://ui/newtab.html"), "bmcp://ui");
+        assert_eq!(origin_of("about:blank"), "about:blank");
+        assert_eq!(origin_of(""), "");
     }
 }

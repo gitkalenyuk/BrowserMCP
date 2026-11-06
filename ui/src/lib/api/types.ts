@@ -31,6 +31,8 @@ export interface TabInfo {
   groupId: GroupId | null;
   /** Agent currently holding the tab lock; null when the human is in control. */
   lockedBy: AgentId | null;
+  /** Sent by the core in tabs.list / tab.created (the UI uses TabsSnapshot.activeId instead). */
+  active?: boolean;
 }
 
 export interface TabGroup {
@@ -112,7 +114,8 @@ type TabParam = { tab: TabId };
 /** Every JSON-RPC method the chrome calls: name -> params / result. */
 export interface RpcMethods {
   'tabs.list': { params: void; result: TabsSnapshot };
-  'tabs.open': { params: { url?: string; activate?: boolean }; result: TabInfo };
+  /** `background: true` opens without switching to it (default: the new tab becomes active). */
+  'tabs.open': { params: { url?: string; background?: boolean }; result: TabInfo };
   'tabs.close': { params: TabParam; result: void };
   'tabs.activate': { params: TabParam; result: void };
   /** Human takes the tab back from an agent (releases the agent lock). */
