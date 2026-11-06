@@ -1366,6 +1366,150 @@ export interface IdentityAssignOutput {
   profile: string;
 }
 
+// ---- identity.fit_to_proxy ----
+
+/** Arguments of `identity.fit_to_proxy`. */
+export interface IdentityFitToProxyArgs {
+  /** Saved identity (identity_list). */
+  identity_id: string;
+  /**
+   * For pool:NAME: use the proxy this profile is routed through (its lease) instead of
+   * a fresh pick.
+   */
+  profile?: string | null;
+  /**
+   * The proxy whose exit IP to fit: fwd-N, pool:NAME, lease:POOL/RUN/ROW or a proxy URL
+   * (direct = this machine's IP).
+   */
+  proxy_id: string;
+  /** Save the changed identity (default true). */
+  save?: boolean | null;
+  /** Timeout in milliseconds (default 10000). */
+  timeout_ms?: number | null;
+  /** Lookup endpoint (http:// only, ip-api.com JSON format). Default: ip-api.com. */
+  url?: string | null;
+}
+
+/** Result of `identity.fit_to_proxy`. */
+export interface IdentityFitToProxyOutput {
+  /** What changed (empty = it already fit). The device (UA, platform, screen) never does. */
+  changes: {
+    /** Identity field, e.g. "timezone". */
+    field: string;
+    from: unknown;
+    to: unknown;
+  }[];
+  /** Where an IP is, plus the locale and Accept-Language an identity there should use. */
+  geo: {
+    accept_language: string | null;
+    city: string;
+    country: string;
+    /** ISO code, e.g. "DE". */
+    country_code: string;
+    /** The public IP the lookup service saw. */
+    ip: string;
+    isp: string;
+    latitude: number;
+    /** Suggested locale for the country ("de-DE"), if known. */
+    locale: string | null;
+    longitude: number;
+    region: string;
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+  };
+  /** A complete, consistent fingerprint. Stored in `data/config/identities.json`. */
+  identity: {
+    /**
+     * `navigator.languages` and (with q-values added by Chromium) `Accept-Language`, e.g.
+     * "de-DE,de,en-US,en".
+     */
+    accept_language: string;
+    /**
+     * `navigator.deviceMemory` in GiB: a power of two from 0.25 to 32 (Chromium 156 reports up
+     * to 32; older versions capped at 8).
+     */
+    device_memory: number;
+    /** A fake position for the Geolocation API. */
+    geolocation: {
+      /** Metres. */
+      accuracy: number;
+      latitude: number;
+      longitude: number;
+    } | null;
+    hardware_concurrency: number;
+    /** Name to refer to it (`identity_id`), e.g. "win-7f3a". */
+    id: string;
+    /**
+     * What an identity is good for.
+     *
+     * - `"stealth"`: Consistent with the Chromium engine: meant to look like a normal Chrome user.
+     * - `"device_emulation"`: Claims a different engine (Safari on iPhone/iPad): fine for responsive layout testing, but fingerprinting scripts will see that the engine is Chromium.
+     */
+    kind: "stealth" | "device_emulation";
+    /** ICU locale for Intl, e.g. "de-DE"; also `navigator.language`. */
+    locale: string;
+    max_touch_points: number;
+    /** Mobile viewport behaviour (meta viewport, overlay scrollbars). */
+    mobile: boolean;
+    /** Operating system family an identity claims. */
+    os: "windows" | "macos" | "android" | "ios";
+    /** `navigator.platform`, e.g. "Win32", "MacIntel", "Linux armv81". */
+    platform: string;
+    /** The preset it was built from, e.g. "windows-1080p". */
+    preset: string;
+    /** Screen size in CSS pixels and the device pixel ratio. */
+    screen: {
+      dpr: number;
+      height: number;
+      width: number;
+    };
+    /** IANA zone, e.g. "Europe/Berlin". */
+    timezone: string;
+    /** Touch screen (mobile): `maxTouchPoints` > 0 and touch events. */
+    touch: boolean;
+    /** Client hints; `None` for Safari identities (Safari has none). */
+    ua_metadata: {
+      /** "x86", "arm" or "" (mobile). */
+      architecture: string;
+      /** "64" on desktop, "" on mobile. */
+      bitness: string;
+      /** Low-entropy brands with major versions, e.g. Chromium/156, Google Chrome/156, a GREASE. */
+      brands: {
+        brand: string;
+        version: string;
+      }[];
+      /** The same brands with full versions (high entropy). */
+      full_version_list: {
+        brand: string;
+        version: string;
+      }[];
+      mobile: boolean;
+      /** Device model on Android ("Pixel 8"), empty on desktop. */
+      model: string;
+      /** "Windows", "macOS", "Android". */
+      platform: string;
+      /** e.g. "19.0.0" (Windows 11 24H2), "14.5.0" (macOS), "14.0.0" (Android 14). */
+      platform_version: string;
+      wow64: boolean;
+    } | null;
+    /** `navigator.userAgent` and the `User-Agent` header. */
+    user_agent: string;
+    /** Forced viewport (mobile). `None` = keep the real window size. */
+    viewport: {
+      height: number;
+      width: number;
+    } | null;
+    /** `UNMASKED_RENDERER_WEBGL`, e.g. "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 ...)". */
+    webgl_renderer: string;
+    /** `UNMASKED_VENDOR_WEBGL`, e.g. "Google Inc. (NVIDIA)". */
+    webgl_vendor: string;
+  };
+  identity_id: string;
+  saved: boolean;
+  /** The proxy the lookup went through (masked), null = direct. */
+  via: string | null;
+}
+
 // ---- identity.generate ----
 
 /** Arguments of `identity.generate`. */
@@ -3309,6 +3453,8 @@ export interface ProxyForwardStartArgs {
   pool?: string | null;
   /** Upstream proxy URL (with user:pass). */
   proxy?: string | null;
+  /** Or: a proxy reference such as "lease:POOL/RUN/ROW" (from proxy_lease) or "pool:NAME". */
+  proxy_id?: string | null;
   /** Run id for sticky pools. */
   run?: string | null;
 }
@@ -3336,6 +3482,40 @@ export interface ProxyForwardStopArgs {
 /** Result of `proxy.forward_stop`. */
 export interface ProxyForwardStopOutput {
   stopped: boolean;
+}
+
+// ---- proxy.lease ----
+
+/** Arguments of `proxy.lease`. */
+export interface ProxyLeaseArgs {
+  pool: string;
+  /**
+   * Give the row a different proxy than it has now (e.g. its IP got blocked). Default
+   * false: sticky, the row keeps its proxy.
+   */
+  rotate?: boolean | null;
+  /** Row number in the run. */
+  row: number;
+  /** The mass run, e.g. "run-42". */
+  run_id: string;
+}
+
+/** Result of `proxy.lease`. */
+export interface ProxyLeaseOutput {
+  /** Active leases on this proxy (including this one). */
+  load: number;
+  pool: string;
+  /** The leased proxy, password masked. */
+  proxy: string;
+  /**
+   * Reference for proxy_rules_set (via/default), identity_fit_to_proxy and
+   * proxy_forward_start: "lease:POOL/RUN/ROW".
+   */
+  proxy_id: string;
+  /** True when the row already had this proxy. */
+  reused: boolean;
+  row: number;
+  run_id: string;
 }
 
 // ---- proxy.next ----
@@ -3445,6 +3625,95 @@ export interface ProxyPoolRemoveOutput {
   /** Proxies left in the pool (0 when the pool was deleted). */
   remaining: number;
   removed: boolean;
+}
+
+// ---- proxy.release ----
+
+/** Arguments of `proxy.release`. */
+export interface ProxyReleaseArgs {
+  pool: string;
+  /** One row; omit to release every row of the run (when the run ends). */
+  row?: number | null;
+  run_id: string;
+}
+
+/** Result of `proxy.release`. */
+export interface ProxyReleaseOutput {
+  /** How many leases were released. */
+  released: number;
+}
+
+// ---- proxy.rules_set ----
+
+/** Arguments of `proxy.rules_set`. */
+export interface ProxyRulesSetArgs {
+  /** Where everything else goes (default "direct"). No rules + direct = remove the routing. */
+  default?: string | null;
+  /** Profile id, e.g. "work". */
+  profile: string;
+  /**
+   * Checked in order; the first match wins. `match`: host glob ("*.example.com" also
+   * matches example.com), URL glob ("http://example.com/api/*") or "re:REGEX" (searched in
+   * the URL, case-insensitive). `via`: direct, fwd-N, pool:NAME, lease:POOL/RUN/ROW or a
+   * proxy URL. Note: for https URLs only scheme://host:port/ is visible to the rules.
+   * @default []
+   */
+  rules?: {
+    /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+    match: string;
+    /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+    via: string;
+  }[];
+}
+
+/** Result of `proxy.rules_set`. */
+export interface ProxyRulesSetOutput {
+  default: string;
+  /** Local forwarders the routes go through. */
+  forwarders: string[];
+  /** The generated PAC script (null when no script is needed). */
+  pac_script: string | null;
+  /**
+   * The Chromium `proxy` preference for the profile's request context (the browser applies
+   * it; it is also sent as a proxy.routes_changed event).
+   */
+  pref: unknown;
+  profile: string;
+  /** The stored rules (passwords masked). */
+  rules: {
+    /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+    match: string;
+    /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+    via: string;
+  }[];
+}
+
+// ---- proxy.rules_test ----
+
+/** Arguments of `proxy.rules_test`. */
+export interface ProxyRulesTestArgs {
+  profile: string;
+  /** Full URL, e.g. "https://www.example.com/page". */
+  url: string;
+}
+
+/** Result of `proxy.rules_test`. */
+export interface ProxyRulesTestOutput {
+  host: string;
+  /** The matching rule's pattern. */
+  matched: string | null;
+  /** What the PAC script sees (https URLs are cut to scheme://host:port/). */
+  pac_url: string;
+  profile: string;
+  /** 1-based number of the matching rule; null = the default route. */
+  rule: number | null;
+  /**
+   * The upstream proxy behind the route when it is already known (masked); null for
+   * direct or a pool the profile has not used yet.
+   */
+  upstream: string | null;
+  /** The route (passwords masked): direct, fwd-N, pool:NAME, lease:..., or a proxy URL. */
+  via: string;
 }
 
 // ---- record.codegen ----
@@ -5280,6 +5549,8 @@ export interface Commands {
   "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
   /** Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set). */
   "identity.assign": { args: IdentityAssignArgs; output: IdentityAssignOutput };
+  /** Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set. */
+  "identity.fit_to_proxy": { args: IdentityFitToProxyArgs; output: IdentityFitToProxyOutput };
   /** Generate a consistent random fingerprint identity (UA + client hints + platform + CPU/memory + screen + timezone/locale + GPU) from the presets; deterministic by seed. save=true stores it in identities.json for stealth_fingerprint_set. */
   "identity.generate": { args: IdentityGenerateArgs; output: IdentityGenerateOutput };
   /** Return one saved identity with all its values. */
@@ -5378,6 +5649,8 @@ export interface Commands {
   "proxy.forward_start": { args: ProxyForwardStartArgs; output: ProxyForwardStartOutput };
   /** Stop a local proxy forwarder (closes its open connections). */
   "proxy.forward_stop": { args: ProxyForwardStopArgs; output: ProxyForwardStopOutput };
+  /** Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release. */
+  "proxy.lease": { args: ProxyLeaseArgs; output: ProxyLeaseOutput };
   /** Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it. */
   "proxy.next": { args: ProxyNextArgs; output: ProxyNextOutput };
   /** Add proxies to a named pool (created if new) in proxies.json, optionally setting its rotation strategy (round_robin, random, sticky). */
@@ -5388,6 +5661,12 @@ export interface Commands {
   "proxy.pool_list": { args: ProxyPoolListArgs; output: ProxyPoolListOutput };
   /** Remove one proxy from a pool, or the whole pool. */
   "proxy.pool_remove": { args: ProxyPoolRemoveArgs; output: ProxyPoolRemoveOutput };
+  /** Release proxy leases of a mass run (one row, or the whole run). */
+  "proxy.release": { args: ProxyReleaseArgs; output: ProxyReleaseOutput };
+  /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test. */
+  "proxy.rules_set": { args: ProxyRulesSetArgs; output: ProxyRulesSetOutput };
+  /** Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does. */
+  "proxy.rules_test": { args: ProxyRulesTestArgs; output: ProxyRulesTestOutput };
   /** Turn a recording into a TypeScript script for the script host (elements found by role and name, not refs). With parametrize, typed values become inputs. Saves it to data/scripts/<name>.ts and returns the code. */
   "record.codegen": { args: RecordCodegenArgs; output: RecordCodegenOutput };
   /** A recording's steps: a readable summary (default) or the raw JSONL action log. */
@@ -5805,6 +6084,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   "identity.assign": {
     wireName: "identity_assign",
     description: "Give a profile a saved identity (stored in identities.json; applying it to new tabs automatically is not wired yet — use stealth_fingerprint_set).",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "identity.fit_to_proxy": {
+    wireName: "identity_fit_to_proxy",
+    description: "Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set.",
     toolset: "stealth",
     sensitivity: "act",
     mutatesTab: false,
@@ -6252,6 +6540,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "proxy.lease": {
+    wireName: "proxy_lease",
+    description: "Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release.",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "proxy.next": {
     wireName: "proxy_next",
     description: "Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it.",
@@ -6293,6 +6590,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     description: "Remove one proxy from a pool, or the whole pool.",
     toolset: "stealth",
     sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.release": {
+    wireName: "proxy_release",
+    description: "Release proxy leases of a mass run (one row, or the whole run).",
+    toolset: "stealth",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.rules_set": {
+    wireName: "proxy_rules_set",
+    description: "Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.",
+    toolset: "stealth",
+    sensitivity: "secret",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "proxy.rules_test": {
+    wireName: "proxy_rules_test",
+    description: "Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does.",
+    toolset: "stealth",
+    sensitivity: "read",
     mutatesTab: false,
     palette: null,
     defaultKeys: [],
@@ -6971,6 +7295,12 @@ export interface Browser {
      */
     assign(args: IdentityAssignArgs, options?: CallOptions): Promise<IdentityAssignOutput>;
     /**
+     * Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set.
+     *
+     * `identity.fit_to_proxy` (MCP: `identity_fit_to_proxy`): toolset `stealth`, act.
+     */
+    fit_to_proxy(args: IdentityFitToProxyArgs, options?: CallOptions): Promise<IdentityFitToProxyOutput>;
+    /**
      * Generate a consistent random fingerprint identity (UA + client hints + platform + CPU/memory + screen + timezone/locale + GPU) from the presets; deterministic by seed. save=true stores it in identities.json for stealth_fingerprint_set.
      *
      * `identity.generate` (MCP: `identity_generate`): toolset `stealth`, read.
@@ -7290,6 +7620,12 @@ export interface Browser {
      */
     forward_stop(args: ProxyForwardStopArgs, options?: CallOptions): Promise<ProxyForwardStopOutput>;
     /**
+     * Lease a proxy of a pool to one row of a mass run: sticky per (run_id, row) — the row keeps its proxy across retries — or rotate=true for a different one. New leases go to the least-used healthy proxy. Release with proxy_release.
+     *
+     * `proxy.lease` (MCP: `proxy_lease`): toolset `stealth`, act.
+     */
+    lease(args: ProxyLeaseArgs, options?: CallOptions): Promise<ProxyLeaseOutput>;
+    /**
      * Pick the next proxy of a pool by its rotation strategy (skips unhealthy ones). Returns it with the password masked; proxy_forward_start pool=... uses it.
      *
      * `proxy.next` (MCP: `proxy_next`): toolset `stealth`, act.
@@ -7319,6 +7655,24 @@ export interface Browser {
      * `proxy.pool_remove` (MCP: `proxy_pool_remove`): toolset `stealth`, act.
      */
     pool_remove(args: ProxyPoolRemoveArgs, options?: CallOptions): Promise<ProxyPoolRemoveOutput>;
+    /**
+     * Release proxy leases of a mass run (one row, or the whole run).
+     *
+     * `proxy.release` (MCP: `proxy_release`): toolset `stealth`, act.
+     */
+    release(args: ProxyReleaseArgs, options?: CallOptions): Promise<ProxyReleaseOutput>;
+    /**
+     * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.
+     *
+     * `proxy.rules_set` (MCP: `proxy_rules_set`): toolset `stealth`, secret.
+     */
+    rules_set(args: ProxyRulesSetArgs, options?: CallOptions): Promise<ProxyRulesSetOutput>;
+    /**
+     * Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does.
+     *
+     * `proxy.rules_test` (MCP: `proxy_rules_test`): toolset `stealth`, read.
+     */
+    rules_test(args: ProxyRulesTestArgs, options?: CallOptions): Promise<ProxyRulesTestOutput>;
   };
   /** Commands `record.*`. */
   record: {
@@ -7700,6 +8054,7 @@ export function createBrowser(transport: Transport): Browser {
     },
     identity: {
       assign: (args, options) => call<IdentityAssignOutput>("identity.assign", args, options),
+      fit_to_proxy: (args, options) => call<IdentityFitToProxyOutput>("identity.fit_to_proxy", args, options),
       generate: (args, options) => call<IdentityGenerateOutput>("identity.generate", args, options),
       get: (args, options) => call<IdentityGetOutput>("identity.get", args, options),
       list: (args, options) => call<IdentityListOutput>("identity.list", args, options),
@@ -7765,11 +8120,15 @@ export function createBrowser(transport: Transport): Browser {
       forward_list: (args, options) => call<ProxyForwardListOutput>("proxy.forward_list", args, options),
       forward_start: (args, options) => call<ProxyForwardStartOutput>("proxy.forward_start", args, options),
       forward_stop: (args, options) => call<ProxyForwardStopOutput>("proxy.forward_stop", args, options),
+      lease: (args, options) => call<ProxyLeaseOutput>("proxy.lease", args, options),
       next: (args, options) => call<ProxyNextOutput>("proxy.next", args, options),
       pool_add: (args, options) => call<ProxyPoolAddOutput>("proxy.pool_add", args, options),
       pool_check: (args, options) => call<ProxyPoolCheckOutput>("proxy.pool_check", args, options),
       pool_list: (args, options) => call<ProxyPoolListOutput>("proxy.pool_list", args, options),
       pool_remove: (args, options) => call<ProxyPoolRemoveOutput>("proxy.pool_remove", args, options),
+      release: (args, options) => call<ProxyReleaseOutput>("proxy.release", args, options),
+      rules_set: (args, options) => call<ProxyRulesSetOutput>("proxy.rules_set", args, options),
+      rules_test: (args, options) => call<ProxyRulesTestOutput>("proxy.rules_test", args, options),
     },
     record: {
       codegen: (args, options) => call<RecordCodegenOutput>("record.codegen", args, options),

@@ -12,6 +12,10 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+# PAC scripts go into the proxy preference as a base64 data: URL.
+base64 = "0.22"
+# `re:` routing rules (checked in Rust for proxy.rules_test, run as JS RegExp in the PAC).
+regex = "1"
 # `io-util` for the proxy forwarder (read/write halves, copy_bidirectional).
 tokio = { workspace = true, features = ["io-util"] }
 
