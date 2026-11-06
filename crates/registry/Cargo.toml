@@ -18,3 +18,4 @@ bmcp-record = { path = "../record" }
 bmcp-adblock = { path = "../adblock" }
 bmcp-jobs = { path = "../jobs" }
 bmcp-notify = { path = "../notify" }
+bmcp-hints = { path = "../hints" }

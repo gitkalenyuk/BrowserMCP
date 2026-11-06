@@ -191,6 +191,14 @@ export class ChromeController {
   reload = () => this.#onActive('nav.reload');
   stopLoading = () => this.#onActive('nav.stop');
 
+  /** Link hints are typed in the page, so the keyboard goes there. */
+  showHints(): void {
+    const tab = this.tabs.activeId;
+    if (tab === null) return;
+    void this.#guard(this.api.call('hints.show', { tab }));
+    this.host?.focusContent();
+  }
+
   focusOmnibox(): void {
     // The palette page has no omnibox: ask the window to focus the chrome's.
     if (this.role === 'palette' && this.host) this.host.focusOmnibox();
@@ -223,6 +231,7 @@ export class ChromeController {
       case 'nav.reload': return this.active?.loading ? this.stopLoading() : this.reload();
       case 'nav.stop': return this.stopLoading();
       case 'omnibox.focus': return this.focusOmnibox();
+      case 'hints.show': return this.showHints();
       case 'palette.open':
         // In the browser the palette is a separate overlay view (palette.html).
         if (this.host) this.host.palette(this.role === 'palette' ? 'hide' : 'toggle');

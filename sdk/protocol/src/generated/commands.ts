@@ -717,6 +717,30 @@ export interface BookmarksSearchOutput {
   }[];
 }
 
+// ---- clipboard.write ----
+
+/** Arguments of `clipboard.write`. */
+export interface ClipboardWriteArgs {
+  /**
+   * Tab whose page does the copy (the clipboard needs a focused page). Default: the most
+   * recently opened tab.
+   */
+  tab?: number | null;
+  /** Text to put on the clipboard. */
+  text: string;
+}
+
+/** Result of `clipboard.write`. */
+export interface ClipboardWriteOutput {
+  /** How it was written: clipboard_api or exec_command. */
+  method: string;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
 // ---- data.bookmarks ----
 
 /** Arguments of `data.bookmarks`. */
@@ -907,6 +931,150 @@ export interface GeoLookupOutput {
   };
   /** The proxy used (masked), or null for a direct lookup. */
   via: string | null;
+}
+
+// ---- hints.config ----
+
+/** Arguments of `hints.config`. */
+export interface HintsConfigArgs {
+  /** Letters for labels (2+ different lower-case letters/digits). Default "asdfghjkl". */
+  alphabet?: string | null;
+  /** Turn the trigger keys off on one site (host name or URL; subdomains included). */
+  disable_site?: string | null;
+  /** Replace the list of sites where the trigger keys are off. */
+  disabled_sites?: string[] | null;
+  /** Turn them back on for one site. */
+  enable_site?: string | null;
+  /** Turn the trigger keys in pages on or off (hints.show always works). */
+  enabled?: boolean | null;
+  /**
+   * Trigger keys, e.g. {"click": "f", "newtab": "F", "copy": "y"}. Modes left out get
+   * their default (click f, newtab F, none for focus/copy); null turns a key off.
+   */
+  keys?: {
+    /** @default "f" */
+    click?: string | null;
+    /** @default null */
+    copy?: string | null;
+    /** @default null */
+    focus?: string | null;
+    /** @default "F" */
+    newtab?: string | null;
+  } | null;
+}
+
+/** Result of `hints.config`. */
+export interface HintsConfigOutput {
+  /** The settings now in effect (saved to data/config/hints.json). */
+  config: {
+    /**
+     * Letters labels are made of.
+     * @default "asdfghjkl"
+     */
+    alphabet: string;
+    /**
+     * Host names where the trigger keys are off (a site's own shortcuts win); a name also
+     * covers its subdomains (`github.com` → `gist.github.com`).
+     * @default []
+     */
+    disabled_sites: string[];
+    /**
+     * Trigger keys work in pages (hints.show works either way).
+     * @default true
+     */
+    enabled: boolean;
+    /**
+     * Trigger keys typed in the page (`KeyboardEvent.key`, one character; case matters, so `F`
+     * is Shift+F). `null` = no key for that mode.
+     * @default {"click":"f","copy":null,"focus":null,"newtab":"F"}
+     */
+    keys: {
+      /** @default "f" */
+      click: string | null;
+      /** @default null */
+      copy: string | null;
+      /** @default null */
+      focus: string | null;
+      /** @default "F" */
+      newtab: string | null;
+    };
+  };
+}
+
+// ---- hints.hide ----
+
+/** Arguments of `hints.hide`. */
+export interface HintsHideArgs {
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/** Result of `hints.hide`. */
+export interface HintsHideOutput {
+  /** True when hints were on screen. */
+  hidden: boolean;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
+}
+
+// ---- hints.show ----
+
+/** Arguments of `hints.show`. */
+export interface HintsShowArgs {
+  /**
+   * What a picked hint does: click (default), newtab, focus or copy.
+   *
+   * - `"click"`: Click the element (trusted mouse input, like page.act click).
+   * - `"newtab"`: Open the link in a new background tab (elements without a link are clicked).
+   * - `"focus"`: Give the element keyboard focus.
+   * - `"copy"`: Copy the link URL (or the element's text) to the clipboard.
+   */
+  mode?: "click" | "newtab" | "focus" | "copy" | null;
+  /** Tab id from tabs_list. Default: the most recently opened tab. */
+  tab?: number | null;
+}
+
+/**
+ * Result of `hints.show`.
+ * Result of [`HintsService::show`].
+ */
+export interface HintsShowOutput {
+  /** Number of labels shown (0 = nothing interactive in view). */
+  count: number;
+  /** Label → element, in page order. */
+  hints: {
+    /** Absolute link URL, for links. */
+    href?: string | null;
+    label: string;
+    /** Element tag, e.g. `a`, `button`, `input`. */
+    tag: string;
+    /**
+     * Accessible-ish text (aria-label, text, placeholder…), at most 60 characters.
+     * @default ""
+     */
+    text: string;
+  }[];
+  /**
+   * What a picked hint does.
+   *
+   * - `"click"`: Click the element (trusted mouse input, like page.act click).
+   * - `"newtab"`: Open the link in a new background tab (elements without a link are clicked).
+   * - `"focus"`: Give the element keyboard focus.
+   * - `"copy"`: Copy the link URL (or the element's text) to the clipboard.
+   */
+  mode: "click" | "newtab" | "focus" | "copy";
+  /** Milliseconds for the whole call (install on first use, find, draw). */
+  ms: number;
+  /** Milliseconds the page spent finding the elements. */
+  page_ms: number;
+  /**
+   * Stable id of a tab for the lifetime of the process (CEF browser identifier).
+   * On the wire it is a plain number: `3`.
+   */
+  tab: number;
 }
 
 // ---- history.delete ----
@@ -4807,6 +4975,8 @@ export interface Commands {
   "bookmarks.remove": { args: BookmarksRemoveArgs; output: BookmarksRemoveOutput };
   /** Find bookmarks (in all folders) whose title or URL contains the text. Returns {bookmarks}, newest first. */
   "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
+  /** Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused). */
+  "clipboard.write": { args: ClipboardWriteArgs; output: ClipboardWriteOutput };
   /** List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}. */
   "data.bookmarks": { args: DataBookmarksArgs; output: DataBookmarksOutput };
   /** The most frequently and recently visited pages (frecency), as shown on the new-tab page. Returns {sites:[{title,url,visit_count,last_visit,score}]}. */
@@ -4819,6 +4989,12 @@ export interface Commands {
   "downloads.list": { args: DownloadsListArgs; output: DownloadsListOutput };
   /** Find where an IP is (country, city, timezone, coordinates) — directly or through a proxy — and suggest the locale/Accept-Language. Feed timezone/country into identity_generate to fit a fingerprint to the proxy's IP. */
   "geo.lookup": { args: GeoLookupArgs; output: GeoLookupOutput };
+  /** Read or change link-hint settings: enabled, trigger keys (default f = click, F = new tab), sites where the keys are off, label alphabet. No arguments = just read them. */
+  "hints.config": { args: HintsConfigArgs; output: HintsConfigOutput };
+  /** Take the link hints off the page. */
+  "hints.hide": { args: HintsHideArgs; output: HintsHideOutput };
+  /** Show Vim-style link hints: a short label (as, sd…) next to every interactive element in view. Typing a label in the page clicks it (or opens it in a new tab, focuses it, copies its link — see mode); Esc cancels. Returns the labels with the elements they point at. */
+  "hints.show": { args: HintsShowArgs; output: HintsShowOutput };
   /** Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). Give exactly one. Returns how many visits and URLs were removed. */
   "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
   /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
@@ -5210,6 +5386,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "clipboard.write": {
+    wireName: "clipboard_write",
+    description: "Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused).",
+    toolset: "ui",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "data.bookmarks": {
     wireName: "data_bookmarks",
     description: "List the bookmarks and sub-folders of a bookmark folder (default: the bookmarks bar). Returns {folder, bookmarks:[{id,title,url,…}], folders:[{id,title,…}]}.",
@@ -5262,6 +5447,33 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
+    defaultKeys: [],
+  },
+  "hints.config": {
+    wireName: "hints_config",
+    description: "Read or change link-hint settings: enabled, trigger keys (default f = click, F = new tab), sites where the keys are off, label alphabet. No arguments = just read them.",
+    toolset: "ui",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "hints.hide": {
+    wireName: "hints_hide",
+    description: "Take the link hints off the page.",
+    toolset: "ui",
+    sensitivity: "read",
+    mutatesTab: true,
+    palette: null,
+    defaultKeys: [],
+  },
+  "hints.show": {
+    wireName: "hints_show",
+    description: "Show Vim-style link hints: a short label (as, sd…) next to every interactive element in view. Typing a label in the page clicks it (or opens it in a new tab, focuses it, copies its link — see mode); Esc cancels. Returns the labels with the elements they point at.",
+    toolset: "ui",
+    sensitivity: "act",
+    mutatesTab: true,
+    palette: "Show link hints",
     defaultKeys: [],
   },
   "history.delete": {
@@ -6319,6 +6531,15 @@ export interface Browser {
      */
     search(args: BookmarksSearchArgs, options?: CallOptions): Promise<BookmarksSearchOutput>;
   };
+  /** Commands `clipboard.*`. */
+  clipboard: {
+    /**
+     * Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused).
+     *
+     * `clipboard.write` (MCP: `clipboard_write`): toolset `ui`, act.
+     */
+    write(args: ClipboardWriteArgs, options?: CallOptions): Promise<ClipboardWriteOutput>;
+  };
   /** Commands `data.*`. */
   data: {
     /**
@@ -6366,6 +6587,27 @@ export interface Browser {
      * `geo.lookup` (MCP: `geo_lookup`): toolset `stealth`, act.
      */
     lookup(args?: GeoLookupArgs, options?: CallOptions): Promise<GeoLookupOutput>;
+  };
+  /** Commands `hints.*`. */
+  hints: {
+    /**
+     * Read or change link-hint settings: enabled, trigger keys (default f = click, F = new tab), sites where the keys are off, label alphabet. No arguments = just read them.
+     *
+     * `hints.config` (MCP: `hints_config`): toolset `ui`, act.
+     */
+    config(args?: HintsConfigArgs, options?: CallOptions): Promise<HintsConfigOutput>;
+    /**
+     * Take the link hints off the page.
+     *
+     * `hints.hide` (MCP: `hints_hide`): toolset `ui`, read, mutates the tab.
+     */
+    hide(args?: HintsHideArgs, options?: CallOptions): Promise<HintsHideOutput>;
+    /**
+     * Show Vim-style link hints: a short label (as, sd…) next to every interactive element in view. Typing a label in the page clicks it (or opens it in a new tab, focuses it, copies its link — see mode); Esc cancels. Returns the labels with the elements they point at.
+     *
+     * `hints.show` (MCP: `hints_show`): toolset `ui`, act, mutates the tab.
+     */
+    show(args?: HintsShowArgs, options?: CallOptions): Promise<HintsShowOutput>;
   };
   /** Commands `history.*`. */
   history: {
@@ -7081,6 +7323,9 @@ export function createBrowser(transport: Transport): Browser {
       remove: (args, options) => call<BookmarksRemoveOutput>("bookmarks.remove", args, options),
       search: (args, options) => call<BookmarksSearchOutput>("bookmarks.search", args, options),
     },
+    clipboard: {
+      write: (args, options) => call<ClipboardWriteOutput>("clipboard.write", args, options),
+    },
     data: {
       bookmarks: (args, options) => call<DataBookmarksOutput>("data.bookmarks", args, options),
       top_sites: (args, options) => call<DataTopSitesOutput>("data.top_sites", args, options),
@@ -7094,6 +7339,11 @@ export function createBrowser(transport: Transport): Browser {
     },
     geo: {
       lookup: (args, options) => call<GeoLookupOutput>("geo.lookup", args, options),
+    },
+    hints: {
+      config: (args, options) => call<HintsConfigOutput>("hints.config", args, options),
+      hide: (args, options) => call<HintsHideOutput>("hints.hide", args, options),
+      show: (args, options) => call<HintsShowOutput>("hints.show", args, options),
     },
     history: {
       delete: (args, options) => call<HistoryDeleteOutput>("history.delete", args, options),

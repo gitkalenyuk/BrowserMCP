@@ -342,10 +342,51 @@ pub async fn perform(
     };
 
     let target = resolve_target(ctx, tab, state, target_ref).await?;
+    perform_on(ctx, tab, state, &target, step).await
+}
+
+/// [`perform`] on a DOM node found some other way than a ref (e.g. Vim-style link hints:
+/// the page script points at the element, `DOM.describeNode` gives its `backendNodeId`).
+/// Same actionability checks and trusted input as `page.act`; `label` names the element in
+/// messages. `step.target` is ignored.
+pub async fn perform_on_node(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    backend_node_id: i64,
+    label: &str,
+    step: &Step,
+) -> Result<String, CmdError> {
+    if step.action.sends_input() {
+        ensure_page_visible(ctx, tab).await?;
+    }
+    let object_id = cdp::resolve_object(ctx, tab, backend_node_id, label).await?;
+    let target = Target {
+        backend_node_id,
+        object_id,
+        label: label.to_string(),
+    };
+    perform_on(ctx, tab, state, &target, step).await
+}
+
+/// The element half of [`perform`]: `target` is already resolved.
+async fn perform_on(
+    ctx: &Ctx,
+    tab: TabId,
+    state: &mut TabState,
+    target: &Target,
+    step: &Step,
+) -> Result<String, CmdError> {
+    let value = step.value.as_deref();
+    let need_value = |what: &str| {
+        value.ok_or_else(|| {
+            CmdError::invalid_params(format!("action {:?} needs a value ({what})", step.action))
+        })
+    };
     let done = format!("{} {}", step.action.past_tense(), target.label);
     match step.action {
         Action::Click | Action::Dblclick | Action::Hover => {
-            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (_, point) = wait_actionable(ctx, tab, state, target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
             match step.action {
                 Action::Hover => mouse_move(ctx, tab, state, x, y).await?,
@@ -356,7 +397,7 @@ pub async fn perform(
         }
         Action::Check | Action::Uncheck => {
             let want = step.action == Action::Check;
-            let probe = probe_element(ctx, tab, &target).await?;
+            let probe = probe_element(ctx, tab, target).await?;
             let Some(current) = probe.checked else {
                 return Err(not_interactable(
                     format!("{} has no checked state", target.label),
@@ -374,10 +415,10 @@ pub async fn perform(
                 ))
                 .with_hint("Check another option of the same group instead."));
             }
-            let (_, point) = wait_actionable(ctx, tab, state, &target, Need::Pointer).await?;
+            let (_, point) = wait_actionable(ctx, tab, state, target, Need::Pointer).await?;
             let (x, y) = point.expect("pointer checks return a point");
             mouse_click(ctx, tab, state, x, y, 1).await?;
-            let after = probe_element(ctx, tab, &target).await?;
+            let after = probe_element(ctx, tab, target).await?;
             if after.checked != Some(want) {
                 return Err(not_interactable(
                     format!("clicking {} did not make it {}", target.label, on_off(want)),
@@ -389,8 +430,8 @@ pub async fn perform(
         }
         Action::Fill | Action::Type => {
             let text = need_value("the text to type")?;
-            let (probe, _) = wait_actionable(ctx, tab, state, &target, Need::Editable).await?;
-            focus(ctx, tab, &target).await?;
+            let (probe, _) = wait_actionable(ctx, tab, state, target, Need::Editable).await?;
+            focus(ctx, tab, target).await?;
             if probe.tag == "input" && SET_BY_VALUE_TYPES.contains(&probe.input_type.as_str()) {
                 cdp::call_function(ctx, tab, &target.object_id, SET_VALUE_JS, &[json!(text)])
                     .await?;
@@ -413,7 +454,7 @@ pub async fn perform(
         }
         Action::Select => {
             let wanted = need_value("the option's value or label")?;
-            wait_actionable(ctx, tab, state, &target, Need::Enabled).await?;
+            wait_actionable(ctx, tab, state, target, Need::Enabled).await?;
             let reply =
                 cdp::call_function(ctx, tab, &target.object_id, SELECT_JS, &[json!(wanted)])
                     .await?;
@@ -445,7 +486,7 @@ pub async fn perform(
         }
         Action::Press => {
             let chords = keys::parse_keys(need_value("keys such as \"Enter\"")?)?;
-            focus(ctx, tab, &target).await?;
+            focus(ctx, tab, target).await?;
             press_keys(ctx, tab, state, &chords).await?;
             Ok(format!(
                 "pressed {} on {}",
@@ -473,7 +514,7 @@ pub async fn perform(
             ))
         }
         Action::Focus => {
-            focus(ctx, tab, &target).await?;
+            focus(ctx, tab, target).await?;
             Ok(done)
         }
     }
