@@ -45,10 +45,12 @@ pub mod tab {
         json!({ "tab": tab, "index": index })
     }
 
-    /// `tab.updated {id, title, url, loading, favicon, canGoBack, canGoForward}` — always
-    /// the full set of changeable fields (no debouncing, no diffing).
+    /// `tab.updated {id, title, url, loading, favicon, canGoBack, canGoForward, split, zoom,
+    /// profile?, window?}` — always the full set of changeable fields (no debouncing, no
+    /// diffing). `split` and `zoom` are always present (null = not split / 100 %) so the
+    /// UI can clear them; `profile` / `window` only when the backend knows them.
     pub fn updated(tab: &TabInfo) -> Value {
-        json!({
+        let mut out = json!({
             "id": tab.id,
             "title": tab.title,
             "url": tab.url,
@@ -56,7 +58,16 @@ pub mod tab {
             "favicon": tab.favicon,
             "canGoBack": tab.can_go_back,
             "canGoForward": tab.can_go_forward,
-        })
+            "split": tab.split,
+            "zoom": tab.zoom,
+        });
+        if let Some(profile) = &tab.profile {
+            out["profile"] = json!(profile);
+        }
+        if let Some(window) = tab.window {
+            out["window"] = json!(window);
+        }
+        out
     }
 
     /// `tab.closed {id}`
@@ -199,7 +210,31 @@ mod tests {
             json!({
                 "id": 7, "title": "A", "url": "https://a.test/", "loading": true,
                 "favicon": "https://a.test/favicon.ico", "canGoBack": true, "canGoForward": false,
+                "split": null, "zoom": null,
             })
+        );
+        // Profile, window, split and zoom travel when the backend knows them.
+        info.profile = Some("work".into());
+        info.window = Some(3);
+        info.zoom = Some(125);
+        info.split = Some(crate::backend::TabSplit {
+            side: crate::backend::SplitSide::Left,
+            other: TabId(8),
+            ratio: 0.5,
+        });
+        let updated = tab::updated(&info);
+        assert_eq!(updated["profile"], "work");
+        assert_eq!(updated["window"], 3);
+        assert_eq!(updated["zoom"], 125);
+        assert_eq!(
+            updated["split"],
+            json!({ "side": "left", "other": 8, "ratio": 0.5 })
+        );
+        let created = tab::created(&info, 0);
+        assert_eq!(created["tab"]["profile"], "work");
+        assert!(
+            created["tab"].get("offscreen").is_none(),
+            "false flags are left out"
         );
         assert_eq!(tab::closed(TabId(7)), json!({ "id": 7 }));
         assert_eq!(tab::activated(TabId(7)), json!({ "id": 7 }));

@@ -84,6 +84,7 @@ fn list_is_sorted_and_filters_by_toolset() {
             "nav.goto",
             "nav.stop",
             "page.text",
+            "page.zoom",
             "system.ping",
             "tabs.activate",
             "tabs.close",
@@ -91,12 +92,15 @@ fn list_is_sorted_and_filters_by_toolset() {
             "tabs.list",
             "tabs.lock",
             "tabs.open",
-            "tabs.unlock"
+            "tabs.restore_closed",
+            "tabs.split",
+            "tabs.unlock",
+            "tabs.unsplit"
         ]
     );
 
     let core = registry.list(Some(&[Toolset::Core]));
-    assert_eq!(core.len(), 12);
+    assert_eq!(core.len(), 16);
     assert!(registry.list(Some(&[Toolset::Net])).is_empty());
 
     // Hidden: the test's secret command and the UI plumbing `ui.layout`.
@@ -200,7 +204,10 @@ async fn unknown_command_is_not_found_with_candidates() {
             json!("tabs_list"),
             json!("tabs_lock"),
             json!("tabs_open"),
-            json!("tabs_unlock")
+            json!("tabs_restore_closed"),
+            json!("tabs_split"),
+            json!("tabs_unlock"),
+            json!("tabs_unsplit")
         ]
     );
 
@@ -217,7 +224,10 @@ async fn unknown_command_is_not_found_with_candidates() {
             json!("tabs.list"),
             json!("tabs.lock"),
             json!("tabs.open"),
-            json!("tabs.unlock")
+            json!("tabs.restore_closed"),
+            json!("tabs.split"),
+            json!("tabs.unlock"),
+            json!("tabs.unsplit")
         ]
     );
 }

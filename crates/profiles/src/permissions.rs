@@ -183,6 +183,39 @@ impl PermissionsFile {
     }
 }
 
+/// The answer to a permission request when a person can be asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// Every kind is allowed (by a rule or by default).
+    Allow,
+    /// A rule denies one of the kinds (or nothing was asked for).
+    Deny,
+    /// Some kind has no rule: ask (the browser shows its permission bar).
+    Ask,
+}
+
+/// [`Decision`] for `kinds` (pure). A request is all or nothing, like Chrome's prompts.
+pub fn decision(rules: &PermissionsFile, origin: &str, kinds: &[PermissionKind]) -> Decision {
+    if kinds.is_empty() {
+        return Decision::Deny;
+    }
+    let answers: Vec<Option<bool>> = kinds
+        .iter()
+        .map(|k| {
+            rules
+                .decide(origin, *k)
+                .or_else(|| k.allowed_by_default().then_some(true))
+        })
+        .collect();
+    if answers.contains(&Some(false)) {
+        Decision::Deny
+    } else if answers.iter().all(|a| *a == Some(true)) {
+        Decision::Allow
+    } else {
+        Decision::Ask
+    }
+}
+
 /// The rules, shared between the CEF permission handler (UI thread) and the commands.
 /// Cheap to clone (one `Arc`); every clone sees the same rules.
 #[derive(Clone)]
@@ -227,6 +260,13 @@ impl PermissionStore {
         rules.decide(origin, kind)
     }
 
+    /// What to do with a request for `kinds` when a person could be asked (a tab in a
+    /// window): see [`Decision`].
+    pub fn decision(&self, origin: &str, kinds: &[PermissionKind]) -> Decision {
+        let rules = self.inner.rules.read().unwrap_or_else(|e| e.into_inner());
+        decision(&rules, origin, kinds)
+    }
+
     pub fn rules(&self) -> Vec<PermissionRule> {
         let rules = self.inner.rules.read().unwrap_or_else(|e| e.into_inner());
         rules.rules.clone()
@@ -267,6 +307,29 @@ mod tests {
         assert_eq!(kinds_from_prompt_bits(1 << 8), vec![Geolocation]);
         assert_eq!(kinds_from_prompt_bits(1), vec![Other]); // AR session
         assert!(kinds_from_prompt_bits(0).is_empty());
+    }
+
+    #[test]
+    fn decisions_allow_deny_or_ask() {
+        let mut rules = PermissionsFile::default();
+        let o = "https://a.test";
+        // No rule: ask (except the kinds allowed by default).
+        assert_eq!(decision(&rules, o, &[Geolocation]), Decision::Ask);
+        assert_eq!(decision(&rules, o, &[MultipleDownloads]), Decision::Allow);
+        assert_eq!(decision(&rules, o, &[]), Decision::Deny);
+        rules.set(o, Camera, Some(true));
+        assert_eq!(decision(&rules, o, &[Camera]), Decision::Allow);
+        // One kind unknown: ask for the whole request.
+        assert_eq!(decision(&rules, o, &[Camera, Microphone]), Decision::Ask);
+        // One kind denied: deny without asking.
+        rules.set(o, Microphone, Some(false));
+        assert_eq!(decision(&rules, o, &[Camera, Microphone]), Decision::Deny);
+        // Wildcard rules count too.
+        rules.set("*", Notifications, Some(false));
+        assert_eq!(
+            decision(&rules, "https://b.test", &[Notifications]),
+            Decision::Deny
+        );
     }
 
     #[test]

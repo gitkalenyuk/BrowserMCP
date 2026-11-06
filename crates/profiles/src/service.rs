@@ -31,9 +31,20 @@ pub struct ProfileConfig {
     /// Accept-Language list; default: the assigned identity's, else Chromium's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept_language: Option<String>,
+    /// Name shown in the UI (the workspace name); default: the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Workspace color in the UI: grey, blue, red, yellow, green, pink, purple, cyan, orange.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default)]
     pub created_ms: i64,
 }
+
+/// Colors a workspace may have (the UI's tab-group palette).
+pub const COLORS: [&str; 9] = [
+    "grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange",
+];
 
 /// Contents of `profiles.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -192,6 +203,7 @@ impl ProfilesService {
                 proxy_bypass: config.proxy_bypass.clone(),
                 accept_language: config.accept_language.clone().or(identity_language),
             },
+            label: config.label.clone(),
         };
         match self.backend() {
             Ok(backend) => backend.configure(settings).await.map_err(CmdError::from),

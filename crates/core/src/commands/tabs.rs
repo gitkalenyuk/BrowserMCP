@@ -223,9 +223,152 @@ impl Command for Activate {
     }
 }
 
+/// `tabs.split`: two tabs side by side in one window.
+pub struct Split;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SplitArgs {
+    /// Tab shown in the left half.
+    pub left: TabId,
+    /// Tab shown in the right half (same window as `left`).
+    pub right: TabId,
+    /// Width of the left half as a fraction of the page area, 0.15–0.85 (default 0.5).
+    pub ratio: Option<f64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SplitOutput {
+    pub left: TabId,
+    pub right: TabId,
+    pub ratio: f64,
+}
+
+/// Split ratios outside this range leave one half too narrow to use.
+pub const SPLIT_RATIO_RANGE: (f64, f64) = (0.15, 0.85);
+
+/// `ratio` limited to [`SPLIT_RATIO_RANGE`] (missing / NaN = 0.5).
+pub fn clamp_split_ratio(ratio: Option<f64>) -> f64 {
+    match ratio {
+        Some(r) if r.is_finite() => r.clamp(SPLIT_RATIO_RANGE.0, SPLIT_RATIO_RANGE.1),
+        _ => 0.5,
+    }
+}
+
+impl Command for Split {
+    const NAME: &'static str = "tabs.split";
+    type Args = SplitArgs;
+    type Output = SplitOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Split view: show two tabs of the same window side by side (left | right, \
+             ratio = width of the left half, default 0.5). Each half keeps its own tab; \
+             activating either shows both. Calling it again changes the pair or the ratio.",
+            Toolset::Core,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SplitArgs) -> Result<SplitOutput, CmdError> {
+        if args.left == args.right {
+            return Err(CmdError::invalid_params(
+                "left and right must be different tabs",
+            ));
+        }
+        let ratio = clamp_split_ratio(args.ratio);
+        ctx.backend
+            .split_tabs(args.left, args.right, Some(ratio))
+            .await?;
+        Ok(SplitOutput {
+            left: args.left,
+            right: args.right,
+            ratio,
+        })
+    }
+}
+
+/// `tabs.unsplit`: end a split view.
+pub struct Unsplit;
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UnsplitArgs {
+    /// A tab of the split view to end. Default: the split view of the window used last.
+    pub tab: Option<TabId>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UnsplitOutput {
+    /// The tabs that were split (empty when there was no split view).
+    pub tabs: Vec<TabId>,
+}
+
+impl Command for Unsplit {
+    const NAME: &'static str = "tabs.unsplit";
+    type Args = UnsplitArgs;
+    type Output = UnsplitOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "End a split view: both tabs stay open, the focused one is shown alone.",
+            Toolset::Core,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: UnsplitArgs) -> Result<UnsplitOutput, CmdError> {
+        let tabs = ctx.backend.unsplit(args.tab).await?;
+        Ok(UnsplitOutput { tabs })
+    }
+}
+
+/// `tabs.restore_closed`: re-open the last closed tab (Ctrl+Shift+T).
+pub struct RestoreClosed;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RestoreClosedOutput {
+    /// The re-opened tab; null when no closed tab is remembered.
+    pub tab: Option<TabId>,
+}
+
+impl Command for RestoreClosed {
+    const NAME: &'static str = "tabs.restore_closed";
+    type Args = Empty;
+    type Output = RestoreClosedOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Re-open the most recently closed tab (URL and profile, at its old place). \
+             Returns null when nothing is left to restore.",
+            Toolset::Core,
+        )
+        .act()
+        .palette("Reopen closed tab")
+    }
+
+    async fn run(ctx: Ctx, _args: Empty) -> Result<RestoreClosedOutput, CmdError> {
+        let tab = ctx.backend.restore_closed().await?;
+        if let Some(tab) = tab {
+            ctx.tab_opened(tab);
+        }
+        Ok(RestoreClosedOutput { tab })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::keeps_window;
+
+    #[test]
+    fn split_ratio_is_clamped() {
+        use super::clamp_split_ratio;
+        assert_eq!(clamp_split_ratio(None), 0.5);
+        assert_eq!(clamp_split_ratio(Some(f64::NAN)), 0.5);
+        assert_eq!(clamp_split_ratio(Some(0.3)), 0.3);
+        assert_eq!(clamp_split_ratio(Some(0.01)), 0.15);
+        assert_eq!(clamp_split_ratio(Some(2.0)), 0.85);
+    }
     use crate::command::Caller;
 
     #[test]

@@ -14,6 +14,19 @@ use crate::prefs::Prefs;
 pub struct ProfileSettings {
     pub id: String,
     pub prefs: Prefs,
+    /// Name people see (workspace name in the UI, the page context menu); `None` = the id.
+    pub label: Option<String>,
+}
+
+/// A page's permission request waiting for a person (the browser's permission bar).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PermissionPrompt {
+    /// Prompt id for `permissions.answer`.
+    pub id: u64,
+    pub tab: TabId,
+    /// Origin of the page that asks, e.g. `https://maps.example.com`.
+    pub origin: String,
+    pub kinds: Vec<crate::permissions::PermissionKind>,
 }
 
 /// A profile the browser has a live request context for.
@@ -67,4 +80,24 @@ pub trait ProfileBackend: Send + Sync + 'static {
         domain: Option<String>,
         name: Option<String>,
     ) -> BoxFuture<'_, BackendResult<usize>>;
+
+    /// Permission requests waiting for a person. Default: none.
+    fn pending_permissions(&self) -> BoxFuture<'_, BackendResult<Vec<PermissionPrompt>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// Answer a waiting permission request; returns it (`None`: no such prompt, e.g. the
+    /// page navigated away). Default: unsupported.
+    fn answer_permission(
+        &self,
+        id: u64,
+        allow: bool,
+    ) -> BoxFuture<'_, BackendResult<Option<PermissionPrompt>>> {
+        let _ = (id, allow);
+        Box::pin(async {
+            Err(bmcp_core::BackendError::Unsupported(
+                "permission prompts need the real browser".into(),
+            ))
+        })
+    }
 }

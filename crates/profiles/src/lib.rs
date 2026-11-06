@@ -32,7 +32,7 @@ mod tests;
 
 use bmcp_core::{Ctx, Registry};
 
-pub use backend::{CookieTarget, OpenProfile, ProfileBackend, ProfileSettings};
+pub use backend::{CookieTarget, OpenProfile, PermissionPrompt, ProfileBackend, ProfileSettings};
 pub use cookies::CookieInfo;
 pub use hooks::{IdentityPreparer, TabPreparer, WorkerOverrides};
 pub use permissions::{PermissionKind, PermissionStore};
@@ -44,13 +44,16 @@ pub fn register(registry: &mut Registry) {
     registry
         .add::<commands::List>()
         .add::<commands::Create>()
+        .add::<commands::Update>()
         .add::<commands::Delete>()
         .add::<commands::CookiesGet>()
         .add::<commands::CookiesSet>()
         .add::<commands::CookiesDelete>()
         .add::<commands::CookiesApplyPending>()
         .add::<commands::PermissionsSet>()
-        .add::<commands::PermissionsList>();
+        .add::<commands::PermissionsList>()
+        .add::<commands::PermissionsPending>()
+        .add::<commands::PermissionsAnswer>();
 }
 
 /// Give the commands their state: the profile store under `data_root` and the permission

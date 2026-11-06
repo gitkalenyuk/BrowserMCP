@@ -31,9 +31,32 @@ impl fmt::Display for TabId {
 /// URL of the browser's own new tab page (served by the CEF crate from `bmcp://ui/`).
 pub const NEW_TAB_URL: &str = "bmcp://ui/newtab.html";
 
+/// Which half of a split view a tab is shown in (`tabs.split`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitSide {
+    Left,
+    Right,
+}
+
+/// A tab that is one half of a split view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TabSplit {
+    /// The half this tab is shown in.
+    pub side: SplitSide,
+    /// The tab in the other half.
+    pub other: TabId,
+    /// Width of the left half as a fraction of the page area (0.15–0.85).
+    pub ratio: f64,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 /// One tab as every API surface sees it. On the wire the fields are camelCase
 /// (`canGoBack`), which is what the Svelte UI (`ui/src/lib/api/types.ts`) expects.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     /// Tab id, used as `tab` argument by other commands.
@@ -62,6 +85,26 @@ pub struct TabInfo {
     /// Agent holding the tab lock. Always null for now (agent locks come later).
     #[serde(default)]
     pub locked_by: Option<String>,
+    /// Profile (= workspace in the UI) the tab runs in. Absent for backends without
+    /// profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// In-memory profile (nothing written to disk). Absent = false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub incognito: bool,
+    /// Off-screen (windowless automation) tab: not shown in any window's tab strip.
+    /// Absent = false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub offscreen: bool,
+    /// Browser window that shows the tab. Absent for off-screen tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<i32>,
+    /// Set while the tab is one half of a split view (`tabs.split`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<TabSplit>,
+    /// Page zoom in percent when it is not 100 (`page.zoom`, Ctrl+= / Ctrl+-).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<u16>,
 }
 
 impl TabInfo {
@@ -79,8 +122,23 @@ impl TabInfo {
             active: false,
             group_id: None,
             locked_by: None,
+            profile: None,
+            incognito: false,
+            offscreen: false,
+            window: None,
+            split: None,
+            zoom: None,
         }
     }
+}
+
+/// How `page.zoom` changes a tab's zoom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZoomChange {
+    /// Set this zoom, in percent (100 = normal).
+    Percent(f64),
+    /// Go this many preset steps up (+) or down (-); 0 = back to 100 %.
+    Steps(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -238,6 +296,37 @@ pub trait BrowserBackend: Send + Sync + 'static {
     fn cdp_events(&self, tab: TabId) -> BoxFuture<'_, BackendResult<CdpEvents>> {
         let _ = tab;
         Box::pin(async { Err(BackendError::Cdp("this backend has no CDP events".into())) })
+    }
+
+    /// Show two tabs of the same window side by side (`left` | `right`); `ratio` = width
+    /// of the left half (0.15–0.85, default 0.5). Default: unsupported.
+    fn split_tabs(
+        &self,
+        left: TabId,
+        right: TabId,
+        ratio: Option<f64>,
+    ) -> BoxFuture<'_, BackendResult<()>> {
+        let _ = (left, right, ratio);
+        Box::pin(async { Err(BackendError::Unsupported("split view".into())) })
+    }
+
+    /// End the split view `tab` is part of (`None`: the one of the window used last).
+    /// Returns the tabs that were split. Default: unsupported.
+    fn unsplit(&self, tab: Option<TabId>) -> BoxFuture<'_, BackendResult<Vec<TabId>>> {
+        let _ = tab;
+        Box::pin(async { Err(BackendError::Unsupported("split view".into())) })
+    }
+
+    /// Re-open the most recently closed tab (Ctrl+Shift+T). `None` = nothing to restore.
+    /// Default: unsupported.
+    fn restore_closed(&self) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        Box::pin(async { Err(BackendError::Unsupported("closed tabs".into())) })
+    }
+
+    /// Change a tab's page zoom; returns the new zoom in percent. Default: unsupported.
+    fn zoom(&self, tab: TabId, change: ZoomChange) -> BoxFuture<'_, BackendResult<f64>> {
+        let _ = (tab, change);
+        Box::pin(async { Err(BackendError::Unsupported("page zoom".into())) })
     }
 
     /// Close every window and leave the message loop.

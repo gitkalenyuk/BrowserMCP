@@ -21,11 +21,12 @@ pub mod paths;
 pub mod tabs;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod zoom;
 
 pub use agents::{AgentId, Agents};
 pub use backend::{
     BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, NEW_TAB_URL,
-    OpenTabOptions, TabId, TabInfo, WindowTarget,
+    OpenTabOptions, SplitSide, TabId, TabInfo, TabSplit, WindowTarget, ZoomChange,
 };
 pub use command::{
     Caller, CmdError, Command, CommandGuard, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta,
