@@ -1,12 +1,18 @@
 <script lang="ts">
   import type { AiProvider, AiProviderSet, AiProviderTest } from '../../api';
+  import type { AiStore } from '../../ai/store.svelte';
   import { providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
 
-  let { onback }: { onback: () => void } = $props();
+  /**
+   * `store`: the settings page has no chrome controller and passes its own AiStore; the side
+   * panel uses the chrome's. Without `onback` there is no back bar (full page).
+   */
+  let { onback, store }: { onback?: () => void; store?: AiStore } = $props();
 
-  const ai = useChrome().ai;
+  // svelte-ignore state_referenced_locally
+  const ai = store ?? useChrome().ai;
   // svelte-ignore state_referenced_locally
   let openId = $state<string | null>(ai.provider);
   let form = $state({ apiKey: '', baseUrl: '', model: '', path: '' });
@@ -70,6 +76,19 @@
     }
   }
 
+  async function makeDefault(p: AiProvider) {
+    busy = 'save';
+    try {
+      await ai.saveProvider({ id: p.id, default: true });
+      await ai.refreshProviders(); // the previous default lost its flag
+      result = { ok: true, text: `${p.name} now answers self-healing and page.extract.` };
+    } catch (err) {
+      result = { ok: false, text: (err as Error).message };
+    } finally {
+      busy = null;
+    }
+  }
+
   function describe(t: AiProviderTest): string {
     if (!t.ok) return t.error ?? 'Failed';
     if (t.version) return `OK · ${t.version}`;
@@ -90,11 +109,13 @@
   }
 </script>
 
-<div class="settings">
-  <div class="bar">
-    <button class="icon-btn" aria-label="Back to chat" title="Back" onclick={onback}><Icon name="arrow-left" size={15} /></button>
-    <h3>Providers</h3>
-  </div>
+<div class="settings" class:page={!onback}>
+  {#if onback}
+    <div class="bar">
+      <button class="icon-btn" aria-label="Back to chat" title="Back" onclick={onback}><Icon name="arrow-left" size={15} /></button>
+      <h3>Providers</h3>
+    </div>
+  {/if}
   <div class="list">
     {#if ai.providersError}
       <p class="err">Could not load providers: {ai.providersError}</p>
@@ -104,6 +125,7 @@
         <button class="row" aria-expanded={openId === p.id} onclick={() => edit(p)}>
           <span class="name">{p.name}</span>
           <span class="hint">{p.kind === 'cli' ? 'CLI agent' : providerHint(p.id)}</span>
+          {#if p.is_default}<span class="badge def" title="Used by self-healing and page.extract when they name no provider">Default</span>{/if}
           <span class="badge" class:ready={p.configured}>{p.configured ? 'Ready' : p.kind === 'cli' ? 'Not found' : 'Not set up'}</span>
           {#if ai.provider === p.id}<span class="sel" title="Used for new chats"><Icon name="check" size={13} stroke={2.25} /></span>{/if}
         </button>
@@ -154,6 +176,15 @@
               <button class="btn" type="button" disabled={busy !== null} onclick={() => test(p)}>{busy === 'test' ? 'Testing…' : 'Test'}</button>
               <button class="btn" type="button" disabled={ai.provider === p.id} onclick={() => ai.setProvider(p.id)}>
                 {ai.provider === p.id ? 'In use' : 'Use for new chats'}
+              </button>
+              <button
+                class="btn"
+                type="button"
+                disabled={busy !== null || !!p.is_default}
+                title="Background AI features (self-healing of runs, page.extract) use this provider when they name none"
+                onclick={() => makeDefault(p)}
+              >
+                {p.is_default ? 'Default for background AI' : 'Make default for background AI'}
               </button>
             </div>
             {#if result && result.text}
@@ -233,6 +264,14 @@
     font-size: var(--fs-xs);
     font-weight: 600;
     white-space: nowrap;
+  }
+  .badge.def {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .settings.page .list {
+    overflow: visible;
+    padding: 0;
   }
   .badge.ready {
     background: color-mix(in oklab, var(--ok) 14%, transparent);

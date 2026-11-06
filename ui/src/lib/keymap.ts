@@ -41,6 +41,7 @@ export const COMMAND_IDS = [
   'library.import',
   'bookmark.toggle',
   'ui.toggleBookmarksBar',
+  'settings.open',
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];
@@ -86,6 +87,7 @@ export const DEFAULT_KEYMAP: Keymap = {
   'library.import': [],
   'bookmark.toggle': ['Ctrl+D'],
   'ui.toggleBookmarksBar': ['Ctrl+Shift+B'],
+  'settings.open': ['Ctrl+,'],
 };
 
 export interface Chord {

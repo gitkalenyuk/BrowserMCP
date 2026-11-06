@@ -582,7 +582,7 @@ export function createRecordRunsMocks(emit: Emit, activeTab: () => TabId | null)
         done: 0,
         counts: counts(rows),
         created_ms: created,
-        options: { ...options(parallel ?? 4), retries: retries ?? 1, timeout_secs: timeout_secs ?? 300, heal: healOn, stop_on_error: !!stop_on_error },
+        options: { ...options(parallel ?? 4), retries: retries ?? 1, timeout_secs: timeout_secs ?? 300, heal: healOn, heal_mode: heal === true || heal == null ? 'ask' : heal === false ? 'off' : heal, stop_on_error: !!stop_on_error },
       };
       // Heal demo: with healing on, the row in the middle breaks on a selector.
       const r: MockRun = { info, rows, breakAt: healOn && rows.length >= 6 ? Math.floor(rows.length / 2) : null };

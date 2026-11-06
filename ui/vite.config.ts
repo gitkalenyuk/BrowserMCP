@@ -25,7 +25,7 @@ const monacoTypeScriptOnly: Plugin = {
 
 // Multi-page build: the browser chrome (index.html), the Ctrl+K palette overlay
 // (palette.html), the new tab page (newtab.html) and the library (library.html: bookmarks,
-// history, downloads, passwords, import) are separate entries. In the
+// history, downloads, passwords, import) and the settings page (settings.html) are separate entries. In the
 // real browser all are served from bmcp://ui/, so relative asset paths (base: './')
 // keep working.
 export default defineConfig({
@@ -42,6 +42,7 @@ export default defineConfig({
         palette: page('./palette.html'),
         newtab: page('./newtab.html'),
         library: page('./library.html'),
+        settings: page('./settings.html'),
       },
     },
   },
