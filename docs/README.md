@@ -22,17 +22,23 @@ agents, the crate map).
 
 * [phase2/tabs.md](phase2/tabs.md) — Phase 2: tabs and the real Svelte chrome (window
   composition, vertical tabs, palette, new tab).
+* [phase2/profiles.md](phase2/profiles.md) — CEF hooks: profiles and isolation (off-screen
+  tabs), adblock gate, cookies, downloads, permissions, identity auto-apply, CDP port.
 * [phase4/library.md](phase4/library.md) — Phase 4 UI: library (bookmarks, history), bookmarks
   bar, password manager, Chrome import wizard.
 * [phase5/panels.md](phase5/panels.md) — Phase 5/6 UI: AI chat, terminal and traffic side
   panels.
 * [phase7/panels-record-runs.md](phase7/panels-record-runs.md) — Phase 7 UI: recording and runs
   side panels (codegen, self-healing).
+* [phase8/scripts-debugger.md](phase8/scripts-debugger.md) — Phase 8: Scripts side panel
+  (Monaco) and the step debugger.
 
 ## Checks
 
 * [checks/2026-11-06-mvp-claude-code.md](checks/2026-11-06-mvp-claude-code.md) — MVP check:
   Claude Code drives BrowserMCP by refs only, no screenshots.
+* [tests/bench](../tests/bench/README.md) — the MVP benchmark (`cargo xtask bench`): 10 tasks
+  on local fixture sites for Claude Code / Codex.
 
 ## Component READMEs
 
@@ -43,7 +49,8 @@ agents, the crate map).
 | [crates/cdpshare](../crates/cdpshare/README.md) | Sharing one tab's CDP session: domain refcount, the `Fetch` coordinator, lost events |
 | [crates/adblock](../crates/adblock/README.md) | Adblock and simplify commands, threading, the planned CEF hook, the interim CDP path, numbers, gaps |
 | [crates/identity](../crates/identity/README.md) | Hidden mode: identities, stealth checks, devices, proxy pools, PAC, forwarder |
-| [crates/jobs](../crates/jobs/README.md) | Scripts, mass runs, self-healing, exports, cron triggers, run events |
+| [crates/jobs](../crates/jobs/README.md) | Scripts, mass runs, per-row profiles, the self-healing hook, exports, cron triggers, run events |
+| [crates/heal](../crates/heal/README.md) | The self-healing loop (propose / accept / reject / auto), `page.extract` and its plan cache |
 | [ui](../ui/README.md) | The Svelte chrome: running it, mock vs real backend, layout, library, side panels |
 | [sdk/protocol](../sdk/protocol/README.md) | Generated command types, `createBrowser` |
 | [sdk/ts](../sdk/ts/README.md) | The TypeScript SDK: connecting, errors, events |

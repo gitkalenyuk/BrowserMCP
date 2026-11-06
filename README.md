@@ -21,18 +21,19 @@ default; ask for more with `/mcp?toolsets=core,net,record`.
 
 | Area | Toolset | Main commands | Crate |
 |---|---|---|---|
-| Tabs and navigation | `core` | `tabs.list/open/close/activate/freeze`, `nav.goto/back/forward/reload/stop/wait`, `input.keys` | core, browser, governor |
-| Seeing and acting on pages | `core` | `page.snapshot/find/act/act_batch/diff/read/text/screenshot`, `simplify.reader` | browser, perception |
+| Tabs and navigation | `core` | `tabs.list/open/close/activate/freeze/groups`, `tabs.lock/unlock` (one colored tab group per agent; others get `TAB_LOCKED`), `nav.goto/back/forward/reload/stop/wait`, `input.keys`, `ai.handoff` (ask the user to log in / solve a CAPTCHA in a tab) | core, browser, governor |
+| Seeing and acting on pages | `core` | `page.snapshot/find/act/act_batch/diff/read/text/screenshot`, `page.dialog/dialog_policy` (JS dialogs), `page.upload`, `simplify.reader` | browser, perception, pagetools |
+| Profiles | `profile` | `profile.list/create/delete` (own cookies, cache, proxy, language, identity per profile), `cookies.get/set/delete`, `permissions.list/set` (site permissions, default deny) | profiles |
 | Traffic | `net` | `net.capture/list/get/search/ws_frames/har_export`, `net.rule_add/rule_list/rule_remove` (block, redirect, headers, mocks), `net.breakpoint/paused_list/resume`, `net.replay`, `net.api_to_code` | net, cdpshare |
 | Recording and codegen | `record` | `record.start/stop/list/get`, `record.codegen` (action log to a TypeScript script), `record.video_start/video_stop` (needs ffmpeg) | record |
-| Scripts | `script` | `script.list/get/save/delete/run` | jobs, script |
-| Mass runs and triggers | `run` | `run.start/status/list/results/pause/resume/cancel/export`, `run.heal_apply` (self-healing), `trigger.set/list/remove` (cron) | jobs |
-| Daily-driver data | `data` | `data.bookmarks`, `bookmarks.*`, `history.search/delete`, `data.top_sites`, `downloads.list`, `passwords.*`, `import.chrome` | data |
+| Scripts and extensions | `script` | `script.list/get/save/delete/run`, `script.debug_start/debug_cmd` (step debugger), `page.extract` (structured data with a cached, AI-built selector plan), `plugins.*`, `userscripts.*` | jobs, script, heal, plugins |
+| Mass runs and triggers | `run` | `run.start/status/list/results/pause/resume/cancel/export`, self-healing `run.heal_propose/accept/reject/apply/proposals`, `trigger.set/list/remove` (cron), `trigger.webhook_set/list/remove` (signed webhooks) | jobs, heal, plugins |
+| Daily-driver data | `data` | `data.bookmarks`, `bookmarks.*`, `history.search/delete`, `data.top_sites`, `downloads.list`, `passwords.*`, `import.chrome`, `page.pdf/mhtml` | data, pagetools |
 | Resource saving | `data` | `adblock.*` (Brave engine + EasyList), `simplify.site/get/list/measure` (per-site JS/images/fonts/… off) | adblock |
 | Hidden mode | `stealth` | `identity.*` (fingerprint identities), `stealth.fingerprint_set/clear/check`, `device.emulate`, `proxy.*` (pools, leases, PAC rules, local forwarder), `geo.lookup`, `input.humanlike` | identity, browser |
 | Built-in AI and terminal | `ai` | `ai.providers/provider_set/provider_test`, `ai.session_start/send/stop/transcript`, `ai.sessions_list`, `term.open/write/resize/close/list` | ai |
-| Notifications and UI | `ui` | `ui.notify`, `ui.ask_user`, `notify.send/test/config_get/config_set` (UI, Windows toasts, Telegram, webhook), `hints.show/hide/config` (Vim-style link hints), `clipboard.write` | notify, hints |
-| System | `system` (`core` for `system.ping`) | `system.ping`, `governor.status/config/recommend_parallel` (tab freezing, RAM/CPU limits) | core, governor |
+| Notifications and UI | `ui` | `ui.notify`, `ui.ask_user`, `notify.send/test/config_get/config_set` (UI, Windows toasts, Telegram, webhook), `hints.show/hide/config` (Vim-style link hints), `page.find_text/find_clear` (Ctrl+F), `plugins.palette`, `clipboard.write` | notify, hints, pagetools, plugins |
+| System | `system` (`core` for `system.ping`) | `system.ping`, `agents.list/forget`, `governor.status/config/recommend_parallel` (tab freezing, RAM/CPU limits) | core, governor |
 
 The full list with argument and result types is the generated
 [sdk/protocol/src/generated/commands.ts](sdk/protocol/src/generated/commands.ts); a running
@@ -70,7 +71,9 @@ cargo build -p bmcp-script  # the script host (V8), needed for script.run / run.
 The first build downloads CEF (~500 MB; set `CEF_PATH` to share one download between
 checkouts) and copies its runtime next to `target/debug/browsermcp.exe`. Without `ui/dist` the
 build embeds a small placeholder UI. `browsermcp --help` lists the options (`--data-dir`,
-`--profile`, `--api-port`, `--ui-dir`, `--ui-dev`, …); unknown `--switches` go to Chromium.
+`--profile`, `--api-port`, `--cdp-port`, `--ui-dir`, `--ui-dev`, …); unknown `--switches` go
+to Chromium. `--cdp-port <PORT>` opens Chromium's DevTools port for Playwright/Puppeteer
+(`connectOverCDP`); it is off by default and refused while a profile uses a stealth identity.
 
 ## Connect an AI agent
 
@@ -108,6 +111,9 @@ args = ["mcp-stdio"]
 
 **Any other MCP client:** point it at `http://127.0.0.1:47800/mcp` (Streamable HTTP) or run
 `browsermcp.exe mcp-stdio` as a stdio server.
+
+`cargo xtask bench --agent claude-code|codex` runs the MVP benchmark (10 tasks on local
+fixture sites, no screenshots; see [tests/bench/README.md](tests/bench/README.md)).
 
 The browser also has its own AI side panel (Claude Code, Codex, or API providers: Anthropic,
 Gemini, OpenAI-compatible) whose agents get the MCP tools automatically; see
@@ -170,10 +176,17 @@ trigger.set  {kind: "cron", spec: "0 9 * * Mon-Fri", script: "title", inputs: {u
 
 Run data comes from CSV, JSON, Excel or inline rows; one script process per row, retries with
 backoff, pause/resume/cancel, everything in `data/db/runs.sqlite` (a run survives a browser
-restart). When a row breaks on a page selector (`NOT_FOUND`, `STALE_REF`, …) the run pauses and
-emits `run.heal_needed`; an agent answers with `run.heal_apply {id, patched_code}`, which saves
-`<name>.v2` and continues. Exports: CSV, Excel, JSON, SQLite, webhook. See
-[crates/jobs/README.md](crates/jobs/README.md).
+restart). `profile: "isolated"` gives every row a fresh in-memory profile and off-screen tabs
+(use it for `parallel > 1` rows that type or click). When a row breaks on a page selector
+(`NOT_FOUND`, `STALE_REF`, …) the run pauses with `run.heal_needed`; the AI proposes a patch
+(`heal: "ask"` waits for one confirmation, `"auto"` applies a confident patch that passes a dry
+run), and the rest of the run continues with `<name>.v2`. Exports: CSV, Excel, JSON, SQLite,
+webhook. See [crates/jobs/README.md](crates/jobs/README.md) and
+[crates/heal/README.md](crates/heal/README.md).
+
+The Scripts side panel of the browser edits scripts in Monaco and step-debugs them
+(breakpoints, variables; `script.debug_*`), see
+[docs/phase8/scripts-debugger.md](docs/phase8/scripts-debugger.md).
 
 Record instead of writing by hand: `record.start`, use the page, `record.stop`, then
 `record.codegen {id}` gives a script to save.
@@ -185,8 +198,21 @@ cargo run -p bmcp-script -- run scripts/examples/hello.ts --input name=Ada
 ```
 
 Types for editors: reference `crates/script/types/browser.d.ts` (generated) as
-`scripts/examples/*.ts` do. Plugins and userscripts are planned, not built yet (`data/plugins/`
-is reserved for them).
+`scripts/examples/*.ts` do.
+
+**Plugins** are long-lived scripts in `data/plugins/<name>/` (`plugin.json` + `main.ts`). Each
+runs in its own script host over a restricted connection: it may call only the commands and
+receive only the events its manifest lists, and can add Ctrl+K palette entries
+(`browser.on("tab.updated", …)` keeps it running). **Userscripts** in `data/userscripts/*.ts`
+have Tampermonkey-style `// @match` headers and run once per matching page load. Examples:
+[scripts/examples/plugins/hello-plugin](scripts/examples/plugins/hello-plugin) and
+[scripts/examples/userscripts](scripts/examples/userscripts).
+
+```text
+plugins.install {path: "scripts/examples/plugins/hello-plugin"}   plugins.list   plugins.logs {name}
+userscripts.save {name, code}                                      userscripts.list
+trigger.webhook_set {script, …}   →  POST /v1/hooks/{id} with X-BMCP-Signature: sha256=<HMAC>
+```
 
 ## Data folder
 
@@ -197,13 +223,17 @@ overrides it).
 data/
   config/        settings per feature, plain JSON: ai.json (provider keys included),
                  notify.json, governor.json, hints.json, identities.json, proxies.json,
-                 adblock.json, simplify.json
+                 profiles.json, permissions.json, adblock.json, simplify.json
   profiles/<id>/ Chromium profile (cookies, cache, …) of one profile
   db/            browsermcp.sqlite (bookmarks, history, downloads, passwords — unencrypted
                  by design), runs.sqlite (runs, rows, triggers)
   filters/       adblock filter lists, the compiled engine, user.txt (your own rules)
   scripts/       saved scripts (<name>.ts, healed versions <name>.v2.ts, …)
-  runs/<id>/     run exports (results.csv, …)
+  plugins/<name>/  installed plugins
+  userscripts/   userscripts
+  runs/<id>/     run exports (results.csv, …) and the rows' downloads/
+  extract-cache/ page.extract selector plans
+  pdf/ mhtml/    page.pdf / page.mhtml output
   recordings/<id>/  action logs (actions.jsonl, meta.json)
   videos/ har/ logs/
   runtime/       endpoint.json (pid + URLs of the running instance)
@@ -250,12 +280,16 @@ pnpm -C ui check                 # svelte-check, fails on warnings
 | [crates/core](crates/core) | `bmcp-core` | Command registry, `BrowserBackend` trait, event bus, domain model, portable paths |
 | [crates/data](crates/data) | `bmcp-data` | Bookmarks, history, downloads, passwords, Chrome import (SQLite) |
 | [crates/governor](crates/governor) | `bmcp-governor` | Tab freezing/discarding and automatic limits from RAM/CPU |
+| [crates/heal](crates/heal/README.md) | `bmcp-heal` | Self-healing of mass runs (AI patch, one confirmation, rest of the run) and `page.extract` with a cached selector plan |
 | [crates/hints](crates/hints) | `bmcp-hints` | Vim-style link hints drawn inside the page |
 | [crates/identity](crates/identity/README.md) | `bmcp-identity` | Hidden mode: fingerprint identities, stealth checks, device emulation, proxy pools, local proxy forwarder |
 | [crates/jobs](crates/jobs/README.md) | `bmcp-jobs` | Script library, mass runs (queue, data, exports), cron triggers, self-healing |
 | [crates/net](crates/net) | `bmcp-net` | Traffic: capture, HAR, rules/mocks, breakpoints, replay, API-to-code |
 | [crates/notify](crates/notify) | `bmcp-notify` | Notifications: UI toasts, Windows toasts, Telegram bot with answer buttons, webhook |
+| [crates/pagetools](crates/pagetools) | `bmcp-pagetools` | JavaScript dialogs (+ auto policy), file upload, print to PDF / MHTML, find in page |
 | [crates/perception](crates/perception/README.md) | `bmcp-perception` | CDP accessibility tree to compact, token-efficient snapshot text with refs |
+| [crates/plugins](crates/plugins) | `bmcp-plugins` | TypeScript plugins (long-lived, permission-checked), userscripts on page loads, signed webhook triggers |
+| [crates/profiles](crates/profiles) | `bmcp-profiles` | Profiles: per-profile proxy / language / identity, cookies, site permissions, download folders |
 | [crates/record](crates/record) | `bmcp-record` | Recording: action log (API + human), codegen to TypeScript, screencast video via ffmpeg |
 | [crates/registry](crates/registry) | `bmcp-registry` | Builds THE command registry (every command crate registers here) |
 | [crates/schema-dump](crates/schema-dump) | `bmcp-schema-dump` | `bmcp-schema`: prints every command with its JSON Schemas for `gen-sdk` |
@@ -268,7 +302,8 @@ Other parts:
 | [ui/](ui/README.md) | Svelte 5 browser chrome, new-tab page, library, side panels (`pnpm ui:dev`) |
 | [sdk/protocol](sdk/protocol/README.md) | `@browsermcp/protocol`: generated command types and the `createBrowser` wrapper |
 | [sdk/ts](sdk/ts/README.md) | `@browsermcp/sdk`: WebSocket / HTTP transports, events, `connect()` |
-| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk` |
-| `scripts/examples/` | Example scripts |
+| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk/bench` |
+| `scripts/examples/` | Example scripts, a plugin and a userscript |
 | `tests/fixtures/` | Local test pages and recorded CDP data |
+| [tests/bench/](tests/bench/README.md) | The MVP agent benchmark |
 | [docs/](docs/README.md) | Plan, spike notes, phase notes |
