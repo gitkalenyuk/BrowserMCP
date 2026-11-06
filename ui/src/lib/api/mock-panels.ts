@@ -300,8 +300,8 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     at(60, () => {
       if (!s.tabs.includes(tab)) s.tabs.push(tab);
       log.push({ type: 'done', reason: 'end_turn' });
+      setStatus(s, 'idle'); // like the browser: status first, then ai.done
       emit('ai.done', { session: s.id, reason: 'end_turn' });
-      setStatus(s, 'idle');
       runs.delete(s.id);
     });
   };
@@ -644,8 +644,8 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       runs.get(id)?.forEach(clearTimeout);
       runs.delete(id);
       transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
-      emit('ai.done', { session: id, reason: 'stopped' });
       setStatus(s, 'stopped');
+      emit('ai.done', { session: id, reason: 'stopped' });
       return { ...s };
     },
     'ai.sessions_list': () => ({ sessions: [...sessions.values()] }),

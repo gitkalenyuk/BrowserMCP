@@ -116,6 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read # checkout of this private repository
       pull-requests: read
     outputs:
       script: ${{ steps.filter.outputs.script }}

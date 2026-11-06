@@ -22,6 +22,11 @@ export interface WsOptions {
   /** Reconnect delay: starts at `minBackoff` ms and doubles up to `maxBackoff` (250 / 5000). */
   minBackoff?: number;
   maxBackoff?: number;
+  /**
+   * Give up on a connection attempt that is not open after this many ms (default 10 000).
+   * Some WebSocket implementations never report a refused or dropped handshake.
+   */
+  connectTimeout?: number;
   /** WebSocket class to use instead of the global one (e.g. the `ws` package on old Node). */
   WebSocket?: typeof WebSocket;
 }
@@ -51,6 +56,7 @@ export class WsTransport implements Transport {
   readonly #reconnect: boolean;
   readonly #minBackoff: number;
   readonly #maxBackoff: number;
+  readonly #connectTimeout: number;
   readonly #WebSocket: typeof WebSocket;
 
   #ws: WebSocket | null = null;
@@ -75,6 +81,7 @@ export class WsTransport implements Transport {
     this.#reconnect = options.reconnect ?? true;
     this.#minBackoff = options.minBackoff ?? 250;
     this.#maxBackoff = options.maxBackoff ?? 5_000;
+    this.#connectTimeout = options.connectTimeout ?? 10_000;
     this.#backoff = this.#minBackoff;
     const Ws = options.WebSocket ?? globalThis.WebSocket;
     if (!Ws) throw new Error("no global WebSocket: use Node 22+ or pass options.WebSocket");
@@ -84,14 +91,10 @@ export class WsTransport implements Transport {
   /** Open the connection. Rejects with `CONNECTION_FAILED` if the browser cannot be reached. */
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ws = this.#openSocket();
-      const onFirstClose = () =>
-        reject(new BrowserError({ code: "CONNECTION_FAILED", message: `cannot connect to ${this.url}`, retry: "after_wait", hint: "Is BrowserMCP running? Check the port (--api-port) and <data>/runtime/endpoint.json." }));
-      ws.addEventListener("close", onFirstClose, { once: true });
-      ws.addEventListener("open", () => {
-        ws.removeEventListener("close", onFirstClose);
-        resolve();
-      }, { once: true });
+      this.#openSocket(
+        () => resolve(),
+        () => reject(new BrowserError({ code: "CONNECTION_FAILED", message: `cannot connect to ${this.url}`, retry: "after_wait", hint: "Is BrowserMCP running? Check the port (--api-port) and <data>/runtime/endpoint.json." })),
+      );
     });
   }
 
@@ -150,11 +153,45 @@ export class WsTransport implements Transport {
 
   // ------------------------------------------------------------------------------------------
 
-  #openSocket(): WebSocket {
+  /**
+   * Open a socket. `onOpen` / `onFail` report the first outcome of this attempt. A failure is
+   * whichever comes first of `close`, `error` (some implementations, e.g. Node 22's, may report a
+   * refused connection with `error` only) or the connect timeout, and is handled once.
+   */
+  #openSocket(onOpen?: () => void, onFail?: () => void): void {
     const ws = new this.#WebSocket(this.url);
     this.#ws = ws;
-    ws.addEventListener("open", () => {
+    let settled = false;
+    let lost = false;
+    const connectTimer = setTimeout(() => {
+      if (settled) return;
+      try {
+        ws.close();
+      } catch {
+        // a socket still connecting may refuse close(); it is abandoned either way
+      }
+      onLost();
+    }, this.#connectTimeout);
+    const onLost = () => {
+      clearTimeout(connectTimer);
+      if (lost) return;
+      lost = true;
+      if (!settled) {
+        settled = true;
+        onFail?.();
+      }
       if (this.#ws !== ws) return;
+      this.#open = false;
+      this.#ws = null;
+      this.#failPending("CONNECTION_LOST", "the connection to the browser dropped", true);
+      // Only reconnect a connection that worked once; a failing first connect is reported.
+      if (this.#everOpened && this.#reconnect && !this.#closed) this.#scheduleReconnect();
+    };
+    ws.addEventListener("open", () => {
+      clearTimeout(connectTimer);
+      if (lost || this.#ws !== ws) return;
+      settled = true;
+      onOpen?.();
       this.#open = true;
       this.#everOpened = true;
       this.#backoff = this.#minBackoff;
@@ -164,16 +201,11 @@ export class WsTransport implements Transport {
       this.#openWaiters = [];
       waiters.forEach((run) => run());
     });
-    ws.addEventListener("message", (event) => this.#onMessage(event.data));
-    ws.addEventListener("close", () => {
-      if (this.#ws !== ws) return;
-      this.#open = false;
-      this.#ws = null;
-      this.#failPending("CONNECTION_LOST", "the connection to the browser dropped", true);
-      // Only reconnect a connection that worked once; a failing first connect is reported.
-      if (this.#everOpened && this.#reconnect && !this.#closed) this.#scheduleReconnect();
+    ws.addEventListener("message", (event) => {
+      if (this.#ws === ws) this.#onMessage(event.data);
     });
-    return ws;
+    ws.addEventListener("close", onLost);
+    ws.addEventListener("error", onLost);
   }
 
   #scheduleReconnect(): void {

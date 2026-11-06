@@ -140,6 +140,7 @@ async fn openai_compatible_agent_runs_registry_tools() {
             "ai.message", // "Opened " delta
             "ai.message", // "tab 2." delta
             "ai.message", // whole text
+            "ai.session", // idle, before ai.done
             "ai.done",
         ]
     );

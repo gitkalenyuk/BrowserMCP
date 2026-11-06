@@ -131,7 +131,34 @@ describe("WebSocket transport", () => {
     expect(err.code).toBe("CONNECTION_FAILED");
     mock = await MockBrowser.start(); // for afterEach
   });
+
+  it("rejects connect() when the socket reports only an error event (Node 22 undici)", async () => {
+    const err = await caught(connect({ url: "ws://127.0.0.1:9/v1/ws", WebSocket: fakeSocket("error") }));
+    expect(err.code).toBe("CONNECTION_FAILED");
+  });
+
+  it("rejects connect() when the handshake never finishes", async () => {
+    const started = Date.now();
+    const err = await caught(
+      connect({ url: "ws://127.0.0.1:9/v1/ws", WebSocket: fakeSocket("silent"), connectTimeout: 50 }),
+    );
+    expect(err.code).toBe("CONNECTION_FAILED");
+    expect(Date.now() - started).toBeLessThan(PATIENCE);
+  });
 });
+
+/** A WebSocket stand-in that fails its handshake with only `error`, or never answers at all. */
+function fakeSocket(mode: "error" | "silent"): typeof WebSocket {
+  class FakeSocket extends EventTarget {
+    constructor(_url: string) {
+      super();
+      if (mode === "error") setTimeout(() => this.dispatchEvent(new Event("error")), 5);
+    }
+    send(): void {}
+    close(): void {}
+  }
+  return FakeSocket as unknown as typeof WebSocket;
+}
 
 describe("HTTP transport", () => {
   it("calls POST /v1/cmd/{name}", async () => {

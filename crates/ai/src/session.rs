@@ -242,6 +242,13 @@ impl Session {
             }
             AgentEvent::Done(reason) => {
                 self.record(json!({ "type": "done", "reason": reason }));
+                // The status changes BEFORE `ai.done` goes out: a client that sends the next
+                // message as soon as it sees `ai.done` must find the session idle, not busy.
+                self.set_status(if self.cancel.is_cancelled() {
+                    Status::Stopped
+                } else {
+                    Status::Idle
+                });
                 self.emit(topics::DONE, json!({ "reason": reason }));
             }
         }
@@ -348,5 +355,36 @@ mod tests {
         let lines = std::fs::read_to_string(log).unwrap();
         assert_eq!(lines.lines().count(), 4);
         assert_eq!(session.transcript().len(), 4);
+    }
+
+    /// A client that reacts to `ai.done` by sending the next message must find the session idle.
+    #[tokio::test]
+    async fn the_session_is_idle_before_ai_done_is_published() {
+        let bus = EventBus::new();
+        let mut rx_bus = bus.subscribe();
+        let (session, _rx) = Session::new(
+            "custom-1".into(),
+            "custom".into(),
+            None,
+            COLORS[0].into(),
+            bus,
+            None,
+        );
+        session.set_status(Status::Running);
+        session.apply(AgentEvent::Done("end_turn".into()));
+        let events: Vec<_> = std::iter::from_fn(|| rx_bus.try_recv().ok()).collect();
+        let done = events.iter().position(|e| e.topic == "ai.done").unwrap();
+        let idle = events
+            .iter()
+            .position(|e| e.topic == "ai.session" && e.data["status"] == "idle")
+            .expect("an ai.session idle event");
+        assert!(idle < done, "status must change before ai.done");
+        assert_eq!(session.status(), Status::Idle);
+
+        // A stopped session ends as stopped, not idle.
+        session.set_status(Status::Running);
+        session.cancel.cancel();
+        session.apply(AgentEvent::Done("stopped".into()));
+        assert_eq!(session.status(), Status::Stopped);
     }
 }
