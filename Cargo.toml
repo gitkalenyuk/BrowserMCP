@@ -11,7 +11,7 @@ publish = false
 
 [workspace.dependencies]
 # Pinned exactly: crate version tracks a specific CEF build (156.0.15 / Chromium 156).
-# Bump monthly with `cargo xtask bump-cef` (planned), then run the e2e tests.
+# Bump monthly with `cargo xtask bump-cef <version>`, then run the e2e tests (README: "Updating Chromium").
 cef = { version = "=156.3.0", default-features = false }
 
 bmcp-core = { path = "crates/core" }

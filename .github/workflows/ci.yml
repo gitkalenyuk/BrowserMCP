@@ -2,13 +2,17 @@ name: CI
 
 # What runs here is what developers run locally (see README.md, "Contributing"):
 #   rust:   cargo fmt --check, clippy -D warnings, cargo xtask test, cargo xtask gen-sdk --check
+#           (+ no tracked file is gitignored)
 #   node:   pnpm install, pnpm -r build, pnpm -r test, pnpm -C ui check
 #   script: cargo test -p bmcp-script (V8, slow) — only when the script host can be affected
+#   release: cargo xtask dist (portable zip) on v* tags and manual runs, after rust + node
 # The jobs run in parallel.
 
 on:
   push:
     branches: [main]
+    # Release tags also build the portable package (the `release` job).
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -25,6 +29,14 @@ jobs:
       CEF_PATH: ${{ github.workspace }}/.cef
     steps:
       - uses: actions/checkout@v7
+
+      - name: No tracked file is gitignored
+        shell: bash
+        run: |
+          ignored=$(git ls-files --cached --ignored --exclude-standard)
+          if [ -n "$ignored" ]; then
+            echo "tracked files matched by .gitignore (fix the pattern):"; echo "$ignored"; exit 1
+          fi
 
       - name: Install Ninja
         run: choco install ninja -y --no-progress
@@ -49,23 +61,24 @@ jobs:
       - name: Generated SDK types are up to date
         run: cargo xtask gen-sdk --check
 
-      # The release build (LTO) is slow: only on main. It embeds ui/dist, so build the UI first.
+      # The release build (LTO) is slow: only on main (release tags: the `release` job). It
+      # embeds ui/dist, so build the UI first.
       - uses: pnpm/action-setup@v6
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         with:
           version: 11
       - uses: actions/setup-node@v7
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         with:
           node-version: 22
           cache: pnpm
       - name: Build UI for embedding
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: |
           pnpm install --frozen-lockfile
           pnpm -C ui build
       - name: Build release
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         run: cargo xtask build --release
 
   node:
@@ -133,3 +146,50 @@ jobs:
 
       - name: Test (script host)
         run: cargo test -p bmcp-script
+
+  # Portable Windows package (cargo xtask dist) on release tags and manual runs. Uploads the zip
+  # as a workflow artifact only: nothing is published as a GitHub release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Only package what passed fmt, clippy and the tests.
+    needs: [rust, node]
+    runs-on: windows-latest
+    env:
+      CEF_PATH: ${{ github.workspace }}/.cef
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Cache CEF binaries
+        uses: actions/cache@v6
+        with:
+          path: .cef
+          key: cef-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      # ui/dist is embedded into browsermcp.exe: dist runs `pnpm install` + `pnpm -C ui build`.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Build the portable package
+        run: cargo xtask dist
+
+      - name: Upload the zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: BrowserMCP-${{ github.ref_name }}-win64
+          path: dist/BrowserMCP-*-win64.zip
+          # Already deflated.
+          compression-level: 0
+          if-no-files-found: error

@@ -8,6 +8,11 @@ agents, the crate map).
 * [plan.md](plan.md) — the project plan (in Ukrainian): decisions, architecture, threading
   rules, project tree, snapshot format, MCP catalog, phases 0–11, risks.
 
+## Release
+
+* [release.md](release.md) — the portable Windows package (`cargo xtask dist`): contents,
+  sizes, verification, sandbox status; monthly CEF bumps (`cargo xtask bump-cef`).
+
 ## Spikes (Phase 1 go/no-go)
 
 * [spikes/S1-S2-S3.md](spikes/S1-S2-S3.md) — S1 CEF Views window composition (UI view +

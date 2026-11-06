@@ -75,6 +75,39 @@ build embeds a small placeholder UI. `browsermcp --help` lists the options (`--d
 to Chromium. `--cdp-port <PORT>` opens Chromium's DevTools port for Playwright/Puppeteer
 (`connectOverCDP`); it is off by default and refused while a profile uses a stealth identity.
 
+## Portable release
+
+```bash
+cargo xtask dist                      # -> dist/BrowserMCP-<version>-win64/ and .zip
+cargo xtask dist --skip-script-host   # without bmcp-script-host.exe (no V8 build)
+cargo xtask dist --out D:\builds --locales en-US,uk,de   # or --locales all
+cargo xtask dist --no-build           # repackage the existing target/release build
+```
+
+`dist` builds the UI (`pnpm -C ui build`, embedded into the exe), the release `browsermcp.exe` and
+`bmcp-script-host.exe`, and assembles one folder: the two executables, the CEF runtime (DLLs,
+`*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `locales/` — en-US + uk by default), an empty
+`data/`, `README.txt`, `THIRD_PARTY.txt` and `LICENSES/`. Unzip it anywhere and run
+`browsermcp.exe`; everything it stores stays in `data/` next to it. Video recording needs
+`ffmpeg.exe` next to the exe or on `PATH` (not bundled). CI builds the zip on `v*` tags and manual
+runs (artifact only). Details, sizes and the sandbox status: [docs/release.md](docs/release.md).
+
+## Updating Chromium
+
+The `cef` crate is pinned exactly in the root `Cargo.toml`; every crate release tracks one CEF
+build. Once a month, by hand:
+
+```bash
+cargo xtask bump-cef 157.0.0 --dry-run   # what would change
+cargo xtask bump-cef 157.0.0             # re-pin + cargo update -p cef -p cef-dll-sys
+```
+
+It updates the pin and the CEF build noted above it, restores `Cargo.toml`/`Cargo.lock` if the
+update fails, and prints the next steps: read the cef-rs changelog, `cargo xtask build` (downloads
+the new CEF), `cargo xtask test` + clippy, a smoke run, `cargo xtask bench`, `cargo xtask dist`, and
+— when the Chromium major changes — `ENGINE_CHROME_MAJOR` in `crates/identity`. Commit
+`Cargo.toml` + `Cargo.lock` (the CI CEF cache is keyed by `Cargo.lock`).
+
 ## Connect an AI agent
 
 While the browser runs, everything is served on `127.0.0.1:47800` (local only, no tokens;
@@ -304,7 +337,7 @@ Other parts:
 | [ui/](ui/README.md) | Svelte 5 browser chrome, new-tab page, library, side panels (`pnpm ui:dev`) |
 | [sdk/protocol](sdk/protocol/README.md) | `@browsermcp/protocol`: generated command types and the `createBrowser` wrapper |
 | [sdk/ts](sdk/ts/README.md) | `@browsermcp/sdk`: WebSocket / HTTP transports, events, `connect()` |
-| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk/bench` |
+| `xtask/` | `cargo xtask doctor/build/run/test/gen-sdk/bench/dist/bump-cef` |
 | `scripts/examples/` | Example scripts, a plugin and a userscript |
 | `tests/fixtures/` | Local test pages and recorded CDP data |
 | [tests/bench/](tests/bench/README.md) | The MVP agent benchmark |
