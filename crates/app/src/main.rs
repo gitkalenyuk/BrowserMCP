@@ -168,6 +168,10 @@ async fn start_api(
         data.root(),
         format!("http://127.0.0.1:{port}/mcp"),
     ));
+    // Recordings and generated scripts live in the data folder.
+    registry
+        .extensions()
+        .insert(bmcp_record::DataDirExt(data.clone()));
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);

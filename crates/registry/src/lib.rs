@@ -19,6 +19,7 @@ pub fn build_registry() -> Registry {
     bmcp_net::register(&mut registry);
     bmcp_identity::register(&mut registry);
     bmcp_ai::register(&mut registry);
+    bmcp_record::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }

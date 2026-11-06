@@ -14,3 +14,4 @@ bmcp-data = { path = "../data" }
 bmcp-net = { path = "../net" }
 bmcp-identity = { path = "../identity" }
 bmcp-ai = { path = "../ai" }
+bmcp-record = { path = "../record" }
