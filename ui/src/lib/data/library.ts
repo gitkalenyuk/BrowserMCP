@@ -4,11 +4,15 @@
 // `bmcp://ui/library.html`). Which section to show travels through localStorage, which the
 // chrome and the library share (same origin): the chrome writes a request, then opens or
 // activates the library tab; the page reads it on load, or on the `storage` event when it is
-// already open, and clears it. The same channel carries a "data changed" tick so the bookmarks
-// bar and star follow edits made in the library (the core has no data events yet).
+// already open, and clears it.
+//
+// Data changes come from the core itself: every edit (by the library, the star, an agent over
+// REST/MCP, a script) emits `bookmarks.changed` / `history.changed`, and the bar, the star and
+// the library re-read on them (`onDataChanged`).
 
 import type { BrowserApi } from '../api/client';
 import type { ConnectionStatus } from '../api/types';
+import type { DataApiEvents } from '../api/types-data';
 import { load, save, watch } from '../storage';
 
 export const LIBRARY_URL = 'bmcp://ui/library.html';
@@ -23,7 +27,6 @@ export interface LibraryRequest {
 }
 
 const REQUEST_KEY = 'library.request';
-const REV_KEY = 'data.rev';
 /** A request older than this is stale (the user opened the library some other way). */
 const REQUEST_TTL_MS = 15_000;
 
@@ -59,13 +62,32 @@ export function onRequest(cb: () => void): () => void {
   return watch(REQUEST_KEY, cb);
 }
 
-/** Tell the other pages that bookmarks (or other data) changed. */
-export function bumpDataRev(): void {
-  save(REV_KEY, Date.now());
-}
+/** How long `onDataChanged` waits for more events before calling back (a folder import or a
+ * multi-remove sends a burst). */
+export const DATA_CHANGED_DEBOUNCE_MS = 150;
 
-export function onDataRev(cb: () => void): () => void {
-  return watch(REV_KEY, cb);
+/**
+ * Calls `cb` once after a burst of `topic` events from the core (`bookmarks.changed` or
+ * `history.changed`). Returns the unsubscribe function, so it fits an $effect.
+ */
+export function onDataChanged(
+  api: Pick<BrowserApi, 'on'>,
+  topic: keyof DataApiEvents,
+  cb: () => void,
+  delay = DATA_CHANGED_DEBOUNCE_MS,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const off = api.on(topic, () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      cb();
+    }, delay);
+  });
+  return () => {
+    off();
+    if (timer) clearTimeout(timer);
+  };
 }
 
 /**

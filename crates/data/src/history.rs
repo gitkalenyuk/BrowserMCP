@@ -5,6 +5,10 @@
 //! URLs are kept (no `about:blank`, `bmcp://ui`, `devtools://`, `data:` …). A second load of the
 //! same URL within [`DEDUPE_MS`] is not a new visit (it only refreshes the title).
 //!
+//! Deleting works on *visits*: `history.delete` removes the visits in a time window (and/or of
+//! one URL) and then drops the URLs that have no visit left, so clearing "the last hour" keeps
+//! the older visits of the same pages. It emits `history.changed {op: "delete"}`.
+//!
 //! Commands: `history.search`, `history.delete`, `data.top_sites` (frecency).
 
 use bmcp_core::{CmdError, Command, Ctx, Meta, Toolset};
@@ -12,6 +16,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::events::history_changed;
 use crate::store::{DataError, DataResult, DataStore, like_pattern, now_ms};
 
 /// Loads of the same URL closer together than this count as one visit.
@@ -160,35 +165,93 @@ pub struct Deleted {
     pub urls: usize,
 }
 
-/// Forget one URL and all its visits.
-pub fn delete_url(conn: &mut Connection, url: &str) -> DataResult<Deleted> {
-    let tx = conn.transaction()?;
-    let visits: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM visits v JOIN urls u ON u.id = v.url_id WHERE u.url = ?1",
-        [url],
-        |r| r.get(0),
-    )?;
-    // Visits go with it (`ON DELETE CASCADE`).
-    let urls = tx.execute("DELETE FROM urls WHERE url = ?1", [url])?;
-    tx.commit()?;
-    Ok(Deleted {
-        visits: visits as usize,
-        urls,
-    })
+/// Which visits [`delete_visits`] removes: those of `url` (default: every URL) with
+/// `since <= visit_time < before` (default: no bound).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VisitFilter {
+    pub url: Option<String>,
+    pub since: Option<i64>,
+    pub before: Option<i64>,
 }
 
-/// Forget every visit before `before` (Unix ms) and the URLs left without visits.
-pub fn delete_before(conn: &mut Connection, before: i64) -> DataResult<Deleted> {
+/// Delete the visits matching `filter`, update the stats of the URLs they belonged to, and drop
+/// those URLs when no visit is left. A URL given without a time window goes away completely.
+pub fn delete_visits(conn: &mut Connection, filter: &VisitFilter) -> DataResult<Deleted> {
+    let since = filter.since.unwrap_or(i64::MIN);
+    let before = filter.before.unwrap_or(i64::MAX);
+    let url = filter.url.as_deref();
     let tx = conn.transaction()?;
-    let visits = tx.execute("DELETE FROM visits WHERE visit_time < ?1", [before])?;
-    let urls_before: i64 = tx.query_row("SELECT COUNT(*) FROM urls", [], |r| r.get(0))?;
-    recompute_stats(&tx)?;
-    let urls_after: i64 = tx.query_row("SELECT COUNT(*) FROM urls", [], |r| r.get(0))?;
+
+    // The URLs whose visits we touch (`?3 IS NULL` = any URL).
+    let mut affected: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT v.url_id FROM visits v JOIN urls u ON u.id = v.url_id
+             WHERE v.visit_time >= ?1 AND v.visit_time < ?2 AND (?3 IS NULL OR u.url = ?3)",
+        )?;
+        stmt.query_map(params![since, before, url], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    // A URL row without visits (possible after an interrupted import) still goes when the
+    // caller names it without a window.
+    if let (Some(url), None, None) = (url, filter.since, filter.before) {
+        let id: Option<i64> = tx
+            .query_row("SELECT id FROM urls WHERE url = ?1", [url], |r| r.get(0))
+            .optional()?;
+        affected.extend(id.filter(|id| !affected.contains(id)));
+    }
+
+    let visits = tx.execute(
+        "DELETE FROM visits WHERE visit_time >= ?1 AND visit_time < ?2
+             AND (?3 IS NULL OR url_id = (SELECT id FROM urls WHERE url = ?3))",
+        params![since, before, url],
+    )?;
+    let mut urls = 0;
+    for id in affected {
+        recompute_url(&tx, id)?;
+        urls += tx.execute("DELETE FROM urls WHERE id = ?1 AND visit_count = 0", [id])?;
+    }
     tx.commit()?;
-    Ok(Deleted {
-        visits,
-        urls: (urls_before - urls_after) as usize,
-    })
+    Ok(Deleted { visits, urls })
+}
+
+/// Recompute `visit_count` / `last_visit` of one URL from its visits.
+fn recompute_url(conn: &Connection, id: i64) -> DataResult<()> {
+    conn.execute(
+        "UPDATE urls SET
+             visit_count = (SELECT COUNT(*) FROM visits v WHERE v.url_id = urls.id),
+             last_visit = COALESCE((SELECT MAX(visit_time) FROM visits v WHERE v.url_id = urls.id), 0)
+         WHERE id = ?1",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// `[start, end)` in Unix ms of the local calendar day `day` (`YYYY-MM-DD`, in the time zone
+/// of the machine BrowserMCP runs on, which is also the UI's). DST days are 23 or 25 hours.
+pub fn local_day_range(day: &str) -> DataResult<(i64, i64)> {
+    use chrono::{Days, Local, NaiveDate, TimeDelta, TimeZone};
+
+    let date = NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d")
+        .map_err(|_| DataError::Invalid(format!("`day` must be YYYY-MM-DD, got {day:?}")))?;
+    let next = date
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| DataError::Invalid(format!("`day` {day:?} is out of range")))?;
+    // Local midnight. Where a DST change skips midnight, the day starts at the first valid
+    // local time (one hour later).
+    let midnight = |d: NaiveDate| -> DataResult<i64> {
+        let naive = d.and_time(chrono::NaiveTime::MIN);
+        Local
+            .from_local_datetime(&naive)
+            .earliest()
+            .or_else(|| {
+                Local
+                    .from_local_datetime(&(naive + TimeDelta::hours(1)))
+                    .earliest()
+            })
+            .map(|t| t.timestamp_millis())
+            .ok_or_else(|| DataError::Invalid(format!("no local midnight on {d}")))
+    };
+    Ok((midnight(date)?, midnight(next)?))
 }
 
 /// One entry of the new-tab page's "Top sites".
@@ -305,19 +368,59 @@ impl Command for Search {
 /// `history.delete`.
 pub struct Delete;
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteArgs {
-    /// Forget this exact URL (all its visits).
+    /// Only the visits of this exact URL (alone: the URL with all its visits).
     pub url: Option<String>,
-    /// Forget every visit before this time (Unix ms). Use the current time to clear everything.
+    /// Only visits at or after this time (Unix ms).
+    pub since: Option<i64>,
+    /// Only visits before this time (Unix ms). Use the current time to clear everything.
     pub before: Option<i64>,
+    /// Only visits on this local calendar day, `YYYY-MM-DD` (not together with
+    /// `since`/`before`).
+    pub day: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DeleteOutput {
     pub deleted_visits: usize,
+    /// URLs that had no visit left and were dropped.
     pub deleted_urls: usize,
+}
+
+impl DeleteArgs {
+    /// Turn the arguments into a [`VisitFilter`], refusing an empty or contradictory one.
+    fn filter(self) -> DataResult<VisitFilter> {
+        if self.url.is_none() && self.since.is_none() && self.before.is_none() && self.day.is_none()
+        {
+            return Err(DataError::Invalid(
+                "give `url`, `since`, `before` and/or `day` (nothing is deleted by default)".into(),
+            ));
+        }
+        let (since, before) = match self.day {
+            Some(_) if self.since.is_some() || self.before.is_some() => {
+                return Err(DataError::Invalid(
+                    "`day` cannot be combined with `since`/`before`".into(),
+                ));
+            }
+            Some(day) => {
+                let (start, end) = local_day_range(&day)?;
+                (Some(start), Some(end))
+            }
+            None => (self.since, self.before),
+        };
+        if let (Some(since), Some(before)) = (since, before)
+            && since >= before
+        {
+            return Err(DataError::Invalid("`since` must be before `before`".into()));
+        }
+        Ok(VisitFilter {
+            url: self.url,
+            since,
+            before,
+        })
+    }
 }
 
 impl Command for Delete {
@@ -327,24 +430,23 @@ impl Command for Delete {
 
     fn meta() -> Meta {
         Meta::new(
-            "Delete history: one URL (`url`) or every visit before a time (`before`, Unix ms). \
-             Give exactly one. Returns how many visits and URLs were removed.",
+            "Delete history visits: in a time window (`since` and/or `before`, Unix ms), on a \
+             local day (`day`, YYYY-MM-DD) and/or of one URL (`url`; alone it forgets the URL \
+             completely). URLs left without visits are dropped. Returns how many visits and \
+             URLs were removed.",
             Toolset::Data,
         )
         .act()
     }
 
     async fn run(ctx: Ctx, args: DeleteArgs) -> Result<DeleteOutput, CmdError> {
-        let store = DataStore::from_ctx(&ctx)?;
-        let deleted = match (args.url, args.before) {
-            (Some(url), None) => store.run(move |c| delete_url(c, &url)).await?,
-            (None, Some(before)) => store.run(move |c| delete_before(c, before)).await?,
-            _ => {
-                return Err(
-                    DataError::Invalid("give exactly one of `url` or `before`".into()).into(),
-                );
-            }
-        };
+        let filter = args.filter()?;
+        let deleted = DataStore::from_ctx(&ctx)?
+            .run(move |c| delete_visits(c, &filter))
+            .await?;
+        if deleted.visits + deleted.urls > 0 {
+            history_changed(&ctx, "delete");
+        }
         Ok(DeleteOutput {
             deleted_visits: deleted.visits,
             deleted_urls: deleted.urls,
@@ -555,20 +657,141 @@ mod tests {
             json!([{"url": "https://docs.rs/", "title": "Docs.rs", "visit_count": 1, "last_visit": 3_000_000}])
         );
 
-        let err = call_err(&registry, &ctx, "history.delete", json!({})).await;
-        assert_eq!(err.code, ErrorCode::InvalidParams);
-        let err = call_err(
-            &registry,
-            &ctx,
-            "history.delete",
-            json!({"url": "x", "before": 1}),
-        )
-        .await;
-        assert_eq!(err.code, ErrorCode::InvalidParams);
+        for args in [
+            json!({}),
+            json!({"since": 5, "before": 5}),
+            json!({"day": "2026-11-06", "since": 1}),
+            json!({"day": "06.11.2026"}),
+            json!({"day": "2026-02-30"}),
+        ] {
+            let err = call_err(&registry, &ctx, "history.delete", args.clone()).await;
+            assert_eq!(err.code, ErrorCode::InvalidParams, "{args}");
+        }
 
         // Top sites through the command (real clock: all visits are "old" → 10 points each).
         let out = call(&registry, &ctx, "data.top_sites", json!({})).await;
         assert_eq!(out["sites"][0]["url"], "https://docs.rs/");
         assert_eq!(out["sites"][0]["title"], "Docs.rs");
+    }
+
+    /// `(url, visit_count, last_visit)` of every page, most recent first.
+    fn visits_by_url(store: &DataStore) -> Vec<(String, i64, i64)> {
+        store
+            .with(|c| search(c, None, None, 100))
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.url, e.visit_count, e.last_visit))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn delete_removes_visits_in_a_window_not_whole_pages() {
+        let (registry, ctx) = setup();
+        let store = DataStore::from_ctx(&ctx).unwrap();
+        // a.test: visits at 1 000 s, 2 000 s, 3 000 s; b.test: only at 2 500 s; c.test: 500 s.
+        for t in [1_000_000, 2_000_000, 3_000_000] {
+            visit(&store, "https://a.test/", "A", "link", t);
+        }
+        visit(&store, "https://b.test/", "B", "link", 2_500_000);
+        visit(&store, "https://c.test/", "C", "link", 500_000);
+
+        let mut rx = ctx.events.subscribe();
+        // "The last ..." = since: the newest a.test visit and b.test go; older a.test stays.
+        let out = call(
+            &registry,
+            &ctx,
+            "history.delete",
+            json!({"since": 2_400_000}),
+        )
+        .await;
+        assert_eq!(out, json!({"deleted_visits": 2, "deleted_urls": 1}));
+        assert_eq!(
+            visits_by_url(&store),
+            [
+                ("https://a.test/".into(), 2, 2_000_000),
+                ("https://c.test/".into(), 1, 500_000),
+            ]
+        );
+
+        // A closed window [900 s, 1 500 s) takes the oldest a.test visit only.
+        let out = call(
+            &registry,
+            &ctx,
+            "history.delete",
+            json!({"since": 900_000, "before": 1_500_000}),
+        )
+        .await;
+        assert_eq!(out, json!({"deleted_visits": 1, "deleted_urls": 0}));
+
+        // URL + window: only that URL's visits in the window.
+        let out = call(
+            &registry,
+            &ctx,
+            "history.delete",
+            json!({"url": "https://c.test/", "before": 1_500_000}),
+        )
+        .await;
+        assert_eq!(out, json!({"deleted_visits": 1, "deleted_urls": 1}));
+        assert_eq!(
+            visits_by_url(&store),
+            [("https://a.test/".into(), 1, 2_000_000)]
+        );
+
+        // Nothing matched: no event.
+        let out = call(
+            &registry,
+            &ctx,
+            "history.delete",
+            json!({"url": "https://nothing.test/"}),
+        )
+        .await;
+        assert_eq!(out, json!({"deleted_visits": 0, "deleted_urls": 0}));
+
+        let events = crate::tests::drain_events(&mut rx, "history.");
+        let delete = ("history.changed".to_string(), json!({"op": "delete"}));
+        assert_eq!(events, [delete.clone(), delete.clone(), delete]);
+    }
+
+    #[tokio::test]
+    async fn delete_a_local_day() {
+        use chrono::{Local, NaiveDate, TimeZone};
+        let at = |d: &str, h: u32| {
+            let naive = NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap();
+            Local
+                .from_local_datetime(&naive)
+                .earliest()
+                .unwrap()
+                .timestamp_millis()
+        };
+        let (registry, ctx) = setup();
+        let store = DataStore::from_ctx(&ctx).unwrap();
+        // The page visited on 4, 5 and 6 November; another one only on the 5th.
+        for d in ["2026-11-04", "2026-11-05", "2026-11-06"] {
+            visit(&store, "https://a.test/", "A", "link", at(d, 12));
+        }
+        visit(&store, "https://b.test/", "B", "link", at("2026-11-05", 0));
+        visit(&store, "https://b.test/", "B", "link", at("2026-11-05", 23));
+
+        let out = call(
+            &registry,
+            &ctx,
+            "history.delete",
+            json!({"day": "2026-11-05"}),
+        )
+        .await;
+        assert_eq!(out, json!({"deleted_visits": 3, "deleted_urls": 1}));
+        assert_eq!(
+            visits_by_url(&store),
+            [("https://a.test/".into(), 2, at("2026-11-06", 12))]
+        );
+
+        // The day's bounds are local midnights, end exclusive.
+        let (start, end) = local_day_range("2026-11-05").unwrap();
+        assert_eq!(start, at("2026-11-05", 0));
+        assert_eq!(end, at("2026-11-06", 0));
+        assert!(local_day_range("2026-13-01").is_err());
     }
 }
