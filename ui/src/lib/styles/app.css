@@ -1,0 +1,262 @@
+/* BrowserMCP design tokens. Light is the base; dark follows prefers-color-scheme
+   unless the user pinned a theme (data-theme on :root). --accent is set from settings. */
+
+:root {
+  color-scheme: light;
+  --accent: #3b82f6;
+  --on-accent: #ffffff;
+
+  --frame: #e6e8ec;
+  --toolbar: #f7f8fa;
+  --surface: #ffffff;
+  --sunken: #eceef2;
+  --field: #eceef2;
+  --field-focus: #ffffff;
+  --hover: rgb(20 24 32 / 0.06);
+  --press: rgb(20 24 32 / 0.11);
+  --fg: #16191f;
+  --fg-muted: #4f5664;
+  --fg-subtle: #646b78;
+  --border: #d8dbe1;
+  --border-strong: #c1c6cf;
+  --scrim: rgb(14 17 22 / 0.28);
+  --shadow-pop: 0 12px 32px -8px rgb(14 17 22 / 0.28), 0 2px 6px rgb(14 17 22 / 0.08);
+  --shadow-tab: 0 1px 2px rgb(14 17 22 / 0.1);
+  --danger: #c4314b;
+  --ok: #1a7f4b;
+  --warn: #9a6400;
+
+  --g-grey: #5f6672;
+  --g-blue: #1f6feb;
+  --g-red: #d1242f;
+  --g-yellow: #9a6700;
+  --g-green: #1a7f37;
+  --g-pink: #bf3989;
+  --g-purple: #8250df;
+  --g-cyan: #0f7d8c;
+  --g-orange: #c4561d;
+  --on-group: #ffffff;
+
+  --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
+  --accent-line: color-mix(in oklab, var(--accent) 55%, transparent);
+
+  --font: system-ui, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs: 13px;
+  --fs-lg: 15px;
+
+  --r-sm: 5px;
+  --r: 7px;
+  --r-lg: 10px;
+  --strip-h: 34px;
+  --toolbar-h: 40px;
+  --tab-h: 28px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --frame: #131519;
+    --toolbar: #1e2126;
+    --surface: #24272d;
+    --sunken: #191b1f;
+    --field: #131519;
+    --field-focus: #17191d;
+    --hover: rgb(255 255 255 / 0.06);
+    --press: rgb(255 255 255 / 0.1);
+    --fg: #e7e9ed;
+    --fg-muted: #aab0bb;
+    --fg-subtle: #8d939e;
+    --border: #2f333a;
+    --border-strong: #3d424a;
+    --scrim: rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.3);
+    --shadow-tab: 0 1px 2px rgb(0 0 0 / 0.4);
+    --danger: #ff7b8a;
+    --ok: #4ccb7f;
+    --warn: #e3b341;
+    --g-grey: #9aa1ad;
+    --g-blue: #6aa7ff;
+    --g-red: #ff7b72;
+    --g-yellow: #e3b341;
+    --g-green: #56d364;
+    --g-pink: #f778ba;
+    --g-purple: #bc8cff;
+    --g-cyan: #4fd1de;
+    --g-orange: #ff9a5c;
+    --on-group: #131519;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --frame: #131519;
+  --toolbar: #1e2126;
+  --surface: #24272d;
+  --sunken: #191b1f;
+  --field: #131519;
+  --field-focus: #17191d;
+  --hover: rgb(255 255 255 / 0.06);
+  --press: rgb(255 255 255 / 0.1);
+  --fg: #e7e9ed;
+  --fg-muted: #aab0bb;
+  --fg-subtle: #8d939e;
+  --border: #2f333a;
+  --border-strong: #3d424a;
+  --scrim: rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-tab: 0 1px 2px rgb(0 0 0 / 0.4);
+  --danger: #ff7b8a;
+  --ok: #4ccb7f;
+  --warn: #e3b341;
+  --g-grey: #9aa1ad;
+  --g-blue: #6aa7ff;
+  --g-red: #ff7b72;
+  --g-yellow: #e3b341;
+  --g-green: #56d364;
+  --g-pink: #f778ba;
+  --g-purple: #bc8cff;
+  --g-cyan: #4fd1de;
+  --g-orange: #ff9a5c;
+  --on-group: #131519;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--frame);
+  color: var(--fg);
+  font: var(--fs) / 1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Square icon button used across the chrome. */
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--fg-muted);
+  flex: none;
+  transition: background-color 120ms, color 120ms;
+}
+.icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.icon-btn:active:not(:disabled) {
+  background: var(--press);
+}
+.icon-btn:disabled {
+  opacity: 0.38;
+}
+.icon-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background-color 120ms, border-color 120ms;
+}
+.btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.btn:disabled {
+  opacity: 0.5;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 88%, var(--fg));
+}
+
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: 500 var(--fs-xs) / 16px var(--font);
+  text-align: center;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+  }
+}

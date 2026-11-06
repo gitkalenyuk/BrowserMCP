@@ -1,0 +1,10 @@
+{
+  "name": "browsermcp",
+  "private": true,
+  "scripts": {
+    "ui:dev": "pnpm --filter @browsermcp/ui dev",
+    "ui:build": "pnpm --filter @browsermcp/ui build",
+    "ui:check": "pnpm --filter @browsermcp/ui check",
+    "ui:test": "pnpm --filter @browsermcp/ui test"
+  }
+}
