@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
-use crate::command::{CmdError, Command, Ctx, Empty, Meta, Toolset};
+use crate::command::{Caller, CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `tabs.list`: all open tabs.
 pub struct List;
@@ -149,8 +149,9 @@ impl Command for Close {
 
     fn meta() -> Meta {
         Meta::new(
-            "Close a tab. Closing the last tab of a window closes the window (and the last \
-             window quits the browser).",
+            "Close a tab. If it is the last tab of its window, the new tab page takes its \
+             place and the window stays open (only a person closing the last tab closes the \
+             window).",
             Toolset::Core,
         )
         .mutates_tab()
@@ -163,9 +164,24 @@ impl Command for Close {
     }
 
     async fn run(ctx: Ctx, args: TabArgs) -> Result<Empty, CmdError> {
-        ctx.backend.close_tab(args.tab).await?;
+        let keep_window = keeps_window(&ctx.caller);
+        // Logged so an "unexplained" window close / quit can be traced to its caller.
+        tracing::info!(tab = %args.tab, caller = ?ctx.caller, keep_window, "tabs.close");
+        if keep_window {
+            ctx.backend.close_tab_keep_window(args.tab).await?;
+        } else {
+            ctx.backend.close_tab(args.tab).await?;
+        }
         Ok(Empty {})
     }
+}
+
+/// May closing a tab also close its window (when it is the last one)? Only when a person
+/// does it (the browser UI, a keyboard shortcut). Agents, scripts, MCP/REST/WS clients and
+/// runs get the new tab page in place of the last tab instead, so one automation cannot shut
+/// down the browser everyone else is using.
+pub fn keeps_window(caller: &Caller) -> bool {
+    !matches!(caller, Caller::Ui | Caller::Keymap)
 }
 
 /// `tabs.activate`: show a tab.
@@ -188,5 +204,35 @@ impl Command for Activate {
     async fn run(ctx: Ctx, args: TabArgs) -> Result<Empty, CmdError> {
         ctx.backend.activate_tab(args.tab).await?;
         Ok(Empty {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keeps_window;
+    use crate::command::Caller;
+
+    #[test]
+    fn only_people_may_close_the_last_window_through_tabs_close() {
+        // A person: closing the last tab closes the window (normal browser behaviour).
+        assert!(!keeps_window(&Caller::Ui));
+        assert!(!keeps_window(&Caller::Keymap));
+        // Automation: the new tab page replaces the last tab, the window stays.
+        for caller in [
+            Caller::Rest,
+            Caller::Ws { conn: 1 },
+            Caller::Mcp {
+                session: "s".into(),
+                agent: None,
+            },
+            Caller::Script { id: "x".into() },
+            Caller::Agent { id: "a".into() },
+            Caller::Job {
+                run: "r".into(),
+                step: 1,
+            },
+        ] {
+            assert!(keeps_window(&caller), "{caller:?}");
+        }
     }
 }

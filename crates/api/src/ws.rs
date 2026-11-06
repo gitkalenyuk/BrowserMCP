@@ -84,14 +84,30 @@ pub fn router() -> axum::Router<ApiState> {
     axum::Router::new().route("/v1/ws", get(upgrade))
 }
 
-async fn upgrade(State(state): State<ApiState>, ws: WebSocketUpgrade) -> Response {
+async fn upgrade(
+    State(state): State<ApiState>,
+    headers: axum::http::HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
     let conn = state.next_conn_id();
-    ws.on_upgrade(move |socket| run_connection(state, conn, socket))
+    // The guard only lets an `Origin` through when it is our own UI (`bmcp://ui`, or the Vite
+    // dev server in dev mode): such a connection acts for the person using the browser.
+    let caller = caller_for(conn, headers.contains_key(axum::http::header::ORIGIN));
+    ws.on_upgrade(move |socket| run_connection(state, conn, caller, socket))
+}
+
+/// `Caller::Ui` for the browser's own UI pages, `Caller::Ws` for every other client.
+pub fn caller_for(conn: u64, has_origin: bool) -> Caller {
+    if has_origin {
+        Caller::Ui
+    } else {
+        Caller::Ws { conn }
+    }
 }
 
 /// One connection. This task owns the socket: it reads requests and writes everything that
 /// arrives on the outbox (responses from call tasks, notifications from the event forwarder).
-async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
+async fn run_connection(state: ApiState, conn: u64, caller: Caller, mut socket: WebSocket) {
     tracing::debug!(conn, "WebSocket connected");
     let subs = Arc::new(Mutex::new(Subscriptions::with_defaults()));
     let (outbox, mut outgoing) = mpsc::channel::<String>(OUTBOX);
@@ -113,7 +129,7 @@ async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
                     // Close frame, end of stream or a broken connection.
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 };
-                handle_message(&state, conn, &subs, &outbox, &text);
+                handle_message(&state, &caller, &subs, &outbox, &text);
             }
             Some(message) = outgoing.recv() => {
                 if socket.send(Message::Text(message.into())).await.is_err() {
@@ -134,7 +150,7 @@ async fn run_connection(state: ApiState, conn: u64, mut socket: WebSocket) {
 /// because this runs inside the loop that drains the outbox (awaiting here could deadlock).
 fn handle_message(
     state: &ApiState,
-    conn: u64,
+    caller: &Caller,
     subs: &Arc<Mutex<Subscriptions>>,
     outbox: &mpsc::Sender<String>,
     text: &str,
@@ -156,14 +172,14 @@ fn handle_message(
                 send_later(outbox, message);
             }
         }
-        _ => spawn_call(state, conn, outbox, request),
+        _ => spawn_call(state, caller, outbox, request),
     }
 }
 
 /// Run a registry command in its own task and send the response when it is done.
-fn spawn_call(state: &ApiState, conn: u64, outbox: &mpsc::Sender<String>, request: Request) {
+fn spawn_call(state: &ApiState, caller: &Caller, outbox: &mpsc::Sender<String>, request: Request) {
     let unknown_method = state.registry.get(&request.method).is_none();
-    let ctx = state.ctx(Caller::Ws { conn });
+    let ctx = state.ctx(caller.clone());
     let call = state.registry.call(ctx, &request.method, request.params);
     let outbox = outbox.clone();
     let method = request.method;
@@ -407,6 +423,12 @@ fn with_seq(data: Value, seq: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_connections_act_for_the_person() {
+        assert_eq!(caller_for(3, true), Caller::Ui);
+        assert_eq!(caller_for(3, false), Caller::Ws { conn: 3 });
+    }
 
     #[test]
     fn topic_patterns() {

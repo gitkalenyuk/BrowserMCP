@@ -185,6 +185,14 @@ pub trait BrowserBackend: Send + Sync + 'static {
     /// window closes the window; closing the last window quits.
     fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>>;
 
+    /// Close a tab, but never its window: when it is the last tab of its window, the new tab
+    /// page takes its place first. Used for automation callers, so one agent closing "its"
+    /// tab cannot close the window (or quit the browser) others are using. Default: plain
+    /// [`Self::close_tab`].
+    fn close_tab_keep_window(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        self.close_tab(tab)
+    }
+
     /// Show this tab in its window (and hide the one that was shown).
     fn activate_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>>;
 
