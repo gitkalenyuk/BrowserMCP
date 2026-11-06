@@ -544,6 +544,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-heal"
+version = "0.1.0"
+dependencies = [
+ "bmcp-ai",
+ "bmcp-core",
+ "bmcp-jobs",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "bmcp-hints"
 version = "0.1.0"
 dependencies = [
@@ -657,6 +675,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-plugins"
+version = "0.1.0"
+dependencies = [
+ "bmcp-api",
+ "bmcp-core",
+ "bmcp-jobs",
+ "getrandom 0.3.4",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "bmcp-record"
 version = "0.1.0"
 dependencies = [
@@ -684,12 +720,14 @@ dependencies = [
  "bmcp-core",
  "bmcp-data",
  "bmcp-governor",
+ "bmcp-heal",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-net",
  "bmcp-notify",
  "bmcp-pagetools",
+ "bmcp-plugins",
  "bmcp-record",
 ]
 
@@ -735,11 +773,13 @@ dependencies = [
  "bmcp-core",
  "bmcp-data",
  "bmcp-governor",
+ "bmcp-heal",
  "bmcp-hints",
  "bmcp-identity",
  "bmcp-jobs",
  "bmcp-notify",
  "bmcp-pagetools",
+ "bmcp-plugins",
  "bmcp-record",
  "bmcp-registry",
  "serde_json",

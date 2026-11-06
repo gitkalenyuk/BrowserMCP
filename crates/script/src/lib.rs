@@ -34,7 +34,5 @@ pub mod ws_sink;
 
 pub use debugger::{DEBUG_PREFIX, DebugChannel};
 pub use host::{RunOptions, RunOutcome, Timings, run_script, run_script_debug};
-pub use sink::{CallFuture, CommandSink, MockSink, SinkError};
-pub use host::{RunOptions, RunOutcome, Timings, run_script};
 pub use sink::{CallFuture, CommandSink, EventFuture, MockSink, SinkError};
 pub use ws_sink::{DEFAULT_WS_URL, WsSink};

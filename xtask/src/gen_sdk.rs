@@ -275,8 +275,6 @@ fn script_dts(commands: &[Cmd]) -> Result<String> {
          /** Low level: `browser.call(\"tabs.list\", {})`. Also accepts wire names (`tabs_list`). */\n    \
          call<N extends keyof Commands>(name: N, args?: Commands[N][\"args\"]): Promise<Commands[N][\"output\"]>;\n    \
          /** Report a structured result (`##bmcp:result` line; several calls merge object keys). */\n    \
-         output(value: unknown): void;\n",
-         /** Report a structured result (`##bmcp:result` line); several calls are merged. */\n    \
          output(value: unknown): void;\n    \
          /**\n     \
           * Call `handler(data, topic)` for every event matching `pattern` (exact topic, `\"prefix.*\"`\n     \
