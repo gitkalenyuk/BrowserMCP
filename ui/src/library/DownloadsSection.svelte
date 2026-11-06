@@ -7,7 +7,7 @@
   import { isSafeLinkUrl } from '../lib/safeurl';
   import { hostOf } from '../lib/urls';
 
-  let { api, notify, fail }: { api: BrowserApi; notify: (text: string) => void; fail: (err: unknown) => void } = $props();
+  let { api, fail }: { api: BrowserApi; notify: (text: string) => void; fail: (err: unknown) => void } = $props();
 
   let downloads = $state<Download[]>([]);
   let loaded = $state(false);
@@ -36,9 +36,13 @@
     };
   });
 
-  function showInFolder(d: Download) {
-    // Stub: the core has no "reveal in Explorer" command yet.
-    notify(`Saved to ${d.path}`);
+  /** Open Explorer with the file selected (the core allows the data and Downloads folders). */
+  async function showInFolder(d: Download) {
+    try {
+      await api.call('system.reveal_path', { path: d.path });
+    } catch (err) {
+      fail(err);
+    }
   }
 </script>
 
@@ -73,7 +77,7 @@
       <span class="lib-chip" class:ok={d.state === 'complete'} class:bad={d.state === 'cancelled' || d.state === 'interrupted'}>
         {stateLabel(d.state)}
       </span>
-      <button class="btn" onclick={() => showInFolder(d)} title="Opening the folder is not available yet; shows the path">
+      <button class="btn" onclick={() => showInFolder(d)} title="Show {d.path} in Explorer" disabled={!d.path}>
         <Icon name="folder" size={14} /> Show in folder
       </button>
     </div>

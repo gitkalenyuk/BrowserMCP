@@ -24,3 +24,4 @@ bmcp-pagetools = { path = "../pagetools" }
 bmcp-heal = { path = "../heal" }
 bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }
+bmcp-system = { path = "../system" }
