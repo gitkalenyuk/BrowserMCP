@@ -1,0 +1,36 @@
+[package]
+name = "bmcp-notify"
+description = "BrowserMCP notifications: UI toasts, Windows toasts, Telegram bot (with answer buttons), webhook; ui.notify / ui.ask_user"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time", "sync", "macros"] }
+tokio-util.workspace = true
+tracing.workspace = true
+# Telegram Bot API + webhook. native-tls = SChannel on Windows (same choice as bmcp-jobs).
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+
+[target.'cfg(windows)'.dependencies]
+# Windows toast notifications. Uses PowerShell's AppUserModelID, so no installer/shortcut is
+# needed (the toast then says it came from "Windows PowerShell").
+tauri-winrt-notification = "0.8"
+# "Is our window in front?" for rules with `when: "unfocused"`.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+# Mock Telegram / webhook servers: the tests never talk to the real Bot API.
+wiremock = "0.6"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread"] }
