@@ -73,23 +73,32 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     // One bus for everything: the CEF layer emits `tab.*` on it, the API forwards them.
     let events = bmcp_core::EventBus::new();
-    // The UI pages need the real API port before the server starts, so pick it now.
-    let api_port = resolve_port(cli.api_port);
+    // Bind the API socket BEFORE starting CEF: the UI pages and AI agents are told this port,
+    // so it must already be ours (otherwise they could talk to whatever else owns it).
+    let api_listener = if cli.dump_ax {
+        None
+    } else {
+        Some(bind_api(cli.api_port, &data)?)
+    };
+    let api_port = api_listener
+        .as_ref()
+        .and_then(|l| l.local_addr().ok())
+        .map_or(cli.api_port, |addr| addr.port());
 
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
         let runtime_dir = data.runtime();
         let events = events.clone();
         let data = data.clone();
-        let dump_ax = cli.dump_ax;
-        Box::new(move |backend: Arc<dyn BrowserBackend>| {
-            if dump_ax {
+        Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
+            None => {
                 handle.spawn(dump_ax_and_quit(backend));
-            } else {
+            }
+            Some(listener) => {
                 handle.spawn(start_api(
                     backend,
                     events,
-                    api_port,
+                    listener,
                     shutdown,
                     runtime_dir,
                     data,
@@ -127,26 +136,26 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `--api-port 0` means "any free port": ask the OS for one now (the UI pages are told the
-/// port before the server starts). Another program could grab it in between; then the
-/// server logs a bind error.
-fn resolve_port(port: u16) -> u16 {
-    if port != 0 {
-        return port;
-    }
-    std::net::TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|l| l.local_addr())
-        .map_or(cli::DEFAULT_API_PORT, |addr| addr.port())
+/// Bind 127.0.0.1:`port` (`0` = any free port) for the API. A busy port usually means another
+/// BrowserMCP is already running on this data folder or port.
+fn bind_api(port: u16, data: &DataDir) -> anyhow::Result<std::net::TcpListener> {
+    std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| {
+        format!(
+            "cannot use API port {port} on 127.0.0.1 (another BrowserMCP may be running: see {});              pick another with --api-port <n> or --api-port 0",
+            data.runtime().join("endpoint.json").display()
+        )
+    })
 }
 
 async fn start_api(
     backend: Arc<dyn BrowserBackend>,
     events: bmcp_core::EventBus,
-    port: u16,
+    listener: std::net::TcpListener,
     shutdown: CancellationToken,
     runtime_dir: std::path::PathBuf,
     data: DataDir,
 ) {
+    let port = listener.local_addr().map_or(0, |addr| addr.port());
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
     // Command crates that keep files (filter lists, site policies…) find the data folder here.
