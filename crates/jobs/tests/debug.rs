@@ -132,3 +132,70 @@ async fn bad_arguments() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);
 }
+
+/// The same flow against the REAL V8 host (no browser: the script makes no browser calls).
+/// Runs only when `BMCP_REAL_SCRIPT_HOST` points at a built `bmcp-script-host`
+/// (`cargo build -p bmcp-script`); bmcp-jobs does not depend on the V8 crate.
+#[tokio::test]
+async fn real_host_pauses_with_ts_lines_and_variables() {
+    let Some(exe) = std::env::var_os("BMCP_REAL_SCRIPT_HOST") else {
+        eprintln!("skipped: set BMCP_REAL_SCRIPT_HOST to a bmcp-script-host binary");
+        return;
+    };
+    // The host connects to the browser's WebSocket at start: give it an idle one.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = axum::Router::new().route(
+        "/v1/ws",
+        axum::routing::get(|ws: axum::extract::WebSocketUpgrade| async move {
+            ws.on_upgrade(|mut socket| async move { while socket.recv().await.is_some() {} })
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = common::config(tmp.path());
+    config.host_exe = Some(exe.into());
+    config.ws_url = format!("ws://127.0.0.1:{port}/v1/ws");
+    let env = Env::with_config(tmp, config);
+    // Line 2 is type-only (gone in the JS), so its breakpoint lands on line 3.
+    let code = "// demo\ntype Row = { n: number };\nconst rows: Row[] = [{ n: 2 }, { n: 5 }];\n\
+                let sum = 0;\nfor (const row of rows) {\n  sum += row.n;\n}\n\
+                console.log(`sum=${sum} name=${inputs.name}`);\nbrowser.output({ sum });\n";
+    let mut rx = env.events.subscribe();
+    let started = env
+        .ok(
+            "script.debug_start",
+            json!({"code": code, "breakpoints": [2, 6], "inputs": {"name": "Ada"}}),
+        )
+        .await;
+    let id = started["id"].as_str().unwrap().to_string();
+    assert_eq!(started["breakpoints"], json!([3, 6]));
+
+    let paused = wait_event(&mut rx, "script.debug_paused", |d| d["id"] == id).await;
+    assert_eq!(paused.data["line"], 3, "{}", paused.data);
+    env.ok("script.debug_cmd", json!({"id": id, "action": "continue"}))
+        .await;
+    let paused = wait_event(&mut rx, "script.debug_paused", |d| d["id"] == id).await;
+    assert_eq!(paused.data["line"], 6);
+    let vars = paused.data["scopes"].to_string();
+    assert!(vars.contains(r#""value":"{n: 2}""#), "{vars}");
+    assert!(vars.contains(r#""name":"sum""#), "{vars}");
+
+    // Drop the breakpoints and run to the end.
+    env.ok(
+        "script.debug_cmd",
+        json!({"id": id, "action": "set_breakpoints", "lines": []}),
+    )
+    .await;
+    env.ok("script.debug_cmd", json!({"id": id, "action": "continue"}))
+        .await;
+    let out = wait_event(&mut rx, "script.debug_output", |d| {
+        d["id"] == id && d["stream"] == "stdout"
+    })
+    .await;
+    assert_eq!(out.data["text"], "sum=7 name=Ada");
+    let ended = wait_event(&mut rx, "script.debug_ended", |d| d["id"] == id).await;
+    assert_eq!(ended.data["ok"], true, "{}", ended.data);
+    assert_eq!(ended.data["result"], json!({"sum": 7}));
+}

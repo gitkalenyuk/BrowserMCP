@@ -40,5 +40,6 @@ regex = "1"
 [dev-dependencies]
 bmcp-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-axum.workspace = true
+# `ws`: an idle WebSocket endpoint for the real-host debug test.
+axum = { workspace = true, features = ["ws"] }
 tokio = { workspace = true, features = ["process", "io-util", "fs", "test-util"] }

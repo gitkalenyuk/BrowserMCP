@@ -55,6 +55,39 @@ exit_code, duration_ms, result, stopped, error?}`.
   script ends as `failed`; the real binary with `--inspect pipe`.
 * `cargo test -p bmcp-jobs --test debug`: the proxy (fake host speaking the same protocol):
   start → paused event → set_breakpoints → continue → output/result → ended; inline code errors
-  with the parsed line; stop; argument errors.
+  with the parsed line and inputs passed through `--inputs-file`; stop; argument errors. With
+  `BMCP_REAL_SCRIPT_HOST=<target>/debug/bmcp-script-host.exe` the same file also drives the REAL
+  V8 host through the commands (an idle test WebSocket stands in for the browser): breakpoint on
+  a type-only line lands on the next line, pause, `{n: 2}` loop variable, set_breakpoints while
+  paused, output, result and end.
 * `pnpm -C ui check / test / build`: inputs inference, console entries, key ownership, the mock
-  debugger.
+  debugger. Monaco is a lazy chunk: the chrome bundle stays ~0.44 MB; Monaco (~4 MB) and the
+  TypeScript worker (~7 MB) load on first open of the panel. A Vite plugin drops Monaco's other
+  languages (CSS/HTML/JSON workers, ~80 tokenizers): ui/dist went from 108 to 19 asset files.
+* Dev UI (mock): gutter breakpoints, Debug, pause at a breakpoint with the current line, F10 in
+  the editor steps without reloading the page (the chrome lets `data-own-keys` keys through),
+  F5 continues, variables / call stack, Shift+F5 stops; Ctrl+Space on `browser.page.` lists the
+  commands with their docs from browser.d.ts.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![paused](img/mock-debug-paused.jpg) | ![intellisense](img/mock-intellisense.jpg) |
+| mock: paused at a breakpoint (line 9), block + module variables | IntelliSense from the generated browser.d.ts |
+
+## Gaps
+
+* Breakpoints and line mapping only for the main script; a step into an imported module shows
+  that module's JS line numbers.
+* Variables are one level deep (no expanding objects), no watch expressions, no "pause on
+  exceptions", no conditional breakpoints.
+* `--timeout-secs` is not applied by the core to debug sessions (a paused script would be
+  killed); the session lifetime (`timeout_secs`, default 30 min) is the limit instead.
+* While paused, a pending browser command keeps its own timeout in the core.
+* The panel does not ask before switching scripts: unsaved edits are kept per script in memory
+  only (lost when the chrome reloads).
+* Pre-existing, not from this change: `cargo test -p bmcp-script -p bmcp-jobs` in ONE command
+  fails three bmcp-jobs unit tests (deno_core turns on serde_json `preserve_order` through feature
+  unification, so JSON objects keep insertion order); each crate alone passes, and
+  `cargo xtask test` excludes bmcp-script.
