@@ -3,6 +3,8 @@ import type { BrowserApi } from '../api/client';
 import type { Agent, ConnectionStatus, TabId, Workspace, WorkspaceId } from '../api/types';
 import { buildKeyIndex, commandForEvent, DEFAULT_KEYMAP, type CommandId, type Keymap, type KeyLike } from '../keymap';
 import { AiStore } from '../ai/store.svelte';
+import { chromeBookmarks } from '../data/chrome-bookmarks.svelte';
+import { openLibrary } from '../data/library';
 import type { NativeHost } from '../native';
 import { NetStore } from '../net/store.svelte';
 import { TerminalStore } from '../term/store.svelte';
@@ -215,6 +217,14 @@ export class ChromeController {
   reload = () => this.#onActive('nav.reload');
   stopLoading = () => this.#onActive('nav.stop');
 
+  /** Link hints are typed in the page, so the keyboard goes there. */
+  showHints(): void {
+    const tab = this.tabs.activeId;
+    if (tab === null) return;
+    void this.#guard(this.api.call('hints.show', { tab }));
+    this.host?.focusContent();
+  }
+
   focusOmnibox(): void {
     // The palette page has no omnibox: ask the window to focus the chrome's.
     if (this.role === 'palette' && this.host) this.host.focusOmnibox();
@@ -247,6 +257,7 @@ export class ChromeController {
       case 'nav.reload': return this.active?.loading ? this.stopLoading() : this.reload();
       case 'nav.stop': return this.stopLoading();
       case 'omnibox.focus': return this.focusOmnibox();
+      case 'hints.show': return this.showHints();
       case 'palette.open':
         // In the browser the palette is a separate overlay view (palette.html).
         if (this.host) this.host.palette(this.role === 'palette' ? 'hide' : 'toggle');
@@ -261,6 +272,13 @@ export class ChromeController {
       case 'panel.scripts': return panel('scripts');
       case 'panel.runs': return panel('runs');
       case 'panel.close': return settings.update({ panel: null });
+      case 'library.bookmarks': return openLibrary(this, 'bookmarks');
+      case 'library.history': return openLibrary(this, 'history');
+      case 'library.downloads': return openLibrary(this, 'downloads');
+      case 'library.passwords': return openLibrary(this, 'passwords');
+      case 'library.import': return openLibrary(this, 'import');
+      case 'bookmark.toggle': return void chromeBookmarks(this.api).toggle(this.active?.url, this.active?.title);
+      case 'ui.toggleBookmarksBar': return settings.update({ bookmarksBar: !settings.value.bookmarksBar });
     }
   }
 

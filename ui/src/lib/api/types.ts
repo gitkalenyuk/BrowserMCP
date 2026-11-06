@@ -1,4 +1,5 @@
 // Wire types shared by every BrowserApi implementation.
+export * from './types-data'; // data.* / bookmarks.* / history.* / … (merged into RpcMethods)
 // These mirror what the Rust core will expose over JSON-RPC (ws://127.0.0.1:47800/v1/ws).
 // Later they will be replaced by the generated @browsermcp/protocol package.
 
@@ -151,6 +152,8 @@ export interface RpcMethods {
   'nav.forward': { params: TabParam; result: void };
   'nav.reload': { params: TabParam; result: void };
   'nav.stop': { params: TabParam; result: void };
+  /** Vim-style link hints in the page (crates/hints). */
+  'hints.show': { params: TabParam & { mode?: 'click' | 'newtab' | 'focus' | 'copy' }; result: { count: number } };
   'agents.list': { params: void; result: { agents: Agent[] } };
   /** Unlock the agent's tabs and drop its group. */
   'agents.forget': { params: { id: AgentId }; result: { released: TabId[] } };
@@ -161,9 +164,6 @@ export interface RpcMethods {
   'runs.patch.reject': { params: { id: string }; result: void };
   'scripts.list': { params: void; result: Script[] };
   'scripts.run': { params: { id: string }; result: { runId: string } };
-  // Shapes follow the Rust commands (crates/data): object outputs, folders have no url.
-  'data.bookmarks': { params: void; result: { bookmarks: Bookmark[] } };
-  'data.top_sites': { params: void; result: { sites: Bookmark[] } };
   // ---- built-in AI (crates/ai/src/commands.rs) --------------------------------------------
   'ai.providers': { params: void; result: { providers: AiProvider[] } };
   /** Omitted fields stay unchanged; "" clears one. Returns the provider. */
@@ -215,6 +215,8 @@ export interface RpcMethods {
   'net.resume': { params: NetResume; result: { pause_id: string; done: string; text: string } };
   /** Reports the page area's bounds (CSS px, relative to the UI view) so the core can place the content view. */
   'ui.layout': { params: Rect & { dpr: number }; result: void };
+  /** A notification button was pressed (crates/notify). */
+  'ui.answer': { params: { id: string; choice: string }; result: { id: string; label: string } };
 }
 
 /** Server -> client notifications. */
@@ -245,6 +247,23 @@ export interface ApiEvents {
   'net.lagged': { tab: TabId; missed: number; warning: string };
   /** WS only: this connection fell behind the bus. */
   'bus.lagged': { missed: number };
+  // ui.* (crates/notify): toasts and questions
+  'ui.notification': UiNotification;
+  /** Answered (in the UI or on Telegram), expired or resolved elsewhere: hide it. */
+  'ui.notification_closed': { id: string; choice: string | null; label: string; via: string };
+}
+
+export type NotifyLevel = 'info' | 'success' | 'warning' | 'error';
+
+/** `ui.notification`: a toast; with `actions` it is a question that stays until answered. */
+export interface UiNotification {
+  id: string;
+  title: string;
+  body: string;
+  level: NotifyLevel;
+  actions: { id: string; label: string }[];
+  sticky: boolean;
+  topic: string | null;
 }
 
 /** `Empty` output of the core (`{}`). */
@@ -437,3 +456,5 @@ export type EventName = keyof ApiEvents;
 export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: Params<M>];
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+
+export type * from './types-record-runs';
