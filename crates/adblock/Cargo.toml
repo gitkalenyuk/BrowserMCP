@@ -1,0 +1,25 @@
+[package]
+name = "bmcp-adblock"
+description = "BrowserMCP resource saving: adblock (Brave adblock engine + EasyList), per-site simplification, reader mode (no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Pinned exactly: the serialized engine cache (data/filters/engine.dat) is only guaranteed to
+# load with the same crate version. Default features keep `single-thread`, so `Engine` is
+# !Send/!Sync and every thread builds its own copy from the cached bytes (see gate.rs).
+adblock = "=0.13.5"
+bmcp-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+# Blocking HTTP client (with rustls) for downloading filter lists; run inside spawn_blocking.
+ureq = { version = "3.5", features = ["rustls", "gzip"] }
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
