@@ -1,0 +1,60 @@
+# Phase 8 M8.2–M8.3: Scripts panel and step debugger
+
+Date: 2026-11-06. The Scripts side panel edits, runs and step-debugs the TypeScript scripts of
+`data/scripts/` against the real core. Code map: `ui/README.md` ("Side panels → Scripts"),
+`crates/script/src/debugger.rs` (host side), `crates/jobs/src/debug.rs` (command side).
+
+## How debugging works
+
+```text
+UI (Monaco)  ── script.debug_start {name|code, inputs, breakpoints:[ts lines]} ──>  core (crates/jobs/src/debug.rs)
+                                                                                     │ spawns
+                                                                                     ▼
+                                   bmcp-script-host run <file> --ws … --inspect pipe   (crates/script)
+                                     V8 thread: load module → wait → evaluate
+                                     controller thread: CDP (Debugger.*, Runtime.getProperties)
+                                       stdin  <── {"id":n,"method":"step_over"}            (script.debug_cmd)
+                                       stdout ──> ##bmcp:debug {"method":"paused",…}        -> script.debug_paused
+                                       stdout ──> ##bmcp:debug {"method":"resumed"}         -> script.debug_resumed
+                                       stdout ──> console lines / ##bmcp:result {…}         -> script.debug_output
+                                       exit                                                -> script.debug_ended
+```
+
+* `--inspect` is off by default; without it the host runs exactly as before (no inspector).
+  `--inspect pipe` = commands on stdin, events on stdout; `--inspect <port>` = the same protocol
+  as newline-delimited JSON on one TCP connection at 127.0.0.1:port (printed to stderr).
+* The module is loaded (transpiled, compiled) before the debugger attaches, so breakpoints are
+  set on real code: a TS line is mapped to the first generated JS position through the
+  transpiler's source map (a type-only or empty line moves to the next line with code), and the
+  location V8 reports back is mapped to a TS line again. Pauses, call frames and the
+  `set_breakpoints` answer are all in 1-based TS lines.
+* `scopes` = the top frame's scopes without `global` (local, block, closure, module…), one level
+  of variables, every value a short string (`{id: 1, url: "…"}`, `Array(3) [1, 2, 3]`, 120 chars
+  max). `ext:` scripts (deno_core, the prelude) are blackboxed, so steps never stop inside them.
+* A client that disconnects lets the script run to its end. The core kills a session on
+  `script.debug_cmd {action:"stop"}`, after `timeout_secs` (default 30 min) or on shutdown.
+
+### Commands
+
+| Command | Args | Result |
+|---|---|---|
+| `script.debug_start` | `name` or `code`, `inputs?`, `breakpoints?: [line]`, `timeout_secs?` | `{id, breakpoints: [resolved lines], error?}` |
+| `script.debug_cmd` | `id`, `action: continue \| step_over \| step_into \| step_out \| pause \| set_breakpoints \| stop`, `lines?` | `{breakpoints?}` |
+
+Events: `script.debug_paused {id, reason, line, column, url, hit_breakpoints, call_frames:[{function,
+line, url}], scopes:[{type, variables:[{name, type, value}]}]}`, `script.debug_resumed {id}`,
+`script.debug_output {id, stream: stdout|stderr|result, text}`, `script.debug_ended {id, ok,
+exit_code, duration_ms, result, stopped, error?}`.
+
+## Verified
+
+* `cargo test -p bmcp-script`: the debugger protocol without a browser (MockSink): breakpoint on
+  a type-only line moves to the next line, pause on breakpoints, step into `add()` and read the
+  argument, step over and read a local, step out, change breakpoints while paused, run past an
+  `await`, read module variables; break on the first statement; a vanished client; a failing
+  script ends as `failed`; the real binary with `--inspect pipe`.
+* `cargo test -p bmcp-jobs --test debug`: the proxy (fake host speaking the same protocol):
+  start → paused event → set_breakpoints → continue → output/result → ended; inline code errors
+  with the parsed line; stop; argument errors.
+* `pnpm -C ui check / test / build`: inputs inference, console entries, key ownership, the mock
+  debugger.

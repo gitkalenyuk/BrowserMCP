@@ -408,3 +408,6 @@ export type EventName = keyof ApiEvents;
 export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: Params<M>];
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+
+// Scripts panel types (script.* methods and events are merged into RpcMethods / ApiEvents there).
+export * from './types-scripts';

@@ -125,7 +125,7 @@ intercept_error | lagged`. Full params and results are in `src/lib/api/types.ts`
 structs; will be replaced by the generated `@browsermcp/protocol`). `mock-panels.ts` fakes the
 panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic without a backend.
 
-`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*"]}` (a notification) after every
+`WsApi` sends `events.subscribe {"topics":["ai.*","term.*","net.*","script.*"]}` (a notification) after every
 (re)connect, on top of the server's default topics.
 
 ### Side panels
@@ -147,6 +147,17 @@ panel commands so `pnpm dev` demos the AI chat, a toy shell and live traffic wit
   export to `data/har/`, rules (block / redirect / mock / rewrite body) and breakpoints with an
   editor that resumes with only the changed fields (`net.resume`). The net commands return compact
   text for agents; `net/parse.ts` reads it.
+* **Scripts** (`ScriptsPanel.svelte`, `MonacoEditor.svelte`, `ScriptConsole`, `DebugVariables`,
+  `scripts/*.ts`; types `api/types-scripts.ts`, mock `api/mock-scripts.ts`): library
+  (`script.list/get/save/delete`, rename = save + delete, unsaved edits kept per script), Monaco
+  (lazy `import('scripts/monaco')`, its own chunks + workers) with IntelliSense from
+  `crates/script/types/browser.d.ts` imported `?raw` at build time (so a UI build always carries
+  the typings `cargo xtask gen-sdk` wrote), Ctrl+S save, Run with an inputs form (`inputs.<name>`
+  inferred from the code) → `script.run`, console with stdout/stderr/result and the error's line
+  as a jump link. Debugger: gutter / F9 breakpoints, F5 debug/continue, F10/F11/Shift+F11 steps,
+  Shift+F5 stop, current-line highlight, variables + call stack from `script.debug_paused`
+  (`script.debug_start/debug_cmd`, events `script.*`). The panel root has `data-own-keys`, so the
+  chrome leaves those keys to it (F5 is reload elsewhere).
 
 `VITE_BMCP_PANEL=traffic pnpm build` opens that panel on a profile without saved settings
 (screenshots of a fresh profile).

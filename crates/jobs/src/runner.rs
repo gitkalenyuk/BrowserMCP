@@ -115,7 +115,7 @@ impl Inner {
     }
 
     /// `data/scripts/.adhoc-<ms>-<n>.ts` (hidden from `script.list` by the leading dot).
-    fn write_temp_script(&self, code: &str) -> Result<PathBuf, CmdError> {
+    pub(crate) fn write_temp_script(&self, code: &str) -> Result<PathBuf, CmdError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);

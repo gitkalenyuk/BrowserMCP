@@ -10,6 +10,8 @@
 //! * [`store`] — runs, rows and triggers in `data/db/runs.sqlite` (restart-safe);
 //! * [`export`] — results to CSV / Excel / JSON / SQLite / webhook (`run.export`);
 //! * [`triggers`] — cron triggers that fire `script.run` (`trigger.*`);
+//! * [`debug`] — the step debugger: a `bmcp-script-host --inspect pipe` process per session
+//!   (`script.debug_start`, `script.debug_cmd`, events `script.debug_*`);
 //! * [`commands`] — the registry commands (toolsets `script` and `run`).
 //!
 //! The app creates one [`JobsService`], puts it into the registry's `Extensions` and calls
@@ -27,6 +29,7 @@
 
 pub mod commands;
 pub mod data;
+pub mod debug;
 pub mod export;
 pub mod host;
 pub mod runner;
@@ -123,6 +126,8 @@ pub(crate) struct Inner {
     /// Cancelled on browser shutdown: kills script processes but keeps rows `running` in the
     /// database, so the next start resumes them as `pending`.
     pub shutdown: CancellationToken,
+    /// Live `script.debug_start` sessions.
+    pub debug: debug::DebugSessions,
 }
 
 impl JobsService {
@@ -147,6 +152,7 @@ impl JobsService {
                 runs: Mutex::new(HashMap::new()),
                 firing: Mutex::new(HashSet::new()),
                 shutdown: CancellationToken::new(),
+                debug: Default::default(),
                 config,
             }),
         })
@@ -201,6 +207,8 @@ pub fn register(registry: &mut Registry) {
         .add::<ScriptSave>()
         .add::<ScriptDelete>()
         .add::<ScriptRun>()
+        .add::<ScriptDebugStart>()
+        .add::<ScriptDebugCmd>()
         .add::<RunStart>()
         .add::<RunStatusCmd>()
         .add::<RunList>()

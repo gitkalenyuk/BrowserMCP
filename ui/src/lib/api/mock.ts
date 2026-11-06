@@ -1,5 +1,6 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
 import { createPanelMocks } from './mock-panels';
+import { createScriptMocks } from './mock-scripts';
 import type {
   Agent,
   ApiEvents,
@@ -282,6 +283,7 @@ export class MockApi implements BrowserApi {
       { title: 'OpenAI', url: 'https://chatgpt.com/' },
       { title: 'Linear', url: 'https://linear.app/' },
     ] }),
+    ...createScriptMocks((event, payload) => this.#emit(event, payload)),
     ...createPanelMocks(
       (event, payload) => this.#emit(event, payload),
       () => this.#ws.activeId,

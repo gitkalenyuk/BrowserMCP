@@ -3438,6 +3438,72 @@ declare namespace BrowserMCP {
     total: number;
   }
 
+  // ---- script.debug_cmd ----
+
+  /** Arguments of `script.debug_cmd`. */
+  export interface ScriptDebugCmdArgs {
+    /**
+     * What `script.debug_cmd` can do.
+     *
+     * - `"continue"`: Run to the next breakpoint (F5).
+     * - `"step_over"`: Next line, over calls (F10).
+     * - `"step_into"`: Next line, into calls (F11).
+     * - `"step_out"`: Run until the current function returns (Shift+F11).
+     * - `"pause"`: Stop as soon as possible.
+     * - `"set_breakpoints"`: Replace all breakpoints with `lines`.
+     * - `"stop"`: Kill the script.
+     */
+    action: "continue" | "step_over" | "step_into" | "step_out" | "pause" | "set_breakpoints" | "stop";
+    /** Session id from script.debug_start. */
+    id: string;
+    /** For set_breakpoints: TypeScript lines (1-based). */
+    lines?: number[] | null;
+  }
+
+  /** Result of `script.debug_cmd`. */
+  export interface ScriptDebugCmdOutput {
+    /** For set_breakpoints: where the breakpoints really are. */
+    breakpoints?: number[] | null;
+  }
+
+  // ---- script.debug_start ----
+
+  /** Arguments of `script.debug_start`. */
+  export interface ScriptDebugStartArgs {
+    /** TypeScript lines (1-based) to stop at. */
+    breakpoints?: number[] | null;
+    /** Inline TypeScript instead of a saved script (e.g. the editor's unsaved buffer). */
+    code?: string | null;
+    /** Values the script reads as inputs.<key> (passed as strings). */
+    inputs?: Record<string, unknown> | null;
+    /** Saved script to debug. Give `name` or `code`. */
+    name?: string | null;
+    /** End the session after this many seconds (default 1800). */
+    timeout_secs?: number | null;
+  }
+
+  /** Result of `script.debug_start`. */
+  export interface ScriptDebugStartOutput {
+    /** Where the breakpoints really are (a line without code moves to the next one). */
+    breakpoints: number[];
+    /** Set when the script could not even start (e.g. a syntax error); the session is gone. */
+    error?: {
+      /**
+       * Browser error code (`NOT_FOUND`, `TIMEOUT`, …) when a browser call failed; otherwise
+       * `SCRIPT_ERROR`, `SCRIPT_TIMEOUT`, `HOST_ERROR` or `CANCELLED`.
+       */
+      code: string;
+      /** The browser command that failed, e.g. `page.find`. */
+      command?: string | null;
+      /** Line in the script of the top stack frame. */
+      line?: number | null;
+      /** First line of the error message. */
+      message: string;
+    } | null;
+    /** Session id for script.debug_cmd and the script.debug_* events. */
+    id: string;
+  }
+
   // ---- script.delete ----
 
   /** Arguments of `script.delete`. */
@@ -4531,6 +4597,10 @@ declare namespace BrowserMCP {
     "run.start": { args: RunStartArgs; output: RunStartOutput };
     /** Status of a run: running/paused/finished/failed/cancelled, row counts, options and an open heal request. */
     "run.status": { args: RunStatusArgs; output: RunStatusOutput };
+    /** Control a debug session from script_debug_start: continue, step_over, step_into, step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. Pauses arrive as script.debug_paused events. */
+    "script.debug_cmd": { args: ScriptDebugCmdArgs; output: ScriptDebugCmdOutput };
+    /** Start a saved script (name) or inline TypeScript (code) under the step debugger, stopping at the given TypeScript lines. Returns a session id; then use script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, script.debug_output, script.debug_ended. */
+    "script.debug_start": { args: ScriptDebugStartArgs; output: ScriptDebugStartOutput };
     /** Delete a saved script file. */
     "script.delete": { args: ScriptDeleteArgs; output: ScriptDeleteOutput };
     /** Return the source code of a saved script. */
@@ -5206,6 +5276,18 @@ declare namespace BrowserMCP {
     };
     /** Commands `script.*`. */
     script: {
+      /**
+       * Control a debug session from script_debug_start: continue, step_over, step_into, step_out, pause, set_breakpoints (with lines; returns where they landed) or stop. Pauses arrive as script.debug_paused events.
+       *
+       * `script.debug_cmd` (MCP: `script_debug_cmd`): toolset `script`, act.
+       */
+      debug_cmd(args: ScriptDebugCmdArgs): Promise<ScriptDebugCmdOutput>;
+      /**
+       * Start a saved script (name) or inline TypeScript (code) under the step debugger, stopping at the given TypeScript lines. Returns a session id; then use script_debug_cmd (continue/step_over/step_into/step_out/pause/set_breakpoints/stop). Events: script.debug_paused {id, line, call_frames, scopes}, script.debug_resumed, script.debug_output, script.debug_ended.
+       *
+       * `script.debug_start` (MCP: `script_debug_start`): toolset `script`, act.
+       */
+      debug_start(args?: ScriptDebugStartArgs): Promise<ScriptDebugStartOutput>;
       /**
        * Delete a saved script file.
        *

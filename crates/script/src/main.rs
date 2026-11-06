@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! bmcp-script-host run <file.ts> [--input key=value]... [--mock | --ws <url>]
-//!                      [--timeout-secs N] [--timings]
+//!                      [--timeout-secs N] [--timings] [--inspect pipe|<port>]
 //! ```
 //!
 //! Exit codes: 0 ok, 1 uncaught script error, 2 usage/setup error, 124 timeout
@@ -14,7 +14,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use bmcp_script::{CommandSink, MockSink, RunOptions, RunOutcome, WsSink, run_script};
+use bmcp_script::{
+    CommandSink, DebugChannel, MockSink, RunOptions, RunOutcome, WsSink, run_script,
+    run_script_debug,
+};
 
 const USAGE: &str = "\
 usage: bmcp-script-host run <file.ts> [options]
@@ -25,7 +28,10 @@ options:
   --ws <url>          send browser.* calls as JSON-RPC to a WebSocket
                       of the running browser (e.g. ws://127.0.0.1:47800/v1/ws)
   --timeout-secs N    terminate the script after N seconds (exit code 124)
-  --timings           print startup/run timings to stderr";
+  --timings           print startup/run timings to stderr
+  --inspect pipe|PORT step debugger (off by default): load the script, then wait for
+                      commands on stdin (events on stdout as `##bmcp:debug {json}`)
+                      or on a TCP socket at 127.0.0.1:PORT; see src/debugger.rs";
 
 /// Where browser calls go.
 enum SinkChoice {
@@ -40,6 +46,8 @@ struct Cli {
     sink: SinkChoice,
     timeout: Option<Duration>,
     timings: bool,
+    /// `--inspect`: `Some("pipe")` or `Some("<port>")`.
+    inspect: Option<String>,
 }
 
 /// Hand-written parser: few flags, so no extra dependency.
@@ -56,6 +64,7 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
         sink: SinkChoice::Mock,
         timeout: None,
         timings: false,
+        inspect: None,
     };
     let mut script = None;
     while let Some(arg) = args.next() {
@@ -81,6 +90,13 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<Cli> {
                 cli.timeout = Some(Duration::from_secs_f64(secs));
             }
             "--timings" => cli.timings = true,
+            "--inspect" => {
+                let target = args.next().context("--inspect needs `pipe` or a port")?;
+                if target != "pipe" && target.parse::<u16>().is_err() {
+                    bail!("--inspect must be `pipe` or a port number, got `{target}`");
+                }
+                cli.inspect = Some(target);
+            }
             flag if flag.starts_with("--") => bail!("unknown option `{flag}`\n\n{USAGE}"),
             path if script.is_none() => script = Some(PathBuf::from(path)),
             extra => bail!("unexpected argument `{extra}`"),
@@ -123,7 +139,14 @@ fn main() -> ExitCode {
             inputs: cli.inputs.clone(),
             timeout: cli.timeout,
         };
-        run_script(opts, sink).await
+        match cli.inspect.as_deref() {
+            None => run_script(opts, sink).await,
+            Some("pipe") => run_script_debug(opts, sink, DebugChannel::pipe()).await,
+            Some(port) => {
+                let channel = DebugChannel::tcp(port.parse()?)?;
+                run_script_debug(opts, sink, channel).await
+            }
+        }
     });
 
     match result {
