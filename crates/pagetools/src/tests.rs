@@ -7,8 +7,8 @@ use std::time::Duration;
 use bmcp_core::command::Empty;
 use bmcp_core::testing::{FakeBackend, ctx};
 use bmcp_core::{
-    BackendError, Caller, CmdError, Command, Ctx, DataDir, ErrorCode, Event, Meta, Registry,
-    TabId, Toolset,
+    BackendError, Caller, CmdError, Command, Ctx, DataDir, ErrorCode, Event, Meta, Registry, TabId,
+    Toolset,
 };
 use serde_json::{Value, json};
 
@@ -42,19 +42,22 @@ impl Command for Probe {
     }
 }
 
+/// Scripted CDP answers: `(method, Ok(result) | Err(message))`, newest wins.
+type Answers = Arc<Mutex<Vec<(String, Result<Value, String>)>>>;
+
 struct Env {
     fake: Arc<FakeBackend>,
     registry: Arc<Registry>,
     tmp: tempfile::TempDir,
     /// Scripted answers by CDP method (default `{}`); errors with `Err`.
-    answers: Arc<Mutex<Vec<(String, Result<Value, String>)>>>,
+    answers: Answers,
 }
 
 impl Env {
     fn new() -> Env {
         let tmp = tempfile::tempdir().unwrap();
         let fake = FakeBackend::with_tabs(&["https://tools.test/"]);
-        let answers: Arc<Mutex<Vec<(String, Result<Value, String>)>>> = Arc::default();
+        let answers: Answers = Arc::default();
         let scripted = answers.clone();
         fake.on_cdp(move |_tab, method, _params| {
             let scripted = scripted.lock().unwrap();
@@ -76,9 +79,7 @@ impl Env {
         bmcp_core::commands::register_builtin(&mut registry);
         crate::register(&mut registry);
         registry.add::<Probe>();
-        registry
-            .extensions()
-            .insert(DataDir::from_root(tmp.path()));
+        registry.extensions().insert(DataDir::from_root(tmp.path()));
         Env {
             fake,
             registry: Arc::new(registry),
@@ -185,10 +186,21 @@ fn policy_table() {
 
 #[test]
 fn guarded_commands() {
-    for name in ["page.snapshot", "page.act", "input.keys", "nav.goto", "page.upload"] {
+    for name in [
+        "page.snapshot",
+        "page.act",
+        "input.keys",
+        "nav.goto",
+        "page.upload",
+    ] {
         assert!(is_guarded(name), "{name}");
     }
-    for name in ["page.dialog", "page.dialog_policy", "tabs.close", "net.list"] {
+    for name in [
+        "page.dialog",
+        "page.dialog_policy",
+        "tabs.close",
+        "net.list",
+    ] {
         assert!(!is_guarded(name), "{name}");
     }
 }
@@ -211,8 +223,15 @@ async fn open_dialog_blocks_page_commands_until_answered() {
     // Another page command is refused at once, with the dialog in candidates[0].
     let err = env.call("page.probe", json!({})).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::DialogOpen);
-    assert!(err.message.contains("page.probe is blocked"), "{}", err.message);
-    assert!(err.message.contains("alert dialog is open on tab 1: \"Saved!\""));
+    assert!(
+        err.message.contains("page.probe is blocked"),
+        "{}",
+        err.message
+    );
+    assert!(
+        err.message
+            .contains("an alert dialog is open on tab 1: \"Saved!\"")
+    );
     assert_eq!(err.candidates[0]["type"], "alert");
     assert_eq!(err.candidates[0]["message"], "Saved!");
     assert_eq!(err.candidates[0]["tab"], 1);
@@ -252,8 +271,11 @@ async fn dialog_opening_while_a_command_runs_stops_it() {
     env.call("page.dialog_policy", json!({})).await.unwrap();
     let registry = env.registry.clone();
     let fake = env.fake.clone();
-    let running =
-        tokio::spawn(async move { registry.call(ctx(mcp(), fake), "page.probe", json!({})).await });
+    let running = tokio::spawn(async move {
+        registry
+            .call(ctx(mcp(), fake), "page.probe", json!({}))
+            .await
+    });
     settle().await;
     env.dialog("confirm", "Delete?");
     let err = running.await.unwrap().unwrap_err();
@@ -333,9 +355,12 @@ async fn policies_answer_dialogs_automatically() {
     env.call("page.probe", json!({})).await.unwrap();
 
     // Global rules apply to tabs without their own rule; tab rules win.
-    env.call("page.dialog_policy", json!({"global": true, "confirm": "accept", "alert": "accept"}))
-        .await
-        .unwrap();
+    env.call(
+        "page.dialog_policy",
+        json!({"global": true, "confirm": "accept", "alert": "accept"}),
+    )
+    .await
+    .unwrap();
     let out = env.call("page.dialog_policy", json!({})).await.unwrap();
     assert_eq!(out["policy"]["alert"], "accept");
     assert_eq!(out["policy"]["confirm"], "dismiss");
@@ -438,7 +463,13 @@ async fn with_ref(env: &Env) -> String {
         tab: 1,
         ..Default::default()
     };
-    let snap = snapshot(&tree, &mut tab.registry, &SnapshotOptions::default(), header).unwrap();
+    let snap = snapshot(
+        &tree,
+        &mut tab.registry,
+        &SnapshotOptions::default(),
+        header,
+    )
+    .unwrap();
     snap.refs[0].ref_str.clone()
 }
 
@@ -454,7 +485,10 @@ fn run_files(env: &Env) -> (String, String) {
             .to_string_lossy()
             .into_owned()
     };
-    (plain(dir.join("in").join("a.txt")), plain(dir.join("b.txt")))
+    (
+        plain(dir.join("in").join("a.txt")),
+        plain(dir.join("b.txt")),
+    )
 }
 
 #[test]
@@ -463,23 +497,46 @@ fn upload_paths_are_checked() {
     let (a, b) = run_files(&env);
     let root = env.tmp.path();
     let files = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let ok = crate::upload::resolve_files(root, Some("r1"), &files(&["in/a.txt", "./b.txt"]))
-        .unwrap();
-    let ok: Vec<String> = ok.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let ok =
+        crate::upload::resolve_files(root, Some("r1"), &files(&["in/a.txt", "./b.txt"])).unwrap();
+    let ok: Vec<String> = ok
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     assert_eq!(ok, vec![a.clone(), b]);
     assert!(!ok[0].starts_with(r"\\?\"));
     // Absolute paths are fine with or without a run.
     crate::upload::resolve_files(root, None, &files(&[&a])).unwrap();
 
     let cases: &[(Option<&str>, &str, ErrorCode, &str)] = &[
-        (Some("r1"), "../../secret.txt", ErrorCode::InvalidParams, "leaves the run folder"),
-        (Some("r1"), "in/../../r1/../../secret.txt", ErrorCode::InvalidParams, "leaves"),
-        (Some("r1"), "missing.txt", ErrorCode::NotFound, "file not found"),
+        (
+            Some("r1"),
+            "../../secret.txt",
+            ErrorCode::InvalidParams,
+            "leaves the run folder",
+        ),
+        (
+            Some("r1"),
+            "in/../../r1/../../secret.txt",
+            ErrorCode::InvalidParams,
+            "leaves",
+        ),
+        (
+            Some("r1"),
+            "missing.txt",
+            ErrorCode::NotFound,
+            "file not found",
+        ),
         (Some("r1"), "in", ErrorCode::InvalidParams, "is not a file"),
         (None, "b.txt", ErrorCode::InvalidParams, "is relative"),
         (Some("nope"), "b.txt", ErrorCode::NotFound, "does not exist"),
         (Some(".."), "b.txt", ErrorCode::InvalidParams, "bad run_id"),
-        (Some("r1/../x"), "b.txt", ErrorCode::InvalidParams, "bad run_id"),
+        (
+            Some("r1/../x"),
+            "b.txt",
+            ErrorCode::InvalidParams,
+            "bad run_id",
+        ),
     ];
     for (run, file, code, text) in cases {
         let err = crate::upload::resolve_files(root, *run, &files(&[file])).unwrap_err();
@@ -512,7 +569,10 @@ async fn upload_into_a_file_input() {
         env.calls_of("DOM.setFileInputFiles"),
         vec![json!({"files": [a, b], "backendNodeId": 42})]
     );
-    assert!(env.calls_of("Page.setInterceptFileChooserDialog").is_empty());
+    assert!(
+        env.calls_of("Page.setInterceptFileChooserDialog")
+            .is_empty()
+    );
 
     // A single-file input refuses two files, before setting anything.
     env.answer(
@@ -557,7 +617,8 @@ async fn upload_through_a_file_chooser() {
     let registry = env.registry.clone();
     let fake = env.fake.clone();
     let args = json!({"ref": target, "files": ["in/a.txt"], "run_id": "r1"});
-    let call = tokio::spawn(async move { registry.call(ctx(mcp(), fake), "page.upload", args).await });
+    let call =
+        tokio::spawn(async move { registry.call(ctx(mcp(), fake), "page.upload", args).await });
     // Wait for the click, then open the chooser like Chromium does.
     while !env
         .calls_of("Input.dispatchMouseEvent")
@@ -572,6 +633,7 @@ async fn upload_through_a_file_chooser() {
     );
     let out = call.await.unwrap().unwrap();
     assert_eq!(out["via"], "chooser");
+    settle().await; // interception is switched off from a task
 
     let sequence: Vec<String> = env
         .fake
@@ -600,7 +662,10 @@ async fn upload_through_a_file_chooser() {
             "Page.setInterceptFileChooserDialog false",
         ]
     );
-    assert_eq!(env.calls_of("DOM.setFileInputFiles")[0]["files"], json!([a]));
+    assert_eq!(
+        env.calls_of("DOM.setFileInputFiles")[0]["files"],
+        json!([a])
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -612,13 +677,56 @@ async fn upload_chooser_timeout_switches_interception_off() {
         "DOM.describeNode",
         Ok(json!({"node": {"nodeName": "DIV", "attributes": []}})),
     );
-    env.answer("DOM.getContentQuads", Ok(json!({"quads": [[0, 0, 4, 0, 4, 4, 0, 4]]})));
+    env.answer(
+        "DOM.getContentQuads",
+        Ok(json!({"quads": [[0, 0, 4, 0, 4, 4, 0, 4]]})),
+    );
     let err = env
-        .call("page.upload", json!({"ref": target, "files": [a], "timeout_ms": 200}))
+        .call(
+            "page.upload",
+            json!({"ref": target, "files": [a], "timeout_ms": 200}),
+        )
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::NotInteractable);
-    assert!(err.message.contains("did not open a file chooser within 200 ms"));
+    assert!(
+        err.message
+            .contains("did not open a file chooser within 200 ms")
+    );
+    settle().await;
+    assert_eq!(
+        env.calls_of("Page.setInterceptFileChooserDialog"),
+        vec![json!({"enabled": true}), json!({"enabled": false})]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn upload_cancelled_by_a_dialog_still_switches_interception_off() {
+    let env = Env::new();
+    env.call("page.dialog_policy", json!({})).await.unwrap(); // watch dialogs
+    let (a, _) = run_files(&env);
+    let target = with_ref(&env).await;
+    env.answer(
+        "DOM.describeNode",
+        Ok(json!({"node": {"nodeName": "BUTTON", "attributes": []}})),
+    );
+    env.answer(
+        "DOM.getContentQuads",
+        Ok(json!({"quads": [[0, 0, 4, 0, 4, 4, 0, 4]]})),
+    );
+    let registry = env.registry.clone();
+    let fake = env.fake.clone();
+    let args = json!({"ref": target, "files": [a]});
+    let call =
+        tokio::spawn(async move { registry.call(ctx(mcp(), fake), "page.upload", args).await });
+    while env.calls_of("Input.dispatchMouseEvent").len() < 3 {
+        settle().await;
+    }
+    // The "button" opened an alert instead of a chooser.
+    env.dialog("alert", "No uploads today");
+    let err = call.await.unwrap().unwrap_err();
+    assert_eq!(err.code, ErrorCode::DialogOpen);
+    settle().await;
     assert_eq!(
         env.calls_of("Page.setInterceptFileChooserDialog"),
         vec![json!({"enabled": true}), json!({"enabled": false})]
@@ -696,7 +804,10 @@ async fn find_steps_through_matches_in_an_isolated_world() {
         .call("page.find_text", json!({"query": "foo"}))
         .await
         .unwrap();
-    assert_eq!(out, json!({"tab": 1, "count": 3, "index": 1, "context": "a foo b"}));
+    assert_eq!(
+        out,
+        json!({"tab": 1, "count": 3, "index": 1, "context": "a foo b"})
+    );
 
     env.answer(
         "Runtime.evaluate",
@@ -741,7 +852,10 @@ async fn find_steps_through_matches_in_an_isolated_world() {
         json!({"frameId": "F1", "worldName": "bmcp-find"})
     );
     let err = env
-        .call("page.find_text", json!({"query": "x", "next": true, "prev": true}))
+        .call(
+            "page.find_text",
+            json!({"query": "x", "next": true, "prev": true}),
+        )
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidParams);

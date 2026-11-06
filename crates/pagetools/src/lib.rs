@@ -40,10 +40,10 @@ pub mod commands;
 pub mod dialog;
 pub mod find;
 pub mod print;
-pub mod upload;
-mod util;
 #[cfg(test)]
 mod tests;
+pub mod upload;
+mod util;
 
 use std::sync::Arc;
 

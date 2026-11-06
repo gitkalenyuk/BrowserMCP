@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use bmcp_core::{
-    BoxFuture, BrowserBackend, Caller, CdpEvents, CmdError, CommandGuard, Ctx, ErrorCode,
-    EventBus, TabId,
+    BoxFuture, BrowserBackend, Caller, CdpEvents, CmdError, CommandGuard, Ctx, ErrorCode, EventBus,
+    TabId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -158,7 +158,10 @@ impl Policy {
             confirm: self.confirm.or(base.confirm),
             prompt: self.prompt.or(base.prompt),
             beforeunload: self.beforeunload.or(base.beforeunload),
-            prompt_text: self.prompt_text.clone().or_else(|| base.prompt_text.clone()),
+            prompt_text: self
+                .prompt_text
+                .clone()
+                .or_else(|| base.prompt_text.clone()),
         }
     }
 
@@ -492,7 +495,10 @@ impl CommandGuard for DialogGuard {
         }
         let state = self.0.clone();
         let backend = ctx.backend.clone();
-        let explicit = args.get("tab").and_then(Value::as_i64).map(|t| TabId(t as i32));
+        let explicit = args
+            .get("tab")
+            .and_then(Value::as_i64)
+            .map(|t| TabId(t as i32));
         Some(Box::pin(async move {
             // Subscribe before looking, so a dialog opening in between is not missed.
             let mut changes = state.changed.subscribe();
@@ -526,8 +532,13 @@ impl CommandGuard for DialogGuard {
 /// The `DIALOG_OPEN` error for `command`. `while_running`: the dialog opened after the
 /// command had started (so its action most likely happened, e.g. the click that opened it).
 pub fn dialog_open_error(command: &str, dialog: &OpenDialog, while_running: bool) -> CmdError {
+    let article = if dialog.kind == DialogType::Alert {
+        "an"
+    } else {
+        "a"
+    };
     let what = format!(
-        "a {} dialog {} on tab {}: \"{}\"",
+        "{article} {} dialog {} on tab {}: \"{}\"",
         dialog.kind.as_str(),
         if while_running { "opened" } else { "is open" },
         dialog.tab,

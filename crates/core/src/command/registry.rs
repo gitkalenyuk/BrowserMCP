@@ -21,8 +21,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
-    AllowAll, CmdError, Command, CommandGuard, Ctx, ErrorCode, LockPolicy, Sensitivity, Toolset, args_schema,
-    output_schema, wire_name,
+    AllowAll, CmdError, Command, CommandGuard, Ctx, ErrorCode, LockPolicy, Sensitivity, Toolset,
+    args_schema, output_schema, wire_name,
 };
 use crate::backend::BoxFuture;
 use crate::events::topics;

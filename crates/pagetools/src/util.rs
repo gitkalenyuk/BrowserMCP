@@ -70,7 +70,8 @@ pub fn now_ms() -> u128 {
 /// True when `path` is relative and stays inside its base folder by its text alone
 /// (no `..`, no drive or root). Used for paths the caller gives relative to a data folder.
 pub fn is_plain_relative(path: &Path) -> bool {
-    path.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    path.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 /// Where to write an output file: `requested` (absolute, or relative to `folder`), or

@@ -12,9 +12,10 @@
 //! folder (`..`, links).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use bmcp_core::{CmdError, Ctx, ErrorCode, TabId};
+use bmcp_core::{BrowserBackend, CmdError, Ctx, ErrorCode, TabId};
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -49,7 +50,9 @@ pub fn resolve_files(
     files: &[String],
 ) -> Result<Vec<PathBuf>, CmdError> {
     if files.is_empty() {
-        return Err(CmdError::invalid_params("files is empty: give at least one path"));
+        return Err(CmdError::invalid_params(
+            "files is empty: give at least one path",
+        ));
     }
     let run_dir = match run_id {
         None => None,
@@ -151,6 +154,11 @@ pub async fn upload(
         json!({ "enabled": true }),
     )
     .await?;
+    // Switches interception off again when this function ends in any way.
+    let _off = InterceptOff {
+        backend: ctx.backend.clone(),
+        tab,
+    };
     let result = async {
         click(ctx, tab, backend_node_id).await?;
         let opened = tokio::time::timeout(timeout, async {
@@ -189,15 +197,30 @@ pub async fn upload(
         set_files(ctx, tab, input, files).await
     }
     .await;
-    // Always switch interception off again: later choosers belong to the human.
-    let _ = cdp(
-        ctx,
-        tab,
-        "Page.setInterceptFileChooserDialog",
-        json!({ "enabled": false }),
-    )
-    .await;
     result.map(|()| Via::Chooser)
+}
+
+/// Switches file-chooser interception off when dropped: after success, after an error, and
+/// also when the command is cancelled mid-way (e.g. `DIALOG_OPEN` because the click opened
+/// an alert). Later choosers belong to the human again.
+struct InterceptOff {
+    backend: Arc<dyn BrowserBackend>,
+    tab: TabId,
+}
+
+impl Drop for InterceptOff {
+    fn drop(&mut self) {
+        let (backend, tab) = (self.backend.clone(), self.tab);
+        // `drop` cannot await, so the CDP call goes out from a task.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let off = json!({ "enabled": false });
+                let _ = backend
+                    .cdp(tab, "Page.setInterceptFileChooserDialog".into(), off)
+                    .await;
+            });
+        }
+    }
 }
 
 /// `Some(multiple)` when the node is an `<input type=file>`.

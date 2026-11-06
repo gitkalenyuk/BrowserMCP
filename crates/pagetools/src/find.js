@@ -64,14 +64,15 @@
   const current = ranges[index];
   CSS.highlights.set(CURRENT, new Highlight(current));
 
-  // Scroll: first the nearest scrollable parents, then the window, so the match ends up
-  // in the middle of the viewport.
-  const element = current.startContainer.parentElement;
-  if (element) element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  const rect = current.getBoundingClientRect();
-  if (rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth) {
+  // Scroll only when the match is not visible: first the nearest scrollable parents, then
+  // the window, so the match ends up in the middle of the viewport (like Chrome's Ctrl+F).
+  const outside = (r) => r.top < 0 || r.bottom > innerHeight || r.left < 0 || r.right > innerWidth;
+  if (outside(current.getBoundingClientRect())) {
+    const element = current.startContainer.parentElement;
+    if (element) element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const rect = current.getBoundingClientRect();
     window.scrollBy({
-      top: rect.top - innerHeight / 2,
+      top: rect.top + rect.height / 2 - innerHeight / 2,
       left: rect.left < 0 || rect.right > innerWidth ? rect.left - innerWidth / 2 : 0,
       behavior: 'instant',
     });

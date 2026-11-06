@@ -20,6 +20,10 @@ pub trait CommandGuard: Send + Sync + 'static {
     /// `None` = this guard does not care about the command (e.g. wrong name).
     /// `Some(future)` = run the command only as long as `future` is pending; when it
     /// finishes, the command is cancelled and fails with the returned error.
-    fn watch(&self, ctx: &Ctx, name: &'static str, args: &Value)
-    -> Option<BoxFuture<'static, CmdError>>;
+    fn watch(
+        &self,
+        ctx: &Ctx,
+        name: &'static str,
+        args: &Value,
+    ) -> Option<BoxFuture<'static, CmdError>>;
 }

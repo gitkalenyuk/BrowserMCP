@@ -70,6 +70,8 @@ impl Command for Dialog {
         // Dialog events need the Page domain; tabs opened before `start` get it here.
         dialog::ensure_watched_ctx(&ctx, tab).await?;
         let state = DialogState::from_ctx(&ctx);
+        // Read it before answering: the "closed" event may clear it before the reply arrives.
+        let dialog = state.open_on(tab);
         let accept = args.action == DialogAction::Accept;
         let mut params = json!({ "accept": accept });
         if let Some(text) = &args.text {
@@ -80,7 +82,7 @@ impl Command for Dialog {
             .cdp(tab, "Page.handleJavaScriptDialog".into(), params)
             .await;
         // The dialog is answered (or was not there): it is not open any more either way.
-        let dialog = state.take_open(tab);
+        state.take_open(tab);
         match reply {
             Ok(_) => Ok(DialogOutput {
                 tab,
@@ -164,7 +166,9 @@ impl Command for DialogPolicy {
 
     async fn run(ctx: Ctx, args: DialogPolicyArgs) -> Result<DialogPolicyOutput, CmdError> {
         if args.global && args.tab.is_some() {
-            return Err(CmdError::invalid_params("give either tab or global, not both"));
+            return Err(CmdError::invalid_params(
+                "give either tab or global, not both",
+            ));
         }
         let tab = if args.global {
             None
@@ -251,11 +255,8 @@ impl Command for Upload {
     async fn run(ctx: Ctx, args: UploadArgs) -> Result<UploadOutput, CmdError> {
         let tab = ctx.resolve_tab(args.tab).await?;
         // Check the files before touching the page.
-        let paths = upload::resolve_files(
-            data_dir(&ctx).root(),
-            args.run_id.as_deref(),
-            &args.files,
-        )?;
+        let paths =
+            upload::resolve_files(data_dir(&ctx).root(), args.run_id.as_deref(), &args.files)?;
         let files: Vec<String> = paths
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
