@@ -10,5 +10,10 @@ export default defineConfig({
   },
   test: {
     include: ["test/**/*.test.ts"],
+    // The tests wait for conditions, not fixed times; these limits only catch a real hang.
+    // vitest's defaults (5 s per test, 10 s per hook) fail on a busy machine, e.g. the first
+    // fetch() in a worker loading undici while cargo builds run in parallel.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

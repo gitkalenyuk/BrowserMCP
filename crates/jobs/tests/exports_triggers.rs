@@ -184,16 +184,21 @@ async fn cron_triggers_fire_the_script() {
     let mut rx = env.events.subscribe();
     env.save("tick", "result {\"k\": \"{{k}}\"}").await;
 
+    let before = chrono::Local::now().timestamp_millis();
     let t = env
         .ok(
             "trigger.set",
             json!({"kind": "cron", "spec": "*/5 * * * * *", "script": "tick", "inputs": {"k": "v"}}),
         )
         .await;
+    let after = chrono::Local::now().timestamp_millis();
     let id = t["id"].as_str().unwrap().to_string();
     let next = t["next_fire_ms"].as_i64().unwrap();
-    let now = chrono::Local::now().timestamp_millis();
-    assert!(next > now && next <= now + 5_000, "next {next} now {now}");
+    // The next 5-second boundary after the moment of the call (however long the call took).
+    assert!(
+        next > before && next <= after + 5_000,
+        "next {next} call between {before} and {after}"
+    );
     assert!(t["next_fire"].as_str().unwrap().contains('T'));
 
     // Drive time by hand: nothing due in a 1 ms window that ends before the next firing…

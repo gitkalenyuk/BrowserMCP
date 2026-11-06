@@ -2,6 +2,8 @@
   "name": "browsermcp",
   "private": true,
   "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
     "ui:dev": "pnpm --filter @browsermcp/ui dev",
     "ui:build": "pnpm --filter @browsermcp/ui build",
     "ui:check": "pnpm --filter @browsermcp/ui check",

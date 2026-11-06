@@ -36,7 +36,32 @@ pub fn config(root: &Path) -> JobsConfig {
         retry_backoff: Duration::from_millis(10),
         auto_limit: false,
         max_parallel: 32,
+        // The fake host always honours its own timeout (exit 124). A long grace keeps a slow
+        // process start on a loaded machine from turning that into "killed by us".
+        kill_grace: Duration::from_secs(60),
     }
+}
+
+/// Generous upper bound for anything a test waits for: only reached when something is
+/// really broken, never because the machine is busy.
+pub const PATIENCE: Duration = Duration::from_secs(60);
+
+/// Wait until `path` exists (a script ran `touch <path>`).
+pub async fn wait_file(path: &Path) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    while !path.exists() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{} never appeared",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Path as text for a fake-host script line (forward slashes: no escaping questions).
+pub fn script_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 impl Env {
@@ -89,7 +114,7 @@ impl Env {
 
     /// Poll run.status until `status` is one of `wanted`.
     pub async fn wait_status(&self, id: &str, wanted: &[&str]) -> Value {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let deadline = tokio::time::Instant::now() + PATIENCE;
         loop {
             let run = self.ok("run.status", json!({"id": id})).await;
             if wanted.contains(&run["status"].as_str().unwrap()) {
@@ -118,7 +143,7 @@ pub async fn wait_event(
     topic: &str,
     pred: impl Fn(&Value) -> bool,
 ) -> Event {
-    tokio::time::timeout(Duration::from_secs(20), async {
+    tokio::time::timeout(PATIENCE, async {
         loop {
             let event = rx.recv().await.unwrap();
             if event.topic == topic && pred(&event.data) {

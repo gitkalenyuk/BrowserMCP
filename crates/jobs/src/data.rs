@@ -245,8 +245,9 @@ mod tests {
         let rows = read_json(&path).unwrap();
         assert_eq!(
             pairs(&rows[0]),
-            // JSON objects have no column order: keys come sorted.
-            [("n", "3"), ("ok", "true"), ("q", "rust"), ("x", "")]
+            // Columns keep the file's key order (serde_json `preserve_order`, on for the
+            // whole workspace; see the root Cargo.toml).
+            [("q", "rust"), ("n", "3"), ("ok", "true"), ("x", "")]
         );
         std::fs::write(&path, r#"{"not":"an array"}"#).unwrap();
         assert_eq!(read_json(&path).unwrap_err().code, ErrorCode::InvalidParams);

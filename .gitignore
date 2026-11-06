@@ -12,3 +12,6 @@ sdk/*/dist/
 
 # Agent worktrees and local Claude Code state
 /.claude/worktrees/
+
+# Pending insta snapshots (review with `cargo insta review`, never commit)
+*.snap.new

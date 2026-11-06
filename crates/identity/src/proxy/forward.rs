@@ -85,6 +85,24 @@ fn socks_address(host: &str, port: u16) -> io::Result<Vec<u8>> {
     Ok(out)
 }
 
+/// RFC 1929 username/password request. Each field has a one-byte length, so longer values
+/// are refused instead of being sent with a wrapped length (which garbles the message).
+fn socks_auth(user: &str, pass: &str) -> io::Result<Vec<u8>> {
+    let (user, pass) = (user.as_bytes(), pass.as_bytes());
+    let (Ok(user_len), Ok(pass_len)) = (u8::try_from(user.len()), u8::try_from(pass.len())) else {
+        return Err(err(
+            io::ErrorKind::InvalidInput,
+            "SOCKS5 user name and password must be at most 255 bytes each",
+        ));
+    };
+    let mut auth = Vec::with_capacity(3 + user.len() + pass.len());
+    auth.extend_from_slice(&[0x01, user_len]);
+    auth.extend_from_slice(user);
+    auth.push(pass_len);
+    auth.extend_from_slice(pass);
+    Ok(auth)
+}
+
 async fn socks5_handshake(
     s: &mut TcpStream,
     upstream: &ProxyConfig,
@@ -108,12 +126,10 @@ async fn socks5_handshake(
     match reply[1] {
         0x00 => {}
         0x02 => {
-            let user = upstream.username.as_deref().unwrap_or("").as_bytes();
-            let pass = upstream.password.as_deref().unwrap_or("").as_bytes();
-            let mut auth = vec![0x01, user.len() as u8];
-            auth.extend_from_slice(user);
-            auth.push(pass.len() as u8);
-            auth.extend_from_slice(pass);
+            let auth = socks_auth(
+                upstream.username.as_deref().unwrap_or(""),
+                upstream.password.as_deref().unwrap_or(""),
+            )?;
             s.write_all(&auth).await?;
             let mut status = [0u8; 2];
             s.read_exact(&mut status).await?;
@@ -589,6 +605,23 @@ pub(crate) mod tests {
         assert_eq!(parse_authority("a.com", 80), Some(("a.com".into(), 80)));
         assert_eq!(parse_authority("[::1]:5", 80), Some(("::1".into(), 5)));
         assert_eq!(parse_authority("a:b", 80), None);
+    }
+
+    /// Regression: a user name or password over 255 bytes was sent with its length byte
+    /// wrapped (`len as u8`), a garbled RFC 1929 request.
+    #[test]
+    fn socks_auth_lengths() {
+        assert_eq!(
+            socks_auth("ann", "pw").unwrap(),
+            [0x01, 3, b'a', b'n', b'n', 2, b'p', b'w']
+        );
+        let max = "x".repeat(255);
+        assert_eq!(socks_auth(&max, "").unwrap().len(), 2 + 255 + 1);
+        let long = "x".repeat(256);
+        for (user, pass) in [(long.as_str(), "pw"), ("ann", long.as_str())] {
+            let e = socks_auth(user, pass).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        }
     }
 
     // ------------------------------------------------ in-process fakes
