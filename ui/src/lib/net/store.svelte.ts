@@ -1,4 +1,4 @@
-import type { BrowserApi } from '../api/client';
+import { RpcError, type BrowserApi } from '../api/client';
 import type { NetPaused, NetResume, TabId } from '../api/types';
 import { parsePausedLines } from './parse';
 
@@ -86,9 +86,13 @@ export class NetStore {
   async resume(params: NetResume): Promise<string> {
     try {
       const r = await this.api.call('net.resume', params);
-      return r.text;
-    } finally {
       this.#remove(params.pause_id);
+      return r.text;
+    } catch (err) {
+      // Refused edits (INVALID_PARAMS) are checked before the core takes the pause: it is
+      // still held and can be resumed again with corrected edits.
+      if (!(err instanceof RpcError && err.code === 'INVALID_PARAMS')) this.#remove(params.pause_id);
+      throw err;
     }
   }
 

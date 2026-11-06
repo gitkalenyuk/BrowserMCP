@@ -193,6 +193,35 @@ function ruleLine(r: MockRule): string {
   return `${r.id} tab ${r.tab} ${r.stage} ${r.describe} → ${actionShort(r.action)} (${r.hits} hits)`;
 }
 
+/** Like `intercept::resume_problem`: why these edits cannot reach the page from a response-stage
+ *  pause. A server response keeps its status and headers under CEF; a failed one has no body. */
+export function responseProblem(p: NetPaused, edits: NetEdits): string | null {
+  const norm = (h: [string, string][]) =>
+    h
+      .map(([n, v]) => `${n.toLowerCase()}\n${v}`)
+      .sort()
+      .join('\n\n');
+  const original: [string, string][] = (p.response_headers ?? []).map((h) => [h.name, h.value]);
+  let edited = original;
+  for (const [name, value] of Object.entries(edits.headers ?? {})) {
+    edited = edited.filter(([n]) => n.toLowerCase() !== name.toLowerCase());
+    if (value !== null) edited = [...edited, [name, value]];
+  }
+  const headersChanged = norm(original) !== norm(edited);
+  if (p.error) {
+    if ((edits.status !== undefined || headersChanged) && edits.response_body === undefined) {
+      return `the response failed (${p.error}), so it has no body to keep: give response_body together with status or headers`;
+    }
+    return null;
+  }
+  const code = p.status ?? 200;
+  const newStatus = edits.status !== undefined && edits.status !== code ? edits.status : null;
+  if (newStatus === null && !headersChanged) return null;
+  const what =
+    newStatus !== null && headersChanged ? `status ${code} → ${newStatus} and the headers` : newStatus !== null ? `status ${code} → ${newStatus}` : 'the headers';
+  return `cannot change ${what} at the response stage: the server already answered and the browser (CEF) gives the page the server's status and headers whatever the edit says; only response_body can be replaced here`;
+}
+
 interface MockPause {
   info: NetPaused;
   entry: Entry;
@@ -480,15 +509,16 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     const respond = () => {
       setTimeout(() => {
         if (e.error) return;
-        let st = status;
+        const st = status;
         let b = body ?? null;
         const resRule = ruleFor(tab, e, 'response');
         finish(e, st, size, b, mime);
         if (resRule) {
           resRule.hits++;
           if (resRule.action === 'pause') {
+            // Like CEF: a server response keeps its status and headers (net.resume refuses
+            // changing them), only the body can be replaced.
             pause(tab, resRule, e, 'response', (edits) => {
-              if (edits?.status) st = edits.status;
               if (edits?.response_body !== undefined) b = edits.response_body;
               finish(e, st, size, b, mime);
               if (edits) e.notes.push(`${resRule.id} edited`);
@@ -871,6 +901,10 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       if (p.info.stage === 'response' && (edits?.url || edits?.method || edits?.body !== undefined)) {
         throw new RpcError('INVALID_PARAMS', 'this request is paused at the response stage: url, method and body were already sent; edit status, headers or response_body instead');
       }
+      if (action !== 'drop' && p.info.stage === 'response') {
+        const problem = responseProblem(p.info, edits ?? {});
+        if (problem) throw new RpcError('INVALID_PARAMS', problem);
+      }
       clearTimeout(p.timer);
       pauses.delete(pause_id);
       if (action === 'drop') {
@@ -907,6 +941,22 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     const st = stage ?? match.stage ?? 'request';
     if (action !== 'pause' && typeof action === 'object' && 'redirect' in action && st === 'response') {
       throw new RpcError('INVALID_PARAMS', 'redirect only works at the request stage (the response already came from the original URL)');
+    }
+    // Like rules::validate: CEF gives the page the server's status and headers after a
+    // response-stage answer, so these would silently do nothing.
+    if (action !== 'pause' && typeof action === 'object' && st === 'response') {
+      if ('set_headers' in action || 'remove_headers' in action) {
+        throw new RpcError(
+          'INVALID_PARAMS',
+          "set_headers/remove_headers cannot change response headers: at the response stage the browser (CEF) gives the page the server's headers whatever the answer says",
+        );
+      }
+      if ('mock' in action) {
+        throw new RpcError(
+          'INVALID_PARAMS',
+          "mock only works at the request stage: at the response stage the browser (CEF) keeps the server's status and headers; a request-stage mock answers without sending the request",
+        );
+      }
     }
     return { id, tab, stage: st, regex, method, describe: method ? `${method} ${what}` : what, action, hits: 0 };
   }

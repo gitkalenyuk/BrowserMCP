@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { NetPaused } from '../api/types';
 import {
   EMPTY_RULE,
+  bodyOnly,
   buildResume,
   buildRule,
   chipOf,
@@ -9,6 +10,7 @@ import {
   draftFromPaused,
   filterRows,
   parseHeaderText,
+  responseStageAllowed,
   toggleChip,
 } from './logic';
 import type { NetRow } from './parse';
@@ -104,6 +106,19 @@ describe('buildRule', () => {
       action: { rewrite_body: { find: 'a', replace: 'b' } },
     });
   });
+  it('mocks and redirects always run at the request stage', () => {
+    expect(responseStageAllowed('block')).toBe(true);
+    expect(responseStageAllowed('rewrite_body')).toBe(true);
+    expect(responseStageAllowed('mock')).toBe(false);
+    expect(responseStageAllowed('redirect')).toBe(false);
+    // A stage left over from another kind is not sent: net.rule_add refuses response-stage mocks.
+    expect(buildRule({ ...EMPTY_RULE, kind: 'mock', stage: 'response' })).toEqual({ match: {}, action: { mock: { status: 200, body: '' } } });
+    expect(buildRule({ ...EMPTY_RULE, kind: 'redirect', stage: 'response', redirectUrl: 'https://b.test/' })).toEqual({
+      match: {},
+      action: { redirect: { url: 'https://b.test/' } },
+    });
+    expect(buildRule({ ...EMPTY_RULE, kind: 'block', stage: 'response' })).toEqual({ match: { stage: 'response' }, action: 'block' });
+  });
   it('reports form errors', () => {
     expect(buildRule({ ...EMPTY_RULE, kind: 'redirect' })).toEqual({ error: expect.any(String) });
     expect(buildRule({ ...EMPTY_RULE, kind: 'mock', mockStatus: '99' })).toEqual({ error: expect.any(String) });
@@ -176,15 +191,37 @@ describe('buildResume', () => {
     });
   });
 
-  it('response stage: status, headers and an explicit body replacement', () => {
+  it('response stage of a server response: only the body, never status or headers', () => {
     const d = draftFromPaused(res);
     expect(d.status).toBe('200');
+    expect(bodyOnly(res)).toBe(true);
+    // CEF keeps the server's status and headers, so the core refuses them: they are not sent.
     expect(buildResume(res, { ...d, status: '500', headers: 'content-type: text/plain', replaceBody: true, responseBody: 'oops' }, 'continue')).toEqual({
       pause_id: 'p2',
       action: 'continue',
-      edits: { status: 500, headers: { 'content-type': 'text/plain' }, response_body: 'oops' },
+      edits: { response_body: 'oops' },
     });
+    expect(buildResume(res, { ...d, status: '500', headers: '' }, 'continue')).toEqual({ pause_id: 'p2', action: 'continue' });
     // url/method/body are never sent at the response stage (the core rejects them).
     expect(buildResume(res, { ...d, url: 'https://x.test/', body: 'b' }, 'continue')).toEqual({ pause_id: 'p2', action: 'continue' });
+  });
+
+  it('response stage of a failed response: status, headers and body', () => {
+    const failed: NetPaused = { ...res, pause_id: 'p3', status: undefined, response_headers: undefined, error: 'ConnectionReset' };
+    expect(bodyOnly(failed)).toBe(false);
+    const d = draftFromPaused(failed);
+    expect(d.status).toBe('');
+    expect(buildResume(failed, { ...d, status: '503', headers: 'retry-after: 5', replaceBody: true, responseBody: 'down' }, 'continue')).toEqual({
+      pause_id: 'p3',
+      action: 'continue',
+      edits: { status: 503, headers: { 'retry-after': '5' }, response_body: 'down' },
+    });
+  });
+
+  it('bodyOnly: request stage, and pauses known only from net.paused_list', () => {
+    expect(bodyOnly(req)).toBe(false);
+    // The list line shows the status of a server response and none for a failed one.
+    expect(bodyOnly({ ...res, response_headers: undefined })).toBe(true);
+    expect(bodyOnly({ ...res, status: undefined, response_headers: undefined })).toBe(false);
   });
 });
