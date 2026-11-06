@@ -1,17 +1,25 @@
 name: CI
 
+# What runs here is what developers run locally (see README.md, "Contributing"):
+#   rust:   cargo fmt --check, clippy -D warnings, cargo xtask test, cargo xtask gen-sdk --check
+#   node:   pnpm install, pnpm -r build, pnpm -r test, pnpm -C ui check
+#   script: cargo test -p bmcp-script (V8, slow) — only when the script host can be affected
+# The jobs run in parallel.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  windows:
+  rust:
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
       # Shared CEF download, cached between runs (keyed by the pinned `cef` crate version).
       CEF_PATH: ${{ github.workspace }}/.cef
@@ -41,5 +49,87 @@ jobs:
       - name: Generated SDK types are up to date
         run: cargo xtask gen-sdk --check
 
+      # The release build (LTO) is slow: only on main. It embeds ui/dist, so build the UI first.
+      - uses: pnpm/action-setup@v6
+        if: github.event_name == 'push'
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        if: github.event_name == 'push'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build UI for embedding
+        if: github.event_name == 'push'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C ui build
       - name: Build release
+        if: github.event_name == 'push'
         run: cargo xtask build --release
+
+  node:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      # Caches the pnpm store (keyed by pnpm-lock.yaml).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Check UI (svelte-check)
+        run: pnpm -C ui check
+
+  # Decides whether the V8 script host job is needed.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      script: ${{ steps.filter.outputs.script }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            script:
+              - 'crates/script/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+
+  script:
+    needs: changes
+    if: needs.changes.outputs.script == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Its own cache (the job name is part of the key): the V8 build artifacts are large.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (script host)
+        run: cargo clippy -p bmcp-script --all-targets -- -D warnings
+
+      - name: Test (script host)
+        run: cargo test -p bmcp-script
