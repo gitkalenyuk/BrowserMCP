@@ -162,7 +162,11 @@ export class WsApi implements BrowserApi {
       this.#pending.delete(Number(msg.id));
       clearTimeout(pending.timer);
       if (msg.error) {
-        pending.reject(new RpcError(String(msg.error.code), msg.error.message, msg.error.data));
+        // The core sends a numeric JSON-RPC code (-32000…) and the real error code
+        // ("TAB_NOT_FOUND", …, same as the mock's) in error.data.code.
+        const data = msg.error.data as { code?: unknown } | undefined;
+        const code = typeof data?.code === 'string' ? data.code : String(msg.error.code);
+        pending.reject(new RpcError(code, msg.error.message, msg.error.data));
       } else {
         pending.resolve(msg.result);
       }

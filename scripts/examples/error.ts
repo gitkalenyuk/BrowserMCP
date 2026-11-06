@@ -14,7 +14,7 @@ function checkStep(step: Step): void {
   }
 }
 
-const tabs = await browser.tabs.list();
-console.log(`got ${(tabs as unknown[]).length} tabs, now failing on purpose`);
+const { tabs } = (await browser.tabs.list()) as { tabs: unknown[] };
+console.log(`got ${tabs.length} tabs, now failing on purpose`);
 
 checkStep({ name: "click login", selector: "" });

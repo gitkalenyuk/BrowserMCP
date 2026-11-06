@@ -71,11 +71,11 @@ not reused; the process exits.
 > bmcp-script-host run scripts/examples/hello.ts --input name=Ada --input times=3 --timings
 hello, Ada
 found 2 tabs
-- t1: Example Domain <https://example.com/>
-- t2: GitHub <https://github.com/>
+- 1: Example Domain <https://example.com/>
+- 2: GitHub <https://github.com/>
 goto #1 -> {"called":"nav.goto","args":{"url":"https://example.com/?page=1"}}
 ...
-snapshot -> {"called":"page.snapshot","args":null}
+page.text -> {"called":"page.text","args":null}
 done
 [timings] runtime_init=21.4ms run=2.8ms total=25.4ms
 

@@ -1,5 +1,5 @@
 //! WsSink against a tiny in-process fake JSON-RPC server. This checks our own
-//! client side only; the real browser endpoint does not exist yet.
+//! client side only; the real `/v1/ws` server is tested in `crates/api/tests`.
 
 use std::path::PathBuf;
 use std::rc::Rc;

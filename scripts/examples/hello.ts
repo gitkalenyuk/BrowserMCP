@@ -9,7 +9,7 @@
 // command "<namespace>.<method>" sent to the browser.
 
 interface Tab {
-  id: string;
+  id: number;
   url: string;
   title: string;
 }
@@ -20,7 +20,7 @@ const times: number = Number(inputs.times ?? "2");
 console.log(`hello, ${name}`);
 
 // Top-level await works: the file is an ES module.
-const tabs = (await browser.tabs.list()) as Tab[];
+const { tabs } = (await browser.tabs.list()) as { tabs: Tab[] };
 console.log(`found ${tabs.length} tabs`);
 for (const tab of tabs) {
   console.log(`- ${tab.id}: ${tab.title} <${tab.url}>`);
@@ -32,6 +32,6 @@ for (let i = 1; i <= times; i++) {
   console.log(`goto #${i} -> ${JSON.stringify(res)}`);
 }
 
-const snap = await browser.page.snapshot();
-console.log(`snapshot -> ${JSON.stringify(snap)}`);
+const page = await browser.page.text();
+console.log(`page.text -> ${JSON.stringify(page)}`);
 console.log("done");

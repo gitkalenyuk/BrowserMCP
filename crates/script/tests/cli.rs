@@ -41,12 +41,12 @@ fn hello_lists_tabs_loops_and_reads_inputs() {
 
     let expected = r#"hello, Ada
 found 2 tabs
-- t1: Example Domain <https://example.com/>
-- t2: GitHub <https://github.com/>
+- 1: Example Domain <https://example.com/>
+- 2: GitHub <https://github.com/>
 goto #1 -> {"called":"nav.goto","args":{"url":"https://example.com/?page=1"}}
 goto #2 -> {"called":"nav.goto","args":{"url":"https://example.com/?page=2"}}
 goto #3 -> {"called":"nav.goto","args":{"url":"https://example.com/?page=3"}}
-snapshot -> {"called":"page.snapshot","args":null}
+page.text -> {"called":"page.text","args":null}
 done
 "#;
     assert_eq!(stdout, expected);

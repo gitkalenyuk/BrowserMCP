@@ -66,10 +66,11 @@ impl CommandSink for MockSink {
         // fits the `CallFuture` type.
         Box::pin(async move {
             match name.as_str() {
-                "tabs.list" => Ok(json!([
-                    { "id": "t1", "url": "https://example.com/", "title": "Example Domain" },
-                    { "id": "t2", "url": "https://github.com/", "title": "GitHub" }
-                ])),
+                // Same shape as the real browser's `tabs.list`.
+                "tabs.list" => Ok(json!({ "tabs": [
+                    { "id": 1, "url": "https://example.com/", "title": "Example Domain", "loading": false },
+                    { "id": 2, "url": "https://github.com/", "title": "GitHub", "loading": false }
+                ] })),
                 "test.fail" => Err(SinkError {
                     code: Some(-32000),
                     message: format!("mock failure, args={args}"),
