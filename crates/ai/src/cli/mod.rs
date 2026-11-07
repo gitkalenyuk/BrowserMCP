@@ -2,8 +2,10 @@
 //! own MCP endpoint (`http://127.0.0.1:<port>/mcp?agent=<session id>`); we only relay the
 //! user's messages and turn their JSON-lines output into `ai.*` events.
 
+pub mod access;
 pub mod claude;
 pub mod codex;
+pub mod permission;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

@@ -5,6 +5,7 @@
 //! * [`agent`] — the agent loop for API providers; tools are the registry's commands;
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
 //! * [`session`] — agent id, color, status, transcript, touched tabs, `ai.*` events;
+//! * [`sessions`] — continuing, closing and restoring sessions; approval answers;
 //! * [`term`] — PTY terminals (`term.*`);
 //! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects);
 //! * [`oneshot`] — one-shot text completions (no tools) for self-healing and `page.extract`.
@@ -26,6 +27,7 @@ pub mod model;
 pub mod oneshot;
 pub mod proc_tree;
 pub mod session;
+pub mod sessions;
 pub mod term;
 
 use std::collections::BTreeMap;
@@ -74,14 +76,17 @@ pub struct StartOptions {
     pub prompt: String,
     pub toolsets: Vec<Toolset>,
     pub max_steps: u32,
+    /// CLI agents: overrides of the provider's permission mode, sandbox and folders.
+    pub access: cli::access::AccessSettings,
 }
 
 impl AiService {
     /// `data_root` is the portable `data/` folder; `mcp_url` the browser's MCP endpoint.
+    /// Sessions saved by an earlier run are listed again (stopped; a message continues them).
     pub fn new(data_root: impl Into<PathBuf>, mcp_url: impl Into<String>) -> Self {
         let data = data_root.into();
         let config = AiConfig::load(&data.join("config").join("ai.json"));
-        AiService {
+        let service = AiService {
             data,
             mcp_url: Mutex::new(mcp_url.into()),
             registry: OnceLock::new(),
@@ -89,7 +94,9 @@ impl AiService {
             sessions: Mutex::default(),
             counter: AtomicU64::new(0),
             terminals: term::Terminals::default(),
-        }
+        };
+        service.restore_sessions();
+        service
     }
 
     /// The service from a command's context.
@@ -180,111 +187,181 @@ impl AiService {
             .filter(|m| !m.is_empty())
             .or(resolved.model.clone());
 
+        if matches!(resolved.preset.kind, Kind::Api(_)) && model.is_none() {
+            return Err(
+                CmdError::invalid_params(format!("no model set for '{}'", opts.provider)).with_hint(
+                    "Pass `model`, or set one with ai_provider_set (ai_provider_test lists the models).",
+                ),
+            );
+        }
+        // CLI agents: the provider's access settings, overridden by this chat's; folders checked
+        // before anything starts.
+        let access = match resolved.preset.kind {
+            Kind::Api(_) => None,
+            Kind::ClaudeCode | Kind::Codex => Some(
+                lock(&self.config)
+                    .settings(&opts.provider)
+                    .access
+                    .overridden_by(&opts.access)
+                    .resolve(&self.workspace_dir())
+                    .map_err(|e| {
+                        CmdError::invalid_params(e)
+                            .with_hint("Pass an existing folder as cwd / add_dirs, or omit them.")
+                    })?,
+            ),
+        };
+
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("{}-{n}", opts.provider);
-        // The agent registry hands out the tab-group color, so the chat and the tab group
-        // match; its named colors map onto `COLORS` in the same order.
-        let color = match ctx.extensions.get::<bmcp_core::Agents>() {
-            Some(agents) => {
-                let name = format!("{} {n}", resolved.preset.name);
-                let named = agents.ensure(&ctx.events, &id, Some(&name)).color;
-                let index = bmcp_core::agents::COLORS
-                    .iter()
-                    .position(|c| *c == named)
-                    .unwrap_or(0);
-                COLORS[index % COLORS.len()].to_string()
-            }
-            None => COLORS[(n as usize - 1) % COLORS.len()].to_string(),
-        };
+        let color = self.agent_color(ctx, &id, n, resolved.preset.name);
         let dir = self.sessions_dir();
         let log = std::fs::create_dir_all(&dir)
             .ok()
             .map(|_| dir.join(format!("{id}.jsonl")));
-        let (session, input) = Session::new(
+        let (mut session, input) = Session::new(
             id.clone(),
             opts.provider.clone(),
-            model.clone(),
+            model,
             color,
             ctx.events.clone(),
             log,
         );
+        session.launch = session::Launch {
+            toolsets: opts
+                .toolsets
+                .iter()
+                .map(|t| t.as_str().to_string())
+                .collect(),
+            max_steps: opts.max_steps,
+            access,
+        };
         let session = Arc::new(session);
-
-        match resolved.preset.kind {
-            Kind::Api(api) => {
-                let model = model.ok_or_else(|| {
-                    CmdError::invalid_params(format!("no model set for '{}'", opts.provider)).with_hint(
-                        "Pass `model`, or set one with ai_provider_set (ai_provider_test lists the models).",
-                    )
-                })?;
-                let registry = self.registry.get().cloned().unwrap_or_default();
-                let tools = registry
-                    .upgrade()
-                    .map(|r| agent::tool_defs(&r, &opts.toolsets))
-                    .unwrap_or_default();
-                let agent = agent::ApiAgent {
-                    session: session.clone(),
-                    client: model::Client::new(
-                        api,
-                        resolved.base_url.clone(),
-                        resolved.api_key.clone(),
-                    ),
-                    model,
-                    tools,
-                    runner: agent::ToolRunner {
-                        registry,
-                        backend: ctx.backend.clone(),
-                        events: ctx.events.clone(),
-                        agent: id.clone(),
-                    },
-                    max_steps: opts.max_steps,
-                };
-                tokio::spawn(agent.run(input));
-            }
-            Kind::ClaudeCode | Kind::Codex => {
-                let workspace = self.workspace_dir();
-                std::fs::create_dir_all(&workspace).map_err(|e| {
-                    CmdError::internal(format!("cannot create {}: {e}", workspace.display()))
-                })?;
-                let toolsets: Vec<&str> = opts.toolsets.iter().map(|t| t.as_str()).collect();
-                let mcp_url = format!(
-                    "{}?agent={id}&toolsets={}",
-                    lock(&self.mcp_url),
-                    toolsets.join(",")
-                );
-                let binary = resolved.binary.clone().unwrap_or_default();
-                if resolved.preset.kind == Kind::ClaudeCode {
-                    let agent = cli::claude::ClaudeCode {
-                        session: session.clone(),
-                        binary,
-                        model,
-                        mcp_url,
-                        mcp_config: self.sessions_dir().join(format!("{id}.mcp.json")),
-                        cwd: workspace,
-                    };
-                    tokio::spawn(agent.run(input));
-                } else {
-                    let agent = cli::codex::Codex {
-                        session: session.clone(),
-                        binary,
-                        model,
-                        mcp_url,
-                        cwd: workspace,
-                    };
-                    tokio::spawn(agent.run(input));
-                }
-            }
-        }
+        self.spawn_backend(ctx, &session, input)?;
+        session.save_meta();
 
         lock(&self.sessions).insert(id, session.clone());
         session.send(opts.prompt).map_err(CmdError::internal)?;
         Ok(session.info())
     }
 
+    /// The tab-group color of agent `id`. The agent registry hands it out, so the chat and the
+    /// tab group match; its named colors map onto `COLORS` in the same order.
+    fn agent_color(&self, ctx: &Ctx, id: &str, n: u64, provider_name: &str) -> String {
+        match ctx.extensions.get::<bmcp_core::Agents>() {
+            Some(agents) => {
+                let name = format!("{provider_name} {n}");
+                let named = agents.ensure(&ctx.events, id, Some(&name)).color;
+                let index = bmcp_core::agents::COLORS
+                    .iter()
+                    .position(|c| *c == named)
+                    .unwrap_or(0);
+                COLORS[index % COLORS.len()].to_string()
+            }
+            None => COLORS[(n.max(1) as usize - 1) % COLORS.len()].to_string(),
+        }
+    }
+
+    /// Start the backend task of `session` (new, or continuing an ended one): the provider's
+    /// current settings, the session's launch options, and its saved conversation id.
+    fn spawn_backend(
+        &self,
+        ctx: &Ctx,
+        session: &Arc<Session>,
+        input: tokio::sync::mpsc::UnboundedReceiver<String>,
+    ) -> Result<(), CmdError> {
+        let resolved = self.resolve(&session.provider)?;
+        let id = session.id.clone();
+        let launch = &session.launch;
+        let toolsets: Vec<Toolset> = parse_toolsets(&launch.toolsets)?;
+        let model = session.model.clone().or(resolved.model.clone());
+        let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            match resolved.preset.kind {
+                Kind::Api(api) => {
+                    let model = model.ok_or_else(|| {
+                        CmdError::invalid_params(format!("no model set for '{}'", session.provider))
+                    })?;
+                    let registry = self.registry.get().cloned().unwrap_or_default();
+                    let tools = registry
+                        .upgrade()
+                        .map(|r| agent::tool_defs(&r, &toolsets))
+                        .unwrap_or_default();
+                    Box::pin(
+                        agent::ApiAgent {
+                            session: session.clone(),
+                            client: model::Client::new(
+                                api,
+                                resolved.base_url.clone(),
+                                resolved.api_key.clone(),
+                            ),
+                            model,
+                            tools,
+                            runner: agent::ToolRunner {
+                                registry,
+                                backend: ctx.backend.clone(),
+                                events: ctx.events.clone(),
+                                agent: id.clone(),
+                            },
+                            max_steps: launch.max_steps,
+                        }
+                        .run(input),
+                    )
+                }
+                Kind::ClaudeCode | Kind::Codex => {
+                    let access = match &launch.access {
+                        Some(access) => access.clone(),
+                        None => cli::access::AccessSettings::default()
+                            .resolve(&self.workspace_dir())
+                            .map_err(CmdError::internal)?,
+                    };
+                    let names: Vec<&str> = toolsets.iter().map(|t| t.as_str()).collect();
+                    let mcp_url = format!(
+                        "{}?agent={id}&toolsets={}",
+                        lock(&self.mcp_url),
+                        names.join(",")
+                    );
+                    let binary = resolved.binary.clone().unwrap_or_default();
+                    let resume = session.conversation();
+                    if resolved.preset.kind == Kind::ClaudeCode {
+                        Box::pin(
+                            cli::claude::ClaudeCode {
+                                session: session.clone(),
+                                binary,
+                                model,
+                                mcp_url,
+                                mcp_config: self.sessions_dir().join(format!("{id}.mcp.json")),
+                                access,
+                                resume,
+                            }
+                            .run(input),
+                        )
+                    } else {
+                        Box::pin(
+                            cli::codex::Codex {
+                                session: session.clone(),
+                                binary,
+                                model,
+                                mcp_url,
+                                access,
+                                resume,
+                            }
+                            .run(input),
+                        )
+                    }
+                }
+            };
+        let owner = session.clone();
+        session.set_task(tokio::spawn(async move {
+            task.await;
+            // Whatever ended the backend, its approval requests can no longer be answered.
+            owner.cancel_permissions();
+        }));
+        Ok(())
+    }
+
     /// Stop every session and terminal (browser shutdown).
     pub fn shutdown(&self) {
         for session in lock(&self.sessions).values() {
-            session.cancel.cancel();
+            session.cancel();
         }
         self.terminals.close_all();
     }

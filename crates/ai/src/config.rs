@@ -210,6 +210,13 @@ pub struct ProviderSettings {
     /// Model list from the last successful `ai.provider_test`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// CLI providers: default permission mode, sandbox and folders of new chats
+    /// (`ai.agent_access_set`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cli::access::AccessSettings::is_default"
+    )]
+    pub access: crate::cli::access::AccessSettings,
 }
 
 /// The whole `ai.json`.

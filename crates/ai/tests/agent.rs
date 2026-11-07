@@ -355,14 +355,75 @@ async fn stop_cancels_a_running_model_call() {
     assert_eq!(info["status"], "stopped");
     let events = until_done(&mut rx, "ollama-1").await;
     assert_eq!(events.last().unwrap().data["reason"], "stopped");
-    let err = h
+    // The stopped chat takes the next message itself (it is continued, not replaced).
+    let info = h
         .call(
             "ai.session_send",
             json!({ "id": "ollama-1", "text": "more" }),
         )
         .await
-        .unwrap_err();
-    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+        .unwrap();
+    assert_eq!(
+        (info["id"].as_str(), info["status"].as_str()),
+        (Some("ollama-1"), Some("running"))
+    );
+    let info = h
+        .call("ai.session_stop", json!({ "id": "ollama-1" }))
+        .await
+        .unwrap();
+    assert_eq!(info["status"], "stopped");
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+}
+
+/// Continuing a stopped API chat sends the model the whole conversation so far, including
+/// tool calls that were cut off by the stop (answered with an error, so the request is valid).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_api_chat_continues_with_its_history() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_responder)
+        .mount(&server)
+        .await;
+    h.call(
+        "ai.provider_set",
+        json!({ "id": "custom", "base_url": format!("{}/v1", server.uri()), "model": "m" }),
+    )
+    .await
+    .unwrap();
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "open b.test" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    h.call("ai.session_stop", json!({ "id": "custom-1" }))
+        .await
+        .unwrap();
+
+    h.call(
+        "ai.session_send",
+        json!({ "id": "custom-1", "text": "and now?" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    let requests = server.received_requests().await.unwrap();
+    let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let body = last["messages"].to_string();
+    assert!(body.contains("open b.test"), "{body}");
+    assert!(body.contains("Opened tab 2."), "{body}");
+    assert!(body.contains("and now?"), "{body}");
+    // Saved next to the transcript for a browser restart.
+    assert!(
+        h._dir
+            .path()
+            .join("ai/sessions/custom-1.history.json")
+            .exists()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

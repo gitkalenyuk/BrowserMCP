@@ -4,20 +4,26 @@
 //! `"jsonrpc"` field (protocol from `codex app-server generate-json-schema`, codex-cli 0.166):
 //!
 //! 1. `initialize {clientInfo}` → result; then the `initialized` notification;
-//! 2. `thread/start {cwd, approvalPolicy, sandbox, model?, developerInstructions}` → `{thread: {id}}`;
+//! 2. `thread/start {cwd, approvalPolicy, sandbox, model?, developerInstructions}` → `{thread: {id}}`,
+//!    or `thread/resume {threadId, …same}` to continue a stopped chat (falls back to a new
+//!    thread, with a notice, when Codex no longer has it);
 //! 3. per user message `turn/start {threadId, input: [{type: "text", text}]}` → `{turn: {id}}`;
 //!    notifications `item/agentMessage/delta`, `item/started`, `item/completed`
-//!    (`agentMessage`, `mcpToolCall`, `commandExecution`), `turn/completed {turn: {status}}`;
-//! 4. stop: `turn/interrupt {threadId, turnId}`, then kill.
+//!    (`agentMessage`, `mcpToolCall`, `commandExecution`, `fileChange`), `turn/completed {turn: {status}}`;
+//! 4. approvals: the server asks `item/commandExecution/requestApproval {command, cwd, reason}`
+//!    and `item/fileChange/requestApproval {itemId, reason}` (older: `execCommandApproval`,
+//!    `applyPatchApproval`); they become approval cards ([`Session::ask_permission`]) and the
+//!    answer is `{decision: accept | acceptForSession | decline | cancel}`;
+//! 5. stop: `turn/interrupt {threadId, turnId}`, then kill.
 //!
 //! The browser's MCP server is passed as a config override:
-//! `-c mcp_servers.browsermcp.url="http://127.0.0.1:47800/mcp?agent=<id>"`. Approvals are off
-//! (`approvalPolicy: never`) and the shell sandbox is read-only: Codex drives the browser through
-//! MCP, not through shell commands.
+//! `-c mcp_servers.browsermcp.url="http://127.0.0.1:47800/mcp?agent=<id>"`. Sandbox and
+//! approval policy come from the session's [`Access`] (default: workspace-write, on-request).
 //!
 //! Fallback when the app-server does not start (old Codex): `codex exec --json -` per message
 //! (`codex exec resume <thread> --json … -` for the next ones), the prompt written to stdin
-//! (`-`), so user text is never parsed as flags. That path is untested against a real Codex.
+//! (`-`), so user text is never parsed as flags. No approvals there (exec cannot ask): only the
+//! sandbox applies. That path is untested against a real Codex.
 //!
 //! Every child runs in a [`ProcessTree`]: stopping kills `codex.cmd`'s grandchildren too.
 
@@ -32,6 +38,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::{mpsc, oneshot};
 
+use super::access::Access;
+use super::permission::{Ask, Decision, NewPermission, PermissionKind};
 use super::{ProcessTree, StderrTail, command, join_reader, kill_tree, spawn};
 use crate::session::{AgentEvent, Session, Status, summarize};
 
@@ -44,7 +52,10 @@ pub struct Codex {
     pub binary: PathBuf,
     pub model: Option<String>,
     pub mcp_url: String,
-    pub cwd: PathBuf,
+    /// Sandbox, approval policy and working folder (`access.cwd`).
+    pub access: Access,
+    /// Codex thread id to continue.
+    pub resume: Option<String>,
 }
 
 /// `-c` override that adds the browser's MCP server.
@@ -53,17 +64,132 @@ pub fn mcp_override(url: &str) -> String {
 }
 
 /// `thread/start` parameters.
-pub fn thread_start_params(cwd: &str, model: Option<&str>, instructions: &str) -> Value {
+pub fn thread_start_params(model: Option<&str>, instructions: &str, access: &Access) -> Value {
     let mut params = json!({
-        "cwd": cwd,
-        "approvalPolicy": "never",
-        "sandbox": "read-only",
+        "cwd": access.cwd.to_string_lossy(),
+        "approvalPolicy": access.approval_policy.wire(),
+        "sandbox": access.sandbox.wire(),
         "developerInstructions": instructions,
     });
     if let Some(model) = model.filter(|m| !m.is_empty()) {
         params["model"] = json!(model);
     }
     params
+}
+
+/// `thread/resume` parameters: the thread, with this session's settings again.
+pub fn thread_resume_params(
+    thread: &str,
+    model: Option<&str>,
+    instructions: &str,
+    access: &Access,
+) -> Value {
+    let mut params = thread_start_params(model, instructions, access);
+    params["threadId"] = json!(thread);
+    // Only the thread's state is needed, not its whole history.
+    params["excludeTurns"] = json!(true);
+    params
+}
+
+/// Which answer format a server request expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalFormat {
+    /// v2 `item/*/requestApproval`: `accept | acceptForSession | decline | cancel`.
+    V2,
+    /// `execCommandApproval` / `applyPatchApproval`: `approved | approved_for_session | denied | abort`.
+    Legacy,
+}
+
+/// A server request that asks for approval, as a permission request. `file_changes`: the
+/// files of `fileChange` items seen so far (the approval request itself names only the item).
+pub fn approval_request(
+    method: &str,
+    params: &Value,
+    file_changes: &HashMap<String, Value>,
+) -> Option<(NewPermission, ApprovalFormat)> {
+    let reason = params["reason"]
+        .as_str()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string);
+    let command = |format| {
+        let command = match &params["command"] {
+            Value::Array(parts) => parts
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+            other => other.as_str().unwrap_or_default().to_string(),
+        };
+        Some((
+            NewPermission {
+                tool: "shell".into(),
+                kind: PermissionKind::Command,
+                title: None,
+                reason: reason.clone(),
+                input: json!({ "command": command, "cwd": params["cwd"] }),
+            },
+            format,
+        ))
+    };
+    let files = |format| {
+        let item = params["itemId"].as_str().or(params["callId"].as_str());
+        let mut input = json!({});
+        if let Some(files) = item.and_then(|id| file_changes.get(id)) {
+            input["files"] = files.clone();
+        } else if let Some(changes) = params["fileChanges"].as_object() {
+            input["files"] = json!(changes.keys().collect::<Vec<_>>());
+        }
+        if let Some(root) = params["grantRoot"].as_str() {
+            input["grant_root"] = json!(root);
+        }
+        Some((
+            NewPermission {
+                tool: "file_change".into(),
+                kind: PermissionKind::FileChange,
+                title: None,
+                reason: reason.clone(),
+                input,
+            },
+            format,
+        ))
+    };
+    match method {
+        "item/commandExecution/requestApproval" => command(ApprovalFormat::V2),
+        "execCommandApproval" => command(ApprovalFormat::Legacy),
+        "item/fileChange/requestApproval" => files(ApprovalFormat::V2),
+        "applyPatchApproval" => files(ApprovalFormat::Legacy),
+        _ => None,
+    }
+}
+
+/// The answer to an approval request.
+pub fn approval_answer(format: ApprovalFormat, decision: &Decision) -> Value {
+    let decision = match (format, decision) {
+        (ApprovalFormat::V2, Decision::Allow) => "accept",
+        (ApprovalFormat::V2, Decision::AllowAlways) => "acceptForSession",
+        (ApprovalFormat::V2, Decision::Deny { .. }) => "decline",
+        (ApprovalFormat::V2, Decision::Cancelled) => "cancel",
+        (ApprovalFormat::Legacy, Decision::Allow) => "approved",
+        (ApprovalFormat::Legacy, Decision::AllowAlways) => "approved_for_session",
+        (ApprovalFormat::Legacy, Decision::Deny { .. }) => "denied",
+        (ApprovalFormat::Legacy, Decision::Cancelled) => "abort",
+    };
+    json!({ "decision": decision })
+}
+
+/// The files of a `fileChange` item (`item/started`), for its approval card.
+fn file_change_paths(item: &Value) -> Option<(String, Value)> {
+    if item["type"] != "fileChange" {
+        return None;
+    }
+    let paths: Vec<&str> = item["changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c["path"].as_str())
+        .collect();
+    Some((item["id"].as_str()?.to_string(), json!(paths)))
 }
 
 /// `turn/start` parameters.
@@ -88,6 +214,10 @@ pub fn notification(method: &str, params: &Value) -> Vec<AgentEvent> {
                 name: "shell".into(),
                 args: json!({ "command": item["command"] }),
             }],
+            "fileChange" => vec![AgentEvent::ToolCall {
+                name: "file_change".into(),
+                args: json!({ "files": file_change_paths(item).map(|(_, p)| p) }),
+            }],
             _ => Vec::new(),
         },
         "item/completed" => match item["type"].as_str().unwrap_or_default() {
@@ -110,12 +240,38 @@ pub fn notification(method: &str, params: &Value) -> Vec<AgentEvent> {
                     output,
                 }]
             }
-            "commandExecution" => vec![AgentEvent::ToolResult {
-                name: "shell".into(),
-                ok: item["exitCode"] == 0,
-                summary: summarize(&item["aggregatedOutput"]),
-                output: None,
-            }],
+            "commandExecution" => {
+                let ok = item["exitCode"] == 0;
+                // A refused command has no output: say why it did not run.
+                let summary = match (item["status"].as_str(), &item["aggregatedOutput"]) {
+                    (Some("declined"), _) => "Declined: the command was not approved".to_string(),
+                    (_, Value::Null) if !ok => match item["exitCode"].as_i64() {
+                        Some(code) => format!("Exited with code {code}"),
+                        None => "The command failed".to_string(),
+                    },
+                    (_, output) => summarize(output),
+                };
+                vec![AgentEvent::ToolResult {
+                    name: "shell".into(),
+                    ok,
+                    summary,
+                    output: None,
+                }]
+            }
+            "fileChange" => {
+                let status = item["status"].as_str().unwrap_or_default();
+                let summary = match status {
+                    "completed" => "Files changed".to_string(),
+                    "declined" => "Declined: the change was not approved".to_string(),
+                    other => format!("The change was not applied ({other})"),
+                };
+                vec![AgentEvent::ToolResult {
+                    name: "file_change".into(),
+                    ok: status == "completed",
+                    summary,
+                    output: None,
+                }]
+            }
             _ => Vec::new(),
         },
         "turn/completed" => {
@@ -157,14 +313,11 @@ fn mcp_result(result: &Value) -> (String, Option<Value>) {
     (summarize(&Value::String(text)), output)
 }
 
-/// Answer for a request the server sends us. Approvals are declined (`approvalPolicy: never`
-/// should prevent them); MCP elicitations (tool-call confirmations) for our server are accepted.
+/// Answer for a server request that is not an approval (those go to the user, see
+/// [`approval_request`]). MCP elicitations (tool-call confirmations) for our server are
+/// accepted: the browser's tools are always allowed.
 pub fn server_request_answer(method: &str) -> Result<Value, Value> {
     match method {
-        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-            Ok(json!({ "decision": "decline" }))
-        }
-        "execCommandApproval" | "applyPatchApproval" => Ok(json!({ "decision": "denied" })),
         "mcpServer/elicitation/request" => Ok(json!({ "action": "accept", "content": {} })),
         _ => Err(
             json!({ "code": -32601, "message": format!("{method} is not supported by BrowserMCP") }),
@@ -262,7 +415,12 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// `codex exec` arguments for one message. The prompt itself is read from stdin (`-`).
-pub fn exec_args(thread: Option<&str>, mcp_url: &str, model: Option<&str>) -> Vec<String> {
+pub fn exec_args(
+    thread: Option<&str>,
+    mcp_url: &str,
+    model: Option<&str>,
+    access: &Access,
+) -> Vec<String> {
     let mut args = vec!["exec".to_string()];
     if let Some(thread) = thread {
         args.extend(["resume".into(), thread.into()]);
@@ -272,6 +430,9 @@ pub fn exec_args(thread: Option<&str>, mcp_url: &str, model: Option<&str>) -> Ve
         "--skip-git-repo-check".into(),
         "-c".into(),
         mcp_override(mcp_url),
+        // `codex exec` cannot ask: only the sandbox applies.
+        "-c".into(),
+        format!("sandbox_mode=\"{}\"", access.sandbox.wire()),
     ]);
     if let Some(model) = model.filter(|m| !m.is_empty()) {
         args.extend(["-m".into(), model.into()]);
@@ -283,7 +444,7 @@ pub fn exec_args(thread: Option<&str>, mcp_url: &str, model: Option<&str>) -> Ve
 
 impl Codex {
     fn spawn_app_server(&self) -> std::io::Result<(Child, ProcessTree)> {
-        let mut cmd = command(&self.binary, &self.cwd);
+        let mut cmd = command(&self.binary, &self.access.cwd);
         cmd.arg("app-server")
             .args(["-c", &mcp_override(&self.mcp_url)]);
         spawn(&mut cmd)
@@ -291,6 +452,13 @@ impl Codex {
 
     /// The session task.
     pub async fn run(self, input: mpsc::UnboundedReceiver<String>) {
+        let session = self.session.clone();
+        self.run_inner(input).await;
+        // Codex is gone: nobody waits for answers to its approval requests any more.
+        session.cancel_permissions();
+    }
+
+    async fn run_inner(&self, input: mpsc::UnboundedReceiver<String>) {
         let session = self.session.clone();
         match self.spawn_app_server() {
             Ok((child, tree)) => match self.app_server(child, tree, input).await {
@@ -327,6 +495,7 @@ impl Codex {
         mut input: mpsc::UnboundedReceiver<String>,
     ) -> Result<(), (String, Option<mpsc::UnboundedReceiver<String>>)> {
         let session = self.session.clone();
+        let cancel = session.cancel_token();
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -345,6 +514,8 @@ impl Codex {
             let (rpc, session, turn) = (rpc.clone(), session.clone(), turn.clone());
             let stdout = BufReader::new(stdout);
             tokio::spawn(async move {
+                // fileChange item id → its files, for the approval card.
+                let mut file_changes: HashMap<String, Value> = HashMap::new();
                 let mut lines = stdout.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let Ok(msg) = serde_json::from_str::<Value>(&line) else {
@@ -364,6 +535,24 @@ impl Codex {
                             }
                         }
                         (Some(method), Some(id)) => {
+                            if let Some((permission, format)) =
+                                approval_request(method, &msg["params"], &file_changes)
+                            {
+                                // Waits for a person: never block the reader on it.
+                                let ask = session.ask_permission(permission);
+                                let (rpc, id) = (rpc.clone(), id.clone());
+                                tokio::spawn(async move {
+                                    let decision = match ask {
+                                        Ask::Answered(decision) => decision,
+                                        Ask::Pending { answer, .. } => {
+                                            answer.await.unwrap_or(Decision::Cancelled)
+                                        }
+                                    };
+                                    let result = approval_answer(format, &decision);
+                                    let _ = rpc.write(&json!({ "id": id, "result": result })).await;
+                                });
+                                continue;
+                            }
                             let answer = match server_request_answer(method) {
                                 Ok(result) => json!({ "id": id, "result": result }),
                                 Err(error) => json!({ "id": id, "error": error }),
@@ -374,6 +563,12 @@ impl Codex {
                             if method == "turn/started" {
                                 *lock(&turn) =
                                     msg["params"]["turn"]["id"].as_str().map(str::to_string);
+                            }
+                            if method == "item/started"
+                                && let Some((item, files)) =
+                                    file_change_paths(&msg["params"]["item"])
+                            {
+                                file_changes.insert(item, files);
                             }
                             for event in notification(method, &msg["params"]) {
                                 let done = matches!(event, AgentEvent::Done(_));
@@ -400,11 +595,26 @@ impl Codex {
             )
             .await?;
             rpc.notify("initialized").await.map_err(|e| e.to_string())?;
-            let params = thread_start_params(
-                &self.cwd.to_string_lossy(),
-                self.model.as_deref(),
-                &crate::agent::system_prompt(&session.id),
-            );
+            let instructions = crate::agent::system_prompt(&session.id);
+            let model = self.model.as_deref();
+            if let Some(thread) = &self.resume {
+                let params = thread_resume_params(thread, model, &instructions, &self.access);
+                match rpc.request("thread/resume", params).await {
+                    Ok(result) if result["thread"]["id"].is_string() => {
+                        return Ok(result["thread"]["id"]
+                            .as_str()
+                            .unwrap_or(thread)
+                            .to_string());
+                    }
+                    Ok(result) => tracing::warn!(%result, "thread/resume returned no thread"),
+                    Err(err) => tracing::warn!(%err, "codex thread/resume failed"),
+                }
+                // Same chat, new Codex thread: say so, the agent lost its context.
+                session.apply(AgentEvent::Notice(
+                    "Codex could not continue its earlier conversation, so this chat goes on in a new one: the agent does not see the messages above.".into(),
+                ));
+            }
+            let params = thread_start_params(model, &instructions, &self.access);
             let result = rpc.request("thread/start", params).await?;
             result["thread"]["id"]
                 .as_str()
@@ -412,7 +622,7 @@ impl Codex {
                 .ok_or_else(|| format!("thread/start returned no thread id: {result}"))
         };
         let thread = tokio::select! {
-            _ = session.cancel.cancelled() => {
+            _ = cancel.cancelled() => {
                 kill_tree(&mut child, &tree).await;
                 reader.abort();
                 session.apply(AgentEvent::Done("stopped".into()));
@@ -429,11 +639,12 @@ impl Codex {
                 }
             },
         };
+        session.apply(AgentEvent::ConversationId(thread.clone()));
 
         // Turns.
         let exit = loop {
             tokio::select! {
-                _ = session.cancel.cancelled() => break None,
+                _ = cancel.cancelled() => break None,
                 status = child.wait() => break Some(status),
                 text = input.recv() => {
                     let Some(text) = text else { break None };
@@ -483,18 +694,20 @@ impl Codex {
     /// Fallback: one `codex exec --json` process per user message (untested against real Codex).
     async fn exec_mode(&self, mut input: mpsc::UnboundedReceiver<String>) {
         let session = self.session.clone();
-        let mut thread: Option<String> = None;
+        let cancel = session.cancel_token();
+        let mut thread: Option<String> = self.resume.clone();
         loop {
             let text = tokio::select! {
-                _ = session.cancel.cancelled() => break,
+                _ = cancel.cancelled() => break,
                 text = input.recv() => match text { Some(t) => t, None => break },
             };
             session.set_status(Status::Running);
-            let mut cmd = command(&self.binary, &self.cwd);
+            let mut cmd = command(&self.binary, &self.access.cwd);
             cmd.args(exec_args(
                 thread.as_deref(),
                 &self.mcp_url,
                 self.model.as_deref(),
+                &self.access,
             ));
             let (mut child, tree) = match spawn(&mut cmd) {
                 Ok(spawned) => spawned,
@@ -523,7 +736,7 @@ impl Codex {
             let mut done = false;
             loop {
                 tokio::select! {
-                    _ = session.cancel.cancelled() => {
+                    _ = cancel.cancelled() => {
                         writer.abort();
                         kill_tree(&mut child, &tree).await;
                         session.apply(AgentEvent::Done("stopped".into()));
@@ -533,9 +746,13 @@ impl Codex {
                     line = lines.next_line() => {
                         let Ok(Some(line)) = line else { break };
                         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                        let before = thread.clone();
                         for event in exec_event(&v, &mut thread) {
                             done |= matches!(event, AgentEvent::Done(_));
                             session.apply(event);
+                        }
+                        if thread != before && let Some(id) = &thread {
+                            session.apply(AgentEvent::ConversationId(id.clone()));
                         }
                     }
                 }
@@ -612,21 +829,141 @@ mod tests {
         );
     }
 
+    fn access(cwd: &std::path::Path) -> Access {
+        crate::cli::access::AccessSettings::default()
+            .resolve(cwd)
+            .unwrap()
+    }
+
     #[test]
     fn requests_and_params() {
         assert_eq!(
-            server_request_answer("item/commandExecution/requestApproval").unwrap()["decision"],
-            "decline"
+            server_request_answer("mcpServer/elicitation/request").unwrap()["action"],
+            "accept"
         );
         assert!(server_request_answer("item/tool/requestUserInput").is_err());
         assert_eq!(
             mcp_override("http://127.0.0.1:1/mcp?agent=codex-1"),
             "mcp_servers.browsermcp.url=\"http://127.0.0.1:1/mcp?agent=codex-1\""
         );
-        let p = thread_start_params("C:\\w", Some("gpt-x"), "hi");
-        assert_eq!(p["approvalPolicy"], "never");
+        let dir = tempfile::tempdir().unwrap();
+        let mut access = access(dir.path());
+        let p = thread_start_params(Some("gpt-x"), "hi", &access);
+        assert_eq!(p["approvalPolicy"], "on-request");
+        assert_eq!(p["sandbox"], "workspace-write");
         assert_eq!(p["model"], "gpt-x");
+        assert_eq!(p["cwd"], dir.path().to_string_lossy().as_ref());
+        access.sandbox = crate::cli::access::CodexSandbox::ReadOnly;
+        access.approval_policy = crate::cli::access::CodexApproval::Never;
+        let p = thread_resume_params("th-1", None, "hi", &access);
+        assert_eq!(p["threadId"], "th-1");
+        assert_eq!(p["sandbox"], "read-only");
+        assert_eq!(p["approvalPolicy"], "never");
+        assert!(p.get("model").is_none());
         assert_eq!(turn_start_params("t1", "go")["input"][0]["text"], "go");
+    }
+
+    #[test]
+    fn approvals_become_permission_requests() {
+        let mut files = HashMap::new();
+        let started = json!({"type": "fileChange", "id": "i7", "status": "inProgress",
+            "changes": [{"path": "C:\\w\\a.txt", "kind": {"type": "add"}, "diff": "+x"}]});
+        let (item, paths) = file_change_paths(&started).unwrap();
+        files.insert(item, paths);
+
+        let (cmd, format) = approval_request(
+            "item/commandExecution/requestApproval",
+            &json!({"threadId": "t", "turnId": "u", "itemId": "i6", "startedAtMs": 1,
+                "command": "rm -rf build", "cwd": "C:\\w", "reason": "needs to delete files"}),
+            &files,
+        )
+        .unwrap();
+        assert_eq!(format, ApprovalFormat::V2);
+        assert_eq!(
+            (cmd.tool.as_str(), cmd.kind),
+            ("shell", PermissionKind::Command)
+        );
+        assert_eq!(cmd.input["command"], "rm -rf build");
+        assert_eq!(cmd.reason.as_deref(), Some("needs to delete files"));
+
+        let (change, _) = approval_request(
+            "item/fileChange/requestApproval",
+            &json!({"threadId": "t", "turnId": "u", "itemId": "i7", "startedAtMs": 1}),
+            &files,
+        )
+        .unwrap();
+        assert_eq!(change.kind, PermissionKind::FileChange);
+        assert_eq!(change.input["files"], json!(["C:\\w\\a.txt"]));
+
+        let (legacy, format) = approval_request(
+            "execCommandApproval",
+            &json!({"command": ["git", "push"], "cwd": "C:\\w"}),
+            &files,
+        )
+        .unwrap();
+        assert_eq!(format, ApprovalFormat::Legacy);
+        assert_eq!(legacy.input["command"], "git push");
+        assert!(approval_request("item/tool/requestUserInput", &json!({}), &files).is_none());
+
+        let answer = |f, d: Decision| approval_answer(f, &d)["decision"].clone();
+        assert_eq!(answer(ApprovalFormat::V2, Decision::Allow), "accept");
+        assert_eq!(
+            answer(ApprovalFormat::V2, Decision::AllowAlways),
+            "acceptForSession"
+        );
+        assert_eq!(
+            answer(ApprovalFormat::V2, Decision::Deny { reason: None }),
+            "decline"
+        );
+        assert_eq!(answer(ApprovalFormat::V2, Decision::Cancelled), "cancel");
+        assert_eq!(answer(ApprovalFormat::Legacy, Decision::Allow), "approved");
+        assert_eq!(
+            answer(ApprovalFormat::Legacy, Decision::Deny { reason: None }),
+            "denied"
+        );
+    }
+
+    #[test]
+    fn refused_commands_and_file_changes_say_why() {
+        let events: Vec<AgentEvent> = [
+            ("item/completed", json!({"item": {"type": "commandExecution", "id": "1",
+                "command": "rm x", "status": "declined", "exitCode": null, "aggregatedOutput": null}})),
+            ("item/completed", json!({"item": {"type": "commandExecution", "id": "2",
+                "command": "false", "status": "failed", "exitCode": 1, "aggregatedOutput": null}})),
+            ("item/started", json!({"item": {"type": "fileChange", "id": "3", "status": "inProgress",
+                "changes": [{"path": "a.txt", "kind": {"type": "add"}, "diff": ""}]}})),
+            ("item/completed", json!({"item": {"type": "fileChange", "id": "3", "status": "declined", "changes": []}})),
+        ]
+        .iter()
+        .flat_map(|(m, p)| notification(m, p))
+        .collect();
+        assert_eq!(
+            events,
+            vec![
+                AgentEvent::ToolResult {
+                    name: "shell".into(),
+                    ok: false,
+                    summary: "Declined: the command was not approved".into(),
+                    output: None
+                },
+                AgentEvent::ToolResult {
+                    name: "shell".into(),
+                    ok: false,
+                    summary: "Exited with code 1".into(),
+                    output: None
+                },
+                AgentEvent::ToolCall {
+                    name: "file_change".into(),
+                    args: json!({"files": ["a.txt"]})
+                },
+                AgentEvent::ToolResult {
+                    name: "file_change".into(),
+                    ok: false,
+                    summary: "Declined: the change was not approved".into(),
+                    output: None
+                },
+            ]
+        );
     }
 
     #[test]
@@ -650,11 +987,14 @@ mod tests {
 
     #[test]
     fn exec_args_read_the_prompt_from_stdin() {
-        let args = exec_args(None, "http://127.0.0.1:1/mcp", Some("gpt-x"));
+        let dir = tempfile::tempdir().unwrap();
+        let access = access(dir.path());
+        let args = exec_args(None, "http://127.0.0.1:1/mcp", Some("gpt-x"), &access);
         assert_eq!(args.first().map(String::as_str), Some("exec"));
         assert_eq!(args.last().map(String::as_str), Some("-"));
         assert!(args.windows(2).any(|w| w == ["-m", "gpt-x"]));
-        let args = exec_args(Some("th-1"), "http://127.0.0.1:1/mcp", None);
+        assert!(args.contains(&"sandbox_mode=\"workspace-write\"".to_string()));
+        let args = exec_args(Some("th-1"), "http://127.0.0.1:1/mcp", None, &access);
         assert_eq!(&args[..3], ["exec", "resume", "th-1"]);
         assert_eq!(args.last().map(String::as_str), Some("-"));
     }
@@ -692,7 +1032,8 @@ mod tests {
             binary: fake,
             model: None,
             mcp_url: "http://127.0.0.1:9/mcp?agent=codex-test".into(),
-            cwd: dir.path().to_path_buf(),
+            access: access(dir.path()),
+            resume: None,
         };
         let (tx, rx) = mpsc::unbounded_channel();
         tx.send("--help -m gpt-x hi".to_string()).unwrap();
@@ -728,7 +1069,7 @@ mod tests {
         let mut send = async |v: Value| stdin.write_all(format!("{v}\n").as_bytes()).await.unwrap();
         send(json!({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "browsermcp-test", "version": "0"}}})).await;
         send(json!({"method": "initialized"})).await;
-        let mut params = thread_start_params(&dir.path().to_string_lossy(), None, "test");
+        let mut params = thread_start_params(None, "test", &access(dir.path()));
         params["ephemeral"] = json!(true); // keep the user's Codex history clean
         send(json!({"id": 2, "method": "thread/start", "params": params})).await;
         let mut thread = None;
