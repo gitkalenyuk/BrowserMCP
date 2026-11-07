@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '../i18n/index.svelte';
-  import { ACCENTS, settings, type ThemePref } from '../settings.svelte';
+  import { ACCENTS, PALETTE_ACCENT, settings, themeTokens, type ThemePref } from '../settings.svelte';
+  import { PALETTES } from '../theme/palettes';
   import { useChrome } from '../state/chrome.svelte';
   import type { CommandId } from '../keymap';
   import Icon from './Icon.svelte';
@@ -60,8 +61,36 @@
         </div>
       </section>
       <section>
+        <h3>{t('theme.menu.palette')}</h3>
+        <div class="swatches" role="radiogroup" aria-label={t('theme.menu.palette')}>
+          {#each PALETTES as p (p.id)}
+            {@const tk = themeTokens({ palette: p.id, accent: PALETTE_ACCENT }, settings.effectiveTheme)}
+            <button
+              class="swatch pal"
+              role="radio"
+              aria-checked={settings.value.palette === p.id}
+              aria-label={t(`theme.palette.${p.id}`)}
+              title={t(`theme.palette.${p.id}`)}
+              style:--c={tk.accent}
+              style:--bg={tk.frame}
+              style:--c2={tk.surface}
+              onclick={() => settings.update({ palette: p.id })}
+            ></button>
+          {/each}
+        </div>
+      </section>
+      <section>
         <h3>{t('components.menu.accent')}</h3>
         <div class="swatches" role="radiogroup" aria-label={t('components.menu.accentColor')}>
+          <button
+            class="swatch auto"
+            role="radio"
+            aria-checked={settings.value.accent === PALETTE_ACCENT}
+            aria-label={t('theme.menu.paletteDefault')}
+            title={t('theme.menu.paletteDefault')}
+            style:--c={themeTokens({ palette: settings.value.palette, accent: PALETTE_ACCENT }, settings.effectiveTheme).accent}
+            onclick={() => settings.update({ accent: PALETTE_ACCENT })}
+          ></button>
           {#each ACCENTS as c (c)}
             <button
               class="swatch"
@@ -75,7 +104,7 @@
           <label class="swatch custom" title={t('components.menu.customColor')}>
             <input
               type="color"
-              value={settings.value.accent}
+              value={settings.effectiveAccent}
               oninput={(e) => settings.update({ accent: e.currentTarget.value })}
               aria-label={t('components.menu.customAccent')}
             />
@@ -197,6 +226,29 @@
   }
   .swatch[aria-checked='true'] {
     box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c);
+  }
+  /* A palette: its frame and surface split diagonally, its accent as a dot. */
+  .swatch.pal {
+    background: linear-gradient(135deg, var(--bg) 50%, var(--c2) 50%);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+  .swatch.pal::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--c);
+  }
+  .swatch.pal[aria-checked='true'] {
+    box-shadow: inset 0 0 0 1px var(--border-strong), 0 0 0 2px var(--surface), 0 0 0 4px var(--fg-muted);
+  }
+  /* The palette's own accent: a ring of it. */
+  .swatch.auto {
+    background: var(--surface);
+    box-shadow: inset 0 0 0 5px var(--c);
+  }
+  .swatch.auto[aria-checked='true'] {
+    box-shadow: inset 0 0 0 5px var(--c), 0 0 0 2px var(--surface), 0 0 0 4px var(--c);
   }
   .custom {
     background: var(--sunken);

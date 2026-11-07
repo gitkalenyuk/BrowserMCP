@@ -63,6 +63,6 @@
   .allow {
     border-color: transparent;
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
   }
 </style>

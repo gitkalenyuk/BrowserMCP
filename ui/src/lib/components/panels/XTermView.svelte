@@ -53,6 +53,13 @@
     brightWhite: '#8c959f',
   };
 
+  /** ANSI colours by light / dark; background, text, cursor and selection from the palette (reactive). */
+  function themeNow(): ITheme {
+    const tk = settings.tokens;
+    const ansi = settings.effectiveTheme === 'dark' ? DARK : LIGHT;
+    return { ...ansi, background: tk['code-bg'], foreground: tk['code-fg'], cursor: tk['code-fg'], selectionBackground: tk.selection };
+  }
+
   let host: HTMLDivElement;
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
@@ -84,7 +91,7 @@
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: false,
-      theme: settings.effectiveTheme === 'dark' ? DARK : LIGHT,
+      theme: themeNow(),
     });
     const f = new FitAddon();
     t.loadAddon(f);
@@ -110,7 +117,7 @@
   });
 
   $effect(() => {
-    const theme = settings.effectiveTheme === 'dark' ? DARK : LIGHT;
+    const theme = themeNow();
     if (term) term.options.theme = theme;
   });
 

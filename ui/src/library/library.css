@@ -60,7 +60,7 @@ body {
 }
 .btn.danger.primary {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .lib-empty {

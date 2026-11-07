@@ -1,0 +1,26 @@
+// Колірні теми (lib/theme/palettes.ts): назви й короткі описи для Налаштування → Загальні →
+// Вигляд і меню панелі інструментів. Умовності: ../index.svelte.ts.
+export default {
+  'theme.palette.graphite': 'Графіт',
+  'theme.palette.graphite.hint': 'Нейтральні сірі відтінки й синій акцент. Початковий вигляд.',
+  'theme.palette.midnight': 'Опівніч',
+  'theme.palette.midnight.hint': 'Глибокий темно-синій із барвінковим акцентом.',
+  'theme.palette.forest': 'Ліс',
+  'theme.palette.forest.hint': 'Зелень моху й сосни.',
+  'theme.palette.ember': 'Жар',
+  'theme.palette.ember.hint': 'Теплі коричневі й бурштиновий акцент, як на заході сонця.',
+  'theme.palette.rosewood': 'Шипшина',
+  'theme.palette.rosewood.hint': 'Приглушена троянда й слива з малиновим акцентом.',
+  'theme.palette.lagoon': 'Лагуна',
+  'theme.palette.lagoon.hint': 'Синьо-зелена вода з бірюзовим акцентом.',
+  'theme.palette.dusk': 'Сутінки',
+  'theme.palette.dusk.hint': 'Вечірній фіолетовий.',
+  'theme.palette.paper': 'Папір',
+  'theme.palette.paper.hint': 'Теплий папір і чорнило: м’яко для очей, коли довго читаєте.',
+  'theme.palette.contrast': 'Високий контраст',
+  'theme.palette.contrast.hint': 'Чорне й біле з чіткими межами; увесь текст відповідає WCAG AAA.',
+  'theme.menu.palette': 'Колірна тема',
+  'theme.menu.paletteDefault': 'Акцент колірної теми',
+  'theme.aaa': 'AAA',
+  'theme.aaaTitle': 'Увесь текст має контраст за WCAG AAA (щонайменше 7:1)',
+};

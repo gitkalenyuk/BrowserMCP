@@ -208,7 +208,7 @@
   .btn.danger {
     border-color: var(--danger);
     background: var(--danger);
-    color: #fff;
+    color: var(--on-danger);
   }
   .result {
     margin: 0;

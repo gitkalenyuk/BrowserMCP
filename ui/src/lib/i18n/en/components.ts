@@ -79,7 +79,7 @@ export default {
   'components.resize': 'Resize',
   'components.menu.label': 'Appearance and settings',
   'components.menu.appearance': 'Appearance',
-  'components.menu.theme': 'Theme',
+  'components.menu.theme': 'Light or dark',
   'components.menu.theme.system': 'System',
   'components.menu.theme.light': 'Light',
   'components.menu.theme.dark': 'Dark',

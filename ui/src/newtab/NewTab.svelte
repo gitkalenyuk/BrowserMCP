@@ -158,7 +158,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--knob);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
     transition: transform 160ms var(--ease-out);
   }

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { t } from '../../i18n/index.svelte';
   import { load, save } from '../../storage';
-  import { settings } from '../../settings.svelte';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
   import XTermView from './XTermView.svelte';
@@ -37,7 +36,7 @@
   });
 </script>
 
-<div class="term" class:dark={settings.effectiveTheme === 'dark'}>
+<div class="term">
   <div class="tabs" role="tablist" aria-label={t('term.list')}>
     {#each terms.tabs as tab (tab.id)}
       <div class="tab" class:active={terms.activeId === tab.id} class:exited={tab.exited}>
@@ -99,14 +98,11 @@
 
 <style>
   .term {
-    --term-bg: #ffffff;
+    --term-bg: var(--code-bg);
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
-  }
-  .term.dark {
-    --term-bg: #0d0f12;
   }
   .tabs {
     display: flex;

@@ -1,0 +1,26 @@
+// Colour themes (lib/theme/palettes.ts): names and one-line descriptions, shown in
+// Settings → General → Appearance and the toolbar menu. Conventions: ../index.svelte.ts.
+export default {
+  'theme.palette.graphite': 'Graphite',
+  'theme.palette.graphite.hint': 'Neutral greys with a blue accent. The original look.',
+  'theme.palette.midnight': 'Midnight',
+  'theme.palette.midnight.hint': 'Deep navy with a periwinkle accent.',
+  'theme.palette.forest': 'Forest',
+  'theme.palette.forest.hint': 'Moss and pine greens.',
+  'theme.palette.ember': 'Ember',
+  'theme.palette.ember.hint': 'Warm browns with an amber accent, like a sunset.',
+  'theme.palette.rosewood': 'Rosewood',
+  'theme.palette.rosewood.hint': 'Dusty rose and plum with a raspberry accent.',
+  'theme.palette.lagoon': 'Lagoon',
+  'theme.palette.lagoon.hint': 'Blue-green water with a teal accent.',
+  'theme.palette.dusk': 'Dusk',
+  'theme.palette.dusk.hint': 'Twilight violet.',
+  'theme.palette.paper': 'Paper',
+  'theme.palette.paper.hint': 'Warm paper and ink, soft on the eyes for long reading.',
+  'theme.palette.contrast': 'High contrast',
+  'theme.palette.contrast.hint': 'Black and white with strong borders; all text meets WCAG AAA.',
+  'theme.menu.palette': 'Color theme',
+  'theme.menu.paletteDefault': 'Accent of the color theme',
+  'theme.aaa': 'AAA',
+  'theme.aaaTitle': 'Every text meets WCAG AAA contrast (at least 7:1)',
+};
