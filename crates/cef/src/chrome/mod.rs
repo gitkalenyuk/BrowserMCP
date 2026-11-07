@@ -665,6 +665,9 @@ pub(crate) fn handle_command(sender: i32, command: Command) {
             .map(|view| (view.kind, view.browser.clone()))
     });
     let Some((kind, sender_browser)) = sender_view else {
+        if protocol::allowed_from_tab(&command) && tab_command(sender, &command) {
+            return;
+        }
         tracing::warn!(
             sender,
             ?command,
@@ -712,6 +715,39 @@ pub(crate) fn handle_command(sender: i32, command: Command) {
                 focus_omnibox(&views);
             }
         }
+        Command::OpenAi { session } => open_ai(key, &session),
+    }
+}
+
+/// A command from a tab (`protocol::allowed_from_tab`): runs only while the tab's page is
+/// one of ours (`bmcp://ui/`, e.g. the new tab page), never for a web page. Returns false
+/// when the sender is not such a tab.
+fn tab_command(sender: i32, command: &Command) -> bool {
+    let browser = with_ui(|ui| ui.tabs.get(&TabId(sender)).map(|t| t.browser.clone()));
+    let Some(browser) = browser else {
+        return false;
+    };
+    let url = browser
+        .main_frame()
+        .map(|f| CefString::from(&f.url()).to_string())
+        .unwrap_or_default();
+    if !crate::scheme::is_chrome_url(&url) {
+        tracing::warn!(sender, url, ?command, "command from a web page ignored");
+        return true; // a tab, but not ours: handled (ignored)
+    }
+    let Some(key) = window_key(&browser) else {
+        return true; // an off-screen tab has no panel to open
+    };
+    if let Command::OpenAi { session } = command {
+        open_ai(key, session);
+    }
+    true
+}
+
+/// Show AI chat `session` in window `key`'s AI panel (`bmcp.openAi` in its chrome page).
+fn open_ai(key: i32, session: &str) {
+    if let Some(views) = views(key) {
+        run_js(&views.ui, &protocol::open_ai_script(session));
     }
 }
 

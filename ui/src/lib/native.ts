@@ -11,8 +11,10 @@
 //   focus-pane      keyboard focus to the left / right half of the split view
 //   cover           a dropdown of the chrome is open: hide the page (it would cover the
 //                   dropdown, which this page draws under the native page view)
+//   open-ai         (from the new tab page in a tab) show a chat in the window's AI panel
 // The other direction: the browser calls window.bmcp.run(commandId) for shortcuts pressed
-// while a web page has focus, and bmcp.onShow() / bmcp.onHide() in the palette page.
+// while a web page has focus, bmcp.openAi(session) for open-ai, and bmcp.onShow() /
+// bmcp.onHide() in the palette page.
 
 import type { Rect } from './api/types';
 
@@ -31,6 +33,8 @@ declare global {
 /** What the browser may call in our page. */
 export interface NativeHooks {
   run?: (commandId: string) => void;
+  /** Show this AI chat in the panel (asked by a new tab page of the window: `openAiPanel`). */
+  openAi?: (session: string) => void;
   onShow?: () => void;
   onHide?: () => void;
 }
@@ -73,6 +77,20 @@ export const nativeHost: NativeHost = {
   focusPane: (side) => send('focus-pane', { side }),
   cover: (on) => send('cover', { on: on ? 1 : 0 }),
 };
+
+/**
+ * From one of our pages shown in a tab (the new tab page): open the AI panel of the window
+ * around the tab on chat `session`. The browser accepts `open-ai` from a tab only while it
+ * shows a bmcp://ui page, and calls `bmcp.openAi(session)` in that window's chrome. In the
+ * dev mock the page sits in the chrome's iframe and asks the parent instead.
+ */
+export function openAiPanel(session: string): void {
+  if (typeof window !== 'undefined' && window.parent !== window) {
+    window.parent.postMessage({ type: 'bmcp:open-ai', session }, location.origin);
+    return;
+  }
+  send('open-ai', { session });
+}
 
 /** Install the hooks the browser calls (merged with ones installed earlier). */
 export function installHooks(hooks: NativeHooks): void {

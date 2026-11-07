@@ -13,7 +13,9 @@
 //!   `focus-pane?side=left|right`, `cover?on=1|0` (a chrome dropdown is open: hide the
 //!   page so the dropdown is not drawn under it). The handler (IO thread) parses the URL with
 //!   [`parse_command`], answers `204` at once and posts the command to the UI thread,
-//!   where it runs only if the sender is one of our own UI/palette views.
+//!   where it runs only if the sender is one of our own UI/palette views — except
+//!   `open-ai?session=<id>` ("Open in the AI panel" on the new tab page), which a tab may send
+//!   while it shows one of our `bmcp://ui/` pages ([`allowed_from_tab`]).
 //! * Browser → UI page: `execute_java_script("window.bmcp.run('tab.new')")` for shortcuts
 //!   pressed while a web page has focus, `bmcp.onShow()` / `bmcp.onHide()` for the
 //!   palette overlay.
@@ -39,6 +41,35 @@ pub enum Command {
     /// A chrome dropdown opened (`true`) or closed: hide / show the page area so the
     /// dropdown, drawn by the UI page under the native page view, can be seen.
     Cover(bool),
+    /// "Open in the AI panel" on the new tab page: show AI chat `session` in the AI panel of
+    /// the window around the tab. The only command a tab may send (see
+    /// [`allowed_from_tab`]), and only while it shows one of our pages.
+    OpenAi {
+        session: String,
+    },
+}
+
+/// May a tab showing one of our own pages (new tab, settings) send this command? Everything
+/// else is for the chrome / palette views only.
+pub fn allowed_from_tab(command: &Command) -> bool {
+    matches!(command, Command::OpenAi { .. })
+}
+
+/// An AI session id as `ai.session_start` makes them (`claude-code-24`): 1–64 of
+/// `A-Z a-z 0-9 - _ .`. Anything else never reaches the page's JavaScript.
+pub fn is_session_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+}
+
+/// JavaScript that shows AI chat `session` in the chrome page (`bmcp.openAi`, ui/src/chrome/main.ts).
+pub fn open_ai_script(session: &str) -> String {
+    format!(
+        "window.bmcp && window.bmcp.openAi && window.bmcp.openAi({});",
+        serde_json::json!(session)
+    )
 }
 
 /// A half of the split view.
@@ -100,6 +131,9 @@ pub fn parse_command(url: &str) -> Option<Command> {
             Some("hide") => PaletteAction::Hide,
             _ => PaletteAction::Toggle,
         }),
+        "open-ai" => Command::OpenAi {
+            session: arg("session").filter(|s| is_session_id(s))?,
+        },
         _ => return None,
     })
 }
@@ -451,6 +485,35 @@ mod tests {
             Some(Command::FocusPane(Pane::Right))
         );
         assert_eq!(parse_command("bmcp://cmd/focus-pane?side=up"), None);
+    }
+
+    #[test]
+    fn open_ai_takes_only_a_session_id_and_is_the_only_tab_command() {
+        let open = parse_command("bmcp://cmd/open-ai?session=claude-code-24");
+        assert_eq!(
+            open,
+            Some(Command::OpenAi {
+                session: "claude-code-24".into()
+            })
+        );
+        assert!(allowed_from_tab(open.as_ref().unwrap()));
+        // No id, an empty one, script-ish or overlong ids are refused at parse time.
+        assert_eq!(parse_command("bmcp://cmd/open-ai"), None);
+        assert_eq!(parse_command("bmcp://cmd/open-ai?session="), None);
+        assert_eq!(
+            parse_command("bmcp://cmd/open-ai?session=a%22%29%3Balert(1)"),
+            None
+        );
+        let long = format!("bmcp://cmd/open-ai?session={}", "a".repeat(65));
+        assert_eq!(parse_command(&long), None);
+        // The window plumbing stays chrome-only.
+        assert!(!allowed_from_tab(&Command::FocusContent));
+        assert!(!allowed_from_tab(&Command::Cover(true)));
+        assert!(!allowed_from_tab(&Command::Palette(PaletteAction::Show)));
+        assert_eq!(
+            open_ai_script("codex-3"),
+            r#"window.bmcp && window.bmcp.openAi && window.bmcp.openAi("codex-3");"#
+        );
     }
 
     #[test]

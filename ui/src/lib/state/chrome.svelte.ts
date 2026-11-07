@@ -315,6 +315,13 @@ export class ChromeController {
     if (settings.value.panel !== 'ai') settings.update({ panel: 'ai' });
   }
 
+  /** "Open in the AI panel" (new tab page): show that chat in this window's AI panel. */
+  openAiSession(id: string): void {
+    if (this.role !== 'chrome') return;
+    void this.ai.refreshSessions().then(() => this.ai.open(id));
+    if (settings.value.panel !== 'ai') settings.update({ panel: 'ai' });
+  }
+
   /** UI-only: collapsed tab groups (the active tab stays visible). */
   collapsed = $state<Record<string, boolean>>({});
 
