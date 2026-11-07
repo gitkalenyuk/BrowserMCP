@@ -969,3 +969,103 @@ async fn api_agent_edit_rewinds_the_history_and_model_changes_apply() {
     assert!(!saved.contains("and now?"));
     assert!(saved.contains("instead, open c.test"));
 }
+
+/// The next event matching `pred` (20 s at most).
+async fn wait_for(rx: &mut broadcast::Receiver<Event>, pred: impl Fn(&Event) -> bool) -> Event {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let event = rx.recv().await.unwrap();
+            if pred(&event) {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("event did not arrive in time")
+}
+
+/// An API agent may delete or close its own chat from inside its turn: the command ends that
+/// turn (and waits for it), yet is not cut off with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_api_agent_deletes_and_closes_its_own_chat() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|req: &Request| {
+            let body = String::from_utf8_lossy(&req.body);
+            let (tool, id) = if body.contains("delete yourself") {
+                ("ai_session_delete", "custom-1")
+            } else {
+                ("ai_session_close", "custom-2")
+            };
+            sse(&[json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "id": "c1", "type": "function", "function": {"name": tool, "arguments": json!({"id": id}).to_string()}},
+            ]}, "finish_reason": "tool_calls"}]})])
+        })
+        .mount(&server)
+        .await;
+    custom_provider(&h, &server).await;
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "delete yourself", "toolsets": ["core", "ai"] }),
+    )
+    .await
+    .unwrap();
+    wait_for(&mut rx, |e| {
+        e.topic == "ai.session_deleted" && e.data["session"] == "custom-1"
+    })
+    .await;
+    let sessions = h._dir.path().join("ai/sessions");
+    assert!(!sessions.join("custom-1.meta.json").exists());
+    assert!(!sessions.join("custom-1.jsonl").exists());
+
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "close yourself", "toolsets": ["core", "ai"] }),
+    )
+    .await
+    .unwrap();
+    wait_for(&mut rx, |e| {
+        e.topic == "ai.session_closed" && e.data["session"] == "custom-2"
+    })
+    .await;
+    let open = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(open["sessions"], json!([]));
+    let archived = h
+        .call("ai.sessions_list", json!({ "archived": true }))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = archived["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["custom-2"], "custom-1 is gone, custom-2 archived");
+    assert_eq!(archived["sessions"][0]["status"], "stopped");
+}
+
+/// "default" (an ai.models choice) at the start means the provider's model, not a model
+/// named "default".
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_with_the_default_model_uses_the_providers() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_responder)
+        .mount(&server)
+        .await;
+    custom_provider(&h, &server).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "custom", "model": "Default", "prompt": "open b.test" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(info["model"], "test-model");
+    until_done(&mut rx, "custom-1").await;
+    assert_eq!(bodies(&server).await[0]["model"], "test-model");
+}

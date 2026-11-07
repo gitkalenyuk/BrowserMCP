@@ -10745,11 +10745,11 @@ declare namespace BrowserMCP {
     "ai.provider_test": { args: AiProviderTestArgs; output: AiProviderTestOutput };
     /** List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with configured/default flags, base URL, default model and known models. */
     "ai.providers": { args: AiProvidersArgs; output: AiProvidersOutput };
-    /** Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete). */
+    /** Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete). An AI agent may close only its own chat (NEEDS_APPROVAL otherwise). */
     "ai.session_close": { args: AiSessionCloseArgs; output: AiSessionCloseOutput };
     /** Delete an AI chat for good: stops it if running and removes all its files (meta, transcript, history). Emits ai.session_closed and ai.session_deleted. An AI agent may delete only its own chat (NEEDS_APPROVAL otherwise). */
     "ai.session_delete": { args: AiSessionDeleteArgs; output: AiSessionDeleteOutput };
-    /** Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. Returns the session. */
+    /** Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. An AI agent may edit only its own chat (NEEDS_APPROVAL otherwise). Returns the session. */
     "ai.session_edit": { args: AiSessionEditArgs; output: AiSessionEditOutput };
     /** Interrupt the current turn of an AI chat but keep the chat (and the CLI agent) alive: the answer ends with ai.done {reason: stopped} and the next message goes on in the same conversation. ai.session_stop also ends the agent process. */
     "ai.session_interrupt": { args: AiSessionInterruptArgs; output: AiSessionInterruptOutput };
@@ -11328,7 +11328,7 @@ declare namespace BrowserMCP {
        */
       providers(args?: AiProvidersArgs): Promise<AiProvidersOutput>;
       /**
-       * Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete).
+       * Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete). An AI agent may close only its own chat (NEEDS_APPROVAL otherwise).
        *
        * `ai.session_close` (MCP: `ai_session_close`): toolset `ai`, act.
        */
@@ -11340,7 +11340,7 @@ declare namespace BrowserMCP {
        */
       session_delete(args: AiSessionDeleteArgs): Promise<AiSessionDeleteOutput>;
       /**
-       * Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. Returns the session.
+       * Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. An AI agent may edit only its own chat (NEEDS_APPROVAL otherwise). Returns the session.
        *
        * `ai.session_edit` (MCP: `ai_session_edit`): toolset `ai`, act.
        */

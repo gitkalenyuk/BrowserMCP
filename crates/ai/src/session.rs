@@ -130,6 +130,12 @@ pub enum AgentEvent {
     /// (sent right before its [`AgentEvent::Done`], recorded on the `done` entry as `at`).
     /// `ai.session_edit` resumes the conversation at such a point (`--resume-session-at`).
     Checkpoint(String),
+    /// Codex: the id of the turn that is about to end (sent right before its
+    /// [`AgentEvent::Done`], recorded on the `done` entry as `turn`). Only a `done` with it
+    /// ended a turn Codex has in its thread: `ai.session_edit` rolls back by these
+    /// (`thread/rollback {numTurns}`), never by the `done`s of a `turn/start` that failed or
+    /// of a run stopped before its thread started.
+    Turn(String),
 }
 
 /// What the backend task of a session receives.
@@ -299,6 +305,8 @@ struct State {
     queued: Vec<usize>,
     /// See [`AgentEvent::Checkpoint`]: attached to the next `done` entry.
     checkpoint: Option<String>,
+    /// See [`AgentEvent::Turn`]: attached to the next `done` entry.
+    turn: Option<String>,
     /// One-shot instructions for the next backend run after ai.session_edit.
     resume_at: Option<String>,
     rollback: Option<u32>,
@@ -327,7 +335,8 @@ pub struct Rewind {
     pub resume_at: Option<String>,
     /// A turn before the edit ended (done entry), with or without a checkpoint.
     pub turns_before: bool,
-    /// Turns ended after that last finished turn (Codex `thread/rollback {numTurns}`).
+    /// Codex turns ended after that last finished turn (`thread/rollback {numTurns}`): the
+    /// `done` entries marked with [`AgentEvent::Turn`].
     pub turns_after: u32,
     /// The user and assistant texts before the edit (to seed a fresh conversation).
     pub earlier: Vec<(String, String)>,
@@ -391,6 +400,7 @@ impl Session {
                 users: 0,
                 queued: Vec::new(),
                 checkpoint: None,
+                turn: None,
                 resume_at: None,
                 rollback: None,
             }),
@@ -611,6 +621,25 @@ impl Session {
         self.emit_update();
     }
 
+    /// The queued user messages, `(index, text)` in order.
+    pub fn queued_messages(&self) -> Vec<(usize, String)> {
+        let state = self.lock();
+        state
+            .queued
+            .iter()
+            .filter_map(|&index| {
+                let entry =
+                    state.transcript.iter().rev().find(|e| {
+                        e["type"] == "user" && e["index"].as_u64() == Some(index as u64)
+                    })?;
+                Some((
+                    index,
+                    entry["text"].as_str().unwrap_or_default().to_string(),
+                ))
+            })
+            .collect()
+    }
+
     /// Take every queued message (the agent has them all now). Returns their indexes.
     pub fn take_all(&self) -> Vec<usize> {
         let queued = self.queued();
@@ -742,8 +771,9 @@ impl Session {
             run.turn = CancellationToken::new();
             run.generation += 1;
         }
-        // Messages queued for the old run went with it.
-        self.drop_queued();
+        // Messages still queued here were never taken by the old run, which ended by itself
+        // (a stop, close or edit drops them first): they stay queued, and the message that
+        // continues the chat takes them along (see `AiService::send`).
         self.set_status(Status::Idle);
         rx
     }
@@ -891,8 +921,14 @@ impl Session {
             }
             AgentEvent::Done(reason) => {
                 let mut entry = json!({ "type": "done", "reason": reason });
-                if let Some(at) = self.lock().checkpoint.take() {
-                    entry["at"] = json!(at);
+                {
+                    let mut state = self.lock();
+                    if let Some(at) = state.checkpoint.take() {
+                        entry["at"] = json!(at);
+                    }
+                    if let Some(turn) = state.turn.take() {
+                        entry["turn"] = json!(turn);
+                    }
                 }
                 self.record(entry);
                 // The status changes BEFORE `ai.done` goes out: a client that sends the next
@@ -902,6 +938,7 @@ impl Session {
                 self.emit(topics::DONE, json!({ "reason": reason }));
             }
             AgentEvent::Checkpoint(uuid) => self.lock().checkpoint = Some(uuid),
+            AgentEvent::Turn(id) => self.lock().turn = Some(id),
             AgentEvent::ConversationId(id) => {
                 let changed = {
                     let mut state = self.lock();
@@ -983,7 +1020,8 @@ impl Session {
     /// Keep (and save) the API conversation, made consistent for the next request.
     pub fn set_api_history(&self, mut history: Vec<Message>) {
         repair_history(&mut history);
-        if let Some(log) = &self.log_path
+        // Not for a deleted chat (see `save_meta`).
+        if let Some(log) = self.log_path.as_ref().filter(|_| !self.is_closed())
             && let Err(err) = write_json(&with_suffix(log, "history.json"), &history)
         {
             tracing::warn!(%err, "cannot save the AI conversation");
@@ -1053,9 +1091,11 @@ impl Session {
                 resume_at: last_checkpoint
                     .and_then(|b| before[b]["at"].as_str().map(str::to_string)),
                 turns_before: last_done.is_some(),
+                // Only turns Codex really has: a `done` without `turn` (a `turn/start` that
+                // failed, a stop before the thread started) has nothing to roll back.
                 turns_after: entries[start..]
                     .iter()
-                    .filter(|e| e["type"] == "done")
+                    .filter(|e| e["type"] == "done" && e["turn"].is_string())
                     .count() as u32,
                 earlier: before
                     .iter()
@@ -1072,6 +1112,7 @@ impl Session {
             state.users = index;
             state.queued.clear();
             state.checkpoint = None;
+            state.turn = None;
             if index == 0 {
                 state.auto_title = None;
             }
@@ -1094,8 +1135,13 @@ impl Session {
         Some(rewind)
     }
 
-    /// Write `<id>.meta.json` (the session is listed again after a browser restart).
+    /// Write `<id>.meta.json` (the session is listed again after a browser restart). Not for
+    /// a deleted chat: a late write (a close or rename racing the delete, the last events of
+    /// its run) would bring it back after a restart.
     pub fn save_meta(&self) {
+        if self.is_closed() {
+            return;
+        }
         if let Some(log) = &self.log_path
             && let Err(err) = write_json(&meta_path(log), &self.saved())
         {
@@ -1165,7 +1211,8 @@ impl Session {
         let now = now_ms();
         entry["ts_ms"] = json!(now);
         self.lock().updated_ms = now;
-        if let Some(path) = &self.log_path {
+        // Not for a deleted chat (see `save_meta`).
+        if let Some(path) = self.log_path.as_ref().filter(|_| !self.is_closed()) {
             let line = format!("{entry}\n");
             let written = std::fs::OpenOptions::new()
                 .create(true)
@@ -1733,7 +1780,10 @@ mod tests {
         assert_eq!(rewind.resume_at.as_deref(), Some("uuid-1"));
         assert_eq!(rewind.prefix, ["two"]);
         assert_eq!(rewind.user_texts, ["one", "two"]);
-        assert_eq!(rewind.turns_after, 1);
+        assert_eq!(
+            rewind.turns_after, 0,
+            "no Codex turns in a Claude Code chat"
+        );
         assert!(rewind.turns_before);
         assert_eq!(session.user_count(), 2);
         assert!(session.queued().is_empty());
@@ -1757,6 +1807,82 @@ mod tests {
         assert!(session.transcript().is_empty());
         assert_eq!(session.info().title, "Claude Code");
         assert!(session.rewind(5).is_none());
+    }
+
+    /// Codex: only `done`s that ended a turn of the thread count for `thread/rollback`; a
+    /// `turn/start` that failed (or a stop before the thread started) left none.
+    #[tokio::test]
+    async fn codex_rollback_counts_only_turns_codex_has() {
+        let (session, _rx) = Session::new(
+            "codex-1".into(),
+            "codex".into(),
+            None,
+            COLORS[0].into(),
+            EventBus::new(),
+            None,
+        );
+        session.send("one".into()).unwrap();
+        session.apply(AgentEvent::Turn("u1".into()));
+        session.apply(AgentEvent::Done("end_turn".into()));
+        session.send("two".into()).unwrap();
+        session.apply(AgentEvent::Done("error: turn/start: overloaded".into()));
+        session.send("three".into()).unwrap();
+        session.apply(AgentEvent::Turn("u2".into()));
+        session.apply(AgentEvent::Done("end_turn".into()));
+        assert_eq!(session.transcript()[1]["turn"], "u1");
+        assert!(session.transcript()[3].get("turn").is_none());
+        // Editing "one": both real turns go, not the failed start.
+        let rewind = session.rewind(0).unwrap();
+        assert_eq!(rewind.turns_after, 2);
+    }
+
+    /// A deleted chat writes no meta file any more (a close or rename racing the delete
+    /// would bring it back after a restart).
+    #[tokio::test]
+    async fn a_deleted_chat_saves_no_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let (session, _rx) = new_session(dir.path(), "claude-code-5");
+        session.save_meta();
+        assert_eq!(saved_sessions(dir.path()).len(), 1);
+        session.mark_closed();
+        session.remove_files();
+        session.set_archived(true);
+        session.rename(Some("late".into()));
+        session.set_model(Some("opus".into()));
+        // The last events of its run and its history neither.
+        session.apply(AgentEvent::Text("late".into()));
+        session.set_api_history(vec![Message::User { text: "x".into() }]);
+        assert!(saved_sessions(dir.path()).is_empty());
+        for file in ["meta.json", "jsonl", "history.json"] {
+            let path = dir.path().join(format!("claude-code-5.{file}"));
+            assert!(!path.exists(), "{}", path.display());
+        }
+    }
+
+    /// Messages a run never took stay queued when it ended by itself: the next run gets them
+    /// (`AiService::send`), so a restart does not drop them.
+    #[tokio::test]
+    async fn queued_messages_outlive_a_run_that_ended_by_itself() {
+        let (session, _rx) = Session::new(
+            "codex-2".into(),
+            "codex".into(),
+            None,
+            COLORS[0].into(),
+            EventBus::new(),
+            None,
+        );
+        session.send("first".into()).unwrap();
+        session.send("second".into()).unwrap();
+        session.send("third".into()).unwrap();
+        session.take(&[1]);
+        assert_eq!(session.queued(), [2]);
+        // The CLI exits by itself.
+        session.set_status(Status::Failed);
+        let _rx = session.restart(EventBus::new());
+        assert_eq!(session.status(), Status::Idle);
+        assert_eq!(session.queued_messages(), [(2, "third".to_string())]);
+        assert_eq!(session.info().queued, 1);
+        assert_eq!(session.transcript()[2]["queued"], true);
     }
 
     #[test]

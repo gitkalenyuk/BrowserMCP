@@ -83,6 +83,13 @@ impl AiService {
     /// Send the next message. A stopped or failed session is continued first (same chat,
     /// same conversation): it never turns into a new session. A busy one takes the message
     /// while it works (queued until the agent has it).
+    ///
+    /// Messages still queued when a run ended by itself (the CLI failed or exited before it
+    /// took them; a stop, close or edit drops them instead) stay queued while the chat is
+    /// stopped. The message that continues the chat takes them along: the new run gets their
+    /// texts, then this one, as its first input (like an edit sends the messages it rewound
+    /// with `Rewind::prefix`), and each of them is announced as taken (`ai.message_taken`), so
+    /// the chat shows truthfully that the agent has them.
     pub async fn send(&self, ctx: &Ctx, id: &str, text: String) -> Result<SessionInfo, CmdError> {
         let session = self.session(id)?;
         // Continuing is serialized: a second send that waited here finds the session already
@@ -93,14 +100,38 @@ impl AiService {
             false => None,
         };
         self.ensure_open(&session)?;
+        let mut carried = Vec::new();
         if session.needs_restart() {
             self.continue_session(ctx, &session).await?;
+            carried = session.queued_messages();
         }
-        session.send(text).map_err(|m| {
+        let refused = |m: String| {
             CmdError::invalid_params(m)
                 .with_hint("Try again, or start a new session with ai_session_start.")
-        })?;
+        };
+        if carried.is_empty() {
+            session.send(text).map_err(refused)?;
+        } else {
+            let mut parts: Vec<String> = carried.iter().map(|(_, t)| t.clone()).collect();
+            parts.push(text.clone());
+            session.send_as(text, parts.join("\n\n")).map_err(refused)?;
+            let indexes: Vec<usize> = carried.iter().map(|(i, _)| *i).collect();
+            session.take(&indexes);
+        }
         Ok(session.info())
+    }
+
+    /// Run lifecycle work (close, delete, edit) in a task of its own and wait for it. The
+    /// caller may be the chat's own agent: an API agent calls the command from inside its
+    /// turn, which the work cancels (and then waits for), and a CLI agent's MCP request ends
+    /// with the process the work kills. Run inline, the work would be dropped halfway with
+    /// that turn or request; as a task of its own it always finishes.
+    pub(crate) async fn detached<T: Send + 'static>(
+        work: impl std::future::Future<Output = Result<T, CmdError>> + Send + 'static,
+    ) -> Result<T, CmdError> {
+        tokio::spawn(work)
+            .await
+            .unwrap_or_else(|e| Err(CmdError::internal(format!("AI session task failed: {e}"))))
     }
 
     /// Deleted (gone) or archived (closed: reopen it first) chats take no messages.
@@ -228,6 +259,17 @@ impl AiService {
         }
         // Not while a send is continuing it (that send would start a backend for a closed chat).
         let _turn = session.lifecycle().await;
+        // A delete held the guard meanwhile (it must not be written back), or another close
+        // archived it already.
+        if session.is_closed() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("AI session '{id}' was deleted"),
+            ));
+        }
+        if session.is_archived() {
+            return Ok(());
+        }
         self.end_run(&session).await;
         session.set_archived(true);
         ctx.events
@@ -346,13 +388,15 @@ impl AiService {
                 }
             }
         }
-        if lost {
-            session.apply(AgentEvent::resume_lost(&resolved.name));
-        }
+        // The cut first: a window that applies it drops everything from `index` on, so the
+        // notice must come after it.
         ctx.events.emit(
             topics::SESSION_REWOUND,
             json!({ "session": id, "index": index }),
         );
+        if lost {
+            session.apply(AgentEvent::resume_lost(&resolved.name));
+        }
         self.continue_session(ctx, &session).await?;
         parts.push(text.clone());
         session
@@ -400,8 +444,8 @@ impl AiService {
         .with_hint("Ask the user to do it in the browser's AI panel (ai_handoff)."))
     }
 
-    /// The browser's own agents may rename or delete their own chat, never another agent's
-    /// (people and the clients they connected may).
+    /// The browser's own agents may rename, close, edit or delete their own chat, never
+    /// another agent's (people and the clients they connected may).
     pub(crate) fn refuse_other_agents_chat(
         &self,
         caller: &Caller,

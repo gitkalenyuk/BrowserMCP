@@ -638,7 +638,8 @@ impl Command for SessionClose {
             "Close an AI chat: stops it if running and archives it — it leaves the open chats \
              (ai.sessions_list) but keeps every file and is listed with \
              ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits \
-             ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete).",
+             ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete). \
+             An AI agent may close only its own chat (NEEDS_APPROVAL otherwise).",
             Toolset::Ai,
         )
         .act()
@@ -646,10 +647,15 @@ impl Command for SessionClose {
 
     async fn run(ctx: Ctx, args: SessionCloseArgs) -> Result<SessionCloseOutput, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
-        if args.delete_transcript {
-            ai.refuse_other_agents_chat(&ctx.caller, &args.id, "delete")?;
-        }
-        ai.close(&ctx, &args.id, args.delete_transcript).await?;
+        let what = if args.delete_transcript {
+            "delete"
+        } else {
+            "close"
+        };
+        ai.refuse_other_agents_chat(&ctx.caller, &args.id, what)?;
+        let id = args.id.clone();
+        AiService::detached(async move { ai.close(&ctx, &id, args.delete_transcript).await })
+            .await?;
         Ok(SessionCloseOutput { closed: args.id })
     }
 }
@@ -702,7 +708,7 @@ impl Command for SessionDelete {
     async fn run(ctx: Ctx, args: SessionIdArgs) -> Result<SessionDeleteOutput, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
         ai.refuse_other_agents_chat(&ctx.caller, &args.id, "delete")?;
-        ai.delete(&ctx, &args.id).await?;
+        AiService::detached(async move { ai.delete(&ctx, &args.id).await }).await?;
         Ok(SessionDeleteOutput { deleted: true })
     }
 }
@@ -819,19 +825,20 @@ impl Command for SessionEdit {
         Meta::new(
             "Edit an earlier user message of an AI chat: the conversation is rewound to just \
              before it (the transcript is cut there, ai.session_rewound) and the new text is \
-             sent instead, as the next user message. Stops the current turn first. Returns the \
-             session.",
+             sent instead, as the next user message. Stops the current turn first. An AI agent \
+             may edit only its own chat (NEEDS_APPROVAL otherwise). Returns the session.",
             Toolset::Ai,
         )
         .act()
     }
 
     async fn run(ctx: Ctx, args: SessionEditArgs) -> Result<SessionInfo, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        ai.refuse_other_agents_chat(&ctx.caller, &args.id, "edit")?;
         if args.text.trim().is_empty() {
             return Err(CmdError::invalid_params("text is empty"));
         }
-        AiService::from_ctx(&ctx)?
-            .edit(&ctx, &args.id, args.index, args.text)
+        AiService::detached(async move { ai.edit(&ctx, &args.id, args.index, args.text).await })
             .await
     }
 }

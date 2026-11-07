@@ -20,7 +20,8 @@
 //!    to that turn; when the server does not have it (or the turn just ended) the message is
 //!    held and starts the next turn as soon as this one completes;
 //! 7. the model: `turn/start {model}` on every turn (ai.session_set_model takes effect with
-//!    the next one); `model/list` lists them (ai.models);
+//!    the next one); `model/list` lists them (ai.models). A named model sticks on Codex's
+//!    side, so back to the default the next turn names the `isDefault` model of `model/list`;
 //! 8. editing a message: the next run resumes the thread and sends `thread/rollback
 //!    {threadId, numTurns}` (falls back to a new thread, with a notice, when that fails).
 //!
@@ -389,7 +390,9 @@ pub fn notification(method: &str, params: &Value) -> Vec<AgentEvent> {
                     None => format!("error: {other}"),
                 },
             };
-            vec![AgentEvent::Done(reason)]
+            // A turn of the thread (what thread/rollback counts), whatever its status.
+            let id = turn["id"].as_str().unwrap_or("turn").to_string();
+            vec![AgentEvent::Turn(id), AgentEvent::Done(reason)]
         }
         "error" => {
             let message = params["error"]["message"]
@@ -429,6 +432,9 @@ pub fn server_request_answer(method: &str) -> Result<Value, Value> {
     }
 }
 
+/// The [`AgentEvent::Turn`] of a `codex exec` turn.
+const EXEC_TURN: &str = "exec";
+
 /// `codex exec --json` event line → events (fallback mode).
 pub fn exec_event(v: &Value, thread: &mut Option<String>) -> Vec<AgentEvent> {
     let item = &v["item"];
@@ -462,11 +468,18 @@ pub fn exec_event(v: &Value, thread: &mut Option<String>) -> Vec<AgentEvent> {
             }
             _ => Vec::new(),
         },
-        "turn.completed" => vec![AgentEvent::Done("end_turn".into())],
-        "turn.failed" => vec![AgentEvent::Done(format!(
-            "error: {}",
-            v["error"]["message"].as_str().unwrap_or("turn failed")
-        ))],
+        // A turn of the thread (`codex exec` names no turn ids).
+        "turn.completed" => vec![
+            AgentEvent::Turn(EXEC_TURN.into()),
+            AgentEvent::Done("end_turn".into()),
+        ],
+        "turn.failed" => vec![
+            AgentEvent::Turn(EXEC_TURN.into()),
+            AgentEvent::Done(format!(
+                "error: {}",
+                v["error"]["message"].as_str().unwrap_or("turn failed")
+            )),
+        ],
         "error" => vec![AgentEvent::Notice(format!(
             "Codex: {}",
             v["message"].as_str().unwrap_or("error")
@@ -517,6 +530,26 @@ impl Rpc {
 
     async fn notify(&self, method: &str) -> std::io::Result<()> {
         self.write(&json!({ "method": method })).await
+    }
+}
+
+/// The model Codex uses by default (`isDefault` in model/list); `None` when it does not say.
+async fn codex_default_model(rpc: &Rpc) -> Option<String> {
+    match rpc.request("model/list", json!({})).await {
+        Ok(result) => {
+            let default = parse_models(&result)
+                .into_iter()
+                .find(|(_, _, _, is_default)| *is_default)
+                .map(|(id, ..)| id);
+            if default.is_none() {
+                tracing::warn!("codex model/list names no default model");
+            }
+            default
+        }
+        Err(err) => {
+            tracing::warn!(%err, "codex model/list failed: the chat keeps its last model");
+            None
+        }
     }
 }
 
@@ -707,6 +740,15 @@ impl Codex {
             })
         };
 
+        // The model named on thread/start or turn/start sticks for the following turns (a
+        // resumed thread may still have the one an earlier run named). Once one may be in
+        // effect, going back to the default has to name the default model explicitly: the
+        // `isDefault` entry of model/list, asked once per run when needed.
+        let first_model = session.model().or_else(|| self.model.clone());
+        let named =
+            std::sync::atomic::AtomicBool::new(first_model.is_some() || self.resume.is_some());
+        let default_model: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::new();
+
         // Handshake.
         let started = async {
             rpc.request(
@@ -716,8 +758,7 @@ impl Codex {
             .await?;
             rpc.notify("initialized").await.map_err(|e| e.to_string())?;
             let instructions = crate::agent::system_prompt(&session.id);
-            let model = session.model().or_else(|| self.model.clone());
-            let model = model.as_deref();
+            let model = first_model.as_deref();
             if let Some(thread) = &self.resume {
                 let params = thread_resume_params(thread, model, &instructions, &self.access);
                 match rpc.request("thread/resume", params).await {
@@ -784,7 +825,17 @@ impl Codex {
             session.take(&indexes);
             session.set_status(Status::Running);
             // ai.session_set_model: the chat's model, from this turn on.
-            let model = session.model().or_else(|| self.model.clone());
+            let model = match session.model().or_else(|| self.model.clone()) {
+                Some(model) => {
+                    named.store(true, Ordering::Relaxed);
+                    Some(model)
+                }
+                None if named.load(Ordering::Relaxed) => default_model
+                    .get_or_init(|| codex_default_model(&rpc))
+                    .await
+                    .clone(),
+                None => None,
+            };
             let params = turn_start_params(&thread, &text, model.as_deref());
             let ended_before = ended.load(Ordering::Relaxed);
             match rpc.request("turn/start", params).await {
@@ -865,7 +916,7 @@ impl Codex {
         match exit {
             None => {
                 let running = lock(&turn).clone();
-                if let Some(turn_id) = running {
+                if let Some(turn_id) = &running {
                     let interrupt = rpc.request(
                         "turn/interrupt",
                         json!({ "threadId": thread, "turnId": turn_id }),
@@ -873,6 +924,10 @@ impl Codex {
                     let _ = tokio::time::timeout(Duration::from_secs(3), interrupt).await;
                 }
                 if session.status() == Status::Running {
+                    // A turn Codex had started ends here (its turn/completed did not come).
+                    if let Some(turn_id) = running {
+                        session.apply(AgentEvent::Turn(turn_id));
+                    }
                     session.apply(AgentEvent::Done("stopped".into()));
                 }
                 kill_tree(&mut child, &tree).await;
@@ -972,7 +1027,10 @@ impl Codex {
             tree.kill();
             if !done {
                 match status {
-                    Ok(s) if s.success() => session.apply(AgentEvent::Done("end_turn".into())),
+                    Ok(s) if s.success() => {
+                        session.apply(AgentEvent::Turn(EXEC_TURN.into()));
+                        session.apply(AgentEvent::Done("end_turn".into()));
+                    }
                     status => {
                         let code = status
                             .map(|s| s.to_string())
@@ -1033,7 +1091,9 @@ mod tests {
                     output: Some(json!({"tab": 5})),
                 },
                 AgentEvent::Text("Hello".into()),
+                AgentEvent::Turn("u1".into()),
                 AgentEvent::Done("end_turn".into()),
+                AgentEvent::Turn("u2".into()),
                 AgentEvent::Done("error: quota".into()),
             ]
         );
@@ -1211,8 +1271,9 @@ mod tests {
             .flat_map(|l| exec_event(l, &mut thread))
             .collect();
         assert_eq!(thread.as_deref(), Some("th-1"));
-        assert_eq!(events.len(), 4);
-        assert_eq!(events[3], AgentEvent::Done("end_turn".into()));
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[3], AgentEvent::Turn("exec".into()));
+        assert_eq!(events[4], AgentEvent::Done("end_turn".into()));
     }
 
     #[test]

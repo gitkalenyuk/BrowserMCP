@@ -199,10 +199,12 @@ impl AiService {
             self.refuse_agent_widening(&ctx.caller, &defaults, &opts.access)?;
         }
         resolved.ensure_configured()?;
+        // "" and "default" (an ai.models choice) both mean the provider's default.
         let model = opts
             .model
             .clone()
-            .filter(|m| !m.is_empty())
+            .map(|m| m.trim().to_string())
+            .filter(|m| !crate::models::is_default(m))
             .or(resolved.model.clone());
 
         if matches!(resolved.kind, Kind::Api(_)) && model.is_none() {

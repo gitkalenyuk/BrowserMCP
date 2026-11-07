@@ -797,6 +797,11 @@ async fn agents_cannot_rename_or_delete_other_agents_chats() {
             "ai.session_close",
             json!({ "id": "claude-code-2", "delete_transcript": true }),
         ),
+        ("ai.session_close", json!({ "id": "claude-code-2" })),
+        (
+            "ai.session_edit",
+            json!({ "id": "claude-code-2", "index": 0, "text": "rewritten" }),
+        ),
     ] {
         let err = h
             .call_as(as_agent("claude-code-1"), name, args.clone())
@@ -815,6 +820,14 @@ async fn agents_cannot_rename_or_delete_other_agents_chats() {
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::NeedsApproval, "{name}");
     }
+    // None of it happened: the other chat is open, its message unchanged.
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 2);
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": "claude-code-2" }))
+        .await
+        .unwrap();
+    assert_eq!(transcript["entries"][0]["text"], "two");
     // Its own chat: yes. The person: any chat.
     let renamed = h
         .call_as(
@@ -1576,4 +1589,216 @@ async fn claude_code_models_are_its_aliases_and_ids() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+/// Codex keeps the model a turn named: back to Default, the next turn names Codex's default
+/// model (model/list `isDefault`), so the switch takes effect.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_goes_back_to_its_default_model() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("codex", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "codex", "prompt": "model?" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    let events = until_done(&mut rx, &id).await;
+    assert!(texts(&events, "assistant").contains(&"model: default".to_string()));
+    let ask = async |rx: &mut broadcast::Receiver<Event>, model: &str| {
+        h.call("ai.session_set_model", json!({ "id": id, "model": model }))
+            .await
+            .unwrap();
+        h.call("ai.session_send", json!({ "id": id, "text": "model?" }))
+            .await
+            .unwrap();
+        texts(&until_done(rx, &id).await, "assistant")
+    };
+    assert!(
+        ask(&mut rx, "fake-small")
+            .await
+            .contains(&"model: fake-small".to_string())
+    );
+    let back = ask(&mut rx, "default").await;
+    assert!(back.contains(&"model: fake-large".to_string()), "{back:?}");
+    // One process the whole time; nothing was named before an override was.
+    assert_eq!(runs(fake.path()).len(), 1);
+    let starts: Vec<Value> = jsonl(&fake.path().join("stdin.jsonl"))
+        .into_iter()
+        .filter(|m| m["method"] == "turn/start")
+        .map(|m| m["params"]["model"].clone())
+        .collect();
+    assert_eq!(
+        starts,
+        [Value::Null, json!("fake-small"), json!("fake-large")]
+    );
+    h.stop_all().await;
+}
+
+/// A message held while Codex crashed mid-turn stays queued while the chat has failed; the
+/// next message continues the chat and takes it along (both texts in the first turn of the
+/// new run, `ai.message_taken` for the held one).
+#[tokio::test(flavor = "multi_thread")]
+async fn messages_queued_when_codex_crashed_go_with_the_next_one() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("codex", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "codex", "prompt": "crash now" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let sent = h
+        .call("ai.session_send", json!({ "id": id, "text": "held one" }))
+        .await
+        .unwrap();
+    assert_eq!(sent["queued"], 1);
+    let events = until_done(&mut rx, &id).await;
+    assert!(
+        events.last().unwrap().data["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("error:")
+    );
+    wait_for(&mut rx, |e| {
+        e.topic == "ai.session" && e.data["session"] == id.as_str() && e.data["status"] == "failed"
+    })
+    .await;
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(
+        (
+            list["sessions"][0]["status"].as_str(),
+            list["sessions"][0]["queued"].as_u64()
+        ),
+        (Some("failed"), Some(1))
+    );
+
+    h.call("ai.session_send", json!({ "id": id, "text": "next" }))
+        .await
+        .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    let taken: Vec<&Value> = of(&events, "ai.message_taken")
+        .iter()
+        .map(|e| &e.data["index"])
+        .collect();
+    assert_eq!(taken, [&json!(1)]);
+    assert_eq!(
+        texts(&events, "assistant").last().unwrap(),
+        "echo: held one\n\nnext"
+    );
+    until_idle(&h, &id).await;
+    assert_eq!(runs(fake.path()).len(), 2);
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": id }))
+        .await
+        .unwrap();
+    assert!(
+        transcript["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e.get("queued").is_none()),
+        "nothing is left queued"
+    );
+    h.stop_all().await;
+}
+
+/// An edit that cannot rewind Claude Code's conversation (a chat from before checkpoints)
+/// says so AFTER `ai.session_rewound`: a window applying the cut keeps the notice.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_lost_conversation_notice_follows_the_rewind() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let sessions = data.path().join("ai").join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join("claude-code-1.meta.json"),
+        r##"{"id":"claude-code-1","provider":"claude-code","model":null,"color":"#3b82f6",
+            "created_ms":5,"launch":{"toolsets":["core"],"max_steps":30,"access":null},
+            "conversation":"sess-old","title":"one","title_set":false,"archived":false,
+            "updated_ms":60}"##,
+    )
+    .unwrap();
+    std::fs::write(
+        sessions.join("claude-code-1.jsonl"),
+        "{\"type\":\"user\",\"text\":\"one\",\"index\":0,\"ts_ms\":10}\n\
+         {\"type\":\"assistant\",\"text\":\"a1\",\"ts_ms\":20}\n\
+         {\"type\":\"done\",\"reason\":\"end_turn\",\"ts_ms\":30}\n\
+         {\"type\":\"user\",\"text\":\"two\",\"index\":1,\"ts_ms\":40}\n\
+         {\"type\":\"assistant\",\"text\":\"a2\",\"ts_ms\":50}\n\
+         {\"type\":\"done\",\"reason\":\"end_turn\",\"ts_ms\":60}\n",
+    )
+    .unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_edit",
+        json!({ "id": "claude-code-1", "index": 1, "text": "TWO" }),
+    )
+    .await
+    .unwrap();
+    let events = until_done(&mut rx, "claude-code-1").await;
+    let rewound = events
+        .iter()
+        .position(|e| e.topic == "ai.session_rewound")
+        .expect("ai.session_rewound");
+    let notice = events
+        .iter()
+        .position(|e| e.topic == "ai.message" && e.data["code"] == "resume_lost")
+        .expect("the resume_lost notice");
+    assert!(rewound < notice, "rewound at {rewound}, notice at {notice}");
+    h.stop_all().await;
+}
+
+/// A close racing a delete never brings the deleted chat back (its meta file stays gone).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_close_racing_a_delete_does_not_restore_the_chat() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "one" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    until_done(&mut rx, &id).await;
+    let (deleted, closed) = tokio::join!(
+        h.call("ai.session_delete", json!({ "id": id })),
+        h.call("ai.session_close", json!({ "id": id })),
+    );
+    deleted.unwrap();
+    if let Err(err) = closed {
+        assert_eq!(err.code, ErrorCode::NotFound);
+    }
+    let meta = data
+        .path()
+        .join("ai/sessions")
+        .join(format!("{id}.meta.json"));
+    assert!(!meta.exists(), "the deleted chat's meta file came back");
+    drop(h);
+    let h = Harness::open(data.path());
+    for archived in [false, true] {
+        let list = h
+            .call("ai.sessions_list", json!({ "archived": archived }))
+            .await
+            .unwrap();
+        assert_eq!(list["sessions"], json!([]));
+    }
 }

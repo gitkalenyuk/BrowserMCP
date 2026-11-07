@@ -12,7 +12,8 @@
 // A turn whose text contains "run" executes a shell command that needs approval
 // (`item/commandExecution/requestApproval`); the decision decides the item's status. "slow"
 // works for up to 3 s: `turn/steer` adds text to it, `turn/interrupt` ends it (status
-// interrupted). "model?" answers with the model of the last `turn/start` that named one.
+// interrupted). "crash" exits (code 3) 1.5 s into the turn, without ending it. "model?"
+// answers with the model of the last `turn/start` that named one.
 // Everything is echoed back as "echo: <text>" (steered text joined with " + ").
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -43,6 +44,11 @@ function request(method, params) {
 
 async function turn(threadId, turnId, text) {
   notify('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [] } });
+  if (text.includes('crash')) {
+    // Dies in the middle of the turn (no turn/steer meanwhile: messages are held).
+    setTimeout(() => process.exit(3), 1500);
+    return;
+  }
   const steered = [];
   if (text.includes('slow')) {
     current = { turnId, steered, interrupted: false, wake: null };
