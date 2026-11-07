@@ -80,7 +80,9 @@ describe("microphone permission", () => {
     tabs.push(tab);
     const page = await pageOf("form.html?mic=1");
     const result = await page.evaluate(askForMic);
-    // Off-screen website tabs are denied; on screen the permission bar would ask.
-    expect(["NotAllowedError", "pending"]).toContain(result);
+    // Off-screen website tabs are denied; on screen the permission bar would ask. A machine
+    // without any audio input (CI runners) answers NotFoundError before permissions are
+    // asked: the site gets no microphone either way.
+    expect(["NotAllowedError", "pending", "NotFoundError"]).toContain(result);
   });
 });
