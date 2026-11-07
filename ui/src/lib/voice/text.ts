@@ -81,8 +81,11 @@ export class FailureBackoff {
 /** Auto-stop: 15 s without speech, or 2 minutes in all. */
 export const SILENCE_STOP_MS = 15_000;
 export const MAX_RECORDING_MS = 120_000;
-/** Level (0..1) above which the microphone counts as hearing speech. */
-export const SPEECH_LEVEL = 0.04;
+/**
+ * Level (0..1, see wav.ts `levelOf`) above which the microphone counts as hearing speech: a
+ * quiet room is about 0.05–0.15 (RMS 0.001–0.005), speech 0.4–0.9 (RMS 0.04–0.2).
+ */
+export const SPEECH_LEVEL = 0.22;
 
 /** Why a recording should stop now, if it should. */
 export function autoStopReason(now: number, startedAt: number, lastSpeechAt: number): 'silence' | 'limit' | null {

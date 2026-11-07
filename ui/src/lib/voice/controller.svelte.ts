@@ -498,7 +498,7 @@ export class VoiceController {
     const before = value.slice(0, r.start);
     const after = value.slice(r.start + r.length);
     const caretInRegion = (t.selectionStart ?? 0) >= r.start && (t.selectionStart ?? 0) <= r.start + r.length;
-    const j = joinDictation(before.replace(/\s+$/, (m) => (r.length ? m : m)), text, after);
+    const j = joinDictation(before, text, after);
     const caret = caretInRegion || final ? j.caret : (t.selectionStart ?? j.caret);
     this.#setValue(j.value, caret);
     r.start = j.start;

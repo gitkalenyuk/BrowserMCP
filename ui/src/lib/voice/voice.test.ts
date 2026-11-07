@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createVoiceMocks } from '../api/mock-voice';
 import { HotkeyMachine, formatHotkey, hotkeyFromEvent, matchesKey, parseHotkey, type KeyEventLike } from './keys';
 import { VOICE_LANGUAGES, languageName } from './languages';
-import { FailureBackoff, MAX_RECORDING_MS, SILENCE_STOP_MS, autoStopReason, joinDictation, shouldAutoSubmit, wordCount } from './text';
+import { FailureBackoff, MAX_RECORDING_MS, SILENCE_STOP_MS, SPEECH_LEVEL, autoStopReason, joinDictation, shouldAutoSubmit, wordCount } from './text';
 import { bytesToBase64, downsample, encodeWav, floatTo16, int16ToBytes, levelOf } from './wav';
 
 const ev = (code: string, o: Partial<KeyEventLike> = {}): KeyEventLike => ({
@@ -176,6 +176,11 @@ describe('WAV encoder', () => {
     expect(levelOf(new Float32Array(10))).toBe(0);
     expect(levelOf(new Float32Array(10).fill(0.25))).toBe(1);
     expect(levelOf(new Float32Array(10).fill(0.01))).toBeGreaterThan(0.15);
+  });
+
+  it('tells room noise from speech for the silence auto-stop', () => {
+    expect(levelOf(new Float32Array(100).fill(0.003))).toBeLessThan(SPEECH_LEVEL);
+    expect(levelOf(new Float32Array(100).fill(0.05))).toBeGreaterThan(SPEECH_LEVEL);
   });
 });
 
