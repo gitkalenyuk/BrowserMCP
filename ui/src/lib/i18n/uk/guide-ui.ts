@@ -23,7 +23,6 @@ export default {
   'guide.warning': 'Зверніть увагу',
   'guide.see': 'Див. також: {title}',
   'guide.openSettings': 'Відкрити налаштування: {name}',
-  'guide.settingsPath': 'Налаштування → {name}',
   'guide.keys.none': 'без клавіші (призначте в Налаштування → Клавіатура)',
   'guide.keys.unbound': 'без клавіші',
   'guide.code.label': 'Код',
@@ -33,15 +32,4 @@ export default {
   'guide.api.powershell': 'PowerShell',
   'guide.api.curl': 'curl (bash)',
   'guide.api.sdk': 'TS SDK / скрипт',
-  // Розділи налаштувань, які додають інші потоки роботи (VERIFY-AFTER-MERGE: назви та id).
-  'guide.pendingSection.startup': 'Запуск і вкладки',
-  'guide.pendingSection.downloads': 'Завантаження',
-  'guide.pendingSection.search': 'Пошук',
-  'guide.pendingSection.sites': 'Налаштування сайтів',
-  'guide.pendingSection.data': 'Дані',
-  'guide.pendingSection.about': 'Про програму',
-  'guide.pendingSection.connections': 'Підключення та API',
-  'guide.pendingSection.profiles': 'Профілі та особистості',
-  'guide.pendingSection.proxies': 'Проксі',
-  'guide.pendingSection.recording': 'Запис і скрипти',
 };

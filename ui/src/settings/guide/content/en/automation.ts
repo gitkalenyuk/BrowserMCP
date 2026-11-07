@@ -83,11 +83,10 @@ export const recording = chapter(
       'Choose the options (**video**, **network traffic**) and press record.',
       'Do the task. The steps appear live; typed passwords show as `***`.',
       'Press stop. The recording is saved in `data\\recordings\\<id>\\` (`actions.jsonl`, `meta.json`, and `video.webm` / `traffic.jsonl` when chosen).',
-      'Open it and click **Generate script**. With “parametrize”, typed values become inputs (`inputs.email`) with the recorded value as default; secrets always become required inputs.',
+      'Open it and click **Generate script**. With **Turn typed values into inputs**, typed values become inputs (`inputs.email`) with the recorded value as default; secrets always become required inputs.',
       'Fill in the inputs form and **Save & run**: the script is saved and run once so you see that it works.',
     ),
-    // VERIFY-AFTER-MERGE: the "Recording & scripts" settings section.
-    settings('recording', 'Video format and other recording options (the “Recording & scripts” section).'),
+    settings('recording', 'The default frame rate, format and quality of videos, whether ffmpeg is found, and the folders of recordings and videos (the “Recording & scripts” section).'),
     keys(cmd('panel.recording', 'Recording panel')),
   ),
   section(
@@ -97,7 +96,9 @@ export const recording = chapter(
       'Video is made from the page’s frames by **ffmpeg**, which is not bundled. The browser looks for it in this order: the `BMCP_FFMPEG` environment variable, `ffmpeg.exe` next to `browsermcp.exe`, then `PATH`.',
     ),
     code('powershell', 'winget install Gyan.FFmpeg'),
-    p('Formats: WebM (VP9, default) or MP4 (H.264), 1–60 frames per second (default 10).'),
+    p(
+      'Formats: WebM (VP9, default) or MP4 (H.264), 1–60 frames per second (default 10), quality 1–100 (default 80). Change the defaults in **Settings → Recording & scripts**; a call that names its own values still gets them.',
+    ),
     api('record.video_start', { fps: 10, format: 'mp4' }),
     api('record.video_stop', {}),
   ),
@@ -222,7 +223,7 @@ export const runs = chapter(
       'Save a script (by hand or from a recording).',
       'Open the Runs panel ([[cmd:panel.runs]]) → new run.',
       'Pick the script and the data: a file path (`.csv`, `.json`, `.xlsx`) or rows pasted as CSV / JSON.',
-      'Set parallel rows (default 4, limited by CPU cores and free memory), retries (default 1, with backoff), the timeout per row, what to do on selector errors, and whether to stop at the first failure.',
+      'Set parallel rows (default 4, limited by CPU cores and free memory), retries (default 1, with backoff), the timeout per row (default 300 s), what to do on selector errors, and whether to stop at the first failure. The defaults themselves are set in **Settings → Recording & scripts**.',
       'Watch the progress bar and the results table; filter by status, open a row for its error, inputs and output.',
       'Pause, resume or cancel at any time. **Export** to CSV, Excel, JSON, SQLite or a webhook.',
     ),

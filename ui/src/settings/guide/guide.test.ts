@@ -6,7 +6,7 @@ import { SETTINGS_SECTIONS, isSettingsUrl, openGuide, parseGuideHash, peekGuideA
 import { HELP_FOR, parseAnchor, resolveAnchor } from './anchors';
 import { GUIDE } from './content';
 import { commandKey, highlight, parseInline, plainText, queryWords } from './inline';
-import { CHAPTER_IDS, PENDING_SECTIONS, type Block, type Chapter } from './model';
+import { CHAPTER_IDS, type Block, type Chapter } from './model';
 import { searchGuide, snippetAround } from './search';
 import { argsJson, snippet, wireName } from './snippets';
 
@@ -119,14 +119,18 @@ describe('guide content', () => {
     }
   });
 
-  it('settings links point at real sections (or ones being added) and have a name in both languages', () => {
-    const known = new Set<string>([...SETTINGS_SECTIONS, ...PENDING_SECTIONS]);
-    for (const { c, b } of allBlocks(GUIDE.en)) {
-      if (b.type !== 'settings') continue;
-      expect(known.has(b.section), `${c.id} → ${b.section}`).toBe(true);
-      const key = (SETTINGS_SECTIONS as readonly string[]).includes(b.section) ? `settings.nav.${b.section}` : `guide.pendingSection.${b.section}`;
-      for (const loc of LOCALES) expect(DICTS[loc][key], `${loc} ${key}`).toBeTruthy();
+  it('settings links point at real sections that have a name in both languages', () => {
+    for (const loc of LOCALES) {
+      for (const { c, b } of allBlocks(GUIDE[loc])) {
+        if (b.type !== 'settings') continue;
+        const where = `${loc} ${c.id} → ${b.section}`;
+        expect((SETTINGS_SECTIONS as readonly string[]).includes(b.section), where).toBe(true);
+        expect(b.section, where).not.toBe('guide');
+        for (const l of LOCALES) expect(DICTS[l][`settings.nav.${b.section}`], `${where} (${l})`).toBeTruthy();
+      }
     }
+    // The guide names sections only by their nav labels: no labels of its own are left.
+    for (const loc of LOCALES) expect(Object.keys(DICTS[loc]).filter((k) => k.startsWith('guide.pendingSection.')), loc).toEqual([]);
   });
 
   it('every settings section has a nav label in both languages', () => {
@@ -191,18 +195,18 @@ describe('guide content', () => {
       }
       for (const [id, anchor] of Object.entries(HELP_FOR)) expect(resolveAnchor(GUIDE[loc], anchor), `${loc} help ${id}`).toEqual(anchor);
     }
-    for (const id of SETTINGS_SECTIONS.filter((s) => s !== 'guide')) expect(HELP_FOR[id], id).toBeDefined();
+    for (const id of SETTINGS_SECTIONS.filter((s) => s !== 'guide')) expect((HELP_FOR as Record<string, unknown>)[id], id).toBeDefined();
   });
 
-  it('marks paragraphs about features still being built', () => {
-    // Content files carry `// VERIFY-AFTER-MERGE` comments; make sure they were not lost.
-    const files = import.meta.glob('./content/*/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
-    for (const loc of LOCALES) {
-      const marks = Object.entries(files)
-        .filter(([path]) => path.includes(`/${loc}/`))
-        .reduce((n, [, text]) => n + (text.match(/VERIFY-AFTER-MERGE/g) ?? []).length, 0);
-      expect(marks, loc).toBeGreaterThanOrEqual(15);
-    }
+  it('has no paragraphs left that wait for features to be merged', () => {
+    // Paragraphs written before their feature existed were marked `// VERIFY-AFTER-MERGE`;
+    // every one has been checked against the merged code since.
+    const files = import.meta.glob(['./*.ts', './content/*/*.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+    expect(Object.keys(files).length).toBeGreaterThan(10);
+    const marked = Object.entries(files)
+      .filter(([path, text]) => !path.endsWith('.test.ts') && text.includes('VERIFY-AFTER-MERGE'))
+      .map(([path]) => path);
+    expect(marked).toEqual([]);
   });
 });
 

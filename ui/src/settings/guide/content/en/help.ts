@@ -21,6 +21,7 @@ export const troubleshooting = chapter(
       'Install ffmpeg: `winget install Gyan.FFmpeg`, or download `ffmpeg.exe`.',
       'Either put `ffmpeg.exe` next to `browsermcp.exe`, set the environment variable `BMCP_FFMPEG` to its full path, or make sure it is on `PATH`.',
       'Restart the browser so it sees a changed `PATH`.',
+      'Check it in **Settings → Recording & scripts**: **Check again** shows whether ffmpeg is found, and where.',
     ),
   ),
   section(
@@ -49,6 +50,7 @@ export const troubleshooting = chapter(
       ['`data\\runtime\\endpoint.json`', 'check it first: it is written once the API is up (pid and ports of the running browser) and removed on a normal exit. No file while the browser seems to run means its API did not start.'],
       ['`data\\logs\\cef.log`', 'the log of the Chromium engine'],
       ['The browser’s own messages', 'errors and the `RUST_LOG` log go to standard error, which the packaged build (no console window) shows nowhere. Capture them with `Start-Process .\\browsermcp.exe -RedirectStandardError err.txt -Wait` (`RUST_LOG`: `info` by default, `debug` for more). The errors of `browsermcp mcp-stdio` appear in the MCP client’s server log.'],
+      ['Settings → About', '**Copy diagnostics** copies versions, folders and API addresses for a bug report (no browsing data); the **Logs** folder opens from there too.'],
       ['Plugins', 'Settings → Plugins & userscripts → logs, or `plugins.logs`'],
       ['Scripts', 'the console of the Scripts panel, and `stdout` / `error` in the result of `script.run`'],
     ),
@@ -56,13 +58,14 @@ export const troubleshooting = chapter(
   section(
     'scripts',
     'Scripts or runs do nothing',
-    p('Scripts, runs, plugins and userscripts need `bmcp-script-host.exe` next to `browsermcp.exe`. A package built with `--skip-script-host` does not have it.'),
+    p('Scripts, runs, plugins and userscripts need `bmcp-script-host.exe` next to `browsermcp.exe`. A package built with `--skip-script-host` does not have it. **Settings → Recording & scripts** shows whether the script host was found.'),
   ),
   section(
     'ai',
     'The AI cannot read files or run commands',
-    p('An error like “Permission to use Read has been denied because Claude Code is running in don’t ask mode” means the agent runs in a mode without file and shell access. Pick a wider permission mode in the AI panel.'),
-    // VERIFY-AFTER-MERGE: permission modes in the AI panel.
+    p(
+      'An error like “Permission to use Read has been denied because Claude Code is running in don’t ask mode” means the chat runs in **Browser tools only** mode, where everything outside the browser’s own tools is refused. A chat keeps its mode: start a new one (**New** in the AI panel) with another **Permissions** choice such as **Ask me**, or change the default under **What CLI agents may do** in Settings → AI. For Codex, pick a wider **Sandbox** or **Approval requests** setting.',
+    ),
     see('ai-panel', 'modes'),
   ),
   section(
@@ -100,6 +103,8 @@ export const glossary = chapter(
       ['Headless', 'the browser started without any window (`--headless`).'],
       ['Agent group / lock', 'the colored tab group of one agent; its tabs are locked against other agents until you take over.'],
       ['Handoff', 'an agent asking you to do something in a tab (log in, CAPTCHA) and waiting for Done.'],
+      ['Permission mode', 'what a Claude Code chat may do outside the browser’s tools: Ask me, Auto-accept edits, Full access, Plan only or Browser tools only. Codex has a sandbox and an approval setting instead.'],
+      ['Approval card', 'a request of a CLI agent in the chat (“wants to run a command”) that waits for Allow once, Always allow or Deny.'],
       ['Identity / fingerprint', 'a consistent set of browser facts (user agent, screen, hardware, timezone…) that a profile shows to sites.'],
       ['Forwarder', 'a small local proxy that adds the login for an upstream proxy, so passwords never reach the engine.'],
       ['Pool / lease', 'a named list of proxies; a lease ties one proxy to one mass-run row.'],

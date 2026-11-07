@@ -24,7 +24,6 @@ export default {
   'guide.warning': 'Watch out',
   'guide.see': 'See also: {title}',
   'guide.openSettings': 'Open settings: {name}',
-  'guide.settingsPath': 'Settings → {name}',
   'guide.keys.none': 'no key (assign one in Settings → Keyboard)',
   'guide.keys.unbound': 'no shortcut',
   'guide.code.label': 'Code',
@@ -34,15 +33,4 @@ export default {
   'guide.api.powershell': 'PowerShell',
   'guide.api.curl': 'curl (bash)',
   'guide.api.sdk': 'TS SDK / script',
-  // Settings sections being added by other work (VERIFY-AFTER-MERGE: names and ids).
-  'guide.pendingSection.startup': 'Startup & tabs',
-  'guide.pendingSection.downloads': 'Downloads',
-  'guide.pendingSection.search': 'Search',
-  'guide.pendingSection.sites': 'Site settings',
-  'guide.pendingSection.data': 'Data',
-  'guide.pendingSection.about': 'About',
-  'guide.pendingSection.connections': 'Connections & API',
-  'guide.pendingSection.profiles': 'Profiles & identity',
-  'guide.pendingSection.proxies': 'Proxies',
-  'guide.pendingSection.recording': 'Recording & scripts',
 };

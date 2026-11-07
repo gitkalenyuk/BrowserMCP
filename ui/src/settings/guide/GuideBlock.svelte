@@ -2,12 +2,12 @@
   import Icon from '../../lib/components/Icon.svelte';
   import { t } from '../../lib/i18n/index.svelte';
   import { chordLabels, type Keymap } from '../../lib/keymap';
-  import { isSettingsSection, type SettingsSection } from '../../lib/settings/open';
+  import type { SettingsSection } from '../../lib/settings/open';
   import type { GuideAnchor } from './anchors';
   import ApiExample from './ApiExample.svelte';
   import CodeBlock from './CodeBlock.svelte';
   import InlineText from './InlineText.svelte';
-  import type { Block, Chapter, SectionTarget } from './model';
+  import type { Block, Chapter } from './model';
 
   let {
     block,
@@ -27,9 +27,9 @@
     ongo: (anchor: GuideAnchor) => void;
   } = $props();
 
-  /** Settings sections that exist are named by the shell's nav labels, pending ones by ours. */
-  function sectionName(id: SectionTarget): string {
-    return t(isSettingsSection(id) ? `settings.nav.${id}` : `guide.pendingSection.${id}`);
+  /** A settings section by its name in the settings navigation. */
+  function sectionName(id: SettingsSection): string {
+    return t(`settings.nav.${id}`);
   }
 
   function seeTitle(chapter: string, section?: string): string {
@@ -80,16 +80,12 @@
     </tbody>
   </table>
 {:else if block.type === 'settings'}
+  {@const target = block.section}
   <div class="settings-link">
-    {#if isSettingsSection(block.section)}
-      {@const target = block.section}
-      <button class="btn" onclick={() => onopen(target)}>
-        <Icon name="settings" size={14} />
-        {t('guide.openSettings', { name: sectionName(block.section) })}
-      </button>
-    {:else}
-      <span class="pending"><Icon name="settings" size={14} /> {t('guide.settingsPath', { name: sectionName(block.section) })}</span>
-    {/if}
+    <button class="btn" onclick={() => onopen(target)}>
+      <Icon name="settings" size={14} />
+      {t('guide.openSettings', { name: sectionName(target) })}
+    </button>
     {#if block.text}<span class="why"><InlineText text={block.text} {words} /></span>{/if}
   </div>
 {:else if block.type === 'see'}
@@ -190,14 +186,6 @@
     align-items: center;
     gap: 6px 10px;
     margin: 10px 0;
-  }
-  .pending {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--fg-muted);
-    font-size: var(--fs-sm);
-    font-weight: 550;
   }
   .why {
     color: var(--fg-subtle);

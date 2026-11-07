@@ -1,7 +1,7 @@
 // Where the guide opens: `#guide/<chapter>[/<section>]` anchors and the chapter that explains
 // each settings section (the "Help" link in the settings header).
 
-import { parseGuideHash } from '../../lib/settings/open';
+import { parseGuideHash, type SettingsSection } from '../../lib/settings/open';
 import type { Chapter } from './model';
 
 export interface GuideAnchor {
@@ -29,11 +29,8 @@ export function resolveAnchor(chapters: Chapter[], a: GuideAnchor | null): Guide
   return a.section && ch.sections.some((s) => s.id === a.section) ? { chapter: ch.id, section: a.section } : { chapter: ch.id };
 }
 
-/**
- * The guide chapter for each settings section. Keys are section ids as strings, so sections
- * that other streams are still adding can be mapped already.
- */
-export const HELP_FOR: Record<string, GuideAnchor> = {
+/** The guide chapter for each settings section (guide.test.ts checks that none is missing). */
+export const HELP_FOR: Record<Exclude<SettingsSection, 'guide'>, GuideAnchor> = {
   general: { chapter: 'newtab' },
   ai: { chapter: 'ai-panel' },
   notifications: { chapter: 'notifications' },
@@ -42,7 +39,6 @@ export const HELP_FOR: Record<string, GuideAnchor> = {
   hints: { chapter: 'keyboard', section: 'hints' },
   plugins: { chapter: 'scripts', section: 'plugins' },
   keyboard: { chapter: 'keyboard', section: 'shortcuts' },
-  // VERIFY-AFTER-MERGE: section ids of the new settings sections (see model.ts PENDING_SECTIONS).
   startup: { chapter: 'tabs', section: 'restore' },
   downloads: { chapter: 'library', section: 'downloads' },
   search: { chapter: 'keyboard', section: 'omnibox' },
@@ -56,5 +52,5 @@ export const HELP_FOR: Record<string, GuideAnchor> = {
 };
 
 export function helpFor(section: string): GuideAnchor | null {
-  return HELP_FOR[section] ?? null;
+  return (HELP_FOR as Record<string, GuideAnchor>)[section] ?? null;
 }

@@ -12,26 +12,6 @@ import type { CommandArgs, CommandName } from '../../../../sdk/protocol/src/gene
 import type { CommandId } from '../../lib/keymap';
 import type { SettingsSection } from '../../lib/settings/open';
 
-/**
- * Settings sections that other work streams are adding (names from their brief). The guide
- * links to them already; a link renders as a button once the section really exists
- * (`isSettingsSection`), until then as plain text.
- * VERIFY-AFTER-MERGE: replace these ids with the real ones from lib/settings/open.ts.
- */
-export const PENDING_SECTIONS = [
-  'startup',
-  'downloads',
-  'search',
-  'sites',
-  'data',
-  'about',
-  'connections',
-  'profiles',
-  'proxies',
-  'recording',
-] as const;
-export type PendingSection = (typeof PENDING_SECTIONS)[number];
-export type SectionTarget = SettingsSection | PendingSection;
 
 export type Block =
   | { type: 'p'; text: string }
@@ -45,7 +25,7 @@ export type Block =
   /** Shortcuts: keymap commands (shown with the user's current keys) or literal keys. */
   | { type: 'keys'; items: KeyItem[] }
   /** A button that opens a settings section. */
-  | { type: 'settings'; section: SectionTarget; text?: string }
+  | { type: 'settings'; section: SettingsSection; text?: string }
   /** One command as an MCP tool call, PowerShell / curl request and SDK call. */
   | { type: 'api'; command: CommandName; args: Record<string, unknown>; text?: string }
   /** A link to another chapter (and section). */
@@ -89,7 +69,7 @@ export const key = (combo: string | string[], text: string): KeyItem => ({
   keys: Array.isArray(combo) ? combo : [combo],
   text,
 });
-export const settings = (section: SectionTarget, text?: string): Block => ({ type: 'settings', section, text });
+export const settings = (section: SettingsSection, text?: string): Block => ({ type: 'settings', section, text });
 export const see = (chapter: string, section?: string, text?: string): Block => ({ type: 'see', chapter, section, text });
 export const terms = (...items: [term: string, text: string][]): Block => ({
   type: 'terms',

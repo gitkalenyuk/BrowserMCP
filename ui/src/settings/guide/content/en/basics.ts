@@ -55,6 +55,7 @@ export const start = chapter(
       'The browser opens with one window. With an empty history it offers to import from Chrome once (you can skip it).',
       'Pick your language in **Settings → General → Language** ([[cmd:settings.open]] opens Settings).',
       'Connect your AI: open the AI panel ([[cmd:panel.ai]]) to chat with the built-in agent, or connect Claude Code / Codex from outside.',
+      'Press [[cmd:help.guide]] at any time, or pick **Guide: how everything works** in the toolbar menu, to open this guide.',
     ),
     settings('general', 'Language, theme, tab layout.'),
     see('connect'),
@@ -70,7 +71,7 @@ export const start = chapter(
       'The import wizard brings over bookmarks, history, passwords and cookies. Every part is optional and importing the same files twice adds nothing the second time.',
     ),
     steps(
-      'Open the wizard: menu **Library → Import from Chrome…**, or [[Ctrl+K]] and type “import”.',
+      'Open the wizard: menu **Library → Import from Chrome…**, **Settings → Data & storage → Open the import wizard**, or [[Ctrl+K]] and type “import”.',
       'Pick the Chrome profile (the wizard lists the ones it finds).',
       '**Bookmarks and history** are read straight from the Chrome profile folder. Chrome may stay open: history is copied first, the original is never touched.',
       '**Passwords**: in Chrome open `chrome://password-manager` → Settings → Export passwords, save the CSV, then give its path to the wizard.',
@@ -114,7 +115,7 @@ export const tabs = chapter(
       'Vertical or horizontal tabs: [[cmd:ui.toggleVerticalTabs]] or Settings → General.',
       'Zoom with [[cmd:zoom.in]] / [[cmd:zoom.out]] / [[cmd:zoom.reset]]; it is remembered per site and the address bar shows it when it is not 100 % (click it to reset).',
       'Right-click a page for Back / Reload / Print, open a link in a new tab or in another workspace, copy or save images, **Ask AI about this** and **Inspect** (DevTools in a window of its own).',
-      'When a site asks for the camera, microphone or notifications, a bar asks you: Allow / Block, with “Remember”.',
+      'When a site asks for the camera, microphone or notifications, a bar asks you: Allow / Block, with “Remember for this site”.',
     ),
   ),
   section(
@@ -163,10 +164,17 @@ export const tabs = chapter(
     'restore',
     'Session restore',
     p(
-      'The browser remembers your windows and tabs (address, title, profile, the active tab, split view) in `data\\runtime\\session.json` and reopens them on the next start. Back/forward history of a tab is not kept. Start with `--no-restore` to skip it once.',
+      'By default the browser remembers your windows and tabs (address, title, profile, the active tab, split view) in `data\\runtime\\session.json` and reopens them on the next start. Back/forward history of a tab is not kept, and incognito and off-screen tabs are never saved. Start with `--no-restore` to skip it once.',
     ),
-    // VERIFY-AFTER-MERGE: the "Startup & tabs" settings section and what it offers.
-    settings('startup', 'What to open on start (the “Startup & tabs” section).'),
+    p('**Settings → Startup & tabs** decides the rest:'),
+    list(
+      '**On startup**: **Continue where you left off** (the default), **Open the new tab page** or **Open specific pages** (one address per line, or **Use the tabs that are open now**). It applies at the next start; an address on the command line replaces the specific pages for that start.',
+      '**Home button and new tabs**: **Show the Home button** and its **Home page**, and what **A new tab shows**: the new tab page, a blank page or a page of your choice.',
+      '**Tabs**: **Open new tabs** at the end or next to the current tab, and **Keep the window when its last tab closes** (off: closing the last tab closes the window, like Chrome).',
+      '**Recently closed**: the tabs [[cmd:tab.reopen]] brings back (up to 25, kept across restarts); reopen one, or **Clear the list**.',
+    ),
+    settings('startup'),
+    api('startup.config', { on_startup: 'pages', pages: ['example.com', 'github.com'] }),
   ),
   section(
     'keys',
@@ -222,13 +230,17 @@ export const keyboard = chapter(
     'Omnibox (address bar)',
     list(
       'Type an address (`github.com`) and press Enter: it opens with https:// (http:// for `localhost` and IP addresses).',
-      'Type words: they are searched with Google.',
+      'Type words: they are searched with the default search engine (Google until you pick another).',
+      'A keyword in front searches once with another engine: `@ddg weather Kyiv` uses DuckDuckGo. The built-in engines are Google, Bing, DuckDuckGo, Brave and Startpage.',
       '`javascript:` typed in the address bar is searched, never run.',
       'The star (or [[cmd:bookmark.toggle]]) bookmarks the page into the bookmarks bar, or removes its bookmarks.',
     ),
     keys(cmd('omnibox.focus', 'Focus the address bar'), cmd('bookmark.toggle', 'Bookmark / un-bookmark the page')),
-    // VERIFY-AFTER-MERGE: the "Search" settings section (search engine choice).
-    settings('search', 'The search engine (the “Search” section).'),
+    settings(
+      'search',
+      'Pick the default engine, add your own (a results address with `%s` where the words go, plus an optional keyword) and see in **Try it** what Enter would open (the “Search” section).',
+    ),
+    api('search.url', { query: '@ddg weather Kyiv' }, 'The same address an agent gets:'),
   ),
   section(
     'palette',
@@ -260,6 +272,7 @@ export const keyboard = chapter(
       cmd('panel.scripts', 'Scripts panel'),
       cmd('panel.runs', 'Runs panel'),
       cmd('settings.open', 'Settings'),
+      cmd('help.guide', 'This guide'),
     ),
     steps(
       'Open **Settings → Keyboard**.',
@@ -341,10 +354,15 @@ export const library = chapter(
     'downloads',
     'Downloads',
     p(
-      'Downloads start without a dialog and go to `data\\downloads\\` (files of a mass run go to `data\\runs\\<id>\\downloads\\`). The library lists them with progress; **Show in folder** opens Explorer with the file selected.',
+      'Downloads start without a dialog and go to the download folder, `data\\downloads\\` unless you pick another (files of a mass run always go to `data\\runs\\<id>\\downloads\\`). An existing file is never overwritten: the new one becomes “report (1).pdf”. The library lists them with progress; **Show in folder** opens Explorer with the file selected.',
     ),
-    // VERIFY-AFTER-MERGE: the "Downloads" settings section (folder choice, ask where to save).
-    settings('downloads', 'Where downloads go (the “Downloads” section).'),
+    list(
+      'In **Settings → Downloads**, **Change…** takes the full path of another **Download folder** (it is created if missing; system folders such as a drive root, Windows or Program Files are refused). **Use default** goes back to the data folder.',
+      '**Ask where to save each file** shows the Save as dialog for every download, starting in that folder (never in the tabs of a mass run, where nobody would answer).',
+      '**Clear the list** forgets the entries; the files stay on disk.',
+    ),
+    settings('downloads'),
+    api('downloads.config', { ask: true }),
     api('downloads.list', {}),
   ),
   section(
@@ -383,7 +401,7 @@ export const library = chapter(
     list(
       'Bookmarks-bar folders open the library instead of a drop-down; no drag and drop on the bar itself.',
       'Downloads only stay tracked while their tab is open; closing the tab right after a download starts can leave it “in progress”.',
-      '“Show in folder” works for the data folder and your Windows Downloads folder only (a moved Downloads folder is not followed).',
+      '“Show in folder” works for the data folder, the download folder picked in Settings and your Windows Downloads folder (a moved Windows Downloads folder is not followed).',
     ),
   ),
 );
@@ -404,9 +422,10 @@ export const newtab = chapter(
     'How to set it up',
     steps(
       'Open a new tab ([[cmd:tab.new]]).',
-      'Click **Customize** and switch widgets on or off; or use Settings → General → New tab widgets.',
+      'Click **Customize** and switch widgets on or off; or use **Settings → General → New tab page**.',
       'Type a task into **Ask the AI**, pick the agent and send it: a new agent session starts. Its tabs appear in its own group; follow it in the AI panel.',
     ),
+    p('Whether a new tab shows this page at all, a blank page or an address of your choice is set under **A new tab shows** in **Settings → Startup & tabs**.'),
     settings('general'),
   ),
   section(

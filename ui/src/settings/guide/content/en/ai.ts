@@ -17,7 +17,7 @@ export const aiPanel = chapter(
     list(
       '**Claude Code**: your installed `claude` command line, with your Claude login. BrowserMCP starts it with streaming JSON and connects its MCP tools automatically.',
       '**Codex**: your installed `codex` command line (`codex app-server`), the same way.',
-      '**API models**: Anthropic, OpenAI, Google Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq, Ollama and LM Studio (local), and **Custom** for any OpenAI-compatible server. Here BrowserMCP runs the agent loop itself.',
+      '**API models**: Anthropic, OpenAI, Google Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq, Ollama and LM Studio (local), plus **providers of your own**: any OpenAI-compatible server, or another Anthropic- or Gemini-compatible endpoint. Here BrowserMCP runs the agent loop itself.',
     ),
   ),
   section(
@@ -34,52 +34,66 @@ export const aiPanel = chapter(
     'providers',
     'Providers and keys',
     steps(
-      'Open **Settings → AI** (or the gear in the AI panel).',
+      'Open **Settings → AI**, or the gear in the AI panel (**Providers, keys and agent permissions**).',
       'For Claude Code / Codex: install the command line tool and log in once in a terminal; set its path if it is not found automatically.',
-      'For an API provider: paste the API key (and the base URL / model for Ollama, LM Studio or Custom).',
-      'Click **Test**: it only lists models or runs `--version`, it spends no tokens.',
+      'For an API provider: paste the **API key** (Ollama and LM Studio need none) and pick the **Default model**; change the **Base URL** only when yours differs.',
+      'Click **Test** (**Save and test** while there are unsaved changes): it only lists models or runs `--version`, it spends no tokens.',
       'Pick **Use for new chats**, and **Make default for background AI** for self-healing and `page.extract`.',
     ),
-    // VERIFY-AFTER-MERGE: several custom providers (add, name, save, remove).
     p(
-      'You can add **several custom providers** (for example a local vLLM server and a company gateway): each gets its own name, base URL, key and model and is saved next to the presets.',
+      '**My providers** holds providers of your own, as many as you need: a second account of the same service, a local vLLM server, a company gateway. Click **Add provider**, pick a template under **Start from** (a built-in provider, or **Blank (OpenAI-compatible)**), give it a **Name** no other provider has, check the **API type** (OpenAI-compatible, Anthropic-compatible or Google Gemini), **Base URL**, **API key** and **Default model**, and save it with the **Add provider** button under the form. **Extra HTTP headers** (for example `HTTP-Referer` for OpenRouter or `api-key` for Azure) go with every request. **Delete** removes a provider of your own together with its key; built-in providers cannot be deleted. The single **Custom** provider of older versions shows up here as “Custom (OpenAI-compatible)”.',
     ),
+    api('ai.provider_add', { name: 'Home server', base_url: 'http://10.0.0.5:8000/v1' }),
     warning('Keys are stored in plain text in `data\\config\\ai.json` (a deliberate choice). Anyone who can read the data folder can use them.'),
     settings('ai'),
   ),
   section(
     'modes',
     'Permission modes',
-    // VERIFY-AFTER-MERGE: permission modes are being added; names from the brief, behaviour to check.
-    p('The mode decides what a Claude Code or Codex agent may do on your computer besides the browser tools. Pick it in the chat before you send:'),
+    p(
+      'For **Claude Code**, the permission mode decides what the agent may do on your computer besides the browser’s own tools, which are always allowed. Pick it under **Permissions** on the new-chat page of the AI panel, before your first message. A chat keeps its mode; the chip next to its name shows it.',
+    ),
     terms(
-      ['Ask me', 'Before anything not allowed yet (editing a file, running a command) the agent stops and asks you with an approval card.'],
+      ['Ask me', 'The default. Commands, file changes and other tools outside the browser wait for your approval: an approval card in the chat.'],
       ['Auto-accept edits', 'File edits go through without asking; commands and everything else still ask.'],
-      ['Full access', 'Everything is allowed without asking: files, commands, browser. Use it only for tasks and folders you trust.'],
-      ['Plan only', 'The agent reads and plans, but changes nothing.'],
-      ['Browser tools only', 'Only the BrowserMCP tools; no files and no shell.'],
+      ['Full access', 'The agent runs any command and changes any file without asking. Use it only with folders and tasks you trust.'],
+      ['Plan only', 'The agent reads and makes a plan; it asks before it changes anything.'],
+      ['Browser tools only', 'Only the browser’s own tools. Everything else is refused without asking.'],
+    ),
+    p(
+      '**Codex** has two settings instead: **Sandbox** (**Read only**, **May change the working folder** — the default — or **No sandbox (full access)**) and **Approval requests** (**Ask before most commands**, **Ask when it needs more than the sandbox** — the default — or **Never ask**, where whatever the sandbox refuses simply fails).',
+    ),
+    p(
+      'Both agents work in a **Folder** (empty = `data\\ai\\workspace`, created when needed); Claude Code can also get **Extra folders**, one per line. Every folder must exist. The defaults for new chats are set per agent under **What CLI agents may do** in Settings → AI (also in the AI panel’s provider view); the new-chat page changes them for that one chat. When one of the browser’s own AI agents starts another chat, it may narrow these defaults, never widen them.',
     ),
     warning(
-      'Earlier versions always ran Claude Code in “don’t ask” mode and Codex with a read-only shell, so any file or command tool was refused (“Permission … denied because Claude Code is running in don’t ask mode”). Pick “Ask me” or a wider mode when the task needs files.',
+      'Earlier versions always ran Claude Code in “don’t ask” mode and Codex with a read-only shell, so every file or command tool was refused (“Permission … denied because Claude Code is running in don’t ask mode”). Now new chats start in **Ask me**; you get that refusal in **Browser tools only** mode.',
     ),
   ),
   section(
     'approvals',
     'Approval cards',
-    // VERIFY-AFTER-MERGE: approval cards in the chat.
     p(
-      'In “Ask me” mode a request shows up in the chat as a card: what the agent wants to do (the tool and its arguments, for example the command line or the file), with **Allow**, **Always allow** (for the rest of the chat) and **Deny**. The agent waits until you answer.',
+      'When an agent asks, the chat shows a card: “Claude Code #1 wants to use Bash”, “… wants to run a command” or “… wants to change files”, with what would run (the command and its folder, the files, the address or the arguments) and the agent’s reason when it gives one. The agent waits until you answer:',
+    ),
+    list(
+      '**Allow once**: just this request.',
+      '**Always allow Bash in this chat** (with the tool’s name): this request and every later one for the same tool, without asking, for the rest of the chat.',
+      '**Deny…**: refuse, optionally telling the agent why (Codex does not pass the reason on; it stays a note in the chat).',
+    ),
+    p(
+      'A chat with requests waiting shows their number on its tab. A request the agent withdraws, or one still open when the chat stops, is cancelled. Requests can also be answered over the API (`ai.permission_answer`), but never by the browser’s own AI agents.',
     ),
   ),
   section(
     'chats',
     'Chats: continuing and closing',
-    // VERIFY-AFTER-MERGE: continuing a chat with the next message, closing chats.
     list(
-      'Every chat is a chip at the top of the panel; click one to switch.',
-      'Your next message **continues the chat you have open**; start a new one with the **+ New** button.',
-      'Close a chat with the × on its chip; a running answer is stopped first.',
-      'The stop button ends the current answer, the chat stays.',
+      'Every chat is a tab at the top of the panel, named after its agent (“Claude Code #2”) and colored like its tab group; click one to switch. Hover it for its status, tabs and folder.',
+      'Your next message **continues the chat that is shown**, a stopped or failed one too: the agent picks up the conversation with everything above (if it cannot, the chat says so and goes on in a new conversation). **New** opens the new-chat page, where you pick the provider and, for Claude Code and Codex, the permissions and folder.',
+      'Close a chat with the × on its tab or with a middle click. A chat that is still working or waits for an approval asks first (**Stop and close**). **Close finished** closes every chat that is not working and waits for no approval.',
+      'Chats stay until you close them, also across restarts (they come back stopped). Closing a chat keeps its transcript file in `data\\ai\\sessions\\`.',
+      'The stop button ends the current answer; the chat stays and your next message continues it.',
       'Tool calls are collapsible rows under the answer: click one to see what was sent and what came back.',
     ),
   ),
@@ -96,7 +110,8 @@ export const aiPanel = chapter(
     'For AI and scripts',
     p('The same chats can be started over the API, for example by another agent or a cron script:'),
     api('ai.providers', {}),
-    api('ai.session_start', { provider: 'claude-code', prompt: 'Open example.com and summarize it', toolsets: ['core'] }),
+    api('ai.session_start', { provider: 'claude-code', prompt: 'Open example.com and summarize it', toolsets: ['core'], permission_mode: 'plan' }),
+    api('ai.permission_answer', { id: 'claude-code-1.p1', decision: 'allow' }, 'Answer an approval request (the ids come from `ai.permissions_list`):'),
     api('term.open', { shell: 'pwsh' }),
   ),
   section(
@@ -104,6 +119,7 @@ export const aiPanel = chapter(
     'Limits and known issues',
     list(
       'Claude Code and Codex need their command line tools installed and logged in; their usage counts against your own Claude / OpenAI account.',
+      'Permission modes, the sandbox and folders apply to Claude Code and Codex only; API models get the browser’s tools and nothing else.',
       'Ollama and LM Studio count as configured even when their local server is not running: use **Test**.',
       'An agent gets the `core` toolset by default; pass more toolsets when it needs traffic, recording and so on.',
     ),
@@ -147,8 +163,10 @@ export const connect = chapter(
     'other',
     'Any other MCP client',
     p('Point it at `http://127.0.0.1:47800/mcp` (Streamable HTTP), or run `browsermcp.exe mcp-stdio` as a stdio server. `mcp-stdio --headless` starts a browser without windows when none is running.'),
-    // VERIFY-AFTER-MERGE: the "Connections & API" settings section (status, copy-ready commands).
-    settings('connections', 'Addresses, status and ready-to-copy commands (the “Connections & API” section).'),
+    settings(
+      'connections',
+      'The API status and addresses, ready-to-copy commands for Claude Code, Codex and `mcpServers` JSON with the toolsets you pick, the CDP port and the connected agents (the “Connections & API” section).',
+    ),
   ),
   section(
     'toolsets',
@@ -195,10 +213,12 @@ export const connect = chapter(
   section(
     'cdp',
     'CDP port for Playwright and Puppeteer',
-    p('Start the browser with `--cdp-port 9222` to open Chromium’s DevTools port, then connect with `connectOverCDP`:'),
+    p(
+      'Switch on **Open the CDP port at startup** in **Settings → Connections & API** (port 9222 unless you change it; it opens at the next start), or start the browser with `--cdp-port 9222`, which wins over the setting. Then connect with `connectOverCDP`:',
+    ),
     code('ts', 'import { chromium } from "playwright";\n\nconst browser = await chromium.connectOverCDP("http://127.0.0.1:9222");\nconst page = browser.contexts()[0].pages()[0];'),
     warning(
-      'The CDP port is off by default and is refused while any profile has a stealth identity (an open debugging port is easy to detect). It also exposes the browser’s own pages with full API rights to any local program, so only open it when you need it.',
+      'The CDP port is off by default and stays closed while any profile has a stealth identity (an open debugging port is easy to detect); while it is open, no identity can be assigned. It also exposes the browser’s own pages with full API rights to any local program, so only open it when you need it.',
     ),
   ),
   section(

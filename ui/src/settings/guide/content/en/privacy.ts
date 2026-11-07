@@ -36,8 +36,10 @@ export const stealth = chapter(
       'Open tabs in that profile (workspace menu, or `tabs.open {profile}`).',
       'Check it: `stealth.check` probes the page like a fingerprinting script and returns a pass / warn / fail table.',
     ),
-    // VERIFY-AFTER-MERGE: the "Profiles & identity" settings section.
-    settings('profiles', 'Profiles, identities and website languages (the “Profiles & identity” section).'),
+    p(
+      'Without commands: in **Settings → Profiles & identity** create a profile under **New profile**, then in its card pick a preset under **New identity from a preset** and click **Create and use**. **Fit to the proxy** (**Fit now**) and **Fingerprint check** (**Check**, with a tab of the profile open) are there too, and **Saved identities** lists every identity with the profiles that use it.',
+    ),
+    settings('profiles', 'Profiles with their proxy, website languages, WebRTC policy and identity (the “Profiles & identity” section).'),
     api('identity.generate', { os: 'windows', save: true, id: 'work-id' }),
     api('profile.create', { id: 'shop', identity: 'work-id' }),
     api('stealth.check', {}),
@@ -50,9 +52,12 @@ export const stealth = chapter(
       'Passwords never reach the engine: every proxy is reached through a small local forwarder on 127.0.0.1. That is also how **SOCKS5 with a login** works, which Chromium cannot do by itself.',
       '**Pools**: a named list of proxies with a strategy (round robin, random, or sticky per run), a health check, and leases: one proxy per mass-run row, rotated on retry.',
       '**Split routing**: rules per profile, such as “`*.example.com` through the proxy, everything else direct” (a PAC script). There is no silent fallback to a direct connection: a dead proxy fails instead of leaking your real IP.',
+      'HTTP and SOCKS5 proxies work, both with a login, and HTTPS sites work through both. Proxies reached over TLS (`https://…` as the proxy address) and SOCKS4 are not supported.',
     ),
-    // VERIFY-AFTER-MERGE: the "Proxies" settings section.
-    settings('proxies', 'Proxies and pools (the “Proxies” section).'),
+    p(
+      'In **Settings → Proxies**: **Add proxies** to a new or existing pool (one with the form, or paste a whole list; **Test** tries one first), set the pool’s rotation (**In turn**, **Random**, **Sticky per run**), **Check health**, and edit **Routing by profile**: rules checked from top to bottom (`*.example.com`, `https://example.com/api/*` or `re:REGEX`), with **Test a URL** to see which one matches. **Local forwarders** lists the proxies on 127.0.0.1 that add the logins. The proxy of a profile itself is picked in **Settings → Profiles & identity**.',
+    ),
+    settings('proxies', 'Pools, health checks and split routing (the “Proxies” section).'),
     api('proxy.pool_add', { pool: 'de', proxies: ['socks5://user:pass@203.0.113.7:1080'], strategy: 'sticky' }),
     api('proxy.rules_set', { profile: 'shop', rules: [{ match: '*.example.com', via: 'pool:de' }], default: 'direct' }),
   ),
@@ -68,7 +73,10 @@ export const stealth = chapter(
   section(
     'webrtc',
     'WebRTC protection',
-    p('When a profile uses a proxy, WebRTC is limited to the proxied route (`disable_non_proxied_udp`), so a page cannot discover your real IP through WebRTC. Without a proxy, Chromium’s defaults apply.'),
+    p(
+      'By default (**Automatic (by the proxy)**) a profile with a proxy limits WebRTC to the proxied route (`disable_non_proxied_udp`), so a page cannot discover your real IP through WebRTC; without a proxy, Chromium’s defaults apply. The **WebRTC** setting of a profile in Settings → Profiles & identity can also be **Normal, all addresses** (calls work everywhere, but sites can see your real IP), **Public address only** (local network addresses stay hidden) or **Only through the proxy** (without a proxy, calls that need UDP do not connect).',
+    ),
+    api('profile.create', { id: 'shop', webrtc: 'proxy_only' }),
   ),
   section(
     'headless',
@@ -95,7 +103,7 @@ export const stealth = chapter(
       'Fonts are the ones installed on your computer; `stealth.check` reports when they do not fit the claimed OS.',
       'The claimed browser is always Chrome of the engine’s version (other versions would be revealed by feature detection); iPhone / iPad presets are for layout testing only.',
       'Workers inside iframes from other sites are not patched yet.',
-      'The CDP port (`--cdp-port`) is refused while a profile has an identity.',
+      'The CDP port stays closed while a profile has an identity, and no identity can be assigned while the port is open.',
       'A patched Chromium (deeper fingerprint control) is planned for a later phase.',
     ),
   ),
@@ -117,15 +125,14 @@ export const adblock = chapter(
     'How to use it',
     steps(
       'Open **Settings → Privacy & blocking**.',
-      'Switch blocking on or off for everything; **Update lists** downloads fresh filter lists.',
+      'Switch blocking on or off for everything; **Update now** downloads fresh filter lists.',
       'Add sites where ads are allowed (for example a site you support).',
       'In the site policies table, click a cell to cycle it: inherited → blocked → allowed.',
-      '**Check a site** shows which policy applies to an address.',
+      'Type a site (`shop.example.com`) into the check field and click **Check** to see which policy applies to it.',
       'Your own filter rules go into `data\\filters\\user.txt` (Adblock Plus syntax).',
     ),
     settings('privacy'),
-    // VERIFY-AFTER-MERGE: the "Site settings" section (permissions, zoom, policies per site).
-    settings('sites', 'Everything about one site in one place (the “Site settings” section).'),
+    settings('sites', 'Camera, microphone and the other permissions of each site, and the zoom it keeps, are in the “Site settings” section.'),
   ),
   section(
     'reader',
@@ -245,7 +252,7 @@ export const notifications = chapter(
     'Limits and known issues',
     list(
       'Rejecting a patch from Telegram sends no feedback text (a button has no text field); give feedback in the browser.',
-      'Existing `notify.json` files keep their rules: new default rules are offered with **Add missing default rules**.',
+      'Existing `notify.json` files keep their rules: new default rules are offered with **Add … missing default rules**.',
     ),
   ),
 );
@@ -260,32 +267,37 @@ export const languages = chapter(
     terms(
       ['Interface language', 'menus, panels, these settings and this guide (English or Ukrainian)'],
       ['Languages for websites', 'what sites see in `Accept-Language` and `navigator.languages`, so they pick their own language'],
-      ['Browser language', 'Chromium’s built-in texts, such as some error pages and form hints'],
+      ['Browser language', 'Chromium’s own texts: the page context menu, its dialogs and error pages'],
     ),
   ),
   section(
     'ui',
     'Interface language',
-    p('**Settings → General → Language**: “Same as the system”, English or Українська. It applies at once in every window and page of the browser.'),
+    p('**Settings → General → Language → Interface language**: “Same as the system”, English or Українська. It applies at once in every window and page of the browser.'),
     settings('general'),
   ),
   section(
     'sites',
     'Languages for websites',
     p(
-      'Each profile can send its own list, for example `uk-UA,uk,en`. A profile with an identity uses the identity’s languages (that is what keeps it consistent with its proxy).',
+      '**Languages for websites** in **Settings → General → Language** is the list for the whole browser, most preferred first: add a language by name or code (`Deutsch`, `fr`, `pt-BR`), move it up or down, remove it. Changes reach every tab at once; reload a page to see it in the new language. Until you change it, the list is automatic: the interface language, then English.',
     ),
-    // VERIFY-AFTER-MERGE: where the website-languages setting lives in the new sections.
-    settings('profiles', 'Per-profile website languages.'),
+    p(
+      'A profile’s own languages win over this list: the **Languages (Accept-Language)** of a profile in **Settings → Profiles & identity** (for example `uk-UA,uk,en`), or the languages of its stealth identity, fitted to its proxy’s country. That keeps what a site sees consistent with the IP.',
+    ),
+    settings('general'),
+    settings('profiles', 'A profile’s own languages.'),
+    api('browser.languages_set', { web: ['uk', 'en'] }),
     api('profile.create', { id: 'default', accept_language: 'uk-UA,uk,en-US,en' }),
   ),
   section(
     'browser',
     'Browser language',
-    // VERIFY-AFTER-MERGE: browser (Chromium) language setting, restart behaviour, available locales.
     p(
-      'Chromium’s own texts come from the language packs in the `locales\\` folder next to the exe (English and Ukrainian in the standard package; others fall back to English). A change applies after a restart of the browser.',
+      '**Browser language**, in the same place, is the language of Chromium itself: the page context menu, its dialogs and error pages. Only languages whose pack ships in the `locales\\` folder next to the exe are offered (English and Ukrainian in the standard package). **Same as Windows** takes the shipped language closest to the Windows display language, otherwise English. A change applies after a restart of the browser.',
     ),
+    p('Each website language also has a **Spellcheck** switch for spell checking in text fields.'),
+    api('browser.languages_set', { browser_locale: 'uk' }),
   ),
   section(
     'limits',
@@ -300,19 +312,20 @@ export const languages = chapter(
 export const data = chapter(
   'data',
   'Data and privacy',
-  'What is stored where in the data folder, what is unencrypted on purpose, site permissions, backups and moving the folder.',
+  'What is stored where in the data folder, what is unencrypted on purpose, site permissions, clearing browsing data, backups and moving the folder.',
   section(
     'layout',
     'The data folder',
     terms(
-      ['`config\\`', 'settings per feature, plain JSON: `ai.json` (provider keys), `notify.json`, `governor.json`, `hints.json`, `identities.json`, `proxies.json`, `profiles.json`, `permissions.json`, `adblock.json`, `simplify.json`, `zoom.json`'],
+      ['`config\\`', 'settings per feature, plain JSON: `ai.json` (provider keys), `notify.json`, `governor.json`, `hints.json`, `identities.json`, `proxies.json`, `profiles.json`, `permissions.json`, `adblock.json`, `simplify.json`, `zoom.json`, `startup.json`, `search.json`, `downloads.json`, `languages.json`, `connections.json`, `recording.json`, `scripts.json`'],
+      ['`ai\\`', '`sessions\\` (the chats of the AI panel) and `workspace\\` (the default working folder of Claude Code and Codex)'],
       ['`profiles\\<id>\\`', 'the Chromium profile of one workspace: cookies, cache, local storage'],
       ['`db\\`', '`browsermcp.sqlite` (bookmarks, history, downloads, passwords), `runs.sqlite` (runs, rows, triggers)'],
       ['`filters\\`', 'ad-block lists, the compiled engine, `user.txt` (your own rules)'],
       ['`scripts\\`, `plugins\\`, `userscripts\\`', 'your automation code'],
       ['`runs\\<id>\\`', 'exports and downloads of a mass run'],
       ['`recordings\\`, `videos\\`, `har\\`, `pdf\\`, `mhtml\\`', 'what recording, traffic export and printing produce'],
-      ['`downloads\\`', 'downloaded files'],
+      ['`downloads\\`', 'downloaded files (unless you picked another folder in Settings → Downloads)'],
       ['`extract-cache\\`', 'selector plans of `page.extract`'],
       ['`logs\\`', '`cef.log` (the engine’s log)'],
       ['`runtime\\`', '`endpoint.json` (addresses and pid of the running browser), `session.json` (open tabs)'],
@@ -334,12 +347,30 @@ export const data = chapter(
     'permissions',
     'Site permissions',
     p(
-      'When a site asks for the camera, microphone, notifications and so on, a bar asks you; “Remember” stores the answer as a rule (`config\\permissions.json`). Without a rule, tabs you cannot see (off-screen) are denied.',
+      'When a site asks for the camera, microphone, location, notifications and so on, a bar under the address bar asks you; with **Remember for this site** ticked the answer is stored as a rule (`config\\permissions.json`). Without a rule, tabs you cannot see (off-screen) are denied.',
+    ),
+    p(
+      '**Settings → Site settings** lists the remembered answers per site: switch one between **Allow** and **Block**, forget it (the site asks again), **Reset** a whole site, or **Add a rule** for one site or for `*` (every site without a rule of its own). The same page lists the zoom levels sites keep and resets them.',
     ),
     api('permissions.list', {}),
     api('permissions.set', { origin: 'https://meet.example.com', kind: 'camera', allow: true }),
-    // VERIFY-AFTER-MERGE: the "Site settings" section.
     settings('sites'),
+  ),
+  section(
+    'clear',
+    'Clearing browsing data',
+    steps(
+      'Open **Settings → Data & storage → Clear browsing data**.',
+      'Pick the **Time range** (from **Last hour** to **All time**) and the **Workspace** whose cookies, cache and site data are cleared.',
+      'Tick what goes: **Browsing history**, **Downloads list**, **Cookies**, **Cached images and files**, **Site data**.',
+      'Click **Clear data**, then once more to confirm. This cannot be undone.',
+    ),
+    list(
+      'History and the downloads list are shared by all workspaces; the cache is always cleared completely, whatever the time range.',
+      'Downloaded files stay on disk; only the list is cleared.',
+    ),
+    settings('data'),
+    api('browsing_data.clear', { profile: 'work', cookies: true, cache: true }),
   ),
   section(
     'backup',
@@ -350,8 +381,8 @@ export const data = chapter(
       'To move: put the folder next to `browsermcp.exe` in the new place, or start with `--data-dir <path>`.',
       'To restore, replace the `data\\` folder with the backup while the browser is closed.',
     ),
-    // VERIFY-AFTER-MERGE: the "Data" settings section (open folder, backup helpers).
-    settings('data'),
+    settings('data', 'How much space each part of the data folder takes (**Measure again**), **Open folder** and the Chrome import (the “Data & storage” section).'),
+    api('browsing_data.usage', {}),
     api('system.reveal_path', { path: 'D:\\BrowserMCP\\data\\recordings' }, 'Show a folder of the data folder in Explorer (an absolute path inside it):'),
   ),
   section(
