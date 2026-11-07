@@ -777,6 +777,7 @@ dependencies = [
  "bmcp-record",
  "bmcp-settings",
  "bmcp-system",
+ "bmcp-voice",
 ]
 
 [[package]]
@@ -830,6 +831,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmcp-voice"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bmcp-core",
+ "futures-util",
+ "reqwest 0.12.28",
+ "rustls",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
+ "tracing",
+ "webpki-roots",
+ "windows-sys 0.61.2",
+ "wiremock",
+ "zip",
+]
+
+[[package]]
 name = "boxed_error"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,6 +889,7 @@ dependencies = [
  "bmcp-registry",
  "bmcp-settings",
  "bmcp-system",
+ "bmcp-voice",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -4886,7 +4912,10 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.29.0",
 ]
 
@@ -5052,6 +5081,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 2.0.21",
 ]

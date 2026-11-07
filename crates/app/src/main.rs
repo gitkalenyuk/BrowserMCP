@@ -370,6 +370,9 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
             bmcp_notify::NotifyOptions::new(data.config().join("notify.json")),
             events.clone(),
         ));
+    // Voice dictation (data/config/voice.json, data/voice): the whisper-server sidecar starts
+    // on the first local transcription and is stopped when the browser quits.
+    let voice = bmcp_voice::install(&registry, data.root());
     tracing::info!(commands = registry.len(), "command registry ready");
     let registry = Arc::new(registry);
     bmcp_ai::attach(&registry);
@@ -427,6 +430,7 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
                 shutdown.cancelled().await;
                 ai.shutdown();
                 notify.shutdown();
+                voice.shutdown();
                 if let Some(jobs) = jobs {
                     jobs.shutdown();
                 }

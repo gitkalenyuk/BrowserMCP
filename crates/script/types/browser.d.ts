@@ -9368,6 +9368,779 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- voice.engines ----
+
+  /**
+   * Arguments of `voice.engines`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type VoiceEnginesArgs = Record<string, never>;
+
+  /** Result of `voice.engines`. */
+  export interface VoiceEnginesOutput {
+    /**
+     * The engine dictation uses.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    active: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    engines: {
+      /**
+       * Speech-to-text engines.
+       *
+       * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+       * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+       * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+       * - `"elevenlabs"`: ElevenLabs Scribe.
+       * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+       * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+       */
+      id: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+      name: string;
+      /** Ready to transcribe (key set / model downloaded). */
+      configured: boolean;
+      /** Why not, when it is not. */
+      reason: string | null;
+      needs_key: boolean;
+      /**
+       * - `"voice"`: The voice settings (`voice.json`).
+       * - `"ai_provider"`: The AI provider of the same name (Settings → AI, `ai.json`).
+       */
+      key_source: "voice" | "ai_provider" | null;
+      /**
+       * Text appears while you speak: Deepgram streams it; Local Whisper re-transcribes the
+       * growing recording. Batch engines insert the text when you stop.
+       */
+      interim: boolean;
+      /** Models to pick from (empty: any name, or the local catalog). */
+      models: string[];
+      /** The model it uses now. */
+      model: string | null;
+      /** Takes the page title / site as a vocabulary hint. */
+      page_hint: boolean;
+      /** Runs on this computer (no audio leaves it). */
+      offline: boolean;
+    }[];
+  }
+
+  // ---- voice.local_cancel ----
+
+  /**
+   * Arguments of `voice.local_cancel`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type VoiceLocalCancelArgs = Record<string, never>;
+
+  /**
+   * Result of `voice.local_cancel`.
+   * Everything Settings → Voice shows about Local Whisper (`voice.local_status`).
+   */
+  export interface VoiceLocalCancelOutput {
+    /** Can this computer run the downloadable build (Windows x64)? */
+    supported: boolean;
+    /** Local Whisper's engine as installed. */
+    engine: {
+      installed: boolean;
+      /** Release tag of the installed build. */
+      version: string | null;
+      /** Size of the download. */
+      size: number | null;
+      /** `data/voice/bin`. */
+      folder: string;
+    };
+    models: {
+      /** Id used by the commands (`base`, `large-v3-turbo-q5_0`). */
+      id: string;
+      /** Display name. */
+      name: string;
+      /** File name in the repository and in `data/voice/models`. */
+      file: string;
+      /** Exact size in bytes. */
+      size: number;
+      /** SHA-256 (hex) of the file. */
+      sha256: string;
+      /** Recommended for Ukrainian and other non-English languages. */
+      recommended: boolean;
+      /** Rough quality: 1 (rough) … 5 (best). */
+      quality: number;
+      /** Rough speed on a CPU: 1 (slow) … 5 (fast). */
+      speed: number;
+      installed: boolean;
+    }[];
+    /** The model transcription uses now: the chosen one if installed, else the best installed. */
+    active_model: string | null;
+    /** The current or last download. */
+    download: {
+      /** `engine` or a model id. */
+      what: string;
+      /** Phase of the current (or last) download. */
+      phase: "running" | "verifying" | "installing" | "done" | "failed" | "cancelled";
+      received: number;
+      /** Bytes expected (`null` while unknown). */
+      total: number | null;
+      /** Why it failed. */
+      error: string | null;
+    } | null;
+    /** The sidecar while it runs. */
+    server: {
+      port: number;
+      model: string;
+      pid: number | null;
+    } | null;
+  }
+
+  // ---- voice.local_delete ----
+
+  /** Arguments of `voice.local_delete`. */
+  export interface VoiceLocalDeleteArgs {
+    /**
+     * `engine` (whisper.cpp from GitHub) or a model id (`base`, `small`,
+     * `large-v3-turbo-q5_0`, …).
+     */
+    what: string;
+  }
+
+  /**
+   * Result of `voice.local_delete`.
+   * Everything Settings → Voice shows about Local Whisper (`voice.local_status`).
+   */
+  export interface VoiceLocalDeleteOutput {
+    /** Can this computer run the downloadable build (Windows x64)? */
+    supported: boolean;
+    /** Local Whisper's engine as installed. */
+    engine: {
+      installed: boolean;
+      /** Release tag of the installed build. */
+      version: string | null;
+      /** Size of the download. */
+      size: number | null;
+      /** `data/voice/bin`. */
+      folder: string;
+    };
+    models: {
+      /** Id used by the commands (`base`, `large-v3-turbo-q5_0`). */
+      id: string;
+      /** Display name. */
+      name: string;
+      /** File name in the repository and in `data/voice/models`. */
+      file: string;
+      /** Exact size in bytes. */
+      size: number;
+      /** SHA-256 (hex) of the file. */
+      sha256: string;
+      /** Recommended for Ukrainian and other non-English languages. */
+      recommended: boolean;
+      /** Rough quality: 1 (rough) … 5 (best). */
+      quality: number;
+      /** Rough speed on a CPU: 1 (slow) … 5 (fast). */
+      speed: number;
+      installed: boolean;
+    }[];
+    /** The model transcription uses now: the chosen one if installed, else the best installed. */
+    active_model: string | null;
+    /** The current or last download. */
+    download: {
+      /** `engine` or a model id. */
+      what: string;
+      /** Phase of the current (or last) download. */
+      phase: "running" | "verifying" | "installing" | "done" | "failed" | "cancelled";
+      received: number;
+      /** Bytes expected (`null` while unknown). */
+      total: number | null;
+      /** Why it failed. */
+      error: string | null;
+    } | null;
+    /** The sidecar while it runs. */
+    server: {
+      port: number;
+      model: string;
+      pid: number | null;
+    } | null;
+  }
+
+  // ---- voice.local_download ----
+
+  /** Arguments of `voice.local_download`. */
+  export interface VoiceLocalDownloadArgs {
+    /**
+     * `engine` (whisper.cpp from GitHub) or a model id (`base`, `small`,
+     * `large-v3-turbo-q5_0`, …).
+     */
+    what: string;
+  }
+
+  /**
+   * Result of `voice.local_download`.
+   * Everything Settings → Voice shows about Local Whisper (`voice.local_status`).
+   */
+  export interface VoiceLocalDownloadOutput {
+    /** Can this computer run the downloadable build (Windows x64)? */
+    supported: boolean;
+    /** Local Whisper's engine as installed. */
+    engine: {
+      installed: boolean;
+      /** Release tag of the installed build. */
+      version: string | null;
+      /** Size of the download. */
+      size: number | null;
+      /** `data/voice/bin`. */
+      folder: string;
+    };
+    models: {
+      /** Id used by the commands (`base`, `large-v3-turbo-q5_0`). */
+      id: string;
+      /** Display name. */
+      name: string;
+      /** File name in the repository and in `data/voice/models`. */
+      file: string;
+      /** Exact size in bytes. */
+      size: number;
+      /** SHA-256 (hex) of the file. */
+      sha256: string;
+      /** Recommended for Ukrainian and other non-English languages. */
+      recommended: boolean;
+      /** Rough quality: 1 (rough) … 5 (best). */
+      quality: number;
+      /** Rough speed on a CPU: 1 (slow) … 5 (fast). */
+      speed: number;
+      installed: boolean;
+    }[];
+    /** The model transcription uses now: the chosen one if installed, else the best installed. */
+    active_model: string | null;
+    /** The current or last download. */
+    download: {
+      /** `engine` or a model id. */
+      what: string;
+      /** Phase of the current (or last) download. */
+      phase: "running" | "verifying" | "installing" | "done" | "failed" | "cancelled";
+      received: number;
+      /** Bytes expected (`null` while unknown). */
+      total: number | null;
+      /** Why it failed. */
+      error: string | null;
+    } | null;
+    /** The sidecar while it runs. */
+    server: {
+      port: number;
+      model: string;
+      pid: number | null;
+    } | null;
+  }
+
+  // ---- voice.local_status ----
+
+  /**
+   * Arguments of `voice.local_status`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type VoiceLocalStatusArgs = Record<string, never>;
+
+  /**
+   * Result of `voice.local_status`.
+   * Everything Settings → Voice shows about Local Whisper (`voice.local_status`).
+   */
+  export interface VoiceLocalStatusOutput {
+    /** Can this computer run the downloadable build (Windows x64)? */
+    supported: boolean;
+    /** Local Whisper's engine as installed. */
+    engine: {
+      installed: boolean;
+      /** Release tag of the installed build. */
+      version: string | null;
+      /** Size of the download. */
+      size: number | null;
+      /** `data/voice/bin`. */
+      folder: string;
+    };
+    models: {
+      /** Id used by the commands (`base`, `large-v3-turbo-q5_0`). */
+      id: string;
+      /** Display name. */
+      name: string;
+      /** File name in the repository and in `data/voice/models`. */
+      file: string;
+      /** Exact size in bytes. */
+      size: number;
+      /** SHA-256 (hex) of the file. */
+      sha256: string;
+      /** Recommended for Ukrainian and other non-English languages. */
+      recommended: boolean;
+      /** Rough quality: 1 (rough) … 5 (best). */
+      quality: number;
+      /** Rough speed on a CPU: 1 (slow) … 5 (fast). */
+      speed: number;
+      installed: boolean;
+    }[];
+    /** The model transcription uses now: the chosen one if installed, else the best installed. */
+    active_model: string | null;
+    /** The current or last download. */
+    download: {
+      /** `engine` or a model id. */
+      what: string;
+      /** Phase of the current (or last) download. */
+      phase: "running" | "verifying" | "installing" | "done" | "failed" | "cancelled";
+      received: number;
+      /** Bytes expected (`null` while unknown). */
+      total: number | null;
+      /** Why it failed. */
+      error: string | null;
+    } | null;
+    /** The sidecar while it runs. */
+    server: {
+      port: number;
+      model: string;
+      pid: number | null;
+    } | null;
+  }
+
+  // ---- voice.settings_get ----
+
+  /**
+   * Arguments of `voice.settings_get`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type VoiceSettingsGetArgs = Record<string, never>;
+
+  /**
+   * Result of `voice.settings_get`.
+   * `voice.settings_get` / `voice.settings_set`.
+   */
+  export interface VoiceSettingsGetOutput {
+    enabled: boolean;
+    /**
+     * Speech-to-text engines.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    /** Push-to-talk (hold the key) or toggle (tap to start, tap to stop). */
+    mode: "hold" | "tap";
+    hotkey: string;
+    auto_submit_hold: boolean;
+    auto_submit_tap: boolean;
+    /** `""` = the UI language, `auto` = detect, else a language code. */
+    language: string;
+    page_hint: boolean;
+    /** Local Whisper's settings. */
+    local: {
+      /** Chosen model id; `null` = the best one installed. */
+      model: string | null;
+      threads: number | null;
+      idle_minutes: number;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    openai: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    groq: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    elevenlabs: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    deepgram: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    custom: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+  }
+
+  // ---- voice.settings_set ----
+
+  /** Arguments of `voice.settings_set`. */
+  export interface VoiceSettingsSetArgs {
+    enabled?: boolean | null;
+    /**
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine?: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom" | null;
+    /** Push-to-talk (hold the key) or toggle (tap to start, tap to stop). */
+    mode?: "hold" | "tap" | null;
+    /** `Space`, `Ctrl+Space`, `Alt+V`, `F8`… */
+    hotkey?: string | null;
+    auto_submit_hold?: boolean | null;
+    auto_submit_tap?: boolean | null;
+    /** `""` = the UI language, `auto` = detect, or a code like `uk`. */
+    language?: string | null;
+    page_hint?: boolean | null;
+    /** Changes to Local Whisper. */
+    local?: {
+      /** Model id; `""` = the best one installed. */
+      model?: string | null;
+      /** CPU threads; 0 = whisper-server's default. */
+      threads?: number | null;
+      /** Stop the server after this many idle minutes (1–120). */
+      idle_minutes?: number | null;
+    } | null;
+    /** Changes to one cloud engine: `""` clears a field. */
+    openai?: {
+      api_key?: string | null;
+      model?: string | null;
+      base_url?: string | null;
+    } | null;
+    /** Changes to one cloud engine: `""` clears a field. */
+    groq?: {
+      api_key?: string | null;
+      model?: string | null;
+      base_url?: string | null;
+    } | null;
+    /** Changes to one cloud engine: `""` clears a field. */
+    elevenlabs?: {
+      api_key?: string | null;
+      model?: string | null;
+      base_url?: string | null;
+    } | null;
+    /** Changes to one cloud engine: `""` clears a field. */
+    deepgram?: {
+      api_key?: string | null;
+      model?: string | null;
+      base_url?: string | null;
+    } | null;
+    /** Changes to one cloud engine: `""` clears a field. */
+    custom?: {
+      api_key?: string | null;
+      model?: string | null;
+      base_url?: string | null;
+    } | null;
+  }
+
+  /**
+   * Result of `voice.settings_set`.
+   * `voice.settings_get` / `voice.settings_set`.
+   */
+  export interface VoiceSettingsSetOutput {
+    enabled: boolean;
+    /**
+     * Speech-to-text engines.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    /** Push-to-talk (hold the key) or toggle (tap to start, tap to stop). */
+    mode: "hold" | "tap";
+    hotkey: string;
+    auto_submit_hold: boolean;
+    auto_submit_tap: boolean;
+    /** `""` = the UI language, `auto` = detect, else a language code. */
+    language: string;
+    page_hint: boolean;
+    /** Local Whisper's settings. */
+    local: {
+      /** Chosen model id; `null` = the best one installed. */
+      model: string | null;
+      threads: number | null;
+      idle_minutes: number;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    openai: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    groq: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    elevenlabs: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    deepgram: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+    /** A cloud engine's settings as clients see them: never the key itself. */
+    custom: {
+      /** A key is stored in the voice settings. */
+      api_key_set: boolean;
+      /** Its last 4 characters, to tell keys apart. */
+      api_key_hint: string | null;
+      /**
+       * OpenAI / Groq: the AI provider of the same name has a key that is used when this
+       * engine has none of its own.
+       */
+      ai_provider_key: boolean;
+      /** `null` = the engine's default model. */
+      model: string | null;
+      /** `null` = the engine's own API address. */
+      base_url: string | null;
+    };
+  }
+
+  // ---- voice.stream_push ----
+
+  /** Arguments of `voice.stream_push`. */
+  export interface VoiceStreamPushArgs {
+    stream: string;
+    /** 16-bit little-endian mono PCM at 16 kHz, base64. */
+    pcm_base64: string;
+  }
+
+  /** Result of `voice.stream_push`. */
+  export interface VoiceStreamPushOutput {
+    /** Text heard so far (not final; empty for batch engines). */
+    partial: string;
+    /** Audio received so far. */
+    duration_ms: number;
+  }
+
+  // ---- voice.stream_start ----
+
+  /** Arguments of `voice.stream_start`. */
+  export interface VoiceStreamStartArgs {
+    /** Language code or `auto`; default: the voice settings. */
+    language?: string | null;
+    /** Vocabulary hint (page title and site). */
+    prompt?: string | null;
+    /**
+     * Engine to use instead of the one in the settings.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine?: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom" | null;
+  }
+
+  /** Result of `voice.stream_start`. */
+  export interface VoiceStreamStartOutput {
+    /** Id for voice.stream_push / voice.stream_stop. */
+    stream: string;
+    /**
+     * Speech-to-text engines.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    /** `voice.stream_push` returns text while you speak (else only at stop). */
+    interim: boolean;
+    /** A live socket streams the audio (Deepgram). */
+    live: boolean;
+  }
+
+  // ---- voice.stream_stop ----
+
+  /** Arguments of `voice.stream_stop`. */
+  export interface VoiceStreamStopArgs {
+    stream: string;
+    /**
+     * Discard the recording (Esc): no engine call, empty text.
+     * @default false
+     */
+    cancel?: boolean;
+  }
+
+  /** Result of `voice.stream_stop`. */
+  export interface VoiceStreamStopOutput {
+    text: string;
+    /** Language the engine detected or used, when it says. */
+    language: string | null;
+    /** Length of the audio. */
+    duration_ms: number;
+    /**
+     * Speech-to-text engines.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    /** How long the engine took. */
+    elapsed_ms: number;
+  }
+
+  // ---- voice.transcribe ----
+
+  /** Arguments of `voice.transcribe`. */
+  export interface VoiceTranscribeArgs {
+    /**
+     * The recording, base64. WAV 16 kHz mono works with every engine; cloud engines also
+     * take webm/ogg/mp3/m4a.
+     */
+    audio_base64: string;
+    /** MIME type of the audio (default `audio/wav`). */
+    mime?: string | null;
+    /** Language code (`uk`, `en`) or `auto`; default: the voice settings. */
+    language?: string | null;
+    /** Vocabulary hint (e.g. the page title and site) for engines that take one. */
+    prompt?: string | null;
+    /**
+     * Engine to use instead of the one in the settings.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine?: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom" | null;
+  }
+
+  /** Result of `voice.transcribe`. */
+  export interface VoiceTranscribeOutput {
+    text: string;
+    /** Language the engine detected or used, when it says. */
+    language: string | null;
+    /** Length of the audio. */
+    duration_ms: number;
+    /**
+     * Speech-to-text engines.
+     *
+     * - `"local"`: whisper.cpp on this computer (whisper-server sidecar): offline, free, private.
+     * - `"openai"`: OpenAI `/audio/transcriptions` (gpt-4o-transcribe, gpt-4o-mini-transcribe, whisper-1).
+     * - `"groq"`: Groq, OpenAI-compatible (whisper-large-v3-turbo, whisper-large-v3).
+     * - `"elevenlabs"`: ElevenLabs Scribe.
+     * - `"deepgram"`: Deepgram (nova-3), live over WebSocket.
+     * - `"custom"`: Any OpenAI-compatible `/audio/transcriptions` endpoint.
+     */
+    engine: "local" | "openai" | "groq" | "elevenlabs" | "deepgram" | "custom";
+    /** How long the engine took. */
+    elapsed_ms: number;
+  }
+
   // ---- zoom.list ----
 
   /**
@@ -9851,6 +10624,28 @@ declare namespace BrowserMCP {
     "userscripts.list": { args: UserscriptsListArgs; output: UserscriptsListOutput };
     /** Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load. */
     "userscripts.save": { args: UserscriptsSaveArgs; output: UserscriptsSaveOutput };
+    /** List the speech-to-text engines for voice dictation and whether each is ready (key set, local model downloaded), streams text while you speak, and runs offline. */
+    "voice.engines": { args: VoiceEnginesArgs; output: VoiceEnginesOutput };
+    /** Cancel the running Local Whisper download. */
+    "voice.local_cancel": { args: VoiceLocalCancelArgs; output: VoiceLocalCancelOutput };
+    /** Delete the downloaded whisper.cpp engine (`engine`) or a model (its id) from data/voice. */
+    "voice.local_delete": { args: VoiceLocalDeleteArgs; output: VoiceLocalDeleteOutput };
+    /** Download the whisper.cpp engine (official GitHub release) or a Whisper model (official Hugging Face repository) into data/voice, checked by size and SHA-256. Runs in the background: poll voice.local_status for progress. */
+    "voice.local_download": { args: VoiceLocalDownloadArgs; output: VoiceLocalDownloadOutput };
+    /** Local Whisper: whether the whisper.cpp engine and each model (with sizes) are downloaded, the download in progress, and the running whisper-server. */
+    "voice.local_status": { args: VoiceLocalStatusArgs; output: VoiceLocalStatusOutput };
+    /** Read the voice dictation settings: engine (local Whisper, OpenAI, Groq, ElevenLabs, Deepgram, custom), hold/tap mode, hotkey, auto-submit, language, page hint, local model. API keys are never returned (only whether one is set). */
+    "voice.settings_get": { args: VoiceSettingsGetArgs; output: VoiceSettingsGetOutput };
+    /** Change voice dictation settings (fields left out stay; "" clears a key, model or address). Keys are stored as plain JSON in data/config/voice.json; OpenAI and Groq fall back to the key of the AI provider of the same name. Returns the same as voice.settings_get. */
+    "voice.settings_set": { args: VoiceSettingsSetArgs; output: VoiceSettingsSetOutput };
+    /** Add audio to a dictation stream (16 kHz mono 16-bit PCM, base64). Returns the interim text so far. */
+    "voice.stream_push": { args: VoiceStreamPushArgs; output: VoiceStreamPushOutput };
+    /** Start a dictation stream: push 16 kHz mono 16-bit PCM with voice.stream_push (returns the text so far) and finish with voice.stream_stop (the final text). Deepgram streams live; Local Whisper re-transcribes the growing audio every ~1.5 s; other engines transcribe at stop. */
+    "voice.stream_start": { args: VoiceStreamStartArgs; output: VoiceStreamStartOutput };
+    /** Finish a dictation stream and return the final text (cancel: true discards it). */
+    "voice.stream_stop": { args: VoiceStreamStopArgs; output: VoiceStreamStopOutput };
+    /** Turn a recording into text with the voice engine (local Whisper by default; cloud engines send the audio to that provider). Returns the text, the language and the audio length. */
+    "voice.transcribe": { args: VoiceTranscribeArgs; output: VoiceTranscribeOutput };
     /** List the sites with a remembered page zoom other than 100 % (set with page_zoom or Ctrl+=/-, saved per host in data/config/zoom.json). Returns {sites:[{host, percent}]}. */
     "zoom.list": { args: ZoomListArgs; output: ZoomListOutput };
     /** Forget the remembered page zoom of a site (host) or of every site; its open tabs go back to 100 % at once. Returns the hosts that were reset. */
@@ -11339,6 +12134,75 @@ declare namespace BrowserMCP {
        * `userscripts.save` (MCP: `userscripts_save`): toolset `script`, act.
        */
       save(args: UserscriptsSaveArgs): Promise<UserscriptsSaveOutput>;
+    };
+    /** Commands `voice.*`. */
+    voice: {
+      /**
+       * List the speech-to-text engines for voice dictation and whether each is ready (key set, local model downloaded), streams text while you speak, and runs offline.
+       *
+       * `voice.engines` (MCP: `voice_engines`): toolset `ui`, read.
+       */
+      engines(args?: VoiceEnginesArgs): Promise<VoiceEnginesOutput>;
+      /**
+       * Cancel the running Local Whisper download.
+       *
+       * `voice.local_cancel` (MCP: `voice_local_cancel`): toolset `ui`, act.
+       */
+      local_cancel(args?: VoiceLocalCancelArgs): Promise<VoiceLocalCancelOutput>;
+      /**
+       * Delete the downloaded whisper.cpp engine (`engine`) or a model (its id) from data/voice.
+       *
+       * `voice.local_delete` (MCP: `voice_local_delete`): toolset `ui`, act.
+       */
+      local_delete(args: VoiceLocalDeleteArgs): Promise<VoiceLocalDeleteOutput>;
+      /**
+       * Download the whisper.cpp engine (official GitHub release) or a Whisper model (official Hugging Face repository) into data/voice, checked by size and SHA-256. Runs in the background: poll voice.local_status for progress.
+       *
+       * `voice.local_download` (MCP: `voice_local_download`): toolset `ui`, act.
+       */
+      local_download(args: VoiceLocalDownloadArgs): Promise<VoiceLocalDownloadOutput>;
+      /**
+       * Local Whisper: whether the whisper.cpp engine and each model (with sizes) are downloaded, the download in progress, and the running whisper-server.
+       *
+       * `voice.local_status` (MCP: `voice_local_status`): toolset `ui`, read.
+       */
+      local_status(args?: VoiceLocalStatusArgs): Promise<VoiceLocalStatusOutput>;
+      /**
+       * Read the voice dictation settings: engine (local Whisper, OpenAI, Groq, ElevenLabs, Deepgram, custom), hold/tap mode, hotkey, auto-submit, language, page hint, local model. API keys are never returned (only whether one is set).
+       *
+       * `voice.settings_get` (MCP: `voice_settings_get`): toolset `ui`, read.
+       */
+      settings_get(args?: VoiceSettingsGetArgs): Promise<VoiceSettingsGetOutput>;
+      /**
+       * Change voice dictation settings (fields left out stay; "" clears a key, model or address). Keys are stored as plain JSON in data/config/voice.json; OpenAI and Groq fall back to the key of the AI provider of the same name. Returns the same as voice.settings_get.
+       *
+       * `voice.settings_set` (MCP: `voice_settings_set`): toolset `ui`, secret.
+       */
+      settings_set(args?: VoiceSettingsSetArgs): Promise<VoiceSettingsSetOutput>;
+      /**
+       * Add audio to a dictation stream (16 kHz mono 16-bit PCM, base64). Returns the interim text so far.
+       *
+       * `voice.stream_push` (MCP: `voice_stream_push`): toolset `ui`, act.
+       */
+      stream_push(args: VoiceStreamPushArgs): Promise<VoiceStreamPushOutput>;
+      /**
+       * Start a dictation stream: push 16 kHz mono 16-bit PCM with voice.stream_push (returns the text so far) and finish with voice.stream_stop (the final text). Deepgram streams live; Local Whisper re-transcribes the growing audio every ~1.5 s; other engines transcribe at stop.
+       *
+       * `voice.stream_start` (MCP: `voice_stream_start`): toolset `ui`, act.
+       */
+      stream_start(args?: VoiceStreamStartArgs): Promise<VoiceStreamStartOutput>;
+      /**
+       * Finish a dictation stream and return the final text (cancel: true discards it).
+       *
+       * `voice.stream_stop` (MCP: `voice_stream_stop`): toolset `ui`, act.
+       */
+      stream_stop(args: VoiceStreamStopArgs): Promise<VoiceStreamStopOutput>;
+      /**
+       * Turn a recording into text with the voice engine (local Whisper by default; cloud engines send the audio to that provider). Returns the text, the language and the audio length.
+       *
+       * `voice.transcribe` (MCP: `voice_transcribe`): toolset `ui`, act.
+       */
+      transcribe(args: VoiceTranscribeArgs): Promise<VoiceTranscribeOutput>;
     };
     /** Commands `zoom.*`. */
     zoom: {
