@@ -7,7 +7,6 @@ import { createRecordRunsMocks } from './mock-record-runs';
 import { createScriptMocks } from './mock-scripts';
 import { createSettingsMocks } from './mock-settings';
 import { createE1Mocks } from './mock-e1';
-import { createModelMocks } from './mock-ai-models';
 import type {
   Agent,
   ApiEvents,
@@ -411,7 +410,6 @@ export class MockApi implements BrowserApi {
     },
     'hints.show': () => ({ count: 0 }), // the mock has no page to label
     'agents.list': () => ({ agents: this.#agents }),
-    ...createModelMocks(async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
     ...createDataMocks({
       empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1',
       emit: (event, payload) => this.#emit(event, payload),

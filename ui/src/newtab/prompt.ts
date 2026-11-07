@@ -24,9 +24,14 @@ export function rememberModel(choices: ModelChoices, provider: string, model: st
   return next;
 }
 
-/** Name of the default model for the "Default (…)" option, if the core names one. */
+/** The models to list: the core's own `default` entry is the picker's "Default" option already. */
+export function listedModels(offered: AiModels | null): AiModels['models'] {
+  return (offered?.models ?? []).filter((m) => m.id !== 'default');
+}
+
+/** Name of the default model for the "Default (…)" option, if the core names a real one. */
 export function defaultModelName(offered: AiModels | null): string | null {
-  if (!offered?.default) return null;
+  if (!offered?.default || offered.default === 'default') return null;
   return offered.models.find((m) => m.id === offered.default)?.name ?? offered.default;
 }
 

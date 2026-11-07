@@ -26,8 +26,7 @@ import type {
   TermInfo,
 } from './types';
 
-// ai.models: mock-ai-models.ts.
-type PanelMethod = Exclude<Extract<Method, `ai.${string}` | `term.${string}` | `net.${string}`>, 'ai.models'>;
+type PanelMethod = Extract<Method, `ai.${string}` | `term.${string}` | `net.${string}`>;
 export type PanelHandlers = { [M in PanelMethod]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
 type Emit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
 

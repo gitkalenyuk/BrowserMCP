@@ -7,7 +7,7 @@
   import { openAiPanel } from '../../lib/native';
   import { PROVIDERS, TASK_AGENTS } from '../../lib/providers';
   import { load, save } from '../../lib/storage';
-  import { chatTitle, defaultModelName, pickModel, rememberModel, type ModelChoices } from '../prompt';
+  import { chatTitle, defaultModelName, listedModels, pickModel, rememberModel, type ModelChoices } from '../prompt';
 
   let { api }: { api: BrowserApi } = $props();
 
@@ -143,7 +143,7 @@
             <span class="sr-only">{t('newtab.prompt.model')}</span>
             <select value={model} onchange={(e) => chooseModel(e.currentTarget.value)}>
               <option value="">{defaultName ? t('newtab.prompt.modelDefault', { name: defaultName }) : t('newtab.prompt.modelDefaultPlain')}</option>
-              {#each offered.models as m (m.id)}
+              {#each listedModels(offered) as m (m.id)}
                 <option value={m.id} title={m.hint}>{m.name}</option>
               {/each}
             </select>

@@ -231,8 +231,6 @@ export interface RpcMethods {
   /** Free check: API providers list their models, CLI providers run --version. */
   'ai.provider_test': { params: { id: string }; result: AiProviderTest };
   'ai.session_start': { params: AiSessionStart; result: AiSession };
-  /** Models a provider offers for a new chat (CLI aliases, or the API's model list). */
-  'ai.models': { params: { provider: string }; result: AiModels };
   'ai.session_send': { params: { id: string; text: string }; result: AiSession };
   'ai.session_stop': { params: { id: string }; result: AiSession };
   /** Default: the open chats; `archived: true`: the closed (archived) ones, newest first. */

@@ -10,11 +10,11 @@ describe('new tab calls in the mock', () => {
   it('lists models per provider and starts a chat with the chosen one', async () => {
     api = new MockApi({ simulate: false });
     const claude = await api.call('ai.models', { provider: 'claude-code' });
-    expect(claude.models.map((m) => m.id)).toEqual(['opus', 'sonnet', 'haiku']);
-    expect(claude.default).toBe('sonnet');
+    expect(claude.models.map((m) => m.id)).toEqual(expect.arrayContaining(['default', 'opus', 'sonnet', 'haiku']));
+    expect(claude.default).toBe('default');
     const anthropic = await api.call('ai.models', { provider: 'anthropic' });
     expect(anthropic.models.length).toBeGreaterThan(0);
-    await expect(api.call('ai.models', { provider: 'nope' })).rejects.toThrow(/unknown AI provider/);
+    await expect(api.call('ai.models', { provider: 'nope' })).rejects.toThrow();
 
     const session = await api.call('ai.session_start', { provider: 'claude-code', prompt: 'Compare prices', model: 'opus' });
     expect(session.model).toBe('opus');

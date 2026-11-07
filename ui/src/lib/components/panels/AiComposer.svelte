@@ -9,6 +9,8 @@
   import { t, tp } from '../../i18n/index.svelte';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
+  import VoiceInput from '../voice/VoiceInput.svelte';
+  import { openSettings } from '../../settings/open';
 
   let {
     placeholder,
@@ -33,7 +35,28 @@
     oneditlast?: () => boolean;
   } = $props();
 
-  const ai = useChrome().ai;
+  const chrome = useChrome();
+  const ai = chrome.ai;
+
+  /** A hint for speech recognition: the page the user looks at (its title and site). */
+  function pageContext(): string | undefined {
+    const tab = chrome.active;
+    if (!tab || !/^https?:/.test(tab.url)) return undefined;
+    let host = '';
+    try {
+      host = new URL(tab.url).hostname;
+    } catch {
+      /* not a URL: the title alone */
+    }
+    return [tab.title, host].filter(Boolean).join(' — ') || undefined;
+  }
+
+  /** Auto-submit after dictation: the draft is updated by then (the controller fires `input`). */
+  function voiceSubmit() {
+    void tick().then(() => {
+      if (ai.draft.trim()) onsend();
+    });
+  }
 
   let area = $state<HTMLTextAreaElement>();
   let menuOpen = $state(false);
@@ -120,11 +143,8 @@
   ></textarea>
   <div class="tools">
     <div class="composer-tools" role="group" aria-label={t('aiChat.composerTools')}>
-      <!--
-        Voice button goes here (bottom-left of the composer): the VOICE stream mounts its
-        microphone button in this slot. It writes what it hears into `chrome.ai.draft`
-        (the composer grows and Enter sends it like typed text).
-      -->
+      <!-- Voice dictation: hold Space in the empty box, or the mic button (Settings → Voice). -->
+      <VoiceInput api={chrome.api} target={area} onsubmit={voiceSubmit} context={pageContext} onsetup={() => openSettings(chrome, 'voice')} size={28} />
     </div>
     {#if queued > 0}
       <span class="queued" title={t('aiChat.queuedTitle')}><Icon name="clock" size={11} />{tp('aiChat.queuedCount', queued)}</span>
