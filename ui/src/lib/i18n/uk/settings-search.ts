@@ -1,6 +1,6 @@
 // Налаштування → Пошук і підказка «Шукати (…)» в адресному рядку. Правила: ../index.svelte.ts.
 export default {
-  'settings.search.nav': 'Пошук',
+  'settings.nav.search': 'Пошук',
   'settings.search.title': 'Пошук',
   'settings.search.intro':
     'Пошукова система, яку використовує адресний рядок, коли введене не схоже на адресу. Зберігається в data/config/search.json; агенти отримують таку саму адресу результатів через search_url.',

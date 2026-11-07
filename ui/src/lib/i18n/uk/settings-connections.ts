@@ -1,6 +1,6 @@
 // Налаштування → Підключення та API (ui/src/settings/ConnectionsSection.svelte). Правила: ../index.svelte.ts.
 export default {
-  'settings.connections.nav': 'Підключення та API',
+  'settings.nav.connections': 'Підключення та API',
   'settings.connections.title': 'Підключення та API',
   'settings.connections.intro':
     'Як до цього браузера під’єднуються ШІ-агенти (Claude Code, Codex, будь-який MCP-клієнт), ваші скрипти й інструменти на кшталт Playwright. Усе працює лише на цьому комп’ютері.',

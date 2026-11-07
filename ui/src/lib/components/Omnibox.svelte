@@ -1,7 +1,6 @@
 <script lang="ts">
   import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
-  import { t } from '../i18n/index.svelte';
   import { intentWithEngines } from '../settings/e1-search';
   import { displayUrl, isNewTab } from '../urls';
   import BookmarkStar from './BookmarkStar.svelte';

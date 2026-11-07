@@ -1,6 +1,6 @@
 // Settings → Downloads. Conventions: ../index.svelte.ts.
 export default {
-  'settings.downloads.nav': 'Downloads',
+  'settings.nav.downloads': 'Downloads',
   'settings.downloads.title': 'Downloads',
   'settings.downloads.intro': 'Where downloaded files go and whether the browser asks first. Saved in data/config/downloads.json.',
   'settings.downloads.loadError': 'Could not read the download settings: {error}',

@@ -1,7 +1,7 @@
 // Settings → Proxies (ui/src/settings/ProxiesSection.svelte). Conventions: ../index.svelte.ts.
 // Plurals carry every form Ukrainian needs (one/few/many/other), so both files have the same keys.
 export default {
-  'settings.proxies.nav': 'Proxies',
+  'settings.nav.proxies': 'Proxies',
   'settings.proxies.title': 'Proxies',
   'settings.proxies.intro':
     'Proxies are kept in pools (data/config/proxies.json). A profile uses one proxy of a pool or its own proxy URL; mass runs lease a different proxy for every row. Passwords are stored as plain text in the data folder and shown masked here.',

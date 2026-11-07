@@ -1,0 +1,21 @@
+// Рамка сторінки налаштувань: навігація, заголовок, стан з'єднання. Правила: ../index.svelte.ts.
+export default {
+  'settings.title': 'Налаштування',
+  'settings.docTitle': '{section} — Налаштування',
+  'settings.nav.label': 'Розділи налаштувань',
+  'settings.nav.general': 'Загальні',
+  'settings.nav.ai': 'ШІ',
+  'settings.nav.notifications': 'Сповіщення',
+  'settings.nav.performance': 'Продуктивність',
+  'settings.nav.privacy': 'Приватність і блокування',
+  'settings.nav.hints': 'Підказки посилань',
+  'settings.nav.plugins': 'Плагіни та юзерскрипти',
+  'settings.nav.keyboard': 'Клавіатура',
+  'settings.nav.guide': 'Посібник',
+  'settings.conn.connecting': 'Підключаємося до браузера…',
+  'settings.conn.closed': 'Немає зв’язку з браузером',
+  'settings.conn.mock': 'Демо-дані (браузер не підключено)',
+  'settings.help': 'Довідка',
+  'settings.helpTitle': 'Відкрити посібник: {chapter}',
+  'settings.toast.dismiss': 'Закрити',
+};

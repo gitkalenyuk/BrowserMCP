@@ -1,7 +1,7 @@
 // Sentences with markup inside (a path in <code>, a JSON shape in a mono span): one dictionary
 // string with `{slot}` placeholders instead of fragments around the markup, so each language
 // keeps its own word order. The component renders the text parts and puts its markup at the
-// slots: {#each richParts(t('key')) as p}{#if p.slot === 'dir'}<code>…</code>{:else}{p.text}{/if}{/each}
+// slots: {#each richParts(t(someKey)) as p}{#if p.slot === 'dir'}<code>…</code>{:else}{p.text}{/if}{/each}
 
 export interface RichPart {
   /** Plain text (empty for a slot). */

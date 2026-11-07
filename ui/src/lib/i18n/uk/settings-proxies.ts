@@ -1,6 +1,6 @@
 // Налаштування → Проксі (ui/src/settings/ProxiesSection.svelte). Правила: ../index.svelte.ts.
 export default {
-  'settings.proxies.nav': 'Проксі',
+  'settings.nav.proxies': 'Проксі',
   'settings.proxies.title': 'Проксі',
   'settings.proxies.intro':
     'Проксі зберігаються в пулах (data/config/proxies.json). Профіль використовує один проксі з пулу або власну адресу проксі; масові запуски беруть для кожного рядка окремий проксі. Паролі зберігаються відкритим текстом у папці даних, а тут показуються прихованими.',

@@ -1,6 +1,6 @@
 // Налаштування → Про програму. Правила: ../index.svelte.ts.
 export default {
-  'settings.about.nav': 'Про програму',
+  'settings.nav.about': 'Про програму',
   'settings.about.title': 'Про BrowserMCP',
   'settings.about.intro': 'Версії, де браузер зберігає свої файли, як підключаються ШІ-агенти та скрипти, і ліцензії.',
   'settings.about.loadError': 'Не вдалося отримати відомості про браузер: {error}',

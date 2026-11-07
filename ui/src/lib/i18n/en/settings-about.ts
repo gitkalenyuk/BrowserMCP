@@ -1,6 +1,6 @@
 // Settings → About. Conventions: ../index.svelte.ts.
 export default {
-  'settings.about.nav': 'About',
+  'settings.nav.about': 'About',
   'settings.about.title': 'About BrowserMCP',
   'settings.about.intro': 'Versions, where the browser keeps its files, how AI agents and scripts connect, and the licenses.',
   'settings.about.loadError': 'Could not read the browser information: {error}',

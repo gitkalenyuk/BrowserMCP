@@ -1,7 +1,7 @@
 // Settings → Profiles & identity (ui/src/settings/ProfilesSection.svelte). Conventions: ../index.svelte.ts.
 // Plurals carry every form Ukrainian needs (one/few/many/other), so both files have the same keys.
 export default {
-  'settings.profiles.nav': 'Profiles & identity',
+  'settings.nav.profiles': 'Profiles & identity',
   'settings.profiles.title': 'Profiles & identity',
   'settings.profiles.intro':
     'A profile is a separate browser: its own cookies, logins, cache, proxy, language and fingerprint. In the tab strip profiles are the workspaces. Tabs open in a profile with the workspace switcher, or by an agent with tabs_open {profile}.',

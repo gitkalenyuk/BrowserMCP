@@ -1,6 +1,6 @@
 // Налаштування → Запис і скрипти (ui/src/settings/RecordingSection.svelte). Правила: ../index.svelte.ts.
 export default {
-  'settings.recording.nav': 'Запис і скрипти',
+  'settings.nav.recording': 'Запис і скрипти',
   'settings.recording.title': 'Запис і скрипти',
   'settings.recording.intro':
     'Типові значення для відео вкладок, скриптів і масових запусків. Якщо ШІ-агент чи скрипт задає власні значення, діють вони; ці — коли виклик їх не вказує.',

@@ -1,6 +1,6 @@
 // Settings → Startup & tabs, and the toolbar's Home button. Conventions: ../index.svelte.ts.
 export default {
-  'settings.startup.nav': 'Startup & tabs',
+  'settings.nav.startup': 'Startup & tabs',
   'settings.startup.title': 'Startup & tabs',
   'settings.startup.intro':
     'What opens when the browser starts, the Home button, what a new tab shows and how tabs behave. Saved in data/config/startup.json; agents can change it too (startup_config).',

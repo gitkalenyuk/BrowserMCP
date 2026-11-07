@@ -1,6 +1,6 @@
 // Settings → Data & storage. Conventions: ../index.svelte.ts.
 export default {
-  'settings.data.nav': 'Data & storage',
+  'settings.nav.data': 'Data & storage',
   'settings.data.title': 'Data & storage',
   'settings.data.intro':
     'Clear what the browser keeps, see how much space it uses and bring your data over from Chrome. Everything lives in the portable data folder next to browsermcp.exe.',

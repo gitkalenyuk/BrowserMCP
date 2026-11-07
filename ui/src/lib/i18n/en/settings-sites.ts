@@ -1,6 +1,6 @@
 // Settings → Site settings (permissions, zoom, pop-ups). Conventions: ../index.svelte.ts.
 export default {
-  'settings.sites.nav': 'Site settings',
+  'settings.nav.sites': 'Site settings',
   'settings.sites.title': 'Site settings',
   'settings.sites.intro':
     'What each site may use (camera, microphone, location, notifications…) and the page zoom it remembers. Ad blocking and per-site policies are under Privacy & blocking.',

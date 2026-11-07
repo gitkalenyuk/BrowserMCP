@@ -1,6 +1,6 @@
 // Налаштування → Профілі та ідентичність (ui/src/settings/ProfilesSection.svelte). Правила: ../index.svelte.ts.
 export default {
-  'settings.profiles.nav': 'Профілі та ідентичність',
+  'settings.nav.profiles': 'Профілі та ідентичність',
   'settings.profiles.title': 'Профілі та ідентичність',
   'settings.profiles.intro':
     'Профіль — це окремий браузер: власні кукі, входи в акаунти, кеш, проксі, мова й відбиток. На панелі вкладок профілі — це робочі простори. Вкладку в профілі відкривають через перемикач просторів, а агент — командою tabs_open {profile}.',

@@ -1,6 +1,6 @@
 // Налаштування → Дані та сховище. Правила: ../index.svelte.ts.
 export default {
-  'settings.data.nav': 'Дані та сховище',
+  'settings.nav.data': 'Дані та сховище',
   'settings.data.title': 'Дані та сховище',
   'settings.data.intro':
     'Очищуйте те, що зберігає браузер, дивіться, скільки місця він займає, і переносьте дані з Chrome. Усе зберігається в портативній папці даних поруч із browsermcp.exe.',

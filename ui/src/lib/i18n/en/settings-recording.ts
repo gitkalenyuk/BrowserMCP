@@ -1,6 +1,6 @@
 // Settings → Recording & scripts (ui/src/settings/RecordingSection.svelte). Conventions: ../index.svelte.ts.
 export default {
-  'settings.recording.nav': 'Recording & scripts',
+  'settings.nav.recording': 'Recording & scripts',
   'settings.recording.title': 'Recording & scripts',
   'settings.recording.intro':
     'Defaults for tab videos and for scripts and mass runs. An AI agent or a script that names its own values still gets them; these apply when a call leaves them out.',

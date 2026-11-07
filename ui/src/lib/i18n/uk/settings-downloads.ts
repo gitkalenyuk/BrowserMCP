@@ -1,6 +1,6 @@
 // Налаштування → Завантаження. Правила: ../index.svelte.ts.
 export default {
-  'settings.downloads.nav': 'Завантаження',
+  'settings.nav.downloads': 'Завантаження',
   'settings.downloads.title': 'Завантаження',
   'settings.downloads.intro': 'Куди зберігаються завантажені файли і чи питає браузер перед збереженням. Зберігається в data/config/downloads.json.',
   'settings.downloads.loadError': 'Не вдалося прочитати налаштування завантажень: {error}',

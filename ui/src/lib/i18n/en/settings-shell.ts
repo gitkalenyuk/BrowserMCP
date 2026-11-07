@@ -1,0 +1,21 @@
+// The settings page frame: navigation, title, connection state. Conventions: ../index.svelte.ts.
+export default {
+  'settings.title': 'Settings',
+  'settings.docTitle': '{section} — Settings',
+  'settings.nav.label': 'Settings sections',
+  'settings.nav.general': 'General',
+  'settings.nav.ai': 'AI',
+  'settings.nav.notifications': 'Notifications',
+  'settings.nav.performance': 'Performance',
+  'settings.nav.privacy': 'Privacy & blocking',
+  'settings.nav.hints': 'Link hints',
+  'settings.nav.plugins': 'Plugins & userscripts',
+  'settings.nav.keyboard': 'Keyboard',
+  'settings.nav.guide': 'Guide',
+  'settings.conn.connecting': 'Connecting to the browser…',
+  'settings.conn.closed': 'Disconnected from the browser',
+  'settings.conn.mock': 'Demo data (no browser connected)',
+  'settings.help': 'Help',
+  'settings.helpTitle': 'Open the guide: {chapter}',
+  'settings.toast.dismiss': 'Dismiss',
+};

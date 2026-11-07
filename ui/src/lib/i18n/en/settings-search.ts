@@ -1,6 +1,6 @@
 // Settings → Search, and the address bar's "Search <engine>" hint. Conventions: ../index.svelte.ts.
 export default {
-  'settings.search.nav': 'Search',
+  'settings.nav.search': 'Search',
   'settings.search.title': 'Search',
   'settings.search.intro':
     'The search engine the address bar uses when what you type is not an address. Saved in data/config/search.json; agents get the same results URL with search_url.',

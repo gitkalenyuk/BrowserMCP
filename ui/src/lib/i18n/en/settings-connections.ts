@@ -1,6 +1,6 @@
 // Settings → Connections & API (ui/src/settings/ConnectionsSection.svelte). Conventions: ../index.svelte.ts.
 export default {
-  'settings.connections.nav': 'Connections & API',
+  'settings.nav.connections': 'Connections & API',
   'settings.connections.title': 'Connections & API',
   'settings.connections.intro':
     'How AI agents (Claude Code, Codex, any MCP client), your scripts and tools like Playwright reach this browser. Everything runs on this computer only.',
