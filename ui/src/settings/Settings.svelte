@@ -2,11 +2,22 @@
   import type { BrowserApi } from '../lib/api';
   import type { ConnectionStatus } from '../lib/api/types';
   import Icon, { type IconName } from '../lib/components/Icon.svelte';
+  import { applyLang, locale, t } from '../lib/i18n/index.svelte';
   import { applyTheme, settings } from '../lib/settings.svelte';
-  import { isSettingsSection, onSettingsRequest, takeSettingsRequest, type SettingsSection } from '../lib/settings/open';
+  import {
+    isSettingsSection,
+    onSettingsRequest,
+    parseGuideHash,
+    peekGuideAnchor,
+    takeSettingsRequest,
+    type SettingsSection,
+  } from '../lib/settings/open';
   import { load, save } from '../lib/storage';
   import AiSection from './AiSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
+  import { helpFor, parseAnchor, type GuideAnchor } from './guide/anchors';
+  import { GUIDE } from './guide/content';
+  import Guide from './guide/Guide.svelte';
   import HintsSection from './HintsSection.svelte';
   import KeyboardSection from './KeyboardSection.svelte';
   import NotificationsSection from './NotificationsSection.svelte';
@@ -16,32 +27,49 @@
 
   let { api }: { api: BrowserApi } = $props();
 
-  const SECTIONS: { id: SettingsSection; label: string; icon: IconName }[] = [
-    { id: 'general', label: 'General', icon: 'settings' },
-    { id: 'ai', label: 'AI', icon: 'sparkles' },
-    { id: 'notifications', label: 'Notifications', icon: 'alert' },
-    { id: 'performance', label: 'Performance', icon: 'runs' },
-    { id: 'privacy', label: 'Privacy & blocking', icon: 'lock' },
-    { id: 'hints', label: 'Link hints', icon: 'hand' },
-    { id: 'plugins', label: 'Plugins & userscripts', icon: 'layers' },
-    { id: 'keyboard', label: 'Keyboard', icon: 'command' },
+  // Labels are dictionary keys (settings-shell.ts): t() must run in markup / $derived.
+  const SECTIONS: { id: SettingsSection; icon: IconName }[] = [
+    { id: 'general', icon: 'settings' },
+    { id: 'ai', icon: 'sparkles' },
+    { id: 'notifications', icon: 'alert' },
+    { id: 'performance', icon: 'runs' },
+    { id: 'privacy', icon: 'lock' },
+    { id: 'hints', icon: 'hand' },
+    { id: 'plugins', icon: 'layers' },
+    { id: 'keyboard', icon: 'command' },
   ];
 
-  // The chrome asks for a section through localStorage (the URL has no query); otherwise the
-  // page opens where the user left it.
+  // Where the page opens: a `#guide/<chapter>[/<section>]` anchor, else a request from the
+  // chrome (localStorage: the URL has no query), else where the user left it.
+  const hashAnchor = parseAnchor(parseGuideHash(location.hash));
+  const requestAnchor = parseAnchor(peekGuideAnchor());
+  const requested = takeSettingsRequest();
   const stored = load<string>('settings.section', 'general');
-  let section = $state<SettingsSection>(takeSettingsRequest() ?? (isSettingsSection(stored) ? stored : 'general'));
+  let section = $state<SettingsSection>(hashAnchor ? 'guide' : (requested ?? (isSettingsSection(stored) ? stored : 'general')));
+  /** Where the guide should go next (a new object per jump). */
+  let guideTarget = $state<{ anchor: GuideAnchor | null } | null>(
+    hashAnchor || requestAnchor ? { anchor: hashAnchor ?? requestAnchor } : null,
+  );
   let status = $state<ConnectionStatus>('connecting');
   let toast = $state<{ text: string; error: boolean } | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let main = $state<HTMLElement>();
 
+  clearHash();
+
+  const help = $derived(helpFor(section));
+  const helpTitle = $derived(help ? (GUIDE[locale()].find((c) => c.id === help.chapter)?.title ?? '') : '');
+  const sectionLabel = $derived(t(`settings.nav.${section}`));
+
   $effect(() => applyTheme(document.documentElement, settings.value));
+  $effect(() => applyLang(document.documentElement));
   $effect(() => api.onStatus((s) => (status = s)));
   $effect(() =>
     onSettingsRequest(() => {
+      const anchor = parseAnchor(peekGuideAnchor());
       const req = takeSettingsRequest();
       if (req) section = req;
+      if (req === 'guide') guideTarget = { anchor };
     }),
   );
   $effect(() => {
@@ -49,9 +77,33 @@
     main?.scrollTo({ top: 0 });
   });
   $effect(() => {
-    const label = SECTIONS.find((s) => s.id === section)?.label ?? 'Settings';
-    document.title = `${label} — Settings`;
+    document.title = t('settings.docTitle', { section: sectionLabel });
   });
+
+  /**
+   * The browser lets a tab load exactly bmcp://ui/settings.html (crates/cef scheme.rs: no query,
+   * no fragment), so a reload or a restored session with `#guide/…` in the URL would be
+   * refused. The anchor is read once, then removed from the address.
+   */
+  function clearHash() {
+    if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
+  }
+
+  function onHashChange() {
+    const anchor = parseAnchor(parseGuideHash(location.hash));
+    clearHash();
+    if (!anchor) return;
+    section = 'guide';
+    guideTarget = { anchor };
+  }
+
+  function openHelp() {
+    // Read `help` before switching: it is derived from `section` (and null for the guide).
+    const anchor = help;
+    if (!anchor) return;
+    guideTarget = { anchor };
+    section = 'guide';
+  }
 
   function notify(text: string, error = false) {
     toast = { text, error };
@@ -61,48 +113,67 @@
   const fail = (err: unknown) => notify(err instanceof Error ? err.message : String(err), true);
 </script>
 
+<svelte:window onhashchange={onHashChange} />
+
 <div class="lib">
-  <nav aria-label="Settings">
-    <h1>Settings</h1>
+  <nav aria-label={t('settings.nav.label')}>
+    <h1>{t('settings.title')}</h1>
     {#each SECTIONS as s (s.id)}
       <button class="nav-item" aria-current={section === s.id ? 'page' : undefined} onclick={() => (section = s.id)}>
         <Icon name={s.icon} size={16} />
-        <span>{s.label}</span>
+        <span>{t(`settings.nav.${s.id}`)}</span>
       </button>
     {/each}
+    <hr />
+    <button class="nav-item" aria-current={section === 'guide' ? 'page' : undefined} onclick={() => (section = 'guide')}>
+      <Icon name="info" size={16} />
+      <span>{t('settings.nav.guide')}</span>
+    </button>
     {#if api.kind === 'ws' && status !== 'open'}
-      <p class="conn" role="status">{status === 'connecting' ? 'Connecting to the browser…' : 'Disconnected from the browser'}</p>
+      <p class="conn" role="status">{status === 'connecting' ? t('settings.conn.connecting') : t('settings.conn.closed')}</p>
     {:else if api.kind === 'mock'}
-      <p class="conn mock">Demo data (no browser connected)</p>
+      <p class="conn mock">{t('settings.conn.mock')}</p>
     {/if}
   </nav>
 
   <main bind:this={main}>
-    {#key section}
-      {#if section === 'general'}
-        <GeneralSection />
-      {:else if section === 'ai'}
-        <AiSection {api} />
-      {:else if section === 'notifications'}
-        <NotificationsSection {api} {notify} {fail} />
-      {:else if section === 'performance'}
-        <PerformanceSection {api} {notify} {fail} />
-      {:else if section === 'privacy'}
-        <PrivacySection {api} {notify} {fail} />
-      {:else if section === 'hints'}
-        <HintsSection {api} {notify} {fail} />
-      {:else if section === 'plugins'}
-        <PluginsSection {api} {notify} {fail} />
-      {:else}
-        <KeyboardSection {notify} />
+    <!-- Shared header area of every section: the link to its chapter of the guide. -->
+    <div class="section-wrap">
+      {#if help}
+        <button class="help-link" onclick={openHelp} title={t('settings.helpTitle', { chapter: helpTitle })}>
+          <span class="q" aria-hidden="true">?</span>
+          <span>{t('settings.help')}</span>
+          <span class="sr-only">: {helpTitle}</span>
+        </button>
       {/if}
-    {/key}
+      {#key section}
+        {#if section === 'general'}
+          <GeneralSection />
+        {:else if section === 'ai'}
+          <AiSection {api} />
+        {:else if section === 'notifications'}
+          <NotificationsSection {api} {notify} {fail} />
+        {:else if section === 'performance'}
+          <PerformanceSection {api} {notify} {fail} />
+        {:else if section === 'privacy'}
+          <PrivacySection {api} {notify} {fail} />
+        {:else if section === 'hints'}
+          <HintsSection {api} {notify} {fail} />
+        {:else if section === 'plugins'}
+          <PluginsSection {api} {notify} {fail} />
+        {:else if section === 'guide'}
+          <Guide target={guideTarget} onopen={(id) => (section = id)} onfail={(m) => notify(m, true)} />
+        {:else}
+          <KeyboardSection {notify} />
+        {/if}
+      {/key}
+    </div>
   </main>
 
   {#if toast}
     <div class="toast" class:error={toast.error} role={toast.error ? 'alert' : 'status'}>
       <span>{toast.text}</span>
-      <button class="icon-btn" aria-label="Dismiss" onclick={() => (toast = null)}><Icon name="x" size={14} /></button>
+      <button class="icon-btn" aria-label={t('settings.toast.dismiss')} onclick={() => (toast = null)}><Icon name="x" size={14} /></button>
     </div>
   {/if}
 </div>
@@ -163,6 +234,50 @@
     overflow: auto;
     background: var(--toolbar);
   }
+  hr {
+    width: calc(100% - 20px);
+    margin: 8px 10px;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+  /* The sections are 940 px wide pages; the Help link sits in their top right corner. */
+  .section-wrap {
+    position: relative;
+  }
+  .help-link {
+    position: absolute;
+    z-index: 2;
+    top: 26px;
+    left: min(calc(100% - 32px), 908px);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px 0 4px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: var(--surface);
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+    font-weight: 550;
+    white-space: nowrap;
+    transform: translateX(-100%);
+  }
+  .help-link:hover {
+    border-color: var(--accent-line);
+    color: var(--accent);
+  }
+  .help-link .q {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+  }
   .toast {
     position: fixed;
     z-index: 50;
@@ -205,6 +320,19 @@
     }
     .nav-item span {
       display: none;
+    }
+    hr {
+      display: none;
+    }
+    /* No room beside the section title: the link goes above it. */
+    .help-link {
+      position: static;
+      margin: 12px 16px -6px auto;
+      transform: none;
+    }
+    .section-wrap {
+      display: flex;
+      flex-direction: column;
     }
   }
 </style>

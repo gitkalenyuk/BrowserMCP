@@ -14,6 +14,8 @@ export const SETTINGS_SECTIONS = [
   'hints',
   'plugins',
   'keyboard',
+  // The user guide (ui/src/settings/guide); deep links: `#guide/<chapter>[/<section>]`.
+  'guide',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
@@ -21,7 +23,8 @@ const REQUEST_KEY = 'settings.request';
 const REQUEST_TTL_MS = 15_000;
 
 export function isSettingsUrl(url: string): boolean {
-  return url === SETTINGS_URL;
+  // An in-page `#guide/…` anchor may show up in the URL until the page clears it.
+  return url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`);
 }
 
 export function isSettingsSection(s: unknown): s is SettingsSection {
@@ -44,6 +47,23 @@ export function takeSettingsRequest(now = Date.now()): SettingsSection | null {
   return section;
 }
 
+/**
+ * `chapter` or `chapter/section` from `#guide/<chapter>[/<section>]` (ids: lower-case letters,
+ * digits and dashes); null for any other hash.
+ */
+export function parseGuideHash(hash: string): string | null {
+  const m = /^#?guide\/([a-z0-9-]{1,40}(?:\/[a-z0-9-]{1,40})?)$/.exec(hash);
+  return m ? m[1] : null;
+}
+
+/** The guide anchor of a pending request (read it before `takeSettingsRequest` clears it). */
+export function peekGuideAnchor(now = Date.now()): string | null {
+  const raw = load<unknown>(REQUEST_KEY, null);
+  if (parseSettingsRequest(raw, now) !== 'guide') return null;
+  const anchor = (raw as { guide?: unknown }).guide;
+  return typeof anchor === 'string' ? parseGuideHash(`guide/${anchor}`) : null;
+}
+
 export function onSettingsRequest(cb: () => void): () => void {
   return watch(REQUEST_KEY, cb);
 }
@@ -61,4 +81,10 @@ export function openSettings(chrome: SettingsOpener, section?: SettingsSection, 
   const existing = chrome.tabs.tabs.find((t) => isSettingsUrl(t.url));
   if (existing) chrome.activate(existing.id);
   else chrome.newTab(SETTINGS_URL);
+}
+
+/** Show the guide at `anchor` (`chapter` or `chapter/section`) on the settings page. */
+export function openGuide(chrome: SettingsOpener, anchor: string, now = Date.now()): void {
+  save(REQUEST_KEY, { section: 'guide', guide: anchor, at: now });
+  openSettings(chrome, undefined, now);
 }
