@@ -2,6 +2,8 @@
   import { t } from '../../lib/i18n/index.svelte';
   import type { BrowserApi } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
+  import VoiceInput from '../../lib/components/voice/VoiceInput.svelte';
+  import { openSettings } from '../../lib/settings/open';
   import type { AiProvider } from '../../lib/api';
   import { PROVIDERS, TASK_AGENTS } from '../../lib/providers';
   import { load, save } from '../../lib/storage';
@@ -21,7 +23,7 @@
   let text = $state('');
   let sending = $state(false);
   let status = $state<{ ok: boolean; text: string } | null>(null);
-  let field: HTMLTextAreaElement;
+  let field = $state<HTMLTextAreaElement>();
   const name = $derived(AGENTS.find((p) => p.id === provider)?.name ?? 'AI');
 
   $effect(() => {
@@ -54,8 +56,14 @@
   }
 
   function autosize() {
+    if (!field) return;
     field.style.height = 'auto';
     field.style.height = `${Math.min(field.scrollHeight, 220)}px`;
+  }
+
+  /** Voice not set up yet: Settings → Voice opens in this tab (the new tab page has no chrome). */
+  function openVoiceSettings() {
+    openSettings({ tabs: { tabs: [] }, activate: () => {}, newTab: (url) => location.assign(url) }, 'voice');
   }
 </script>
 
@@ -68,6 +76,8 @@
       void submit();
     }}
   >
+    <!-- Voice dictation, bottom left of the box: hold Space in the empty box, or the mic button. -->
+    <VoiceInput {api} target={field} onsubmit={() => void submit()} onsetup={openVoiceSettings} />
     <textarea
       bind:this={field}
       bind:value={text}
@@ -107,7 +117,7 @@
           class="ex"
           onclick={() => {
             text = ex;
-            field.focus();
+            field?.focus();
             requestAnimationFrame(autosize);
           }}>{ex}</button
         >
@@ -141,6 +151,11 @@
     background: var(--surface);
     box-shadow: 0 6px 20px -10px rgb(14 17 22 / 0.3);
     transition: border-color 140ms, box-shadow 140ms;
+  }
+  /* With the mic button at the bottom left, the text starts right after it. */
+  .box:has(:global(.voice)) {
+    padding-left: 8px;
+    gap: 6px;
   }
   .box:focus-within {
     border-color: var(--accent-line);

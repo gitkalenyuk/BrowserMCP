@@ -525,7 +525,11 @@ wrap_permission_handler! {
             let Some(callback) = callback else { return 0 };
             let origin = requesting_origin.map(CefString::to_string).unwrap_or_default();
             let kinds = bmcp_profiles::permissions::kinds_from_media_bits(requested_permissions);
+            // Our own pages (bmcp://ui) get the microphone for voice dictation, in a tab
+            // (new tab page, settings) as in the chrome (AI panel); websites never do here.
+            let ours = crate::scheme::allow_ui_media(&origin, requested_permissions);
             let allow = match (self.kind, browser) {
+                _ if ours => Some(true),
                 (ViewKind::Content, Some(browser)) => {
                     let decided = crate::prompts::decide(browser, &origin, &kinds);
                     if decided.is_none() {

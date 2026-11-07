@@ -620,4 +620,5 @@ export type * from './types-scripts';
 export type * from './types-settings'; // settings page + heal UI (notify, governor, hints, adblock, plugins, run.heal_*)
 export type * from './types-ai-chat'; // AI chat: approvals, closing chats, agent access (merged into RpcMethods / ApiEvents)
 export type * from './types-languages'; // browser.languages_* (Settings → General → Language)
+export type * from './types-voice'; // voice.* (voice dictation, Settings → Voice)
 export type * from './types-e2-settings'; // settings: connections (api.*), identities, proxies, recording/script defaults

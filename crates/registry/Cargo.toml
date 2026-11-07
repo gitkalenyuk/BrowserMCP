@@ -27,3 +27,4 @@ bmcp-hints = { path = "../hints" }
 bmcp-system = { path = "../system" }
 bmcp-languages = { path = "../languages" }
 bmcp-settings = { path = "../settings" }
+bmcp-voice = { path = "../voice" }

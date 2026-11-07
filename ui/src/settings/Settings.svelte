@@ -35,6 +35,8 @@
   import ProfilesSection from './ProfilesSection.svelte';
   import ProxiesSection from './ProxiesSection.svelte';
   import RecordingSection from './RecordingSection.svelte';
+  // Voice dictation: engines, local Whisper downloads, hotkey, test.
+  import VoiceSection from './VoiceSection.svelte';
 
   let { api }: { api: BrowserApi } = $props();
 
@@ -47,6 +49,7 @@
     { id: 'sites', key: 'settings.nav.sites', icon: 'globe' },
     { id: 'data', key: 'settings.nav.data', icon: 'folder' },
     { id: 'ai', key: 'settings.nav.ai', icon: 'sparkles' },
+    { id: 'voice', key: 'settings.nav.voice', icon: 'mic' },
     { id: 'connections', key: 'settings.nav.connections', icon: 'bot' },
     { id: 'notifications', key: 'settings.nav.notifications', icon: 'alert' },
     { id: 'performance', key: 'settings.nav.performance', icon: 'runs' },
@@ -194,6 +197,8 @@
           <RecordingSection {api} {notify} {fail} />
         {:else if section === 'ai'}
           <AiSection {api} />
+        {:else if section === 'voice'}
+          <VoiceSection {api} {notify} {fail} />
         {:else if section === 'notifications'}
           <NotificationsSection {api} {notify} {fail} />
         {:else if section === 'performance'}

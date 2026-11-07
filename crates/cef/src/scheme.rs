@@ -216,12 +216,27 @@ const NETWORK_PERMISSIONS: u32 = (1 << 25) | (1 << 26) | (1 << 27);
 /// pages must not reach the API or other local services, and a real permission UI is a
 /// later Phase 2 item. Returns true to accept.
 pub(crate) fn allow_permission(requesting_origin: &str, requested: u32) -> bool {
-    let ours = requesting_origin.trim_end_matches('/') == UI_ORIGIN
-        || config()
-            .dev_url
-            .as_deref()
-            .is_some_and(|dev| requesting_origin.trim_end_matches('/') == dev);
-    ours && requested & !NETWORK_PERMISSIONS == 0 && requested != 0
+    is_ui_origin(requesting_origin)
+        && requested & !(NETWORK_PERMISSIONS | MIC_STREAM_PERMISSION) == 0
+        && requested != 0
+}
+
+/// `cef_permission_request_types_t` MIC_STREAM: voice dictation in our own pages.
+const MIC_STREAM_PERMISSION: u32 = 1 << 12;
+/// `cef_media_access_permission_types_t` DEVICE_AUDIO_CAPTURE.
+const MEDIA_AUDIO_CAPTURE: u32 = 1;
+
+/// `bmcp://ui`, or the `--ui-dev` server.
+fn is_ui_origin(requesting_origin: &str) -> bool {
+    let origin = requesting_origin.trim_end_matches('/');
+    origin == UI_ORIGIN || config().dev_url.as_deref().is_some_and(|dev| origin == dev)
+}
+
+/// `getUserMedia({audio: true})` from our own pages (voice dictation in the new tab page,
+/// the AI panel, Settings → Voice): the microphone only, granted without asking. Camera and
+/// screen capture still go through the normal rules, and websites always do.
+pub(crate) fn allow_ui_media(requesting_origin: &str, requested: u32) -> bool {
+    is_ui_origin(requesting_origin) && requested == MEDIA_AUDIO_CAPTURE
 }
 
 /// Origin allowed to fetch `bmcp://cmd/` (our pages, or the Vite dev server).
@@ -519,6 +534,24 @@ mod tests {
         // Our pages get nothing else (camera = 4) without a real prompt.
         assert!(!allow_permission("bmcp://ui", loopback | 4));
         assert!(!allow_permission("bmcp://ui", 0));
+        // The microphone (voice dictation), but only for our pages.
+        assert!(allow_permission("bmcp://ui", 1 << 12));
+        assert!(!allow_permission("https://evil.test", 1 << 12));
+    }
+
+    #[test]
+    fn our_pages_get_the_microphone_and_nothing_else() {
+        assert!(allow_ui_media("bmcp://ui", 1));
+        assert!(allow_ui_media("bmcp://ui/", 1));
+        // Camera (2), desktop capture (4/8), or audio + video: not without a prompt.
+        assert!(!allow_ui_media("bmcp://ui", 2));
+        assert!(!allow_ui_media("bmcp://ui", 1 | 2));
+        assert!(!allow_ui_media("bmcp://ui", 4));
+        assert!(!allow_ui_media("bmcp://ui", 0));
+        // Websites never: they keep the normal permission bar.
+        assert!(!allow_ui_media("https://evil.test", 1));
+        assert!(!allow_ui_media("bmcp://uix", 1));
+        assert!(!allow_ui_media("http://bmcp://ui", 1));
     }
 
     #[test]

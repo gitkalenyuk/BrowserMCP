@@ -25,6 +25,8 @@ export const SETTINGS_SECTIONS = [
   'profiles',
   'proxies',
   'recording',
+  // Voice dictation (stream VOICE).
+  'voice',
   // The user guide (ui/src/settings/guide); deep links: `#guide/<chapter>[/<section>]`.
   'guide',
 ] as const;

@@ -32,6 +32,7 @@ pub fn build_registry() -> Registry {
     bmcp_system::register(&mut registry);
     bmcp_languages::register(&mut registry);
     bmcp_settings::register(&mut registry);
+    bmcp_voice::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }
@@ -57,6 +58,7 @@ mod tests {
             "bookmarks.update",
             "system.reveal_path",
             "browser.languages_set",
+            "voice.transcribe",
         ] {
             assert!(registry.get(name).is_some(), "{name} missing");
         }
