@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { settings, type PanelId } from '../settings.svelte';
   import Icon, { type IconName } from './Icon.svelte';
   import ResizeHandle from './ResizeHandle.svelte';
@@ -11,18 +12,18 @@
 
   let { panel }: { panel: PanelId } = $props();
 
-  const META: Record<PanelId, { title: string; icon: IconName }> = {
-    traffic: { title: 'Traffic', icon: 'traffic' },
-    recording: { title: 'Recording', icon: 'record' },
-    ai: { title: 'AI', icon: 'sparkles' },
-    terminal: { title: 'Terminal', icon: 'terminal' },
-    scripts: { title: 'Scripts', icon: 'code' },
-    runs: { title: 'Runs', icon: 'runs' },
+  const ICONS: Record<PanelId, IconName> = {
+    traffic: 'traffic',
+    recording: 'record',
+    ai: 'sparkles',
+    terminal: 'terminal',
+    scripts: 'code',
+    runs: 'runs',
   };
-  const meta = $derived(META[panel]);
+  const title = $derived(t(`components.panel.${panel}`));
 </script>
 
-<aside class="panel" style:width="{settings.value.panelWidth}px" aria-label="{meta.title} panel">
+<aside class="panel" style:width="{settings.value.panelWidth}px" aria-label={t('components.panelLabel', { name: title })}>
   <ResizeHandle
     edge="left"
     value={settings.value.panelWidth}
@@ -31,9 +32,9 @@
     onchange={(w) => settings.update({ panelWidth: w })}
   />
   <header>
-    <Icon name={meta.icon} size={15} />
-    <h2>{meta.title}</h2>
-    <button class="icon-btn close" aria-label="Close panel" title="Close panel" onclick={() => settings.update({ panel: null })}>
+    <Icon name={ICONS[panel]} size={15} />
+    <h2>{title}</h2>
+    <button class="icon-btn close" aria-label={t('components.closePanel')} title={t('components.closePanel')} onclick={() => settings.update({ panel: null })}>
       <Icon name="x" size={15} />
     </button>
   </header>

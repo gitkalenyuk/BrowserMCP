@@ -10,6 +10,7 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import browserTypes from '../../../../crates/script/types/browser.d.ts?raw';
+import { t } from '../i18n/index.svelte';
 
 // Workers: once MonacoEnvironment.getWorker exists Monaco asks it for EVERY worker, so the
 // TypeScript language service must get its own (Vite bundles each `?worker` import).
@@ -106,8 +107,8 @@ export class ScriptEditor {
       opts.onBreakpoints(this.breakpointLines());
     });
     this.editor.onMouseDown((e) => {
-      const t = e.target.type;
-      const gutter = t === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || t === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS;
+      const target = e.target.type;
+      const gutter = target === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || target === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS;
       if (gutter && e.target.position) this.#toggle(e.target.position.lineNumber);
     });
 
@@ -153,7 +154,7 @@ export class ScriptEditor {
           isWholeLine: true,
           stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
           glyphMarginClassName: verified && !verified.includes(line) ? 'bmcp-bp bmcp-bp-unverified' : 'bmcp-bp',
-          glyphMarginHoverMessage: { value: 'Breakpoint (F9 / click to remove)' },
+          glyphMarginHoverMessage: { value: t('scripts.breakpointHover') },
         },
       })),
     );

@@ -1,0 +1,19 @@
+// UI strings: term. Conventions: ../index.svelte.ts.
+export default {
+  'term.cannotStart': 'Cannot start {shell}: {error}',
+  'term.shell.pwsh': 'PowerShell',
+  'term.shell.cmd': 'Command Prompt',
+  'term.shell.bash': 'Bash',
+  'term.list': 'Terminals',
+  'term.exited': 'exited',
+  'term.exitedCode': 'exited ({code})',
+  'term.closeLabel': 'Close {name} terminal',
+  'term.remove': 'Remove',
+  'term.closeHint': 'Close (kills the shell)',
+  'term.new': 'New terminal',
+  'term.newHint': 'New {shell} terminal',
+  'term.shellHint': 'Shell for new terminals',
+  'term.shell': 'Shell',
+  'term.notFound': 'not found',
+  'term.empty': 'No terminal open. Start a shell — it runs in a real PTY on this computer.',
+};

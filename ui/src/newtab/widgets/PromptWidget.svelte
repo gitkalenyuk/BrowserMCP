@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../lib/i18n/index.svelte';
   import type { BrowserApi } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
   import type { AiProvider } from '../../lib/api';
@@ -30,26 +31,23 @@
       .catch(() => {});
   });
 
-  const EXAMPLES = [
-    'Compare prices for a ThinkPad X1 across 4 stores',
-    'Download all invoices from billing since January',
-    'Watch Hacker News for posts about CEF',
-  ];
+  // Example tasks in the UI language (`newtab.prompt.example1..3`).
+  const EXAMPLES = $derived([1, 2, 3].map((n) => t(`newtab.prompt.example${n}`)));
 
   async function submit() {
-    const t = text.trim();
-    if (!t || sending) return;
+    const task = text.trim();
+    if (!task || sending) return;
     sending = true;
     status = null;
     try {
-      const session = await api.call('ai.session_start', { provider, prompt: t });
+      const session = await api.call('ai.session_start', { provider, prompt: task });
       status = {
         ok: true,
-        text: `${name} started (${session.id}). Its tabs appear in its own group, locked until you take over; follow it in the AI panel.`,
+        text: t('newtab.prompt.started', { name, id: session.id }),
       };
       text = '';
     } catch (err) {
-      status = { ok: false, text: `${name} did not accept the task: ${(err as Error).message}` };
+      status = { ok: false, text: t('newtab.prompt.rejected', { name, error: (err as Error).message }) };
     } finally {
       sending = false;
     }
@@ -62,7 +60,7 @@
 </script>
 
 <section class="prompt" aria-labelledby="prompt-title">
-  <h1 id="prompt-title">What should I do?</h1>
+  <h1 id="prompt-title">{t('newtab.prompt.title')}</h1>
   <form
     class="box"
     onsubmit={(e) => {
@@ -81,21 +79,21 @@
         }
       }}
       rows="1"
-      placeholder="Describe a task. An agent opens its own tabs and works while you browse."
+      placeholder={t('newtab.prompt.placeholder')}
       aria-labelledby="prompt-title"
     ></textarea>
     <div class="controls">
       <label class="select">
-        <span class="sr-only">Agent</span>
+        <span class="sr-only">{t('newtab.prompt.agent')}</span>
         <select bind:value={provider} onchange={() => save('newtab.provider', provider)}>
           {#each AGENTS as p (p.id)}
-            <option value={p.id}>{p.name}{p.configured ? '' : ' (not set up)'}</option>
+            <option value={p.id}>{p.name}{p.configured ? '' : ` (${t('newtab.prompt.notSetUp')})`}</option>
           {/each}
         </select>
         <Icon name="chevron-down" size={12} stroke={2.25} />
       </label>
       <button class="btn primary" type="submit" disabled={!text.trim() || sending}>
-        {sending ? 'Sending…' : 'Start'}
+        {sending ? t('newtab.prompt.sending') : t('newtab.prompt.start')}
         <kbd>Enter</kbd>
       </button>
     </div>

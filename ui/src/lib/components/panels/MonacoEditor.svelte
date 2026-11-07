@@ -1,6 +1,7 @@
 <script lang="ts">
   // Monaco, loaded on first mount with a dynamic import (its own chunks; see scripts/monaco.ts).
   import { untrack } from 'svelte';
+  import { t } from '../../i18n/index.svelte';
   import type { EditorKey, ScriptEditor } from '../../scripts/monaco';
 
   let {
@@ -70,9 +71,9 @@
 
 <div class="monaco" bind:this={host}>
   {#if !editor && !loadError}
-    <div class="note">Loading editor…</div>
+    <div class="note">{t('scripts.editor.loading')}</div>
   {:else if loadError}
-    <div class="note error">Editor failed to load: {loadError}</div>
+    <div class="note error">{t('scripts.editor.failed', { error: loadError })}</div>
   {/if}
 </div>
 

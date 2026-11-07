@@ -2,24 +2,22 @@
 // payloads. Tested in logic.test.ts.
 
 import type { NetAction, NetEdits, NetMatch, NetPaused, NetResume, NetStage } from '../api/types';
+import { t } from '../i18n/index.svelte';
 import type { NetRow } from './parse';
 
 // ---- request list filter ---------------------------------------------------------------------
 
 export type TypeChip = 'all' | 'fetch' | 'doc' | 'js' | 'css' | 'img' | 'media' | 'font' | 'ws' | 'other';
 
-export const TYPE_CHIPS: { id: TypeChip; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'fetch', label: 'Fetch/XHR' },
-  { id: 'doc', label: 'Doc' },
-  { id: 'js', label: 'JS' },
-  { id: 'css', label: 'CSS' },
-  { id: 'img', label: 'Img' },
-  { id: 'media', label: 'Media' },
-  { id: 'font', label: 'Font' },
-  { id: 'ws', label: 'WS' },
-  { id: 'other', label: 'Other' },
-];
+/** The type filter chips; `label` is a getter in the UI language (`net.chip.<id>`). */
+export const TYPE_CHIPS: { readonly id: TypeChip; readonly label: string }[] = (
+  ['all', 'fetch', 'doc', 'js', 'css', 'img', 'media', 'font', 'ws', 'other'] as const
+).map((id) => ({
+  id,
+  get label() {
+    return t(`net.chip.${id}`);
+  },
+}));
 
 const CHIP_TYPES: Record<Exclude<TypeChip, 'all' | 'other'>, string[]> = {
   fetch: ['xhr', 'fetch', 'eventsource'],
@@ -173,18 +171,18 @@ export function buildRule(form: RuleForm): { match: NetMatch; action: NetAction 
       return { match, action: 'block' };
     case 'redirect': {
       const url = form.redirectUrl.trim();
-      if (!url) return { error: 'Enter the URL to redirect to.' };
+      if (!url) return { error: t('net.rule.needRedirect') };
       return { match, action: { redirect: { url } } };
     }
     case 'mock': {
       const status = form.mockStatus.trim() ? Number(form.mockStatus) : 200;
-      if (!Number.isInteger(status) || status < 100 || status > 599) return { error: 'Status must be 100–599.' };
+      if (!Number.isInteger(status) || status < 100 || status > 599) return { error: t('net.rule.badStatus') };
       const mock: { status: number; body: string; headers?: Record<string, string> } = { status, body: form.mockBody };
       if (form.mockContentType.trim()) mock.headers = { 'content-type': form.mockContentType.trim() };
       return { match, action: { mock } };
     }
     case 'rewrite_body': {
-      if (!form.find) return { error: 'Enter the text to find.' };
+      if (!form.find) return { error: t('net.rule.needFind') };
       return { match, action: { rewrite_body: { find: form.find, replace: form.replace } } };
     }
   }
@@ -238,10 +236,6 @@ function pausedHeaders(p: NetPaused): HeaderList {
   if (p.stage === 'response') return (p.response_headers ?? []).map((h) => [h.name, h.value]);
   return Object.entries(p.headers ?? {});
 }
-
-/** Shown next to the read-only status and headers of a server response. */
-export const BODY_ONLY_NOTE =
-  "CEF can't change the status or headers of a server response here; edit the body, or use a request-stage breakpoint or a mock rule";
 
 /**
  * Paused at the response stage of a response that came from the server (not a failed one)?

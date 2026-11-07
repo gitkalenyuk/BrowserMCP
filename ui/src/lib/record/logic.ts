@@ -1,6 +1,7 @@
 // Pure helpers of the Recording panel: the live step list and the inputs of a generated script.
 
 import type { CodegenInput, RecordStep } from '../api/types-record-runs';
+import { t } from '../i18n/index.svelte';
 
 // ---- steps ------------------------------------------------------------------------------
 
@@ -46,31 +47,36 @@ export interface StepView {
   failed: boolean;
 }
 
-const VERBS: Record<string, string> = {
-  start: 'Start',
-  goto: 'Go to',
-  navigated: 'Navigated',
-  back: 'Back',
-  forward: 'Forward',
-  reload: 'Reload',
-  open_tab: 'New tab',
-  wait: 'Wait',
-  click: 'Click',
-  dblclick: 'Double-click',
-  fill: 'Fill',
-  type: 'Type',
-  select: 'Select',
-  check: 'Check',
-  uncheck: 'Uncheck',
-  hover: 'Hover',
-  press: 'Press',
-  scroll: 'Scroll',
-  focus: 'Focus',
-};
+/** Actions with a translated verb (`record.verb.<action>`); others show the raw action name. */
+const VERBS = new Set([
+  'start',
+  'goto',
+  'navigated',
+  'back',
+  'forward',
+  'reload',
+  'open_tab',
+  'wait',
+  'click',
+  'dblclick',
+  'fill',
+  'type',
+  'select',
+  'check',
+  'uncheck',
+  'hover',
+  'press',
+  'scroll',
+  'focus',
+]);
+
+function verb(action: string): string {
+  return VERBS.has(action) ? t(`record.verb.${action}`) : action;
+}
 
 function quote(s: string, max = 48): string {
-  const t = s.replace(/\s+/g, ' ').trim();
-  return `"${t.length > max ? `${t.slice(0, max - 1)}…` : t}"`;
+  const text = s.replace(/\s+/g, ' ').trim();
+  return `"${text.length > max ? `${text.slice(0, max - 1)}…` : text}"`;
 }
 
 /** `button "Sign in"`, `text "Accept"`, the CSS path or the tag. */
@@ -94,13 +100,13 @@ export function describeStep(s: RecordStep): StepView {
     case 'back':
     case 'forward':
     case 'reload':
-      return { kind: s.action === 'start' ? 'system' : 'nav', verb: VERBS[s.action], target: s.url ?? '', value: null, failed };
+      return { kind: s.action === 'start' ? 'system' : 'nav', verb: verb(s.action), target: s.url ?? '', value: null, failed };
     case 'wait':
-      return { kind: 'wait', verb: 'Wait', target: s.wait_for ? `for ${s.wait_for}` : '', value, failed };
+      return { kind: 'wait', verb: verb('wait'), target: s.wait_for ? t('record.waitFor', { what: s.wait_for }) : '', value, failed };
     case 'command':
       return { kind: 'command', verb: s.command?.name ?? 'command', target: '', value: s.command?.error ?? null, failed };
     default:
-      return { kind: 'action', verb: VERBS[s.action] ?? s.action, target: targetLabel(s.target), value, failed };
+      return { kind: 'action', verb: verb(s.action), target: targetLabel(s.target), value, failed };
   }
 }
 

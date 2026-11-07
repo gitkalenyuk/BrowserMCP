@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../lib/i18n/index.svelte';
   import type { BrowserApi, Script } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
 
@@ -19,11 +20,11 @@
 </script>
 
 <section aria-labelledby="scripts-title">
-  <h2 id="scripts-title">Quick launch</h2>
+  <h2 id="scripts-title">{t('newtab.widget.scripts')}</h2>
   {#if scripts === null}
-    <p class="muted">Loading…</p>
+    <p class="muted">{t('common.loading')}</p>
   {:else if scripts.length === 0}
-    <p class="muted">No scripts yet. Record one from the Recording panel.</p>
+    <p class="muted">{t('newtab.scripts.none')}</p>
   {:else}
     <div class="tiles">
       {#each scripts as s (s.id)}
@@ -33,7 +34,7 @@
           </span>
           <span class="text">
             <span class="name">{s.name}</span>
-            <span class="meta">{started === s.id ? 'Started' : s.lastRun ? `Ran ${s.lastRun}` : 'Never run'}</span>
+            <span class="meta">{started === s.id ? t('newtab.scripts.started') : s.lastRun ? t('newtab.scripts.ran', { when: s.lastRun }) : t('newtab.scripts.never')}</span>
           </span>
         </button>
       {/each}

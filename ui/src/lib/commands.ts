@@ -1,56 +1,70 @@
+import { t } from './i18n/index.svelte';
 import type { CommandId } from './keymap';
 
 export interface CommandMeta {
   id: CommandId;
-  title: string;
+  /** In the current UI language (a getter: read it in markup or `$derived`). */
+  readonly title: string;
   /** Not listed in the palette (still bound to keys). */
   hidden?: boolean;
+}
+
+/** The command's title in the current UI language (`commands.<id>` in lib/i18n). */
+export function commandTitle(id: CommandId): string {
+  return t(`commands.${id}`);
+}
+
+// The title is a getter so the list can stay a constant and still follow the language.
+function cmd(id: CommandId, hidden?: boolean): CommandMeta {
+  return {
+    id,
+    get title() {
+      return commandTitle(id);
+    },
+    ...(hidden ? { hidden } : {}),
+  };
 }
 
 // Static palette entries. Later this list comes from the core's Command Registry
 // (Meta.palette), and execution is routed through it.
 export const COMMANDS: CommandMeta[] = [
-  { id: 'tab.new', title: 'New tab' },
-  { id: 'tab.close', title: 'Close tab' },
-  { id: 'tab.reopen', title: 'Reopen closed tab' },
-  { id: 'tab.next', title: 'Next tab' },
-  { id: 'tab.prev', title: 'Previous tab' },
-  { id: 'nav.back', title: 'Go back' },
-  { id: 'nav.forward', title: 'Go forward' },
-  { id: 'nav.reload', title: 'Reload page' },
-  { id: 'nav.stop', title: 'Stop loading' },
-  { id: 'omnibox.focus', title: 'Focus address bar' },
+  cmd('tab.new'),
+  cmd('tab.close'),
+  cmd('tab.reopen'),
+  cmd('tab.next'),
+  cmd('tab.prev'),
+  cmd('nav.back'),
+  cmd('nav.forward'),
+  cmd('nav.reload'),
+  cmd('nav.stop'),
+  cmd('omnibox.focus'),
   // Hidden: in the browser the palette is another page, which has no find bar to open.
-  { id: 'find.open', title: 'Find in page', hidden: true },
-  { id: 'hints.show', title: 'Show link hints' },
-  { id: 'ui.toggleVerticalTabs', title: 'Toggle vertical tabs' },
-  { id: 'ui.toggleTheme', title: 'Toggle light / dark theme' },
-  { id: 'panel.traffic', title: 'Open Traffic panel' },
-  { id: 'panel.recording', title: 'Open Recording panel' },
-  { id: 'panel.ai', title: 'Open AI panel' },
-  { id: 'panel.terminal', title: 'Open Terminal panel' },
-  { id: 'panel.scripts', title: 'Open Scripts panel' },
-  { id: 'panel.runs', title: 'Open Runs panel' },
-  { id: 'panel.close', title: 'Close side panel' },
-  { id: 'library.bookmarks', title: 'Bookmarks manager' },
-  { id: 'library.history', title: 'History' },
-  { id: 'library.downloads', title: 'Downloads' },
-  { id: 'library.passwords', title: 'Passwords' },
-  { id: 'library.import', title: 'Import bookmarks, history and passwords from Chrome' },
-  { id: 'bookmark.toggle', title: 'Bookmark this page / remove bookmark' },
-  { id: 'ui.toggleBookmarksBar', title: 'Show / hide bookmarks bar' },
-  { id: 'tab.split', title: 'Split view with the next tab / end split view' },
-  { id: 'split.focusLeft', title: 'Focus left half of the split view', hidden: true },
-  { id: 'split.focusRight', title: 'Focus right half of the split view', hidden: true },
-  { id: 'zoom.in', title: 'Zoom in' },
-  { id: 'zoom.out', title: 'Zoom out' },
-  { id: 'zoom.reset', title: 'Reset zoom' },
-  { id: 'settings.open', title: 'Settings' },
-  { id: 'palette.open', title: 'Command palette', hidden: true },
-  ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => ({
-    id: `tab.select${n}` as CommandId,
-    title: `Select tab ${n}`,
-    hidden: true,
-  })),
-  { id: 'tab.selectLast', title: 'Select last tab', hidden: true },
+  cmd('find.open', true),
+  cmd('hints.show'),
+  cmd('ui.toggleVerticalTabs'),
+  cmd('ui.toggleTheme'),
+  cmd('panel.traffic'),
+  cmd('panel.recording'),
+  cmd('panel.ai'),
+  cmd('panel.terminal'),
+  cmd('panel.scripts'),
+  cmd('panel.runs'),
+  cmd('panel.close'),
+  cmd('library.bookmarks'),
+  cmd('library.history'),
+  cmd('library.downloads'),
+  cmd('library.passwords'),
+  cmd('library.import'),
+  cmd('bookmark.toggle'),
+  cmd('ui.toggleBookmarksBar'),
+  cmd('tab.split'),
+  cmd('split.focusLeft', true),
+  cmd('split.focusRight', true),
+  cmd('zoom.in'),
+  cmd('zoom.out'),
+  cmd('zoom.reset'),
+  cmd('settings.open'),
+  cmd('palette.open', true),
+  ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => cmd(`tab.select${n}`, true)),
+  cmd('tab.selectLast', true),
 ];

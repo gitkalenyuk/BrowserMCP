@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import type { Snippet } from 'svelte';
   import Icon, { type IconName } from '../Icon.svelte';
 
@@ -17,8 +18,8 @@
   <h3>{title}</h3>
   <p>{text}</p>
   {#if action}
-    <button class="btn" disabled title="Not available yet">{action}</button>
-    <span class="soon">Not wired to the core yet</span>
+    <button class="btn" disabled title={t('panels.empty.notYet')}>{action}</button>
+    <span class="soon">{t('panels.empty.notWired')}</span>
   {/if}
 </div>
 

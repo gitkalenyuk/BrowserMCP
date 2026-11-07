@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { applyLang, t } from '../lib/i18n/index.svelte';
   import type { BrowserApi } from '../lib/api';
   import Icon from '../lib/components/Icon.svelte';
   import { applyTheme, settings, type WidgetId } from '../lib/settings.svelte';
@@ -10,13 +11,10 @@
   let { api, embedded }: { api: BrowserApi; embedded: boolean } = $props();
 
   $effect(() => applyTheme(document.documentElement, settings.value));
+  $effect(() => applyLang(document.documentElement));
 
-  const WIDGETS: { id: WidgetId; label: string; hint: string }[] = [
-    { id: 'prompt', label: 'Ask AI', hint: '“What should I do?” prompt' },
-    { id: 'agents', label: 'Agents & runs', hint: 'Live agents, runs, patches to approve' },
-    { id: 'scripts', label: 'Quick launch', hint: 'Your scripts, one click away' },
-    { id: 'sites', label: 'Bookmarks & top sites', hint: 'Where you go most' },
-  ];
+  // Label and hint: `newtab.widget.<id>` / `newtab.widget.<id>.hint`.
+  const WIDGETS: WidgetId[] = ['prompt', 'agents', 'scripts', 'sites'];
   const w = $derived(settings.value.widgets);
   const none = $derived(!Object.values(w).some(Boolean));
   let customizing = $state(false);
@@ -43,18 +41,18 @@
   <div class="top" bind:this={root}>
     <button class="btn ghost" aria-expanded={customizing} aria-haspopup="dialog" onclick={() => (customizing = !customizing)}>
       <Icon name="settings" size={14} />
-      Customize
+      {t('newtab.customize')}
     </button>
     {#if customizing}
-      <div class="pop" role="dialog" aria-label="Widgets">
-        <h3>Widgets</h3>
-        {#each WIDGETS as item (item.id)}
+      <div class="pop" role="dialog" aria-label={t('newtab.widgets')}>
+        <h3>{t('newtab.widgets')}</h3>
+        {#each WIDGETS as id (id)}
           <label class="toggle">
-            <input type="checkbox" checked={w[item.id]} onchange={() => toggle(item.id)} />
+            <input type="checkbox" checked={w[id]} onchange={() => toggle(id)} />
             <span class="switch" aria-hidden="true"></span>
             <span class="lbl">
-              <span>{item.label}</span>
-              <span class="hint">{item.hint}</span>
+              <span>{t(`newtab.widget.${id}`)}</span>
+              <span class="hint">{t(`newtab.widget.${id}.hint`)}</span>
             </span>
           </label>
         {/each}
@@ -80,8 +78,8 @@
 
     {#if none}
       <div class="blank">
-        <p>All widgets are hidden.</p>
-        <button class="btn" onclick={() => (customizing = true)}>Choose widgets</button>
+        <p>{t('newtab.allHidden')}</p>
+        <button class="btn" onclick={() => (customizing = true)}>{t('newtab.chooseWidgets')}</button>
       </div>
     {/if}
   </main>

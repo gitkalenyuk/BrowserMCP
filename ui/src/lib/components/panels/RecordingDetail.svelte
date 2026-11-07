@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
+  import { formatDateTime } from '../../i18n/intl';
   import type { CodegenOutput, RecordStep, RecordingDetail, ScriptRunOutput } from '../../api/types-record-runs';
   import { buildInputs, fileUrl, inferInputs, parseStepsJsonl, scriptName, type ScriptInput } from '../../record/logic';
   import { formatDuration } from '../../runs/logic';
@@ -66,7 +68,7 @@
     if (!gen) return;
     const n = scriptName(name);
     if (!n) {
-      error = 'Give the script a name (A-Z a-z 0-9 _ -)';
+      error = t('record.detail.needName');
       return;
     }
     const built = buildInputs(inputs, values);
@@ -111,15 +113,15 @@
 </script>
 
 <div class="rr-bar">
-  <button class="icon-btn" aria-label="Back to recordings" title="Back" onclick={onclose}><Icon name="arrow-left" size={15} /></button>
+  <button class="icon-btn" aria-label={t('record.detail.back')} title={t('common.back')} onclick={onclose}><Icon name="arrow-left" size={15} /></button>
   <h3 title={id}>{meta?.name ?? id}</h3>
-  {#if detail?.active}<span class="rr-pill rec">recording</span>{/if}
+  {#if detail?.active}<span class="rr-pill rec">{t('record.detail.recording')}</span>{/if}
 </div>
 
 {#if error}
   <div class="rr-note err" role="alert">
     <span>{error}</span>
-    <button class="icon-btn" aria-label="Dismiss" onclick={() => (error = null)}><Icon name="x" size={12} /></button>
+    <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (error = null)}><Icon name="x" size={12} /></button>
   </div>
 {/if}
 
@@ -127,29 +129,29 @@
   {#if meta}
     <div class="rr-section facts">
       <dl>
-        <dt>Started</dt>
-        <dd>{new Date(meta.started_ms).toLocaleString()}</dd>
-        <dt>Steps</dt>
-        <dd>{meta.steps}{duration !== null ? ` in ${formatDuration(duration)}` : ''}</dd>
-        <dt>Page</dt>
+        <dt>{t('record.detail.started')}</dt>
+        <dd>{formatDateTime(meta.started_ms)}</dd>
+        <dt>{t('record.detail.steps')}</dt>
+        <dd>{duration !== null ? t('record.detail.stepsIn', { n: meta.steps, time: formatDuration(duration) }) : meta.steps}</dd>
+        <dt>{t('record.detail.page')}</dt>
         <dd class="rr-mono url" title={meta.start_url}>{meta.start_url}</dd>
-        <dt>Capture</dt>
+        <dt>{t('record.detail.capture')}</dt>
         <dd>{meta.human_capture}</dd>
       </dl>
       {#if meta.video}
         <div class="file">
-          <span class="rr-h">Video</span>
+          <span class="rr-h">{t('record.video')}</span>
           <code class="rr-path">{meta.video}</code>
           <div class="rr-row">
-            <button class="btn sm" onclick={() => open(meta.video!, false)} title="Play it in a new tab"><Icon name="play" size={12} /> Open video</button>
-            <button class="btn sm" onclick={() => open(meta.video!, true)} title="Show the video in Explorer">Open folder</button>
-            <button class="btn sm" onclick={() => copy(meta.video!)}>Copy path</button>
+            <button class="btn sm" onclick={() => open(meta.video!, false)} title={t('record.detail.playHint')}><Icon name="play" size={12} /> {t('record.detail.openVideo')}</button>
+            <button class="btn sm" onclick={() => open(meta.video!, true)} title={t('record.detail.folderHint')}>{t('record.detail.openFolder')}</button>
+            <button class="btn sm" onclick={() => copy(meta.video!)}>{t('record.detail.copyPath')}</button>
           </div>
         </div>
       {/if}
       {#if meta.traffic}
         <div class="file">
-          <span class="rr-h">Traffic log</span>
+          <span class="rr-h">{t('record.detail.trafficLog')}</span>
           <code class="rr-path">{meta.traffic}</code>
         </div>
       {/if}
@@ -157,7 +159,7 @@
 
     <div class="rr-section">
       <button class="rr-h toggle" aria-expanded={showSteps} onclick={() => (showSteps = !showSteps)}>
-        <Icon name={showSteps ? 'chevron-down' : 'chevron-right'} size={12} /> Steps
+        <Icon name={showSteps ? 'chevron-down' : 'chevron-right'} size={12} /> {t('record.detail.steps')}
       </button>
       {#if showSteps}
         <div class="steps-box"><StepList {steps} /></div>
@@ -165,45 +167,45 @@
     </div>
 
     <div class="rr-section">
-      <h4>Script</h4>
+      <h4>{t('record.detail.script')}</h4>
       <div class="rr-form">
         <div class="rr-row">
           <label class="rr-field grow">
-            Name
+            {t('record.detail.name')}
             <input class="mono" bind:value={name} spellcheck="false" placeholder="login" />
           </label>
         </div>
-        <label class="rr-check" title="Typed and selected values become inputs.<name> with the recorded value as default. Passwords are always inputs.">
-          <input type="checkbox" bind:checked={parametrize} /> Turn typed values into inputs
+        <label class="rr-check" title={t('record.detail.parametrizeHint')}>
+          <input type="checkbox" bind:checked={parametrize} /> {t('record.detail.parametrize')}
         </label>
         <div class="rr-row">
           <button class="btn primary" disabled={busy !== null || detail?.active} onclick={generate}>
             <Icon name="code" size={13} />
-            {busy === 'codegen' ? 'Generating…' : gen ? 'Generate again' : 'Generate script'}
+            {busy === 'codegen' ? t('record.detail.generating') : gen ? t('record.detail.generateAgain') : t('record.detail.generate')}
           </button>
-          {#if detail?.active}<span class="rr-hint">Stop the recording first.</span>{/if}
+          {#if detail?.active}<span class="rr-hint">{t('record.detail.stopFirst')}</span>{/if}
         </div>
       </div>
     </div>
 
     {#if gen}
       <div class="rr-section">
-        <p class="rr-hint saved">Saved to <span class="rr-mono">{gen.path}</span></p>
-        <CodeView code={gen.code} label="Generated script" />
+        <p class="rr-hint saved">{t('record.detail.savedTo')} <span class="rr-mono">{gen.path}</span></p>
+        <CodeView code={gen.code} label={t('record.detail.generated')} />
       </div>
 
       <div class="rr-section">
-        <h4>Run it once</h4>
+        <h4>{t('record.detail.runOnce')}</h4>
         <div class="rr-form">
           {#if inputs.length === 0}
-            <p class="rr-hint">The script reads no inputs.</p>
+            <p class="rr-hint">{t('record.detail.noInputs')}</p>
           {/if}
           {#each inputs as inp (inp.name)}
             <label class="rr-field">
               <span>
                 {inp.label}
                 {#if inp.label !== inp.name}<span class="opt rr-mono">inputs.{inp.name}</span>{/if}
-                {#if inp.required}<span class="opt">· required</span>{/if}
+                {#if inp.required}<span class="opt">· {t('record.detail.required')}</span>{/if}
               </span>
               <input
                 type={inp.secret ? 'password' : 'text'}
@@ -216,20 +218,20 @@
             </label>
           {/each}
           {#if missing.length}
-            <p class="rr-hint err">Fill in: {missing.join(', ')}</p>
+            <p class="rr-hint err">{t('record.detail.fillIn', { names: missing.join(', ') })}</p>
           {/if}
           <div class="rr-row">
             <button class="btn primary" disabled={busy !== null} onclick={saveAndRun}>
               <Icon name="play" size={12} />
-              {busy === 'run' ? 'Running…' : 'Save & run'}
+              {busy === 'run' ? t('record.detail.running') : t('record.detail.saveRun')}
             </button>
-            {#if savedAs}<span class="rr-hint">as <span class="rr-mono">{savedAs}</span></span>{/if}
+            {#if savedAs}<span class="rr-hint">{t('record.detail.as')} <span class="rr-mono">{savedAs}</span></span>{/if}
           </div>
         </div>
         {#if result}
           <div class="result" class:bad={!result.ok}>
             <div class="rr-row">
-              <span class="rr-pill {result.ok ? 'ok' : 'failed'}">{result.ok ? 'ok' : `exit ${result.exit_code ?? 'killed'}`}</span>
+              <span class="rr-pill {result.ok ? 'ok' : 'failed'}">{result.ok ? 'ok' : result.exit_code !== null && result.exit_code !== undefined ? t('record.detail.exit', { code: result.exit_code }) : t('record.detail.killed')}</span>
               <span class="rr-hint">{formatDuration(result.duration_ms)}</span>
             </div>
             {#if result.error}
@@ -237,7 +239,7 @@
                 <b>{result.error.code}</b>
                 {#if result.error.command}<span class="rr-mono">{result.error.command}</span>{/if}
                 {result.error.message}
-                {#if result.error.line}<span class="rr-hint">(line {result.error.line})</span>{/if}
+                {#if result.error.line}<span class="rr-hint">({t('scripts.console.line', { line: result.error.line })})</span>{/if}
               </p>
             {/if}
             {#if result.result !== null && result.result !== undefined}
@@ -250,7 +252,7 @@
       </div>
     {/if}
   {:else if !error}
-    <div class="rr-empty">Loading…</div>
+    <div class="rr-empty">{t('common.loading')}</div>
   {/if}
 </div>
 

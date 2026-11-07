@@ -7,6 +7,11 @@
 //   * Day of month AND day of week must both match (Unix: either).
 //   * `a/n` means a, a+n, … up to the field's max; `?` = `*` in day fields.
 //   * @yearly @monthly @weekly (Sunday) @daily @hourly.
+//
+// The description and the errors are in the UI language (`runs.cron.*` in lib/i18n).
+
+import { t } from '../i18n/index.svelte';
+import { intlLocale } from '../i18n/intl';
 
 export interface CronField {
   values: number[];
@@ -27,10 +32,20 @@ export interface CronSchedule {
   numericDow: boolean;
 }
 
-export class CronError extends Error {}
+/** A spec the core would reject; `field` names the bad field (`dow`: a hint about 1 = Sunday). */
+export class CronError extends Error {
+  constructor(
+    message: string,
+    readonly field: FieldKey | null = null,
+  ) {
+    super(message);
+  }
+}
+
+type FieldKey = 'seconds' | 'minutes' | 'hours' | 'dom' | 'month' | 'dow' | 'year';
 
 interface FieldDef {
-  name: string;
+  key: FieldKey;
   min: number;
   max: number;
   names?: Record<string, number>;
@@ -48,17 +63,27 @@ const MONTH_NAMES: Record<string, number> = {
 };
 
 const FIELDS: FieldDef[] = [
-  { name: 'seconds', min: 0, max: 59 },
-  { name: 'minutes', min: 0, max: 59 },
-  { name: 'hours', min: 0, max: 23 },
-  { name: 'day of month', min: 1, max: 31, any: true },
-  { name: 'month', min: 1, max: 12, names: MONTH_NAMES },
-  { name: 'day of week', min: 1, max: 7, names: DOW_NAMES, any: true },
-  { name: 'year', min: 1970, max: 2100 },
+  { key: 'seconds', min: 0, max: 59 },
+  { key: 'minutes', min: 0, max: 59 },
+  { key: 'hours', min: 0, max: 23 },
+  { key: 'dom', min: 1, max: 31, any: true },
+  { key: 'month', min: 1, max: 12, names: MONTH_NAMES },
+  { key: 'dow', min: 1, max: 7, names: DOW_NAMES, any: true },
+  { key: 'year', min: 1970, max: 2100 },
 ];
 
-export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** "minutes: 61 is outside 0-59" (`runs.cron.err.<what>`, prefixed with the field's name). */
+function fieldError(def: FieldDef, what: string, params: Record<string, string | number> = {}): CronError {
+  const field = t(`runs.cron.field.${def.key}`);
+  return new CronError(t(`runs.cron.err.${what}`, { field, min: def.min, max: def.max, ...params }), def.key);
+}
+
+// Weekdays 1 = Sunday … 7 = Saturday; months 1-12. Separate keys for the grammatical forms
+// Ukrainian needs ("у середу", "у січні"); in English they are the same words.
+const dowName = (v: number) => t(`runs.cron.dow.${v}`);
+const dowOn = (v: number) => t(`runs.cron.dowOn.${v}`);
+const dowShort = (v: number) => t(`runs.cron.dowShort.${v}`);
+const monthIn = (v: number) => t(`runs.cron.monthIn.${v}`);
 
 function range(a: number, b: number, step = 1): number[] {
   const out: number[] = [];
@@ -70,12 +95,12 @@ function parseValue(tok: string, def: FieldDef): number {
   if (/^\d+$/.test(tok)) {
     const v = Number(tok);
     if (v < def.min || v > def.max) {
-      throw new CronError(`${def.name}: ${v} is outside ${def.min}-${def.max}`);
+      throw fieldError(def, 'outside', { v });
     }
     return v;
   }
   const named = def.names?.[tok.toLowerCase()];
-  if (named === undefined) throw new CronError(`${def.name}: '${tok}' is not a valid value`);
+  if (named === undefined) throw fieldError(def, 'invalid', { tok });
   return named;
 }
 
@@ -83,14 +108,14 @@ function parseField(text: string, def: FieldDef): CronField {
   if (text === '*' || (def.any && text === '?')) return { values: range(def.min, def.max), all: true };
   const set = new Set<number>();
   for (const item of text.split(',')) {
-    if (!item) throw new CronError(`${def.name}: empty list item in '${text}'`);
+    if (!item) throw fieldError(def, 'emptyItem', { text });
     const [base, stepText, extra] = item.split('/');
-    if (extra !== undefined) throw new CronError(`${def.name}: bad step in '${item}'`);
+    if (extra !== undefined) throw fieldError(def, 'badStepIn', { item });
     let step = 1;
     if (stepText !== undefined) {
-      if (!/^\d+$/.test(stepText)) throw new CronError(`${def.name}: bad step '${stepText}'`);
+      if (!/^\d+$/.test(stepText)) throw fieldError(def, 'badStep', { step: stepText });
       step = Number(stepText);
-      if (step < 1 || step > def.max) throw new CronError(`${def.name}: step must be 1-${def.max}`);
+      if (step < 1 || step > def.max) throw fieldError(def, 'stepRange');
     }
     let lo: number;
     let hi: number;
@@ -99,10 +124,10 @@ function parseField(text: string, def: FieldDef): CronField {
       hi = def.max;
     } else if (base.includes('-')) {
       const [a, b, more] = base.split('-');
-      if (more !== undefined || !a || !b) throw new CronError(`${def.name}: bad range '${base}'`);
+      if (more !== undefined || !a || !b) throw fieldError(def, 'badRange', { range: base });
       lo = parseValue(a, def);
       hi = parseValue(b, def);
-      if (lo > hi) throw new CronError(`${def.name}: range '${base}' goes backwards`);
+      if (lo > hi) throw fieldError(def, 'backwards', { range: base });
     } else {
       lo = parseValue(base, def);
       // `5/15` = 5, 20, 35, 50; a lone `5` is just 5.
@@ -125,12 +150,12 @@ const SHORTHANDS: Record<string, string> = {
 /** Parse a spec like the core does; throws CronError with a readable message. */
 export function parseCron(spec: string): CronSchedule {
   const trimmed = spec.trim();
-  if (!trimmed) throw new CronError('Enter a cron expression, e.g. "0 9 * * Mon-Fri"');
+  if (!trimmed) throw new CronError(t('runs.cron.err.empty'));
   const short = SHORTHANDS[trimmed.toLowerCase()];
   let parts = (short ?? trimmed).split(/\s+/);
   if (parts.length === 5) parts = ['0', ...parts];
   if (parts.length !== 6 && parts.length !== 7) {
-    throw new CronError(`Expected 5 fields (min hour day month weekday) or 6-7 with seconds first, got ${parts.length}`);
+    throw new CronError(t('runs.cron.err.fields', { n: parts.length }));
   }
   const f = parts.map((p, i) => parseField(p, FIELDS[i]));
   return {
@@ -194,7 +219,7 @@ function runs(values: number[], fmt: (v: number) => string = String, sep = '–'
 
 function joinList(parts: string[]): string {
   if (parts.length <= 1) return parts.join('');
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${parts.slice(0, -1).join(', ')} ${t('runs.cron.and')} ${parts[parts.length - 1]}`;
 }
 
 /** Evenly spaced from the field's minimum: the step, else null. */
@@ -206,79 +231,98 @@ function stepOf(f: CronField, min: number): number | null {
   return step;
 }
 
-function describeTime(s: CronSchedule): string {
+/** Part of a description; `periodic`: it repeats within the day ("every 5 minutes"). */
+interface Phrase {
+  text: string;
+  periodic: boolean;
+}
+
+/** Comma-joined; periodic when the first phrase is (it leads the sentence). */
+function joinPhrases(list: (Phrase | null)[]): Phrase {
+  const kept = list.filter((p): p is Phrase => p !== null);
+  return { text: kept.map((p) => p.text).join(', '), periodic: kept[0]?.periodic ?? false };
+}
+
+function describeTime(s: CronSchedule): Phrase {
   const sec = s.second;
   const secOnly0 = sec.values.length === 1 && sec.values[0] === 0;
-  const secText = secOnly0
-    ? ''
+  const secStep = stepOf(sec, 0);
+  const secPhrase: Phrase | null = secOnly0
+    ? null
     : sec.all
-      ? 'every second'
-      : stepOf(sec, 0)
-        ? `every ${stepOf(sec, 0)} seconds`
-        : `at second ${runs(sec.values)}`;
+      ? { text: t('runs.cron.everySecond'), periodic: true }
+      : secStep
+        ? { text: t('runs.cron.everyNSeconds', { n: secStep }), periodic: true }
+        : { text: t('runs.cron.atSeconds', { list: runs(sec.values) }), periodic: false };
 
   const { minute: mi, hour: h } = s;
-  let text: string;
   if (mi.values.length === 1 && h.values.length <= 6 && !h.all) {
     const oneSec = sec.values.length === 1;
-    const times = h.values.map((x) => `${pad(x)}:${pad(mi.values[0])}${oneSec && !secOnly0 ? ':' + pad(sec.values[0]) : ''}`);
-    text = `at ${joinList(times)}`;
-    return oneSec ? text : `${secText}, during ${joinList(times)}`;
+    const times = joinList(h.values.map((x) => `${pad(x)}:${pad(mi.values[0])}${oneSec && !secOnly0 ? ':' + pad(sec.values[0]) : ''}`));
+    if (oneSec || !secPhrase) return { text: t('runs.cron.at', { times }), periodic: false };
+    return { text: t('runs.cron.during', { what: secPhrase.text, times }), periodic: secPhrase.periodic };
   }
-  let minText: string;
-  if (mi.all) minText = secOnly0 ? 'every minute' : '';
-  else if (stepOf(mi, 0)) minText = `every ${stepOf(mi, 0)} minutes`;
-  else if (mi.values.length === 1) minText = mi.values[0] === 0 ? 'every hour' : `every hour at :${pad(mi.values[0])}`;
-  else minText = `at minutes ${runs(mi.values, pad)} past the hour`;
 
-  let hourText = '';
+  const minStep = stepOf(mi, 0);
+  let minPhrase: Phrase | null;
+  if (mi.all) minPhrase = secOnly0 ? { text: t('runs.cron.everyMinute'), periodic: true } : null;
+  else if (minStep) minPhrase = { text: t('runs.cron.everyNMinutes', { n: minStep }), periodic: true };
+  else if (mi.values.length === 1) {
+    const text = mi.values[0] === 0 ? t('runs.cron.everyHour') : t('runs.cron.everyHourAt', { mm: pad(mi.values[0]) });
+    minPhrase = { text, periodic: true };
+  } else minPhrase = { text: t('runs.cron.atMinutes', { list: runs(mi.values, pad) }), periodic: true };
+
+  let hourPhrase: Phrase | null = null;
   if (!h.all) {
     const hs = h.values;
     const contiguous = hs.every((x, i) => i === 0 || x === hs[i - 1] + 1);
-    if (stepOf(h, 0) && !contiguous) hourText = `every ${stepOf(h, 0)} hours`;
-    else if (contiguous) hourText = `from ${pad(hs[0])}:00 to ${pad(hs[hs.length - 1])}:59`;
-    else hourText = `during hours ${runs(hs, pad)}`;
-    if (mi.values.length === 1 && minText === 'every hour' && stepOf(h, 0) && !contiguous) {
-      return [secText, `every ${stepOf(h, 0)} hours on the hour`].filter(Boolean).join(', ');
+    const hourStep = stepOf(h, 0);
+    if (hourStep && !contiguous) hourPhrase = { text: t('runs.cron.everyNHours', { n: hourStep }), periodic: true };
+    else if (contiguous) {
+      hourPhrase = { text: t('runs.cron.fromTo', { from: `${pad(hs[0])}:00`, to: `${pad(hs[hs.length - 1])}:59` }), periodic: false };
+    } else hourPhrase = { text: t('runs.cron.duringHours', { list: runs(hs, pad) }), periodic: false };
+    // Minute 0 every n hours: one phrase ("every 2 hours on the hour").
+    if (mi.values.length === 1 && mi.values[0] === 0 && hourStep && !contiguous) {
+      return joinPhrases([secPhrase, { text: t('runs.cron.everyNHoursSharp', { n: hourStep }), periodic: true }]);
     }
   }
-  return [secText, minText, hourText].filter(Boolean).join(', ');
+  return joinPhrases([secPhrase, minPhrase, hourPhrase]);
 }
 
-function describeDays(s: CronSchedule): string {
+/** The day part; `everyDay` when no day, month or year field restricts it. */
+function describeDays(s: CronSchedule): { text: string; everyDay: boolean } {
   const parts: string[] = [];
   const dowText = (vals: number[]) => {
-    if (vals.length === 5 && vals.join() === '2,3,4,5,6') return 'on weekdays';
-    if (vals.length === 2 && vals.join() === '1,7') return 'on weekends';
-    return `on ${runs(vals, (v) => WEEKDAYS[v - 1])}`;
+    if (vals.length === 5 && vals.join() === '2,3,4,5,6') return t('runs.cron.onWeekdays');
+    if (vals.length === 2 && vals.join() === '1,7') return t('runs.cron.onWeekends');
+    return t('runs.cron.onDays', { days: runs(vals, dowOn) });
   };
   if (!s.dom.all && !s.dow.all) {
-    parts.push(`on day ${runs(s.dom.values)} of the month, only if it is a ${joinList(s.dow.values.map((v) => WEEKDAYS[v - 1]))}`);
+    parts.push(t('runs.cron.onDomIf', { days: runs(s.dom.values), dows: joinList(s.dow.values.map(dowName)) }));
   } else if (!s.dom.all) {
-    parts.push(`on day ${runs(s.dom.values)} of the month`);
+    parts.push(t('runs.cron.onDom', { days: runs(s.dom.values) }));
   } else if (!s.dow.all) {
     parts.push(dowText(s.dow.values));
   } else {
-    parts.push('every day');
+    parts.push(t('runs.cron.everyDay'));
   }
-  if (!s.month.all) parts.push(`in ${runs(s.month.values, (v) => MONTHS[v - 1])}`);
-  if (!s.year.all) parts.push(`in ${runs(s.year.values)}`);
-  return parts.join(' ');
+  if (!s.month.all) parts.push(t('runs.cron.inMonths', { months: runs(s.month.values, monthIn) }));
+  if (!s.year.all) parts.push(t('runs.cron.inYears', { years: runs(s.year.values) }));
+  return { text: parts.join(' '), everyDay: s.dom.all && s.dow.all && s.month.all && s.year.all };
 }
 
-/** "every 15 minutes, from 09:00 to 17:59, on weekdays". */
+/** "Every 15 minutes, from 09:00 to 17:59 on weekdays" (in the UI language). */
 export function describeCron(s: CronSchedule): string {
   const time = describeTime(s);
   const days = describeDays(s);
-  const text = days === 'every day' && /^(every|at minutes)/.test(time) ? time : `${time} ${days}`.trim();
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  // "Every 5 minutes" says enough; "At 09:00" needs its "every day".
+  const text = days.everyDay && time.periodic ? time.text : `${time.text} ${days.text}`.trim();
+  return text.charAt(0).toLocaleUpperCase() + text.slice(1);
 }
 
 export type CronPreview =
   | { ok: true; text: string; next: Date[]; warning: string | null }
   | { ok: false; error: string; hint: string | null };
-
-const DOW_HINT = 'Weekdays here count 1 = Sunday … 7 = Saturday (not Unix 0-6); names like Mon-Fri avoid surprises.';
 
 /** Description + next firings + warnings, for the trigger form. */
 export function cronPreview(spec: string, now: Date = new Date(), count = 5): CronPreview {
@@ -287,19 +331,22 @@ export function cronPreview(spec: string, now: Date = new Date(), count = 5): Cr
     s = parseCron(spec);
   } catch (err) {
     const error = (err as Error).message;
-    return { ok: false, error, hint: error.startsWith('day of week') ? DOW_HINT : null };
+    const dow = err instanceof CronError && err.field === 'dow';
+    return { ok: false, error, hint: dow ? t('runs.cron.dowHint') : null };
   }
   const next = nextFires(s, now, count);
   let warning: string | null = null;
-  if (s.numericDow && !s.dow.all) warning = `${DOW_HINT} This spec means ${runs(s.dow.values, (v) => WEEKDAYS[v - 1].slice(0, 3))}.`;
-  if (next.length === 0) warning = 'This spec never fires (in the next years).';
+  if (s.numericDow && !s.dow.all) {
+    warning = `${t('runs.cron.dowHint')} ${t('runs.cron.dowMeans', { days: runs(s.dow.values, dowShort) })}`;
+  }
+  if (next.length === 0) warning = t('runs.cron.never');
   return { ok: true, text: describeCron(s), next, warning };
 }
 
-/** "Mon 9 Nov, 09:00" (seconds only when not :00). */
+/** "Mon 9 Nov, 09:00" (seconds only when not :00), in the UI language. */
 export function formatFire(d: Date, now: Date = new Date()): string {
   const sameYear = d.getFullYear() === now.getFullYear();
-  const date = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' });
+  const date = d.toLocaleDateString(intlLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' });
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}${d.getSeconds() ? ':' + pad(d.getSeconds()) : ''}`;
   return `${date}, ${time}`;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp } from '../i18n/index.svelte';
   import type { GroupColor, Workspace } from '../api/types';
   import { useChrome } from '../state/chrome.svelte';
   import Icon from './Icon.svelte';
@@ -108,11 +109,11 @@
     class="trigger"
     aria-haspopup="menu"
     aria-expanded={open}
-    title={current ? `Workspace: ${current.name} · profile ${current.profile} · ${current.proxy}` : 'Workspaces'}
+    title={current ? t('components.ws.title', { name: current.name, profile: current.profile, proxy: current.proxy }) : t('components.ws.list')}
     onclick={toggle}
   >
     <span class="dot" style:--c="var(--g-{current?.color ?? 'grey'})"></span>
-    <span class="name">{current?.name ?? 'Workspace'}</span>
+    <span class="name">{current?.name ?? t('components.ws.one')}</span>
     {#if wide && current}
       <span class="meta">{current.profile}</span>
     {/if}
@@ -120,7 +121,7 @@
   </button>
 
   {#if open}
-    <div class="menu" role="menu" aria-label="Workspaces" tabindex="-1" bind:this={menu} onkeydown={onMenuKey}>
+    <div class="menu" role="menu" aria-label={t('components.ws.list')} tabindex="-1" bind:this={menu} onkeydown={onMenuKey}>
       {#each chrome.workspaces as w (w.id)}
         {#if editing?.id === w.id}
           {@render form()}
@@ -137,12 +138,12 @@
               <span class="text">
                 <span class="title">{w.name} <span class="count">{tabCount(w.id)}</span></span>
                 <span class="sub">
-                  <span>Profile {w.profile}</span>
+                  <span>{t('components.ws.profile', { profile: w.profile })}</span>
                   <span class="sep" aria-hidden="true"></span>
                   <span>{w.proxy}</span>
                   {#if w.identity}
                     <span class="sep" aria-hidden="true"></span>
-                    <span title="Stealth identity">{w.identity}</span>
+                    <span title={t('components.ws.identity')}>{w.identity}</span>
                   {/if}
                 </span>
               </span>
@@ -150,14 +151,14 @@
                 <span class="check"><Icon name="check" size={14} stroke={2.25} /></span>
               {/if}
             </button>
-            <button class="act" aria-label="Rename {w.name}" title="Rename / color" onclick={() => startRename(w)}>
+            <button class="act" aria-label={t('components.ws.rename', { name: w.name })} title={t('components.ws.renameHint')} onclick={() => startRename(w)}>
               <Icon name="settings" size={13} />
             </button>
             {#if !w.launch}
               <button
                 class="act danger"
-                aria-label="Delete {w.name}"
-                title="Delete workspace (closes its tabs, deletes its cookies)"
+                aria-label={t('components.ws.delete', { name: w.name })}
+                title={t('components.ws.deleteHint')}
                 onclick={() => (confirmDelete = confirmDelete === w.id ? null : w.id)}
               >
                 <Icon name="trash" size={13} />
@@ -166,9 +167,9 @@
           </div>
           {#if confirmDelete === w.id}
             <div class="confirm" role="alert">
-              <span>Close {tabCount(w.id)} tab(s) and delete “{w.name}” with its cookies?</span>
-              <button class="danger-btn" data-confirm-delete={w.id} onclick={() => remove(w.id)}>Delete</button>
-              <button onclick={() => (confirmDelete = null)}>Cancel</button>
+              <span>{tp('components.ws.confirm', tabCount(w.id), { name: w.name })}</span>
+              <button class="danger-btn" data-confirm-delete={w.id} onclick={() => remove(w.id)}>{t('common.delete')}</button>
+              <button onclick={() => (confirmDelete = null)}>{t('common.cancel')}</button>
             </div>
           {/if}
         {/if}
@@ -178,10 +179,10 @@
       {:else}
         <button class="item new" onclick={startNew}>
           <Icon name="plus" size={14} stroke={2.25} />
-          <span>New workspace…</span>
+          <span>{t('components.ws.new')}</span>
         </button>
       {/if}
-      <div class="foot">Each workspace has its own profile, cookies and proxy.</div>
+      <div class="foot">{t('components.ws.foot')}</div>
     </div>
   {/if}
 </div>
@@ -189,22 +190,22 @@
 {#snippet form()}
   {#if editing}
     <div class="form">
-      <input class="name" placeholder="Workspace name" maxlength="40" aria-label="Workspace name" bind:value={editing.name} />
-      <div class="colors" role="radiogroup" aria-label="Color">
+      <input class="name" placeholder={t('components.ws.name')} maxlength="40" aria-label={t('components.ws.name')} bind:value={editing.name} />
+      <div class="colors" role="radiogroup" aria-label={t('components.ws.color')}>
         {#each COLORS as c (c)}
           <button
             class="swatch"
             role="radio"
             aria-checked={editing.color === c}
-            aria-label={c}
+            aria-label={t(`components.color.${c}`)}
             style:--c="var(--g-{c})"
             onclick={() => editing && (editing.color = c)}
           ></button>
         {/each}
       </div>
       <div class="buttons">
-        <button class="primary" disabled={!editing.name.trim()} onclick={save}>{editing.id === null ? 'Create' : 'Save'}</button>
-        <button onclick={() => (editing = null)}>Cancel</button>
+        <button class="primary" disabled={!editing.name.trim()} onclick={save}>{editing.id === null ? t('components.ws.create') : t('common.save')}</button>
+        <button onclick={() => (editing = null)}>{t('common.cancel')}</button>
       </div>
     </div>
   {/if}

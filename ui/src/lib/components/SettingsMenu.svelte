@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { ACCENTS, settings, type ThemePref } from '../settings.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import type { CommandId } from '../keymap';
@@ -14,26 +15,17 @@
     return () => chrome.dropdown(false);
   });
 
-  const LIBRARY: { id: CommandId; label: string }[] = [
-    { id: 'library.bookmarks', label: 'Bookmarks' },
-    { id: 'library.history', label: 'History' },
-    { id: 'library.downloads', label: 'Downloads' },
-    { id: 'library.passwords', label: 'Passwords' },
-    { id: 'library.import', label: 'Import from Chrome…' },
-  ];
-  const THEMES: { id: ThemePref; label: string }[] = [
-    { id: 'system', label: 'System' },
-    { id: 'light', label: 'Light' },
-    { id: 'dark', label: 'Dark' },
-  ];
+  // Labels are keys (`components.menu.<id>`), translated in the markup.
+  const LIBRARY: CommandId[] = ['library.bookmarks', 'library.history', 'library.downloads', 'library.passwords', 'library.import'];
+  const THEMES: ThemePref[] = ['system', 'light', 'dark'];
   const statusLabel = $derived(
     chrome.api.kind === 'mock'
-      ? 'Mock core (in-memory)'
+      ? t('components.menu.status.mock')
       : chrome.status === 'open'
-        ? 'Connected to core'
+        ? t('components.menu.status.open')
         : chrome.status === 'connecting'
-          ? 'Connecting to core…'
-          : 'Disconnected',
+          ? t('components.menu.status.connecting')
+          : t('components.menu.status.closed'),
   );
 </script>
 
@@ -45,8 +37,8 @@
 <div class="wrap" bind:this={root}>
   <button
     class="icon-btn"
-    aria-label="Appearance and settings"
-    title="Appearance"
+    aria-label={t('components.menu.label')}
+    title={t('components.menu.appearance')}
     aria-haspopup="dialog"
     aria-expanded={open}
     onclick={() => (open = !open)}
@@ -54,65 +46,65 @@
     <Icon name="menu" size={18} stroke={2.5} />
   </button>
   {#if open}
-    <div class="pop" role="dialog" aria-label="Appearance">
+    <div class="pop" role="dialog" aria-label={t('components.menu.appearance')}>
       <section>
-        <h3>Theme</h3>
-        <div class="seg" role="radiogroup" aria-label="Theme">
-          {#each THEMES as t (t.id)}
+        <h3>{t('components.menu.theme')}</h3>
+        <div class="seg" role="radiogroup" aria-label={t('components.menu.theme')}>
+          {#each THEMES as theme (theme)}
             <button
               role="radio"
-              aria-checked={settings.value.theme === t.id}
-              onclick={() => settings.update({ theme: t.id })}>{t.label}</button
+              aria-checked={settings.value.theme === theme}
+              onclick={() => settings.update({ theme })}>{t(`components.menu.theme.${theme}`)}</button
             >
           {/each}
         </div>
       </section>
       <section>
-        <h3>Accent</h3>
-        <div class="swatches" role="radiogroup" aria-label="Accent color">
+        <h3>{t('components.menu.accent')}</h3>
+        <div class="swatches" role="radiogroup" aria-label={t('components.menu.accentColor')}>
           {#each ACCENTS as c (c)}
             <button
               class="swatch"
               role="radio"
               aria-checked={settings.value.accent === c}
-              aria-label="Accent {c}"
+              aria-label={t('components.menu.accentSwatch', { color: c })}
               style:--c={c}
               onclick={() => settings.update({ accent: c })}
             ></button>
           {/each}
-          <label class="swatch custom" title="Custom color">
+          <label class="swatch custom" title={t('components.menu.customColor')}>
             <input
               type="color"
               value={settings.value.accent}
               oninput={(e) => settings.update({ accent: e.currentTarget.value })}
-              aria-label="Custom accent color"
+              aria-label={t('components.menu.customAccent')}
             />
             <Icon name="plus" size={12} stroke={2.5} />
           </label>
         </div>
       </section>
       <section>
-        <h3>Tabs</h3>
-        <div class="seg" role="radiogroup" aria-label="Tab layout">
+        <h3>{t('components.tabs')}</h3>
+        <div class="seg" role="radiogroup" aria-label={t('components.menu.tabLayout')}>
           <button role="radio" aria-checked={!settings.value.verticalTabs} onclick={() => settings.update({ verticalTabs: false })}>
-            Horizontal
+            {t('components.menu.horizontal')}
           </button>
           <button role="radio" aria-checked={settings.value.verticalTabs} onclick={() => settings.update({ verticalTabs: true })}>
-            Vertical
+            {t('components.menu.vertical')}
           </button>
         </div>
       </section>
       <section>
-        <h3>Library</h3>
+        <h3>{t('components.library')}</h3>
         <div class="menu">
-          {#each LIBRARY as item (item.id)}
-            <button onclick={() => ((open = false), chrome.run(item.id))}>
-              <span>{item.label}</span>
-              {#if chrome.keymap[item.id][0]}<kbd>{chrome.keymap[item.id][0]}</kbd>{/if}
+          {#each LIBRARY as id (id)}
+            <button onclick={() => ((open = false), chrome.run(id))}>
+              <span>{t(`components.menu.${id}`)}</span>
+              {#if chrome.keymap[id][0]}<kbd>{chrome.keymap[id][0]}</kbd>{/if}
             </button>
           {/each}
           <button role="menuitemcheckbox" aria-checked={settings.value.bookmarksBar} onclick={() => chrome.run('ui.toggleBookmarksBar')}>
-            <span>{settings.value.bookmarksBar ? 'Hide' : 'Show'} bookmarks bar</span>
+            <span>{settings.value.bookmarksBar ? t('components.menu.hideBar') : t('components.menu.showBar')}</span>
             <kbd>{chrome.keymap['ui.toggleBookmarksBar'][0]}</kbd>
           </button>
         </div>
@@ -120,7 +112,7 @@
       <section>
         <div class="menu">
           <button onclick={() => ((open = false), chrome.run('settings.open'))}>
-            <span>All settings…</span>
+            <span>{t('components.menu.allSettings')}</span>
             {#if chrome.keymap['settings.open'][0]}<kbd>{chrome.keymap['settings.open'][0]}</kbd>{/if}
           </button>
         </div>

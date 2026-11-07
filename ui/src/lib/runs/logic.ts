@@ -9,6 +9,7 @@ import type {
   RunStartArgs,
   RecordRunsEvents,
 } from '../api/types-record-runs';
+import { t } from '../i18n/index.svelte';
 
 // ---- results paging (run.results is cursor based) ----------------------------------------
 
@@ -49,9 +50,9 @@ export function pageCount(rows: number, limit: number): number {
 
 /** "51–100 of 230" (rows shown on the current page). */
 export function pageRange(p: Pager, limit: number, onPage: number, total: number): string {
-  if (onPage === 0) return `0 of ${total}`;
+  if (onPage === 0) return t('runs.pageRange', { range: '0', total });
   const from = p.index * limit + 1;
-  return `${from}–${from + onPage - 1} of ${Math.max(total, from + onPage - 1)}`;
+  return t('runs.pageRange', { range: `${from}–${from + onPage - 1}`, total: Math.max(total, from + onPage - 1) });
 }
 
 // ---- data sources ---------------------------------------------------------------------------
@@ -61,7 +62,7 @@ export type RunData = RunStartArgs['data'];
 /** `{csv_path}` / `{json_path}` / `{xlsx_path}` by file extension. */
 export function dataFromPath(path: string): RunData {
   const p = path.trim().replace(/^"(.*)"$/, '$1');
-  if (!p) throw new Error('Enter the path of a CSV, JSON or Excel file');
+  if (!p) throw new Error(t('runs.data.needPath'));
   const ext = /\.([a-z0-9]+)$/i.exec(p)?.[1]?.toLowerCase();
   switch (ext) {
     case 'csv':
@@ -73,7 +74,7 @@ export function dataFromPath(path: string): RunData {
     case 'ods':
       return { xlsx_path: p };
     default:
-      throw new Error('The file must end in .csv, .json, .xlsx, .xls or .ods');
+      throw new Error(t('runs.data.badExt'));
   }
 }
 
@@ -107,37 +108,37 @@ function splitCsv(line: string, sep: string): string[] {
  * (separator guessed from the header: tab, semicolon or comma).
  */
 export function parseRows(text: string): Record<string, unknown>[] {
-  const t = text.trim();
-  if (!t) throw new Error('Paste rows: a JSON array, JSON lines or CSV with a header row');
-  if (t.startsWith('[')) {
+  const src = text.trim();
+  if (!src) throw new Error(t('runs.data.pasteRows'));
+  if (src.startsWith('[')) {
     let v: unknown;
     try {
-      v = JSON.parse(t);
+      v = JSON.parse(src);
     } catch (err) {
-      throw new Error(`Not valid JSON: ${(err as Error).message}`);
+      throw new Error(t('runs.data.badJson', { error: (err as Error).message }));
     }
     if (!Array.isArray(v) || v.some((r) => typeof r !== 'object' || r === null || Array.isArray(r))) {
-      throw new Error('The JSON must be an array of objects ({"column": value})');
+      throw new Error(t('runs.data.notObjects'));
     }
     return v as Record<string, unknown>[];
   }
-  const lines = t.split(/\r?\n/).filter((l) => l.trim() !== '');
-  if (t.startsWith('{')) {
+  const lines = src.split(/\r?\n/).filter((l) => l.trim() !== '');
+  if (src.startsWith('{')) {
     return lines.map((l, i) => {
       try {
         const v = JSON.parse(l);
-        if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('not an object');
+        if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error(t('runs.data.notObject'));
         return v as Record<string, unknown>;
       } catch (err) {
-        throw new Error(`Line ${i + 1}: ${(err as Error).message}`);
+        throw new Error(t('runs.data.line', { n: i + 1, error: (err as Error).message }));
       }
     });
   }
   const head = lines[0];
   const sep = head.includes('\t') ? '\t' : head.includes(';') && !head.includes(',') ? ';' : ',';
   const cols = splitCsv(head, sep);
-  if (cols.some((c) => !c)) throw new Error('The header row has an empty column name');
-  if (lines.length < 2) throw new Error('Only a header row: add at least one data row');
+  if (cols.some((c) => !c)) throw new Error(t('runs.data.emptyColumn'));
+  if (lines.length < 2) throw new Error(t('runs.data.onlyHeader'));
   return lines.slice(1).map((l) => {
     const cells = splitCsv(l, sep);
     return Object.fromEntries(cols.map((c, i) => [c, cells[i] ?? '']));
@@ -206,12 +207,14 @@ export function upsertRun(runs: RunInfo[], run: RunInfo): RunInfo[] {
 /** "1 h 2 min", "42 s", "850 ms". */
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return '';
-  if (ms < 1000) return `${Math.round(ms)} ms`;
+  // Unit abbreviations in the UI language: ms/s/min/h, мс/с/хв/год.
+  const u = (unit: 'ms' | 's' | 'min' | 'h', n: number) => `${n} ${t(`runs.unit.${unit}`)}`;
+  if (ms < 1000) return u('ms', Math.round(ms));
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} s`;
+  if (s < 60) return u('s', s);
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ${s % 60 ? `${s % 60} s` : ''}`.trim();
-  return `${Math.floor(m / 60)} h ${m % 60} min`;
+  if (m < 60) return s % 60 ? `${u('min', m)} ${u('s', s % 60)}` : u('min', m);
+  return `${u('h', Math.floor(m / 60))} ${u('min', m % 60)}`;
 }
 
 /** Compact one-line JSON of a value for table cells. */

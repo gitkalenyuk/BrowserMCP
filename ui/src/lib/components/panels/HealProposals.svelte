@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp } from '../../i18n/index.svelte';
   import type { RunInfo } from '../../api/types-record-runs';
   import type { HealProposal } from '../../api/types-settings';
   import { confidenceLevel, confidencePct, emptyHeal, pendingProposal } from '../../runs/heal';
@@ -50,15 +51,14 @@
   const reject = (p: HealProposal) => act('reject', () => store.reject(p, feedback));
 
   const mode = $derived(run.options.heal_mode ?? (run.options.heal ? 'ask' : 'off'));
-  const STATUS = { accepted: 'Accepted', rejected: 'Rejected', superseded: 'Replaced', pending: 'Waiting' } as const;
 </script>
 
 {#if hs.applied && !paused}
   <div class="rr-note ok applied" role="status">
     <span>
       <Icon name="check" size={12} stroke={2.25} />
-      {hs.applied.auto ? 'Patched automatically' : 'Patch accepted'}: continues with <span class="rr-mono">{hs.applied.script}</span>,
-      {hs.applied.requeued} row{hs.applied.requeued === 1 ? '' : 's'} back in the queue.
+      {hs.applied.auto ? t('runs.heal.auto') : t('runs.heal.accepted')}: {t('runs.heal.continues')} <span class="rr-mono">{hs.applied.script}</span>,
+      {t('runs.heal.requeued', { rows: tp('runs.form.rows', hs.applied.requeued) })}
     </span>
   </div>
 {/if}
@@ -67,41 +67,41 @@
   <div class="ai" aria-live="polite">
     {#if pending}
       {@const level = confidenceLevel(pending.confidence)}
-      <div class="card" role="group" aria-label="AI patch proposal">
+      <div class="card" role="group" aria-label={t('runs.heal.proposal')}>
         <div class="top">
-          <span class="lbl"><Icon name="sparkles" size={13} /> AI patch</span>
-          <span class="conf {level}" title="The model's own estimate. Auto mode applies from 80%.">{confidencePct(pending.confidence)} confident</span>
-          <span class="rr-hint">attempt {pending.attempt}/{pending.max_attempts}{pending.provider ? ` · ${pending.provider}${pending.model ? ` ${pending.model}` : ''}` : ''}</span>
+          <span class="lbl"><Icon name="sparkles" size={13} /> {t('runs.heal.aiPatch')}</span>
+          <span class="conf {level}" title={t('runs.heal.confidenceHint')}>{t('runs.heal.confident', { pct: confidencePct(pending.confidence) })}</span>
+          <span class="rr-hint">{t('runs.heal.attempt', { n: pending.attempt, max: pending.max_attempts })}{pending.provider ? ` · ${pending.provider}${pending.model ? ` ${pending.model}` : ''}` : ''}</span>
         </div>
         {#if pending.explanation}<p class="expl">{pending.explanation}</p>{/if}
         {#if pending.checks.length}
-          <div class="checks" aria-label="Checks passed">
+          <div class="checks" aria-label={t('runs.heal.checks')}>
             {#each pending.checks as c (c)}<span class="chk"><Icon name="check" size={10} stroke={2.5} />{c}</span>{/each}
           </div>
         {/if}
-        {#if hs.note}<p class="rr-hint">Not applied automatically: {hs.note}</p>{/if}
+        {#if hs.note}<p class="rr-hint">{t('runs.heal.notAuto', { note: hs.note })}</p>{/if}
         <DiffView diff={pending.diff} />
         {#if rejecting}
           <label class="rr-field">
-            <span>What is wrong with it? <span class="opt">the AI gets this for the next attempt</span></span>
-            <textarea rows="2" bind:value={feedback} placeholder="e.g. the button is called “Log in” now, keep the wait" spellcheck="true"></textarea>
+            <span>{t('runs.heal.whatWrong')} <span class="opt">{t('runs.heal.whatWrongHint')}</span></span>
+            <textarea rows="2" bind:value={feedback} placeholder={t('runs.heal.whatWrongPlaceholder')} spellcheck="true"></textarea>
           </label>
           <div class="rr-row">
             <button class="btn primary" disabled={busy !== null} onclick={() => reject(pending)}>
-              {busy === 'reject' ? 'Asking for another…' : pending.attempt >= pending.max_attempts ? 'Reject' : 'Reject & try again'}
+              {busy === 'reject' ? t('runs.heal.askingAnother') : pending.attempt >= pending.max_attempts ? t('newtab.patch.reject') : t('runs.heal.rejectRetry')}
             </button>
-            <button class="btn" disabled={busy !== null} onclick={() => ((rejecting = false), (feedback = ''))}>Back</button>
+            <button class="btn" disabled={busy !== null} onclick={() => ((rejecting = false), (feedback = ''))}>{t('common.back')}</button>
           </div>
         {:else}
           <div class="rr-row">
             <button class="btn primary" disabled={busy !== null} onclick={() => accept(pending)}>
               <Icon name="check" size={13} stroke={2.25} />
-              {busy === 'accept' ? 'Applying…' : 'Accept & continue'}
+              {busy === 'accept' ? t('runs.heal.applying') : t('runs.heal.accept')}
             </button>
-            <button class="btn" disabled={busy !== null} onclick={() => (rejecting = true)}>Reject…</button>
+            <button class="btn" disabled={busy !== null} onclick={() => (rejecting = true)}>{t('runs.heal.rejectDots')}</button>
             {#if pending.patched_code}
-              <button class="btn" disabled={busy !== null} onclick={() => onedit(pending.patched_code, pending.script)} title="Open the patched script in the editor below">
-                <Icon name="pencil" size={12} /> Edit by hand
+              <button class="btn" disabled={busy !== null} onclick={() => onedit(pending.patched_code, pending.script)} title={t('runs.heal.editHint')}>
+                <Icon name="pencil" size={12} /> {t('runs.heal.edit')}
               </button>
             {/if}
           </div>
@@ -111,25 +111,25 @@
       <div class="card none">
         {#if hs.failed}
           <p class="err-line" role="alert">
-            <b>No usable patch</b>{hs.failed.attempts ? ` after ${hs.failed.attempts} attempt${hs.failed.attempts === 1 ? '' : 's'}` : ''}: {hs.failed.error}
+            <b>{t('runs.heal.noPatch')}</b>{hs.failed.attempts ? ` ${t('runs.heal.after', { attempts: tp('runs.detail.attempts', hs.failed.attempts) })}` : ''}: {hs.failed.error}
           </p>
         {:else if busy === 'propose'}
-          <p class="rr-hint">The AI is reading the error, the page snapshot and the script…</p>
+          <p class="rr-hint">{t('runs.heal.reading')}</p>
         {:else}
           <p class="rr-hint">
             {mode === 'off'
-              ? 'Self-healing is off for this run: ask the AI once, or write the patch yourself.'
-              : 'No AI proposal yet. With healing on, one usually arrives by itself; you can also ask now.'}
+              ? t('runs.heal.off')
+              : t('runs.heal.none')}
           </p>
         {/if}
         <label class="rr-field">
-          <span>Hint for the AI <span class="opt">optional</span></span>
-          <input bind:value={feedback} placeholder="e.g. the sign-in button moved into the header" spellcheck="true" />
+          <span>{t('runs.heal.hint')} <span class="opt">{t('runs.heal.optional')}</span></span>
+          <input bind:value={feedback} placeholder={t('runs.heal.hintPlaceholder')} spellcheck="true" />
         </label>
         <div class="rr-row">
           <button class="btn primary" disabled={busy !== null} onclick={propose}>
             <Icon name="sparkles" size={13} />
-            {busy === 'propose' ? 'Asking the AI…' : hs.failed ? 'Propose again' : 'Propose a patch'}
+            {busy === 'propose' ? t('runs.heal.asking') : hs.failed ? t('runs.heal.proposeAgain') : t('runs.heal.propose')}
           </button>
         </div>
       </div>
@@ -141,14 +141,14 @@
 {#if earlier.length}
   <div class="earlier">
     <button class="link" aria-expanded={showEarlier} onclick={() => (showEarlier = !showEarlier)}>
-      <Icon name={showEarlier ? 'chevron-down' : 'chevron-right'} size={12} /> Earlier proposals ({earlier.length})
+      <Icon name={showEarlier ? 'chevron-down' : 'chevron-right'} size={12} /> {t('runs.heal.earlier', { n: earlier.length })}
     </button>
     {#if showEarlier}
       {#each earlier as p (p.proposal_id)}
         <details class="old">
           <summary>
-            <span class="rr-pill {p.status === 'accepted' ? 'ok' : p.status === 'rejected' ? 'failed' : ''}">{STATUS[p.status]}</span>
-            attempt {p.attempt} · {confidencePct(p.confidence)} · {p.explanation}
+            <span class="rr-pill {p.status === 'accepted' ? 'ok' : p.status === 'rejected' ? 'failed' : ''}">{t(`runs.heal.status.${p.status}`)}</span>
+            {t('runs.heal.attemptN', { n: p.attempt })} · {confidencePct(p.confidence)} · {p.explanation}
           </summary>
           <DiffView diff={p.diff} maxHeight={180} />
         </details>

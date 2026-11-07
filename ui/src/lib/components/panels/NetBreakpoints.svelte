@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NetStage } from '../../api';
-  import { BODY_ONLY_NOTE, bodyOnly, buildMatch, buildResume, draftFromPaused, type ResumeDraft } from '../../net/logic';
+  import { t } from '../../i18n/index.svelte';
+  import { bodyOnly, buildMatch, buildResume, draftFromPaused, type ResumeDraft } from '../../net/logic';
   import { parseRuleLines, type RuleRow } from '../../net/parse';
   import type { PausedItem } from '../../net/store.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -36,13 +37,13 @@
   $effect(() => {
     void refresh();
     void net.refreshPaused().catch(() => {});
-    const t = setInterval(() => {
+    const clock = setInterval(() => {
       now = Date.now();
     }, 1000);
-    const r = setInterval(refresh, 3000);
+    const poll = setInterval(refresh, 3000);
     return () => {
-      clearInterval(t);
-      clearInterval(r);
+      clearInterval(clock);
+      clearInterval(poll);
     };
   });
 
@@ -109,30 +110,30 @@
       void add();
     }}
   >
-    <input bind:value={pattern} spellcheck="false" placeholder="URL pattern, empty = every request" aria-label="Breakpoint URL pattern" />
-    <select bind:value={method} aria-label="Method">
-      {#each METHODS as m (m)}<option value={m}>{m || 'Any'}</option>{/each}
+    <input bind:value={pattern} spellcheck="false" placeholder={t('net.bp.patternPlaceholder')} aria-label={t('net.bp.pattern')} />
+    <select bind:value={method} aria-label={t('net.col.method')}>
+      {#each METHODS as m (m)}<option value={m}>{m || t('net.rules.anyMethod')}</option>{/each}
     </select>
-    <select bind:value={stage} aria-label="Stage">
-      <option value="request">Request</option>
-      <option value="response">Response</option>
+    <select bind:value={stage} aria-label={t('net.rules.stage')}>
+      <option value="request">{t('net.stage.request')}</option>
+      <option value="response">{t('net.stage.response')}</option>
     </select>
-    <button class="btn primary" type="submit" disabled={tab === null || adding} title="Pause matching requests of tab {tab}">
-      <Icon name="breakpoint" size={12} stroke={2} /> Pause
+    <button class="btn primary" type="submit" disabled={tab === null || adding} title={t('net.bp.pauseHint', { tab: tab ?? '' })}>
+      <Icon name="breakpoint" size={12} stroke={2} /> {t('runs.detail.pause')}
     </button>
   </form>
 
   {#if error}<p class="msg err" role="alert">{error}</p>{:else if info}<p class="msg">{info}</p>{/if}
 
   {#if breakpoints.length}
-    <ul class="bp-list" aria-label="Breakpoints">
+    <ul class="bp-list" aria-label={t('net.view.breakpoints')}>
       {#each breakpoints as b (b.id)}
         <li>
           <Icon name="breakpoint" size={12} stroke={2} />
           <span class="id">{b.id}</span>
-          <span class="what">{b.stage} · {b.match} · tab {b.tab}</span>
-          <span class="hits" title="Requests paused so far">{b.hits}</span>
-          <button class="icon-btn" aria-label="Remove breakpoint {b.id}" title="Remove (continues what it holds)" onclick={() => remove(b.id)}>
+          <span class="what">{t(`net.stage.${b.stage}`)} · {b.match} · {t('record.tabN', { id: b.tab })}</span>
+          <span class="hits" title={t('net.bp.hits')}>{b.hits}</span>
+          <button class="icon-btn" aria-label={t('net.bp.remove', { id: b.id })} title={t('net.bp.removeHint')} onclick={() => remove(b.id)}>
             <Icon name="x" size={12} />
           </button>
         </li>
@@ -140,10 +141,10 @@
     </ul>
   {/if}
 
-  <h4>Paused <span>{net.paused.length}</span></h4>
+  <h4>{t('net.bp.paused')} <span>{net.paused.length}</span></h4>
   {#if net.paused.length === 0}
     <p class="none">
-      {breakpoints.length ? 'Waiting for a matching request… use the page.' : 'Add a breakpoint to hold requests before they are sent (or before the page sees the answer) and edit them.'}
+      {breakpoints.length ? t('net.bp.waiting') : t('net.bp.empty')}
     </p>
   {/if}
   <ul class="paused">
@@ -161,45 +162,45 @@
           {@const fixed = bodyOnly(p.info)}
           <div class="editor">
             {#if p.partial}
-              <p class="hint">Paused before this panel opened: headers and body are not known here; edits replace or add fields.</p>
+              <p class="hint">{t('net.bp.partial')}</p>
             {/if}
             {#if p.info.stage === 'request'}
               <div class="line">
-                <select bind:value={drafts[id].method} aria-label="Method">
+                <select bind:value={drafts[id].method} aria-label={t('net.col.method')}>
                   {#each ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as m (m)}<option value={m}>{m}</option>{/each}
                 </select>
                 <input bind:value={drafts[id].url} spellcheck="false" aria-label="URL" />
               </div>
             {:else}
-              <label class="line"><span>Status</span><input class="num" bind:value={drafts[id].status} inputmode="numeric" readonly={fixed} /></label>
+              <label class="line"><span>{t('net.col.status')}</span><input class="num" bind:value={drafts[id].status} inputmode="numeric" readonly={fixed} /></label>
               {#if fixed}
-                <p class="hint">{BODY_ONLY_NOTE}.</p>
+                <p class="hint">{t('net.bp.bodyOnly')}</p>
               {:else}
-                <p class="hint">The response failed{p.info.error ? ` (${p.info.error})` : ''}: a new status or headers also need a replacement body.</p>
+                <p class="hint">{t('net.bp.failed', { error: p.info.error ? ` (${p.info.error})` : '' })}</p>
               {/if}
             {/if}
             <label>
               <span>
-                {p.info.stage === 'request' ? 'Request' : 'Response'} headers
-                {#if fixed}<em>read-only</em>{:else}<em>Name: value per line; delete a line to remove</em>{/if}
+                {p.info.stage === 'request' ? t('net.detail.headers.req') : t('net.detail.headers.res')}
+                {#if fixed}<em>{t('net.bp.readOnly')}</em>{:else}<em>{t('net.bp.headersHint')}</em>{/if}
               </span>
               <textarea bind:value={drafts[id].headers} rows="5" spellcheck="false" readonly={fixed}></textarea>
             </label>
             {#if p.info.stage === 'request'}
               <label>
-                <span>Body{p.info.post_data && p.info.post_data.length >= 2048 ? ' (first 2 kB shown)' : ''}</span>
-                <textarea bind:value={drafts[id].body} rows="3" spellcheck="false" placeholder="No body"></textarea>
+                <span>{t('net.rules.body')}{p.info.post_data && p.info.post_data.length >= 2048 ? ` (${t('net.bp.first2k')})` : ''}</span>
+                <textarea bind:value={drafts[id].body} rows="3" spellcheck="false" placeholder={t('net.bp.noBody')}></textarea>
               </label>
             {:else}
-              <label class="check"><input type="checkbox" bind:checked={drafts[id].replaceBody} /> Replace the response body</label>
+              <label class="check"><input type="checkbox" bind:checked={drafts[id].replaceBody} /> {t('net.bp.replaceBody')}</label>
               {#if drafts[id].replaceBody}
-                <textarea bind:value={drafts[id].responseBody} rows="4" spellcheck="false" aria-label="New response body"></textarea>
+                <textarea bind:value={drafts[id].responseBody} rows="4" spellcheck="false" aria-label={t('net.bp.newBody')}></textarea>
               {/if}
             {/if}
             <div class="actions">
-              <button class="btn" disabled={sending !== null} onclick={() => resume(p, 'drop')}>Drop</button>
+              <button class="btn" disabled={sending !== null} onclick={() => resume(p, 'drop')}>{t('net.bp.drop')}</button>
               <button class="btn primary" disabled={sending !== null} onclick={() => resume(p, 'continue')}>
-                <Icon name="play" size={11} /> Continue
+                <Icon name="play" size={11} /> {t('scripts.continue')}
               </button>
             </div>
           </div>

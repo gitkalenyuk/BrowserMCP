@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../lib/i18n/index.svelte';
   import type { Agent, BrowserApi, Patch, Run } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
 
@@ -30,42 +31,30 @@
   });
 
   const runName = (id: string) => runs.find((r) => r.id === id)?.name ?? id;
-  const STATUS: Record<Run['status'], string> = {
-    queued: 'Queued',
-    running: 'Running',
-    paused: 'Needs approval',
-    done: 'Done',
-    failed: 'Failed',
-  };
-  const AGENT_STATUS: Record<Agent['status'], string> = {
-    idle: 'Idle',
-    running: 'Working',
-    waiting: 'Waiting for you',
-    error: 'Error',
-  };
+  // Status labels: `newtab.run.<status>` and `newtab.agent.<status>`.
 </script>
 
 <section aria-labelledby="agents-title">
-  <h2 id="agents-title">Agents & runs</h2>
+  <h2 id="agents-title">{t('newtab.widget.agents')}</h2>
 
   {#if error}
-    <p class="muted">Could not load agents: {error}</p>
+    <p class="muted">{t('newtab.agents.loadFailed', { error })}</p>
   {:else if !loaded}
-    <p class="muted">Loading…</p>
+    <p class="muted">{t('common.loading')}</p>
   {:else}
     {#each patches as p (p.id)}
-      <div class="patch" role="group" aria-label="Patch awaiting approval">
+      <div class="patch" role="group" aria-label={t('newtab.patch.label')}>
         <div class="patch-head">
           <Icon name="patch" size={15} />
-          <span class="patch-title">Patch for <strong>{p.script}</strong></span>
+          <span class="patch-title">{t('newtab.patch.for')} <strong>{p.script}</strong></span>
           <span class="muted small">{runName(p.runId)}</span>
         </div>
         <p class="patch-summary">{p.summary}</p>
         <div class="patch-actions">
           <button class="btn primary" onclick={() => api.call('runs.patch.approve', { id: p.id })}>
-            <Icon name="check" size={14} stroke={2.25} /> Approve and resume
+            <Icon name="check" size={14} stroke={2.25} /> {t('newtab.patch.approve')}
           </button>
-          <button class="btn" onclick={() => api.call('runs.patch.reject', { id: p.id })}>Reject</button>
+          <button class="btn" onclick={() => api.call('runs.patch.reject', { id: p.id })}>{t('newtab.patch.reject')}</button>
         </div>
       </div>
     {/each}
@@ -76,12 +65,12 @@
           <span class="badge"><Icon name="bot" size={14} stroke={2} /></span>
           <span class="main">
             <span class="name">{a.name}</span>
-            <span class="muted small ellipsis">{a.task ?? 'No task'}</span>
+            <span class="muted small ellipsis">{a.task ?? t('newtab.agents.noTask')}</span>
           </span>
-          <span class="state" class:live={a.status === 'running'}>{AGENT_STATUS[a.status]}</span>
+          <span class="state" class:live={a.status === 'running'}>{t(`newtab.agent.${a.status}`)}</span>
         </li>
       {:else}
-        <li class="muted small">No agents connected. Add BrowserMCP to Claude Code or Codex to see them here.</li>
+        <li class="muted small">{t('newtab.agents.none')}</li>
       {/each}
     </ul>
 
@@ -92,7 +81,7 @@
           <li class="run">
             <div class="run-head">
               <span class="name ellipsis">{r.name}</span>
-              <span class="pill {r.status}">{STATUS[r.status]}</span>
+              <span class="pill {r.status}">{t(`newtab.run.${r.status}`)}</span>
             </div>
             <div
               class="bar {r.status}"
@@ -100,13 +89,13 @@
               aria-valuenow={pct}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="{r.name} progress"
+              aria-label={t('newtab.run.progress', { name: r.name })}
             >
               <span style:transform="scaleX({pct / 100})"></span>
             </div>
             <div class="muted small nums">
               <span>{r.done} / {r.total}</span>
-              {#if r.failed}<span class="fail">{r.failed} failed</span>{/if}
+              {#if r.failed}<span class="fail">{t('newtab.run.failedCount', { n: r.failed })}</span>{/if}
             </div>
           </li>
         {/each}

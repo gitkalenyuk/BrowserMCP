@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import { groupRuns } from '../state/tabs';
   import GroupLabel from './GroupLabel.svelte';
@@ -30,7 +31,7 @@
 
 <div class="strip">
   <WorkspaceSwitcher />
-  <div class="tabs" role="tablist" aria-label="Tabs" bind:this={scroller} onwheel={onWheel}>
+  <div class="tabs" role="tablist" aria-label={t('components.tabs')} bind:this={scroller} onwheel={onWheel}>
     {#each runs as run, i (run.group?.id ?? `loose-${i}-${run.tabs[0].id}`)}
       {#if run.group}
         {@const collapsed = !!chrome.collapsed[run.group.id]}
@@ -46,7 +47,7 @@
         {/each}
       {/if}
     {/each}
-    <button class="icon-btn new" aria-label="New tab" title="New tab (Ctrl+T)" onclick={() => chrome.newTab()}>
+    <button class="icon-btn new" aria-label={t('components.newTab')} title="{t('components.newTab')} (Ctrl+T)" onclick={() => chrome.newTab()}>
       <Icon name="plus" size={16} stroke={2} />
     </button>
   </div>

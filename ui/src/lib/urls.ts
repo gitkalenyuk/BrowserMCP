@@ -1,3 +1,5 @@
+import { t } from './i18n/index.svelte';
+
 /** The new tab page (served by the browser, see crates/core NEW_TAB_URL). */
 export const NEWTAB_URL = 'bmcp://ui/newtab.html';
 export const DEFAULT_SEARCH = 'https://www.google.com/search?q=%s';
@@ -57,6 +59,6 @@ export function displayUrl(url: string): string {
 
 /** A readable fallback title for a tab that has not reported one yet. */
 export function fallbackTitle(url: string): string {
-  if (isNewTab(url)) return 'New Tab';
+  if (isNewTab(url)) return t('components.newTab');
   return hostOf(url) || url;
 }

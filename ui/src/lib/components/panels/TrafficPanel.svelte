@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { RpcError } from '../../api';
+  import { t, tp } from '../../i18n/index.svelte';
   import { filterRows, TYPE_CHIPS, toggleChip, type TypeChip } from '../../net/logic';
   import { mergeRows, nextPollCursor, parseNetList, type NetRow } from '../../net/parse';
   import { useChrome } from '../../state/chrome.svelte';
@@ -56,24 +57,24 @@
   }
 
   async function poll() {
-    const t = tab;
-    if (t === null || inFlight) return;
-    if (t !== tabFor) reset(t);
+    const id = tab;
+    if (id === null || inFlight) return;
+    if (id !== tabFor) reset(id);
     inFlight = true;
     try {
       let c = cursor;
       let end = cursor;
       for (let page = 0; page < 10; page++) {
-        const r = await chrome.api.call('net.list', { tab: t, cursor: c, limit: 500 });
-        if (tabFor !== t) return;
+        const r = await chrome.api.call('net.list', { tab: id, cursor: c, limit: 500 });
+        if (tabFor !== id) return;
         const parsed = parseNetList(r.text);
         if (parsed.header) {
-          net.capturing[t] = parsed.header.capturing;
+          net.capturing[id] = parsed.header.capturing;
           captured = parsed.header.captured;
           dropped = parsed.header.dropped;
         }
         rows = mergeRows(rows, parsed.rows);
-        if (parsed.rows.length && notice?.startsWith('Capturing')) notice = null;
+        if (parsed.rows.length && notice === t('net.capturingNotice')) notice = null;
         end = r.next_cursor;
         if (!r.more) break;
         c = r.next_cursor;
@@ -83,7 +84,7 @@
     } catch (err) {
       if (err instanceof RpcError && err.code === 'NOT_FOUND') {
         // Nothing captured on this tab (yet).
-        net.capturing[t] = false;
+        net.capturing[id] = false;
         listError = null;
       } else {
         listError = (err as Error).message;
@@ -134,7 +135,7 @@
     notice = null;
     try {
       await net.setCapture(tab, !capturing);
-      if (net.capturing[tab] && rows.length === 0) notice = 'Capturing. Reload the page to see its first requests.';
+      if (net.capturing[tab] && rows.length === 0) notice = t('net.capturingNotice');
       await poll();
     } catch (err) {
       listError = (err as Error).message;
@@ -150,7 +151,7 @@
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const r = await chrome.api.call('net.har_export', { tab, path: `tab${tab}-${stamp}.har` });
-      notice = `HAR: ${r.entries} requests (${Math.round(r.bytes / 1024)} kB) saved to ${r.path ?? 'memory'}`;
+      notice = t('net.harSaved', { n: r.entries, kb: Math.round(r.bytes / 1024), path: r.path ?? t('net.memory') });
     } catch (err) {
       listError = (err as Error).message;
     } finally {
@@ -197,29 +198,29 @@
       class:on={capturing}
       disabled={tab === null || busy}
       aria-pressed={capturing}
-      title={capturing ? 'Stop recording this tab' : 'Record the requests of the current tab'}
+      title={capturing ? t('net.stopHint') : t('net.captureHint')}
       onclick={toggleCapture}
     >
       <span class="rec" aria-hidden="true"></span>
-      {capturing ? 'Capturing' : 'Capture'}
+      {capturing ? t('net.capturing') : t('net.capture')}
     </button>
-    <span class="count" title="{captured} in the core's buffer{dropped ? `, ${dropped} oldest dropped` : ''}">
-      {visible.length}{visible.length !== rows.length ? ` / ${rows.length}` : ''} requests
+    <span class="count" title={t('net.buffer', { n: captured }) + (dropped ? `, ${t('net.dropped', { n: dropped })}` : '')}>
+      {tp('net.requests', visible.length, { shown: visible.length !== rows.length ? `${visible.length} / ${rows.length}` : String(visible.length) })}
     </span>
     <span class="spacer"></span>
-    <button class="icon-btn" title="Clear the list (the core keeps them)" aria-label="Clear list" disabled={rows.length === 0} onclick={clearView}>
+    <button class="icon-btn" title={t('net.clearHint')} aria-label={t('net.clear')} disabled={rows.length === 0} onclick={clearView}>
       <Icon name="trash" size={14} />
     </button>
-    <button class="icon-btn" title="Export HAR" aria-label="Export HAR" disabled={tab === null || busy || rows.length === 0} onclick={exportHar}>
+    <button class="icon-btn" title={t('net.exportHar')} aria-label={t('net.exportHar')} disabled={tab === null || busy || rows.length === 0} onclick={exportHar}>
       <Icon name="download" size={15} />
     </button>
   </div>
 
-  <div class="views" role="tablist" aria-label="Traffic views">
-    <button role="tab" aria-selected={view === 'requests'} onclick={() => (view = 'requests')}>Requests</button>
-    <button role="tab" aria-selected={view === 'rules'} onclick={() => (view = 'rules')}>Rules</button>
+  <div class="views" role="tablist" aria-label={t('net.views')}>
+    <button role="tab" aria-selected={view === 'requests'} onclick={() => (view = 'requests')}>{t('net.view.requests')}</button>
+    <button role="tab" aria-selected={view === 'rules'} onclick={() => (view = 'rules')}>{t('net.view.rules')}</button>
     <button role="tab" aria-selected={view === 'breakpoints'} onclick={() => (view = 'breakpoints')}>
-      Breakpoints
+      {t('net.view.breakpoints')}
       {#if pausedCount > 0}<span class="badge">{pausedCount}</span>{/if}
     </button>
   </div>
@@ -229,7 +230,7 @@
       <span>{listError ?? net.warning ?? notice}</span>
       <button
         class="icon-btn"
-        aria-label="Dismiss"
+        aria-label={t('chrome.dismiss')}
         onclick={() => {
           if (listError) listError = null;
           else if (net.warning) net.warning = null;
@@ -243,15 +244,15 @@
     <div class="filters">
       <label class="search">
         <Icon name="search" size={13} />
-        <span class="sr-only">Filter requests</span>
-        <input bind:value={query} placeholder="Filter: text, method:post, status:4xx, -word" spellcheck="false" />
+        <span class="sr-only">{t('net.filter')}</span>
+        <input bind:value={query} placeholder={t('net.filterPlaceholder')} spellcheck="false" />
       </label>
-      <div class="chips" role="group" aria-label="Request types">
+      <div class="chips" role="group" aria-label={t('net.types')}>
         {#each TYPE_CHIPS as c (c.id)}
           <button
             class="chip"
             aria-pressed={chips.includes(c.id)}
-            title="{c.label}{c.id === 'all' ? '' : ' (Ctrl+click to combine)'}"
+            title={c.id === 'all' ? c.label : `${c.label} (${t('net.ctrlClick')})`}
             onclick={(e) => (chips = toggleChip(chips, c.id, e.ctrlKey || e.metaKey))}>{c.label}</button
           >
         {/each}
@@ -259,7 +260,7 @@
     </div>
 
     <div class="cols" aria-hidden="true">
-      <span>Status</span><span>Method</span><span>URL</span><span>Type</span><span class="r">Size</span><span class="r">Time</span>
+      <span>{t('net.col.status')}</span><span>{t('net.col.method')}</span><span>URL</span><span>{t('net.col.type')}</span><span class="r">{t('net.col.size')}</span><span class="r">{t('net.col.time')}</span>
     </div>
     <div
       class="list"
@@ -270,20 +271,20 @@
       onkeydown={onKey}
       tabindex="0"
       role="listbox"
-      aria-label="Captured requests"
+      aria-label={t('net.captured')}
     >
       {#if visible.length === 0}
         <div class="empty">
           {#if tab === null}
-            No tab is open.
+            {t('net.noTab')}
           {:else if !capturing && rows.length === 0}
             <Icon name="traffic" size={20} />
-            <p>Record this tab's requests, response bodies and WebSocket frames.</p>
-            <button class="btn primary" disabled={busy} onclick={toggleCapture}>Start capture</button>
+            <p>{t('net.emptyIntro')}</p>
+            <button class="btn primary" disabled={busy} onclick={toggleCapture}>{t('net.start')}</button>
           {:else if rows.length === 0}
-            Waiting for requests… reload the page or use it.
+            {t('net.waiting')}
           {:else}
-            No request matches the filter.
+            {t('net.noMatch')}
           {/if}
         </div>
       {:else}

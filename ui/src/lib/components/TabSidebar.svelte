@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { settings } from '../settings.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import { groupRuns } from '../state/tabs';
@@ -22,7 +23,7 @@
   });
 </script>
 
-<aside class="sidebar" style:width="{settings.value.sidebarWidth}px" aria-label="Tabs">
+<aside class="sidebar" style:width="{settings.value.sidebarWidth}px" aria-label={t('components.tabs')}>
   <div class="head">
     <WorkspaceSwitcher wide />
   </div>
@@ -50,9 +51,9 @@
         {/each}
       {/if}
     {/each}
-    <button class="new" onclick={() => chrome.newTab()} title="New tab (Ctrl+T)">
+    <button class="new" onclick={() => chrome.newTab()} title="{t('components.newTab')} (Ctrl+T)">
       <Icon name="plus" size={15} stroke={2} />
-      New tab
+      {t('components.newTab')}
     </button>
   </div>
   <ResizeHandle

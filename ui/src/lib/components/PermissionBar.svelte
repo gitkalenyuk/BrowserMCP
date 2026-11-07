@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import { permissionText } from '../state/workspaces';
   import Icon from './Icon.svelte';
@@ -12,15 +13,15 @@
 </script>
 
 {#if prompt}
-  <div class="bar" role="alertdialog" aria-label="Permission request" data-prompt={prompt.id}>
+  <div class="bar" role="alertdialog" aria-label={t('components.permission.label')} data-prompt={prompt.id}>
     <Icon name="info" size={15} />
-    <span class="text"><b>{prompt.origin}</b> wants to {permissionText(prompt.kinds)}</span>
+    <span class="text"><b>{prompt.origin}</b> {t('components.permission.wants', { what: permissionText(prompt.kinds) })}</span>
     <label class="remember">
       <input type="checkbox" bind:checked={remember} />
-      Remember for this site
+      {t('components.permission.remember')}
     </label>
-    <button class="allow" onclick={() => chrome.answerPermission(prompt.id, true, remember)}>Allow</button>
-    <button onclick={() => chrome.answerPermission(prompt.id, false, remember)}>Block</button>
+    <button class="allow" onclick={() => chrome.answerPermission(prompt.id, true, remember)}>{t('components.permission.allow')}</button>
+    <button onclick={() => chrome.answerPermission(prompt.id, false, remember)}>{t('components.permission.block')}</button>
   </div>
 {/if}
 

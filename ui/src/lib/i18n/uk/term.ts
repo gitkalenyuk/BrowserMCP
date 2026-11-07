@@ -1,0 +1,19 @@
+// Рядки інтерфейсу: term. Правила: ../index.svelte.ts.
+export default {
+  'term.cannotStart': 'Не вдалося запустити {shell}: {error}',
+  'term.shell.pwsh': 'PowerShell',
+  'term.shell.cmd': 'Командний рядок',
+  'term.shell.bash': 'Bash',
+  'term.list': 'Термінали',
+  'term.exited': 'завершено',
+  'term.exitedCode': 'завершено ({code})',
+  'term.closeLabel': 'Закрити термінал {name}',
+  'term.remove': 'Прибрати',
+  'term.closeHint': 'Закрити (завершить оболонку)',
+  'term.new': 'Новий термінал',
+  'term.newHint': 'Новий термінал: {shell}',
+  'term.shellHint': 'Оболонка для нових терміналів',
+  'term.shell': 'Оболонка',
+  'term.notFound': 'не знайдено',
+  'term.empty': 'Жодного терміналу не відкрито. Запустіть оболонку — вона працює в справжньому PTY на цьому комп’ютері.',
+};

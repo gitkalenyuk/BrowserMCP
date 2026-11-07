@@ -4,6 +4,7 @@
 
 import type { BrowserApi } from '../api/client';
 import type { DataBookmark, DataFolder, PasswordEntry } from '../api/types-data';
+import { t } from '../i18n/index.svelte';
 
 type Api = Pick<BrowserApi, 'call'>;
 
@@ -30,7 +31,7 @@ export async function editPassword(
   if (!password) {
     const { entries } = await api.call('passwords.list', { origin: old.origin, reveal: true });
     password = entries.find((e) => e.id === old.id)?.password ?? '';
-    if (!password) throw new Error('The current password could not be read; enter a new one.');
+    if (!password) throw new Error(t('components.password.unreadable'));
   }
   const saved = await api.call('passwords.save', { origin: next.origin, username: next.username, password, note: next.note });
   if (saved.id !== old.id) await api.call('passwords.delete', { id: old.id });

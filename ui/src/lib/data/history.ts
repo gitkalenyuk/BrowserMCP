@@ -1,6 +1,8 @@
 // History helpers for the library page: grouping by local day and the "clear" ranges.
 
 import type { HistoryEntry } from '../api/types-data';
+import { t } from '../i18n/index.svelte';
+import { intlLocale } from '../i18n/intl';
 
 export interface DayGroup {
   /** Local date, `YYYY-MM-DD`. */
@@ -30,10 +32,10 @@ function previousDay(start: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1).getTime();
 }
 
-export function dayLabel(start: number, now: number, locale = 'en-US'): string {
+export function dayLabel(start: number, now: number, locale = intlLocale()): string {
   const today = startOfDay(now);
-  if (start === today) return 'Today';
-  if (start === previousDay(today)) return 'Yesterday';
+  if (start === today) return t('components.day.today');
+  if (start === previousDay(today)) return t('components.day.yesterday');
   return new Date(start).toLocaleDateString(locale, {
     weekday: 'long',
     month: 'long',
@@ -46,7 +48,7 @@ export function dayLabel(start: number, now: number, locale = 'en-US'): string {
  * Group entries by the local day of their last visit, newest day first; inside a day the
  * newest visit comes first. (The core returns one row per URL with its newest visit.)
  */
-export function groupByDay(entries: readonly HistoryEntry[], now: number, locale = 'en-US'): DayGroup[] {
+export function groupByDay(entries: readonly HistoryEntry[], now: number, locale = intlLocale()): DayGroup[] {
   const groups = new Map<string, DayGroup>();
   for (const e of entries) {
     const key = dayKey(e.last_visit);
@@ -64,20 +66,21 @@ export function groupByDay(entries: readonly HistoryEntry[], now: number, locale
 }
 
 /** "14:05" style local time. */
-export function timeOfDay(ts: number, locale = 'en-US'): string {
+export function timeOfDay(ts: number, locale = intlLocale()): string {
   return new Date(ts).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
 }
 
 export type ClearRange = 'hour' | 'day' | 'week' | 'month' | 'older_month' | 'all';
 
-export const CLEAR_RANGES: { id: ClearRange; label: string }[] = [
-  { id: 'hour', label: 'Last hour' },
-  { id: 'day', label: 'Last 24 hours' },
-  { id: 'week', label: 'Last 7 days' },
-  { id: 'month', label: 'Last 4 weeks' },
-  { id: 'older_month', label: 'Older than 4 weeks' },
-  { id: 'all', label: 'All time' },
-];
+/** The ranges in "Clear history"; `label` is a getter in the UI language. */
+export const CLEAR_RANGES: { readonly id: ClearRange; readonly label: string }[] = (
+  ['hour', 'day', 'week', 'month', 'older_month', 'all'] as const
+).map((id) => ({
+  id,
+  get label() {
+    return t(`components.clear.${id}`);
+  },
+}));
 
 const HOUR = 3_600_000;
 

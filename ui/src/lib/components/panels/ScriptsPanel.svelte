@@ -2,6 +2,8 @@
   // Scripts panel: library (script.list/save/delete), Monaco editor with IntelliSense from the
   // generated browser.d.ts, Run with an inputs form (script.run), and the step debugger
   // (script.debug_start/debug_cmd + script.debug_* events). State lives in scripts/store.
+  import { t } from '../../i18n/index.svelte';
+  import { formatDate, relativeTime } from '../../i18n/intl';
   import { settings } from '../../settings.svelte';
   import { useChrome } from '../../state/chrome.svelte';
   import { freeName } from '../../scripts/logic';
@@ -120,12 +122,11 @@
     await store.remove(name);
   }
 
+  /** "5 min ago" within a day, else the date (in the UI language). */
   function ago(ms: number): string {
-    const s = Math.max(0, (Date.now() - ms) / 1000);
-    if (s < 60) return 'just now';
-    if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-    return new Date(ms).toLocaleDateString();
+    const now = Date.now();
+    if (now - ms < 86_400_000) return relativeTime(Math.min(ms, now), now);
+    return formatDate(ms, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   function focusOnMount(el: HTMLInputElement) {
@@ -140,19 +141,19 @@
     <header>
       <button class="lib-toggle" onclick={() => (libraryOpen = !libraryOpen)} aria-expanded={libraryOpen}>
         <Icon name={libraryOpen ? 'chevron-down' : 'chevron-right'} size={13} stroke={2.25} />
-        Library <span class="count">{store.scripts.length}</span>
+        {t('scripts.library')} <span class="count">{store.scripts.length}</span>
       </button>
-      <button class="icon-btn small" title="New script" aria-label="New script" onclick={startNew}>
+      <button class="icon-btn small" title={t('scripts.new')} aria-label={t('scripts.new')} onclick={startNew}>
         <Icon name="plus" size={14} stroke={2.25} />
       </button>
     </header>
     {#if libraryOpen}
-      <ul class="list" aria-label="Saved scripts">
+      <ul class="list" aria-label={t('scripts.saved')}>
         {#if naming && naming.from === null}
           <li class="row naming">
             <input
               class="name-input"
-              aria-label="New script name"
+              aria-label={t('scripts.newName')}
               bind:value={naming.value}
               onkeydown={nameKey}
               onblur={() => void commitName()}
@@ -165,27 +166,27 @@
             {#if naming && naming.from === s.name}
               <input
                 class="name-input"
-                aria-label="Rename {s.name}"
+                aria-label={t('scripts.renameLabel', { name: s.name })}
                 bind:value={naming.value}
                 onkeydown={nameKey}
                 onblur={() => void commitName()}
                 use:focusOnMount
               />
             {:else}
-              <button class="pick" onclick={() => void store.open(s.name)} title="{s.name}.ts · {s.size} bytes">
+              <button class="pick" onclick={() => void store.open(s.name)} title="{s.name}.ts · {t('scripts.bytes', { n: s.size })}">
                 <Icon name="code" size={13} stroke={2} />
                 <span class="name">{s.name}</span>
-                {#if store.isDirty(s.name)}<span class="dot" title="Unsaved changes"></span>{/if}
+                {#if store.isDirty(s.name)}<span class="dot" title={t('scripts.unsavedChanges')}></span>{/if}
                 <span class="when">{ago(s.modified_ms)}</span>
               </button>
-              <button class="icon-btn small act" title="Rename" aria-label="Rename {s.name}" onclick={() => (naming = { from: s.name, value: s.name })}>
+              <button class="icon-btn small act" title={t('scripts.rename')} aria-label={t('scripts.renameLabel', { name: s.name })} onclick={() => (naming = { from: s.name, value: s.name })}>
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" /></svg>
               </button>
               <button
                 class="icon-btn small act"
                 class:danger={confirmDelete === s.name}
-                title={confirmDelete === s.name ? 'Click again to delete' : 'Delete'}
-                aria-label="Delete {s.name}"
+                title={confirmDelete === s.name ? t('scripts.confirmDelete') : t('common.delete')}
+                aria-label={t('scripts.deleteLabel', { name: s.name })}
                 onclick={() => void remove(s.name)}
                 onblur={() => confirmDelete === s.name && (confirmDelete = null)}
               >
@@ -195,7 +196,7 @@
           </li>
         {:else}
           {#if store.loaded && !naming}
-            <li class="empty-lib">No scripts yet. <button class="link" onclick={startNew}>Create one</button></li>
+            <li class="empty-lib">{t('scripts.none')} <button class="link" onclick={startNew}>{t('scripts.createOne')}</button></li>
           {/if}
         {/each}
       </ul>
@@ -206,47 +207,47 @@
     <div class="error-bar" role="alert">
       <Icon name="alert" size={13} stroke={2} />
       <span>{store.error}</span>
-      <button class="icon-btn small" aria-label="Dismiss" onclick={() => (store.error = null)}><Icon name="x" size={12} /></button>
+      <button class="icon-btn small" aria-label={t('chrome.dismiss')} onclick={() => (store.error = null)}><Icon name="x" size={12} /></button>
     </div>
   {/if}
 
   {#if store.current !== null}
-    <div class="toolbar" role="toolbar" aria-label="Script actions">
-      <span class="title" title="{store.current}.ts">{store.current}<span class="ext">.ts</span>{#if store.dirty}<span class="dot" title="Unsaved"></span>{/if}</span>
-      <button class="icon-btn small" title="Save (Ctrl+S)" aria-label="Save" disabled={!store.dirty} onclick={() => void store.save()}>
+    <div class="toolbar" role="toolbar" aria-label={t('scripts.actions')}>
+      <span class="title" title="{store.current}.ts">{store.current}<span class="ext">.ts</span>{#if store.dirty}<span class="dot" title={t('scripts.unsaved')}></span>{/if}</span>
+      <button class="icon-btn small" title="{t('common.save')} (Ctrl+S)" aria-label={t('common.save')} disabled={!store.dirty} onclick={() => void store.save()}>
         <Icon name="download" size={14} stroke={2} />
       </button>
       {#if !debugging}
-        <button class="btn primary run" disabled={store.running} onclick={() => void store.run()} title="Run with the inputs below (script.run)">
+        <button class="btn primary run" disabled={store.running} onclick={() => void store.run()} title={t('scripts.runHint')}>
           {#if store.running}<span class="spinner" aria-hidden="true"></span>{:else}<Icon name="play" size={12} stroke={2.25} />{/if}
-          Run
+          {t('scripts.run')}
         </button>
         <button class="btn" disabled={store.running} onclick={() => {
           // Keys (F10/F11/F5) go to the editor right away.
           editor?.focus();
           void store.debugStart();
-        }} title="Debug: stop at breakpoints (F5)">
-          <Icon name="breakpoint" size={12} stroke={2.25} /> Debug
+        }} title="{t('scripts.debugHint')} (F5)">
+          <Icon name="breakpoint" size={12} stroke={2.25} /> {t('scripts.debug')}
         </button>
       {:else}
-        <div class="dbg" role="group" aria-label="Debugger">
-          <span class="state" class:paused={!!paused}>{store.debug?.status}</span>
-          <button class="icon-btn small" title="Continue (F5)" aria-label="Continue" disabled={!paused} onclick={() => void store.debugCmd('continue')}>
+        <div class="dbg" role="group" aria-label={t('scripts.op.debugger')}>
+          <span class="state" class:paused={!!paused}>{store.debug ? t(`scripts.debug.${store.debug.status}`) : ''}</span>
+          <button class="icon-btn small" title="{t('scripts.continue')} (F5)" aria-label={t('scripts.continue')} disabled={!paused} onclick={() => void store.debugCmd('continue')}>
             <Icon name="play" size={13} stroke={2.25} />
           </button>
-          <button class="icon-btn small" title="Pause" aria-label="Pause" disabled={!!paused || store.debug?.id === null} onclick={() => void store.debugCmd('pause')}>
+          <button class="icon-btn small" title={t('runs.detail.pause')} aria-label={t('runs.detail.pause')} disabled={!!paused || store.debug?.id === null} onclick={() => void store.debugCmd('pause')}>
             <Icon name="pause" size={13} stroke={2.5} />
           </button>
-          <button class="icon-btn small" title="Step over (F10)" aria-label="Step over" disabled={!paused} onclick={() => void store.debugCmd('step_over')}>
+          <button class="icon-btn small" title="{t('scripts.stepOver')} (F10)" aria-label={t('scripts.stepOver')} disabled={!paused} onclick={() => void store.debugCmd('step_over')}>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 15-3.5M19 4v5.5h-5.5" /><circle cx="12" cy="19" r="2" /></svg>
           </button>
-          <button class="icon-btn small" title="Step into (F11)" aria-label="Step into" disabled={!paused} onclick={() => void store.debugCmd('step_into')}>
+          <button class="icon-btn small" title="{t('scripts.stepInto')} (F11)" aria-label={t('scripts.stepInto')} disabled={!paused} onclick={() => void store.debugCmd('step_into')}>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" /><circle cx="12" cy="19.5" r="2" /></svg>
           </button>
-          <button class="icon-btn small" title="Step out (Shift+F11)" aria-label="Step out" disabled={!paused} onclick={() => void store.debugCmd('step_out')}>
+          <button class="icon-btn small" title="{t('scripts.stepOut')} (Shift+F11)" aria-label={t('scripts.stepOut')} disabled={!paused} onclick={() => void store.debugCmd('step_out')}>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5" /><circle cx="12" cy="19.5" r="2" /></svg>
           </button>
-          <button class="icon-btn small stop" title="Stop (Shift+F5)" aria-label="Stop" disabled={store.debug?.id === null} onclick={() => void store.debugCmd('stop')}>
+          <button class="icon-btn small stop" title="{t('record.stop')} (Shift+F5)" aria-label={t('record.stop')} disabled={store.debug?.id === null} onclick={() => void store.debugCmd('stop')}>
             <Icon name="stop" size={13} stroke={2.25} />
           </button>
         </div>
@@ -257,7 +258,7 @@
       <section class="inputs">
         <button class="inputs-toggle" onclick={() => (showInputs = !showInputs)} aria-expanded={showInputs}>
           <Icon name={showInputs ? 'chevron-down' : 'chevron-right'} size={12} stroke={2.25} />
-          Inputs <span class="count">{store.inputNames.length}</span>
+          {t('scripts.inputs')} <span class="count">{store.inputNames.length}</span>
         </button>
         {#if showInputs}
           <div class="grid">
@@ -296,13 +297,13 @@
 
     <section class="bottom">
       <div class="tabs" role="tablist">
-        <button role="tab" aria-selected={bottomTab === 'console'} class:active={bottomTab === 'console'} onclick={() => (bottomTab = 'console')}>Console</button>
+        <button role="tab" aria-selected={bottomTab === 'console'} class:active={bottomTab === 'console'} onclick={() => (bottomTab = 'console')}>{t('scripts.console')}</button>
         <button role="tab" aria-selected={bottomTab === 'variables'} class:active={bottomTab === 'variables'} onclick={() => (bottomTab = 'variables')}>
-          Variables{#if paused}<span class="live"></span>{/if}
+          {t('scripts.variables')}{#if paused}<span class="live"></span>{/if}
         </button>
         <span class="spacer"></span>
         {#if bottomTab === 'console'}
-          <button class="icon-btn small" title="Clear" aria-label="Clear console" onclick={() => store.clearConsole()}><Icon name="x" size={12} /></button>
+          <button class="icon-btn small" title={t('scripts.clear')} aria-label={t('scripts.clearConsole')} onclick={() => store.clearConsole()}><Icon name="x" size={12} /></button>
         {/if}
       </div>
       {#if bottomTab === 'console'}
@@ -314,9 +315,9 @@
   {:else if store.loaded}
     <div class="empty">
       <Icon name="code" size={20} />
-      <h3>No script open</h3>
-      <p>Scripts are TypeScript that drive the browser through the same API agents use. Pick one from the library or start a new one.</p>
-      <button class="btn primary" onclick={startNew}><Icon name="plus" size={12} stroke={2.5} /> New script</button>
+      <h3>{t('scripts.noneOpen')}</h3>
+      <p>{t('scripts.intro')}</p>
+      <button class="btn primary" onclick={startNew}><Icon name="plus" size={12} stroke={2.5} /> {t('scripts.new')}</button>
     </div>
   {/if}
 </div>

@@ -1,5 +1,6 @@
 import type { BrowserApi } from '../api/client';
 import type { TermInfo } from '../api/types';
+import { t } from '../i18n/index.svelte';
 
 export interface TermTab {
   id: string;
@@ -102,7 +103,7 @@ export class TerminalStore {
       this.unavailable = this.unavailable.filter((s) => s !== shell);
       return info.id;
     } catch (err) {
-      this.error = `Cannot start ${shell}: ${(err as Error).message}`;
+      this.error = t('term.cannotStart', { shell, error: (err as Error).message });
       if (!this.unavailable.includes(shell)) this.unavailable = [...this.unavailable, shell];
       return null;
     }

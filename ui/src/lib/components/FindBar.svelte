@@ -3,6 +3,7 @@
   // core (page.find_text / page.find_clear); this only keeps the query and the counter.
   import { tick } from 'svelte';
   import { findArgs, findLabel, type FindStep } from '../find';
+  import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import Icon from './Icon.svelte';
 
@@ -17,7 +18,7 @@
   let searched: number | null = null;
   let debounce: ReturnType<typeof setTimeout> | undefined;
 
-  const label = $derived(unavailable ? 'Not available' : findLabel(query, count, index));
+  const label = $derived(unavailable ? t('components.find.unavailable') : findLabel(query, count, index));
 
   // Ctrl+F (chrome.findTick): open, focus and select the query.
   $effect(() => {
@@ -97,18 +98,18 @@
       bind:value={query}
       oninput={onInput}
       onkeydown={onKeydown}
-      placeholder="Find in page"
-      aria-label="Find in page"
+      placeholder={t('components.find.placeholder')}
+      aria-label={t('components.find.placeholder')}
       spellcheck="false"
     />
     <span class="count" aria-live="polite">{label}</span>
-    <button class="icon-btn" aria-label="Previous match" disabled={count === 0} onclick={() => search(-1)}>
+    <button class="icon-btn" aria-label={t('components.find.prev')} disabled={count === 0} onclick={() => search(-1)}>
       <Icon name="chevron-down" size={14} class="up" />
     </button>
-    <button class="icon-btn" aria-label="Next match" disabled={count === 0} onclick={() => search(1)}>
+    <button class="icon-btn" aria-label={t('components.find.next')} disabled={count === 0} onclick={() => search(1)}>
       <Icon name="chevron-down" size={14} />
     </button>
-    <button class="icon-btn" aria-label="Close find bar" onclick={close}><Icon name="x" size={14} /></button>
+    <button class="icon-btn" aria-label={t('components.find.close')} onclick={close}><Icon name="x" size={14} /></button>
   </div>
 {/if}
 

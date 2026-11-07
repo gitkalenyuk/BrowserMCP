@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import type { DebugPaused } from '../../api/types-scripts';
 
   let { paused, onjump }: { paused: DebugPaused | null; onjump: (line: number) => void } = $props();
@@ -9,13 +10,13 @@
 
 <div class="vars">
   {#if !paused}
-    <p class="hint">Variables show up while the script is paused. Click the gutter (or press F9) to set a breakpoint, then F5.</p>
+    <p class="hint">{t('scripts.vars.hint')}</p>
   {:else}
     <div class="where">
-      Paused at <button class="link" onclick={() => onjump(paused.line)}>line {paused.line}</button>
+      {t('scripts.vars.pausedAt')} <button class="link" onclick={() => onjump(paused.line)}>{t('scripts.console.line', { line: paused.line })}</button>
       <span class="reason">{paused.reason}</span>
     </div>
-    <div class="section">Call stack</div>
+    <div class="section">{t('scripts.vars.callStack')}</div>
     {#each paused.call_frames as f, i (i)}
       <button class="frame" class:top={i === 0} onclick={() => onjump(f.line)} title={f.url}>
         <span class="fn">{f.function}</span><span class="ln">:{f.line}</span>
@@ -34,7 +35,7 @@
             <span class="value t-{v.type}">{v.value}</span>
           </div>
         {:else}
-          <div class="var empty">(none)</div>
+          <div class="var empty">{t('scripts.vars.none')}</div>
         {/each}
       {/if}
     {/each}

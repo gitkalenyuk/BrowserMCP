@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { cronPreview, formatFire, parseCron, describeCron } from '../../runs/cron';
   import { runsStore } from '../../runs/store.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -6,12 +7,8 @@
 
   const store = runsStore(useChrome().api);
 
-  const EXAMPLES = [
-    { spec: '0 9 * * Mon-Fri', label: 'weekdays 9:00' },
-    { spec: '*/15 * * * *', label: 'every 15 min' },
-    { spec: '0 2 * * *', label: 'nightly 2:00' },
-    { spec: '0 8 1 * *', label: 'monthly' },
-  ];
+  // Chip labels: `runs.trg.example.<n>`.
+  const EXAMPLES = ['0 9 * * Mon-Fri', '*/15 * * * *', '0 2 * * *', '0 8 1 * *'];
 
   let adding = $state(false);
   let spec = $state('0 9 * * Mon-Fri');
@@ -26,8 +23,8 @@
   $effect(() => {
     void store.refreshTriggers();
     void store.refreshScripts();
-    const t = setInterval(() => (now = new Date()), 30_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => (now = new Date()), 30_000);
+    return () => clearInterval(timer);
   });
   $effect(() => {
     if (!script && store.scripts.length) script = store.scripts[0].name;
@@ -40,7 +37,7 @@
       const line = raw.trim();
       if (!line) continue;
       const eq = line.indexOf('=');
-      if (eq <= 0) throw new Error(`Inputs line ${i + 1}: use key=value`);
+      if (eq <= 0) throw new Error(t('runs.trg.badInput', { n: i + 1 }));
       out[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
     }
     return out;
@@ -54,7 +51,7 @@
       return;
     }
     if (!script) {
-      error = 'Pick a saved script';
+      error = t('runs.trg.needScript');
       return;
     }
     busy = true;
@@ -85,7 +82,7 @@
     try {
       return describeCron(parseCron(s));
     } catch {
-      return 'invalid spec';
+      return t('runs.trg.invalid');
     }
   }
 </script>
@@ -93,16 +90,16 @@
 <div class="rr-bar">
   <button class="btn" class:primary={!adding} aria-expanded={adding} onclick={() => (adding = !adding)}>
     <Icon name={adding ? 'x' : 'plus'} size={13} />
-    {adding ? 'Close' : 'New trigger'}
+    {adding ? t('common.close') : t('runs.trg.new')}
   </button>
   <span class="rr-spacer"></span>
-  <button class="icon-btn" aria-label="Refresh triggers" title="Refresh" onclick={() => store.refreshTriggers()}><Icon name="reload" size={14} /></button>
+  <button class="icon-btn" aria-label={t('runs.trg.refresh')} title={t('record.refreshShort')} onclick={() => store.refreshTriggers()}><Icon name="reload" size={14} /></button>
 </div>
 
 {#if error}
   <div class="rr-note err" role="alert">
     <span>{error}</span>
-    <button class="icon-btn" aria-label="Dismiss" onclick={() => (error = null)}><Icon name="x" size={12} /></button>
+    <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (error = null)}><Icon name="x" size={12} /></button>
   </div>
 {/if}
 
@@ -110,19 +107,19 @@
   {#if adding}
     <form class="rr-section rr-form add" onsubmit={add}>
       <label class="rr-field">
-        Script
+        {t('record.detail.script')}
         <select bind:value={script} disabled={store.scripts.length === 0}>
-          {#if store.scripts.length === 0}<option value="">No saved scripts</option>{/if}
+          {#if store.scripts.length === 0}<option value="">{t('runs.form.noScripts')}</option>{/if}
           {#each store.scripts as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
         </select>
       </label>
       <label class="rr-field">
-        <span>Schedule <span class="opt">cron, local time: min hour day month weekday</span></span>
+        <span>{t('runs.trg.schedule')} <span class="opt">{t('runs.trg.scheduleHint')}</span></span>
         <input class="mono" bind:value={spec} spellcheck="false" aria-invalid={!preview.ok} aria-describedby="cron-preview" />
       </label>
       <div class="rr-chips">
-        {#each EXAMPLES as ex (ex.spec)}
-          <button type="button" class="rr-chip" aria-pressed={spec.trim() === ex.spec} onclick={() => (spec = ex.spec)}>{ex.label}</button>
+        {#each EXAMPLES as ex, i (ex)}
+          <button type="button" class="rr-chip" aria-pressed={spec.trim() === ex} onclick={() => (spec = ex)}>{t(`runs.trg.example.${i + 1}`)}</button>
         {/each}
       </div>
       <div class="preview" id="cron-preview" aria-live="polite">
@@ -140,12 +137,12 @@
         {/if}
       </div>
       <label class="rr-field">
-        <span>Inputs <span class="opt">key=value per line (optional)</span></span>
+        <span>{t('runs.col.inputs')} <span class="opt">{t('runs.trg.inputsHint')}</span></span>
         <textarea bind:value={inputsText} rows="3" spellcheck="false" placeholder="url=https://shop.example.test/p/1"></textarea>
       </label>
       <div class="rr-row">
-        <button class="btn primary" type="submit" disabled={busy || !preview.ok}>Add trigger</button>
-        <span class="rr-hint">Missed firings (browser closed) are not caught up.</span>
+        <button class="btn primary" type="submit" disabled={busy || !preview.ok}>{t('runs.trg.add')}</button>
+        <span class="rr-hint">{t('runs.trg.missed')}</span>
       </div>
     </form>
   {/if}
@@ -153,29 +150,29 @@
   {#if store.triggers.length === 0 && !adding}
     <div class="rr-empty">
       <Icon name="runs" size={20} />
-      <p>Run a saved script on a schedule while the browser is open, e.g. every weekday at 9:00.</p>
-      <button class="btn primary" onclick={() => (adding = true)}>New trigger</button>
+      <p>{t('runs.trg.empty')}</p>
+      <button class="btn primary" onclick={() => (adding = true)}>{t('runs.trg.new')}</button>
     </div>
   {:else}
     <ul class="list">
-      {#each store.triggers as t (t.id)}
+      {#each store.triggers as trg (trg.id)}
         <li class="trg">
           <div class="main">
             <span class="top">
-              <span class="script rr-mono">{t.script}</span>
-              <code class="spec">{t.spec}</code>
+              <span class="script rr-mono">{trg.script}</span>
+              <code class="spec">{trg.spec}</code>
             </span>
-            <span class="desc">{describe(t.spec)}</span>
+            <span class="desc">{describe(trg.spec)}</span>
             <span class="meta">
-              {#if t.next_fire_ms}next {formatFire(new Date(t.next_fire_ms), now)}{:else}never fires{/if}
-              {#if t.last_fired_ms}
-                · last {formatFire(new Date(t.last_fired_ms), now)}
-                <span class="rr-pill {t.last_status === 'ok' ? 'ok' : 'failed'}">{t.last_status ?? '?'}</span>
+              {#if trg.next_fire_ms}{t('runs.trg.next', { when: formatFire(new Date(trg.next_fire_ms), now) })}{:else}{t('runs.trg.never')}{/if}
+              {#if trg.last_fired_ms}
+                · {t('runs.trg.last', { when: formatFire(new Date(trg.last_fired_ms), now) })}
+                <span class="rr-pill {trg.last_status === 'ok' ? 'ok' : 'failed'}">{trg.last_status ?? '?'}</span>
               {/if}
             </span>
-            {#if Object.keys(t.inputs).length}<span class="meta rr-mono">{Object.entries(t.inputs).map(([k, v]) => `${k}=${v}`).join('  ')}</span>{/if}
+            {#if Object.keys(trg.inputs).length}<span class="meta rr-mono">{Object.entries(trg.inputs).map(([k, v]) => `${k}=${v}`).join('  ')}</span>{/if}
           </div>
-          <button class="icon-btn" aria-label="Remove trigger {t.id}" title="Remove" onclick={() => remove(t.id)}><Icon name="trash" size={14} /></button>
+          <button class="icon-btn" aria-label={t('runs.trg.remove', { id: trg.id })} title={t('runs.trg.removeShort')} onclick={() => remove(trg.id)}><Icon name="trash" size={14} /></button>
         </li>
       {/each}
     </ul>

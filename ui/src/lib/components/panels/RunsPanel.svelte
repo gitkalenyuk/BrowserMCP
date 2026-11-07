@@ -1,5 +1,7 @@
 <script lang="ts">
   import './record-runs.css';
+  import { t, tp } from '../../i18n/index.svelte';
+  import { formatWhen } from '../../i18n/intl';
   import type { RunInfo } from '../../api/types-record-runs';
   import { formatDuration, healOf, isActive, progressSegments } from '../../runs/logic';
   import { runsStore } from '../../runs/store.svelte';
@@ -23,13 +25,6 @@
     void store.refresh();
   });
 
-  function when(r: RunInfo): string {
-    const d = new Date(r.created_ms);
-    const same = d.toDateString() === new Date().toDateString();
-    const t = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    return same ? t : `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${t}`;
-  }
-
   function took(r: RunInfo): string {
     return r.finished_ms ? formatDuration(r.finished_ms - r.created_ms) : '';
   }
@@ -41,13 +36,13 @@
       <RunDetail run={open} onclose={() => (openId = null)} />
     {/key}
   {:else}
-    <div class="rr-views" role="tablist" aria-label="Runs views">
+    <div class="rr-views" role="tablist" aria-label={t('runs.views')}>
       <button role="tab" aria-selected={view === 'runs'} onclick={() => (view = 'runs')}>
-        Runs
-        {#if waiting > 0}<span class="badge" title="Waiting for a patch">{waiting}</span>{/if}
+        {t('components.panel.runs')}
+        {#if waiting > 0}<span class="badge" title={t('runs.waitingPatch')}>{waiting}</span>{/if}
       </button>
       <button role="tab" aria-selected={view === 'triggers'} onclick={() => (view = 'triggers')}>
-        Triggers
+        {t('runs.triggers')}
         {#if store.triggers.length}<span class="n">{store.triggers.length}</span>{/if}
       </button>
     </div>
@@ -55,7 +50,7 @@
     {#if store.error || store.notice}
       <div class="rr-note" class:err={!!store.error} role="status">
         <span>{store.error ?? store.notice}</span>
-        <button class="icon-btn" aria-label="Dismiss" onclick={() => (store.error ? (store.error = null) : (store.notice = null))}><Icon name="x" size={12} /></button>
+        <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (store.error ? (store.error = null) : (store.notice = null))}><Icon name="x" size={12} /></button>
       </div>
     {/if}
 
@@ -63,11 +58,11 @@
       <div class="rr-bar">
         <button class="btn" class:primary={!creating} aria-expanded={creating} onclick={() => (creating = !creating)}>
           <Icon name={creating ? 'x' : 'plus'} size={13} />
-          {creating ? 'Close' : 'New run'}
+          {creating ? t('common.close') : t('runs.newRun')}
         </button>
         <span class="rr-spacer"></span>
-        <span class="count">{store.runs.length} runs</span>
-        <button class="icon-btn" aria-label="Refresh runs" title="Refresh" onclick={() => store.refresh()}><Icon name="reload" size={14} /></button>
+        <span class="count">{tp('runs.count', store.runs.length)}</span>
+        <button class="icon-btn" aria-label={t('runs.refresh')} title={t('record.refreshShort')} onclick={() => store.refresh()}><Icon name="reload" size={14} /></button>
       </div>
       <div class="rr-scroll">
         {#if creating}
@@ -81,8 +76,8 @@
         {#if store.runs.length === 0 && !creating}
           <div class="rr-empty">
             <Icon name="runs" size={20} />
-            <p>Run a saved script once per row of a CSV, JSON or Excel file, several at a time, with retries. Progress, failures and patches waiting for you show up here.</p>
-            <button class="btn primary" onclick={() => (creating = true)}>New run</button>
+            <p>{t('runs.empty')}</p>
+            <button class="btn primary" onclick={() => (creating = true)}>{t('runs.newRun')}</button>
           </div>
         {:else}
           <ul class="runs">
@@ -92,18 +87,18 @@
                 <button class="run" onclick={() => (openId = r.id)} title={r.id}>
                   <span class="top">
                     <span class="script">{r.script}</span>
-                    <span class="rr-pill {r.status}">{heal ? 'needs patch' : r.status}</span>
+                    <span class="rr-pill {r.status}">{heal ? t('runs.needsPatch') : t(`runs.status.${r.status}`)}</span>
                   </span>
                   <span class="bar" aria-hidden="true">
                     {#each progressSegments(r) as s (s.kind)}<span class="seg {s.kind}" style:width="{s.pct}%"></span>{/each}
                   </span>
                   <span class="meta">
                     <span>{r.done}/{r.total}</span>
-                    {#if r.counts.failed}<span class="bad">{r.counts.failed} failed</span>{/if}
-                    {#if r.counts.needs_heal}<span class="warn">{r.counts.needs_heal} need a patch</span>{/if}
-                    {#if isActive(r) && r.counts.running}<span>{r.counts.running} running</span>{/if}
+                    {#if r.counts.failed}<span class="bad">{t('runs.n.failed', { n: r.counts.failed })}</span>{/if}
+                    {#if r.counts.needs_heal}<span class="warn">{t('runs.n.needsHeal', { n: r.counts.needs_heal })}</span>{/if}
+                    {#if isActive(r) && r.counts.running}<span>{t('runs.n.running', { n: r.counts.running })}</span>{/if}
                     <span class="rr-spacer"></span>
-                    <span>{when(r)}{took(r) ? ` · ${took(r)}` : ''}</span>
+                    <span>{formatWhen(r.created_ms)}{took(r) ? ` · ${took(r)}` : ''}</span>
                   </span>
                 </button>
               </li>

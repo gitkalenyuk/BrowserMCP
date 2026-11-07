@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { tick } from 'svelte';
   import type { RecordStep } from '../../api/types-record-runs';
   import { describeStep, visibleSteps } from '../../record/logic';
@@ -22,7 +23,7 @@
   }
 </script>
 
-<ol class="steps" bind:this={list} aria-label="Recorded steps">
+<ol class="steps" bind:this={list} aria-label={t('record.steps.label')}>
   {#each shown as s (s.seq)}
     {@const v = describeStep(s)}
     <li class="step {v.kind}" class:failed={v.failed} class:pending={s.source === 'api' && s.command && s.command.ok === undefined}>
@@ -32,11 +33,11 @@
         {#if v.target}<span class="target" title={v.target}>{v.target}</span>{/if}
         {#if v.value}<span class="value" class:secret={s.secret} title={v.value}>{v.value}</span>{/if}
       </span>
-      <span class="src" title={s.source === 'api' ? 'API call (agent, script, REST)' : s.source === 'human' ? 'Done in the page' : 'Recorder'}>{s.source}</span>
+      <span class="src" title={s.source === 'api' ? t('record.source.api') : s.source === 'human' ? t('record.source.human') : t('record.source.recorder')}>{s.source}</span>
       <span class="t">{rel(s.ts_ms)}</span>
     </li>
   {:else}
-    <li class="none">No steps yet. Click, type and navigate in the tab.</li>
+    <li class="none">{t('record.steps.none')}</li>
   {/each}
 </ol>
 

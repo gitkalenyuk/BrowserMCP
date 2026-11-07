@@ -1,4 +1,5 @@
 // Small formatters for the library page.
+import { t } from '../i18n/index.svelte';
 
 export function formatBytes(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return '?';
@@ -21,13 +22,10 @@ export function fileName(path: string): string {
 export function stateLabel(state: string): string {
   switch (state) {
     case 'in_progress':
-      return 'Downloading';
     case 'complete':
-      return 'Done';
     case 'cancelled':
-      return 'Cancelled';
     case 'interrupted':
-      return 'Failed';
+      return t(`components.download.${state}`);
     default:
       return state;
   }

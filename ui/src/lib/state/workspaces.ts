@@ -4,13 +4,15 @@
 // `window`. A chrome page shows only the tabs of its own window and of the workspace picked in
 // that window, never off-screen (automation) tabs.
 import type { GroupColor, ProfileEntry, TabId, TabInfo, Workspace } from '../api/types';
+import { t } from '../i18n/index.svelte';
+import { formatList } from '../i18n/intl';
 import type { TabsState } from './tabs';
 
 const COLORS: GroupColor[] = ['blue', 'purple', 'green', 'orange', 'pink', 'cyan', 'red', 'yellow', 'grey'];
 
 /** Readable proxy label: "Direct", or the masked URL's scheme and host ("socks5 · 1.2.3.4:1080"). */
 export function proxyLabel(proxy: string | null): string {
-  if (!proxy) return 'Direct';
+  if (!proxy) return t('chrome.proxy.direct');
   const m = proxy.match(/^([a-z0-9]+):\/\/(?:[^@/]*@)?([^/]+)/i);
   return m ? `${m[1]} · ${m[2]}` : proxy;
 }
@@ -91,15 +93,16 @@ export function profileIdFor(name: string, taken: string[]): string {
 /** Text the AI panel gets for "Ask AI about this" (page context menu). */
 export function askAiPrompt(p: { kind: string; text: string; url: string; title: string }): string {
   const page = p.title ? `"${p.title}" (${p.url})` : p.url;
+  // The prompt lands in the user's own draft, so it is written in the UI language.
   switch (p.kind) {
     case 'selection':
-      return `About this text from ${page}:\n\n> ${p.text.trim().replace(/\n/g, '\n> ')}\n\n`;
+      return `${t('chrome.ask.selection', { page })}\n\n> ${p.text.trim().replace(/\n/g, '\n> ')}\n\n`;
     case 'link':
-      return `About this link on ${page}: ${p.text}\n\n`;
+      return `${t('chrome.ask.link', { page, text: p.text })}\n\n`;
     case 'image':
-      return `About this image on ${page}: ${p.text}\n\n`;
+      return `${t('chrome.ask.image', { page, text: p.text })}\n\n`;
     default:
-      return `About the page ${page}:\n\n`;
+      return `${t('chrome.ask.page', { page })}\n\n`;
   }
 }
 
@@ -117,22 +120,23 @@ export function splitRatioAt(x: number, w: number): number {
   return Math.min(0.85, Math.max(0.15, r));
 }
 
-/** Human labels for permission kinds ("geolocation" → "know your location"). */
-const KIND_LABELS: Record<string, string> = {
-  geolocation: 'know your location',
-  notifications: 'show notifications',
-  camera: 'use your camera',
-  microphone: 'use your microphone',
-  screen_capture: 'see your screen',
-  clipboard: 'see text and images copied to the clipboard',
-  midi: 'use MIDI devices',
-  local_network: 'reach devices on your local network',
-  sensors: 'use motion sensors',
-  storage_access: 'use cookies of other sites',
-};
+/** Permission kinds with a human label (`chrome.perm.<kind>`: "geolocation" → "know your location"). */
+const KNOWN_KINDS = new Set([
+  'geolocation',
+  'notifications',
+  'camera',
+  'microphone',
+  'screen_capture',
+  'clipboard',
+  'midi',
+  'local_network',
+  'sensors',
+  'storage_access',
+]);
 
+/** What the page wants, after "<origin> wants to": "use your camera and use your microphone". */
 export function permissionText(kinds: string[]): string {
-  const parts = kinds.map((k) => KIND_LABELS[k] ?? k.replace(/_/g, ' '));
-  if (parts.length <= 1) return parts[0] ?? 'use a browser feature';
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const parts = kinds.map((k) => (KNOWN_KINDS.has(k) ? t(`chrome.perm.${k}`) : k.replace(/_/g, ' ')));
+  if (!parts.length) return t('chrome.perm.unknown');
+  return formatList(parts);
 }

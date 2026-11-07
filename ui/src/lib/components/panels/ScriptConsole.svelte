@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import type { ConsoleEntry } from '../../scripts/logic';
 
   let { entries, onjump }: { entries: ConsoleEntry[]; onjump: (line: number) => void } = $props();
@@ -17,18 +18,18 @@
   bind:this={box}
   onscroll={() => (stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 8)}
   role="log"
-  aria-label="Script output"
+  aria-label={t('scripts.console.label')}
 >
   {#each entries as e, i (i)}
     <div class="row {e.kind}">
-      {#if e.kind === 'result'}<span class="tag">result</span>{/if}
+      {#if e.kind === 'result'}<span class="tag">{t('scripts.console.result')}</span>{/if}
       <span class="text">{e.text}</span>
       {#if e.line}
-        <button class="jump" onclick={() => onjump(e.line!)} title="Show line {e.line} in the editor">line {e.line}</button>
+        <button class="jump" onclick={() => onjump(e.line!)} title={t('scripts.console.showLine', { line: e.line })}>{t('scripts.console.line', { line: e.line })}</button>
       {/if}
     </div>
   {:else}
-    <div class="row info">Run (▶) or debug (F5) the script; its output appears here.</div>
+    <div class="row info">{t('scripts.console.empty')}</div>
   {/each}
 </div>
 

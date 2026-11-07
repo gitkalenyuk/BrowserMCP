@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { buildRule, EMPTY_RULE, responseStageAllowed, type RuleForm } from '../../net/logic';
   import { parseRuleLines, type RuleRow } from '../../net/parse';
   import { useChrome } from '../../state/chrome.svelte';
@@ -7,12 +8,8 @@
   let { tab }: { tab: number | null } = $props();
 
   const api = useChrome().api;
-  const KINDS = [
-    { id: 'block', label: 'Block' },
-    { id: 'redirect', label: 'Redirect' },
-    { id: 'mock', label: 'Mock response' },
-    { id: 'rewrite_body', label: 'Rewrite body' },
-  ] as const;
+  // Labels: `net.kind.<id>`.
+  const KINDS = ['block', 'redirect', 'mock', 'rewrite_body'] as const;
   const METHODS = ['', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 
   let rules = $state<RuleRow[]>([]);
@@ -33,8 +30,8 @@
 
   $effect(() => {
     void refresh();
-    const t = setInterval(refresh, 3000); // hit counters
-    return () => clearInterval(t);
+    const timer = setInterval(refresh, 3000); // hit counters
+    return () => clearInterval(timer);
   });
 
   async function add() {
@@ -70,9 +67,9 @@
 
 <div class="rules">
   <div class="top">
-    <p>Rules change matching requests of a tab as they happen: block them, send them elsewhere, answer them from here or edit the body.</p>
+    <p>{t('net.rules.intro')}</p>
     <button class="btn" class:primary={!showForm} disabled={tab === null} onclick={() => (showForm = !showForm)}>
-      {#if showForm}Cancel{:else}<Icon name="plus" size={13} stroke={2} /> Add rule{/if}
+      {#if showForm}{t('common.cancel')}{:else}<Icon name="plus" size={13} stroke={2} /> {t('net.rules.add')}{/if}
     </button>
   </div>
 
@@ -84,48 +81,48 @@
         void add();
       }}
     >
-      <div class="kinds" role="radiogroup" aria-label="Action">
-        {#each KINDS as k (k.id)}
-          <button type="button" role="radio" aria-checked={form.kind === k.id} onclick={() => (form.kind = k.id)}>{k.label}</button>
+      <div class="kinds" role="radiogroup" aria-label={t('net.rules.action')}>
+        {#each KINDS as k (k)}
+          <button type="button" role="radio" aria-checked={form.kind === k} onclick={() => (form.kind = k)}>{t(`net.kind.${k}`)}</button>
         {/each}
       </div>
       <label class="wide">
-        <span>URL {form.regex ? 'regex' : 'pattern'}</span>
-        <input bind:value={form.pattern} spellcheck="false" placeholder={form.regex ? '/items/\\d+' : '*://ads.example.com/*  or a part of the URL'} />
+        <span>{form.regex ? t('net.rules.urlRegex') : t('net.rules.urlPattern')}</span>
+        <input bind:value={form.pattern} spellcheck="false" placeholder={form.regex ? '/items/\\d+' : t('net.rules.patternPlaceholder')} />
       </label>
       <div class="row">
-        <label class="check"><input type="checkbox" bind:checked={form.regex} /> Regex</label>
+        <label class="check"><input type="checkbox" bind:checked={form.regex} /> {t('net.rules.regex')}</label>
         <label class="inline">
-          <span>Method</span>
+          <span>{t('net.col.method')}</span>
           <select bind:value={form.method}>
-            {#each METHODS as m (m)}<option value={m}>{m || 'Any'}</option>{/each}
+            {#each METHODS as m (m)}<option value={m}>{m || t('net.rules.anyMethod')}</option>{/each}
           </select>
         </label>
         {#if responseStageAllowed(form.kind)}
           <label class="inline">
-            <span>Stage</span>
+            <span>{t('net.rules.stage')}</span>
             <select bind:value={form.stage}>
-              <option value="request">Request</option>
-              <option value="response">Response</option>
+              <option value="request">{t('net.stage.request')}</option>
+              <option value="response">{t('net.stage.response')}</option>
             </select>
           </label>
         {/if}
       </div>
       {#if form.kind === 'redirect'}
-        <label class="wide"><span>Redirect to</span><input bind:value={form.redirectUrl} type="url" spellcheck="false" placeholder="https://…" /></label>
+        <label class="wide"><span>{t('net.rules.redirectTo')}</span><input bind:value={form.redirectUrl} type="url" spellcheck="false" placeholder="https://…" /></label>
       {:else if form.kind === 'mock'}
         <div class="row">
-          <label class="inline"><span>Status</span><input class="num" bind:value={form.mockStatus} inputmode="numeric" /></label>
-          <label class="inline grow"><span>Content-Type</span><input bind:value={form.mockContentType} spellcheck="false" placeholder="guessed from the body" /></label>
+          <label class="inline"><span>{t('net.col.status')}</span><input class="num" bind:value={form.mockStatus} inputmode="numeric" /></label>
+          <label class="inline grow"><span>Content-Type</span><input bind:value={form.mockContentType} spellcheck="false" placeholder={t('net.rules.guessed')} /></label>
         </div>
-        <label class="wide"><span>Body</span><textarea bind:value={form.mockBody} rows="4" spellcheck="false" placeholder={'{"ok": true}'}></textarea></label>
-        <p class="hint">Mocks answer at the request stage: the request is never sent.</p>
+        <label class="wide"><span>{t('net.rules.body')}</span><textarea bind:value={form.mockBody} rows="4" spellcheck="false" placeholder={'{"ok": true}'}></textarea></label>
+        <p class="hint">{t('net.rules.mockHint')}</p>
       {:else if form.kind === 'rewrite_body'}
-        <label class="wide"><span>Find</span><input bind:value={form.find} spellcheck="false" /></label>
-        <label class="wide"><span>Replace with</span><input bind:value={form.replace} spellcheck="false" /></label>
+        <label class="wide"><span>{t('net.rules.find')}</span><input bind:value={form.find} spellcheck="false" /></label>
+        <label class="wide"><span>{t('net.rules.replace')}</span><input bind:value={form.replace} spellcheck="false" /></label>
       {/if}
       <div class="actions">
-        <button class="btn primary" type="submit" disabled={adding}>{adding ? 'Adding…' : `Add to tab ${tab ?? ''}`}</button>
+        <button class="btn primary" type="submit" disabled={adding}>{adding ? t('net.rules.adding') : t('net.rules.addToTab', { tab: tab ?? '' })}</button>
       </div>
     </form>
   {/if}
@@ -140,13 +137,13 @@
         <span class="id">{r.id}</span>
         <div class="what">
           <span class="action">{r.action}</span>
-          <span class="match">{r.stage} · {r.match} · tab {r.tab}</span>
+          <span class="match">{t(`net.stage.${r.stage}`)} · {r.match} · {t('record.tabN', { id: r.tab })}</span>
         </div>
-        <span class="hits" title="Requests matched">{r.hits}</span>
-        <button class="icon-btn" aria-label="Remove rule {r.id}" title="Remove" onclick={() => remove(r.id)}><Icon name="trash" size={13} /></button>
+        <span class="hits" title={t('net.rules.hits')}>{r.hits}</span>
+        <button class="icon-btn" aria-label={t('net.rules.remove', { id: r.id })} title={t('runs.trg.removeShort')} onclick={() => remove(r.id)}><Icon name="trash" size={13} /></button>
       </li>
     {:else}
-      <li class="none">No rules. Breakpoints are on their own tab.</li>
+      <li class="none">{t('net.rules.none')}</li>
     {/each}
   </ul>
 </div>

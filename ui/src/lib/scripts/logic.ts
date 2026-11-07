@@ -1,5 +1,6 @@
 // Pure helpers of the Scripts panel (unit-tested in logic.test.ts).
 
+import { t } from '../i18n/index.svelte';
 import { chordFromEvent, chordId, parseChord, type KeyLike } from '../keymap';
 import type { DebugEnded, ScriptFailure, ScriptRunOutcome } from '../api/types-scripts';
 
@@ -62,8 +63,8 @@ function lastErrorLine(stderr: string): number {
 
 /** The last console entry: "done in 120 ms" or the error (with its line). */
 export function endEntry(ok: boolean, ms: number, error: ScriptFailure | null, stopped: boolean): ConsoleEntry {
-  if (stopped) return { kind: 'info', text: `stopped after ${formatMs(ms)}` };
-  if (ok || !error) return { kind: 'info', text: `done in ${formatMs(ms)}` };
+  if (stopped) return { kind: 'info', text: t('scripts.stoppedAfter', { time: formatMs(ms) }) };
+  if (ok || !error) return { kind: 'info', text: t('scripts.doneIn', { time: formatMs(ms) }) };
   const where = error.command ? ` (browser.${error.command})` : '';
   return { kind: 'error', text: `${error.code}${where}: ${error.message}`, line: error.line ?? undefined };
 }
@@ -73,7 +74,7 @@ export function debugEndEntry(ended: DebugEnded): ConsoleEntry {
 }
 
 export function formatMs(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+  return ms < 1000 ? `${Math.round(ms)} ${t('runs.unit.ms')}` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} ${t('runs.unit.s')}`;
 }
 
 /** Toggle `line` in a sorted breakpoint list. */
