@@ -307,9 +307,27 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
   }
 
   const runOf = (id: string) => call('run.status', { id });
-  const pendingOf = (proposal_id: string) => {
+  /** Like crates/heal: pending proposals that no longer answer the run's open heal request (the
+   *  run was cancelled, finished, resumed or fixed by hand) become superseded. */
+  async function reconcile(runId: string): Promise<void> {
+    let open: { row: number; script: string } | null = null;
+    try {
+      const run = await runOf(runId);
+      const heal = run.heal as { row: number; script: string } | null | undefined;
+      if (heal && (run.status === 'paused' || run.status === 'running')) open = heal;
+    } catch (err) {
+      if (!(err instanceof RpcError) || err.code !== 'NOT_FOUND') return;
+    }
+    for (const p of proposals.values()) {
+      if (p.id === runId && p.status === 'pending' && (open?.row !== p.row || open?.script !== p.script)) p.status = 'superseded';
+    }
+  }
+  const pendingOf = async (proposal_id: string) => {
     const p = proposals.get(proposal_id);
     if (!p) throw new RpcError('NOT_FOUND', `no proposal ${proposal_id} (proposals are kept in memory)`);
+    const was = p.status;
+    if (was === 'pending') await reconcile(p.id);
+    if (was === 'pending' && p.status === 'superseded') throw new RpcError('INVALID_PARAMS', `proposal ${proposal_id} is outdated: run '${p.id}' is no longer waiting for this fix`);
     if (p.status !== 'pending') throw new RpcError('INVALID_PARAMS', `proposal ${proposal_id} is ${p.status}, not pending`);
     return p;
   };
@@ -375,7 +393,7 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
       return p;
     },
     'run.heal_accept': async ({ proposal_id }) => {
-      const p = pendingOf(proposal_id);
+      const p = await pendingOf(proposal_id);
       const r = await call('run.heal_apply', { id: p.id, patched_code: p.patched_code });
       p.status = 'accepted';
       attempts.delete(p.id);
@@ -383,7 +401,7 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
       return { id: p.id, proposal_id, script: r.script, requeued: r.requeued };
     },
     'run.heal_reject': async ({ proposal_id, feedback }) => {
-      const p = pendingOf(proposal_id);
+      const p = await pendingOf(proposal_id);
       p.status = 'rejected';
       if ((attempts.get(p.id) ?? 0) >= p.max_attempts) {
         const error = `no usable patch after ${p.max_attempts} attempts`;
@@ -393,9 +411,11 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
       const { patched_code: _code, ...next } = await makeProposal(await runOf(p.id), feedback ?? undefined);
       return next;
     },
-    'run.heal_proposals': ({ id }) => ({
-      proposals: [...proposals.values()].filter((p) => !id || p.id === id).sort((a, b) => b.created_ms - a.created_ms),
-    }),
+    'run.heal_proposals': async ({ id }) => {
+      const runs = new Set([...proposals.values()].filter((p) => p.status === 'pending' && (!id || p.id === id)).map((p) => p.id));
+      for (const run of runs) await reconcile(run);
+      return { proposals: [...proposals.values()].filter((p) => !id || p.id === id).sort((a, b) => b.created_ms - a.created_ms) };
+    },
 
     // ---- governor ----
     'governor.config': (args) => {

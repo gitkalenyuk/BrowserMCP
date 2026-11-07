@@ -275,6 +275,91 @@ async fn propose_needs_an_open_heal_request() {
     assert_eq!(err.code, bmcp_core::ErrorCode::NotFound);
 }
 
+/// The status of a proposal as `run.heal_proposals` lists it.
+async fn proposal_status(env: &Env, run: &str, proposal_id: &str) -> Value {
+    let list = env.ok("run.heal_proposals", json!({"id": run})).await;
+    list["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["proposal_id"] == proposal_id)
+        .map(|p| p["status"].clone())
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn proposals_of_a_cancelled_run_are_superseded() {
+    let llm = FakeLlm::new(&[answer(FIX_DIFF, 0.9)]);
+    let env = Env::new(Some(llm));
+    let mut rx = env.events.subscribe();
+    let id = env.start(BROKEN, &["a", "b"], "ask").await;
+    let proposed = wait_event(&mut rx, topics::HEAL_PROPOSED, |d| d["id"] == id.as_str()).await;
+    let proposal_id = proposed.data["proposal_id"].as_str().unwrap().to_string();
+    assert_eq!(proposal_status(&env, &id, &proposal_id).await, "pending");
+
+    env.ok("run.cancel", json!({"id": id})).await;
+    wait_event(&mut rx, "run.finished", |d| d["id"] == id.as_str()).await;
+    assert_eq!(proposal_status(&env, &id, &proposal_id).await, "superseded");
+    let err = env
+        .call("run.heal_accept", json!({"proposal_id": proposal_id}))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("not pending"), "{err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_fixed_by_hand_does_not_take_the_old_proposal() {
+    let llm = FakeLlm::new(&[answer(FIX_DIFF, 0.9)]);
+    let env = Env::new(Some(llm));
+    let mut rx = env.events.subscribe();
+    let id = env.start(BROKEN, &["a", "b", "c"], "ask").await;
+    let proposed = wait_event(&mut rx, topics::HEAL_PROPOSED, |d| d["id"] == id.as_str()).await;
+    let proposal_id = proposed.data["proposal_id"].as_str().unwrap().to_string();
+
+    // Fixed by hand: the run continues with login.v2.
+    let fixed = env
+        .ok(
+            "run.heal_apply",
+            json!({"id": id, "patched_code": "result {\"user\": \"{{user}}\", \"by\": \"hand\"}"}),
+        )
+        .await;
+    assert_eq!(fixed["script"], "login.v2");
+
+    // Approving the outdated proposal is refused instead of saving it as login.v3.
+    let err = env
+        .call("run.heal_accept", json!({"proposal_id": proposal_id}))
+        .await
+        .unwrap_err();
+    assert!(
+        err.message.contains("no longer waiting") || err.message.contains("not pending"),
+        "{err:?}"
+    );
+    assert_eq!(proposal_status(&env, &id, &proposal_id).await, "superseded");
+    assert!(
+        env.call("script.get", json!({"name": "login.v3"}))
+            .await
+            .is_err()
+    );
+    let status = env.wait_status(&id, &["finished"]).await;
+    assert_eq!(status["script"], "login.v2");
+    assert_eq!(status["counts"]["ok"], 3, "{status:#}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_list_marks_a_resumed_run_s_proposal_superseded() {
+    let llm = FakeLlm::new(&[answer(FIX_DIFF, 0.9)]);
+    let env = Env::new(Some(llm));
+    let mut rx = env.events.subscribe();
+    let id = env.start(BROKEN, &["a"], "ask").await;
+    let proposed = wait_event(&mut rx, topics::HEAL_PROPOSED, |d| d["id"] == id.as_str()).await;
+    let proposal_id = proposed.data["proposal_id"].as_str().unwrap().to_string();
+
+    // Skip the broken row instead of patching: the proposal answers nothing any more.
+    env.ok("run.resume", json!({"id": id})).await;
+    assert_eq!(proposal_status(&env, &id, &proposal_id).await, "superseded");
+    env.wait_status(&id, &["finished"]).await;
+}
+
 /// The real provider path (bmcp_ai::AiService → OpenAI-compatible HTTP) against a mock server.
 #[tokio::test(flavor = "multi_thread")]
 async fn proposals_through_a_mocked_openai_compatible_provider() {

@@ -11027,7 +11027,7 @@ export interface Commands {
   "run.heal_accept": { args: RunHealAcceptArgs; output: RunHealAcceptOutput };
   /** Answer a run.heal_needed pause: save the patched script as a new version, re-queue the broken rows and resume the run with the new version. */
   "run.heal_apply": { args: RunHealApplyArgs; output: RunHealApplyOutput };
-  /** List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. */
+  /** List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. A proposal stays pending only while its run still waits for that fix. */
   "run.heal_proposals": { args: RunHealProposalsArgs; output: RunHealProposalsOutput };
   /** Ask the AI for a minimal patch for a run paused by run.heal_needed (it sees the script, the failing line, the error and the page snapshot). The patch is validated (applies, stays near the failing step, transpiles). Returns {proposal_id, diff, explanation, confidence}; answer with run_heal_accept or run_heal_reject. */
   "run.heal_propose": { args: RunHealProposeArgs; output: RunHealProposeOutput };
@@ -12674,7 +12674,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "run.heal_proposals": {
     wireName: "run_heal_proposals",
-    description: "List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.",
+    description: "List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. A proposal stays pending only while its run still waits for that fix.",
     toolset: "run",
     sensitivity: "read",
     mutatesTab: false,
@@ -14484,7 +14484,7 @@ export interface Browser {
      */
     heal_apply(args: RunHealApplyArgs, options?: CallOptions): Promise<RunHealApplyOutput>;
     /**
-     * List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script.
+     * List heal proposals of this browser session (pending, accepted, rejected, superseded), newest first, with diff and the whole patched script. A proposal stays pending only while its run still waits for that fix.
      *
      * `run.heal_proposals` (MCP: `run_heal_proposals`): toolset `run`, read.
      */

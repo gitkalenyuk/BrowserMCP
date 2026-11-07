@@ -59,7 +59,9 @@ older question and `run.heal_applied` closes them. The Runs panel of the UI show
 (diff, explanation, confidence, checks) with Accept / Reject with feedback / Propose.
 
 A newer `run.heal_proposed` for the same run supersedes the older one (accepting the old one
-then fails with "not pending"). `note` is set when "auto" mode did not apply the patch (low
+then fails with "not pending"). So does the end of the run's wait for that fix: the run finished
+or was cancelled (`run.finished`), was resumed past the break (`run.resume`) or fixed by hand
+(`run.heal_apply`); `run.heal_proposals`, accept and reject check the run first. `note` is set when "auto" mode did not apply the patch (low
 confidence, failed dry run, or the per-run limit of 3 automatic patches).
 
 ## What the AI gets

@@ -1,6 +1,10 @@
 //! The background part: one task reading the event bus.
 //!
-//! * `run.heal_needed` → [`HealService::on_heal_needed`] (propose; ask or auto);
+//! * `run.heal_needed` → [`HealService::on_heal_needed`] (propose; ask or auto); pending
+//!   proposals of an earlier heal request of the run become superseded;
+//! * `run.finished` → the run's pending proposals become superseded (cancelled, done);
+//! * `run.progress` of a run with pending proposals → [`HealService::reconcile`]: a run fixed by
+//!   hand (`run.heal_apply`) or resumed past the break no longer waits for them;
 //! * `command.started` from a script (WebSocket caller) with a `tab` argument on `page.*` /
 //!   `nav.wait` → remembered as "the tab scripts work in";
 //! * `tab.created` / `tab.updated` → the URL of every tab (also after it closes).
@@ -85,13 +89,40 @@ pub(crate) async fn watcher(heal: Weak<HealService>, mut rx: broadcast::Receiver
             Err(broadcast::error::RecvError::Closed) => return,
         };
         let Some(heal) = heal.upgrade() else { return };
-        if event.topic == bmcp_jobs::topics::RUN_HEAL_NEEDED {
+        on_event(&heal, event);
+    }
+}
+
+/// One bus event (see the [module docs](self)).
+fn on_event(heal: &Arc<HealService>, event: Event) {
+    let run = event.data["id"].as_str().unwrap_or_default();
+    match event.topic.as_str() {
+        bmcp_jobs::topics::RUN_HEAL_NEEDED => {
+            // A new heal request: proposals of an earlier one of the run are outdated.
+            let row = event.data["row"].as_u64().unwrap_or_default();
+            let script = event.data["script"].as_str().unwrap_or_default();
+            heal.supersede_stale(run, Some((row, script)), None);
             // Proposing calls the AI (seconds to minutes): don't block the event stream.
             let heal = heal.clone();
             tokio::spawn(async move { heal.on_heal_needed(&event.data).await });
-        } else {
-            heal.state().tabs.on_event(&event);
         }
+        // Finished, failed or cancelled: nothing waits for a fix any more.
+        bmcp_jobs::topics::RUN_FINISHED => {
+            heal.run_ended(run);
+        }
+        // Fixed by hand (run.heal_apply) or skipped (run.resume) outside of run.heal_accept:
+        // the progress events of the continuing run say so; check the run once per event
+        // only while it has pending proposals.
+        bmcp_jobs::topics::RUN_PROGRESS if heal.has_pending(run) => {
+            let heal = heal.clone();
+            let run = run.to_string();
+            tokio::spawn(async move {
+                if let Err(err) = heal.reconcile(&run).await {
+                    tracing::debug!(run, %err, "cannot check heal proposals against the run");
+                }
+            });
+        }
+        _ => heal.state().tabs.on_event(&event),
     }
 }
 

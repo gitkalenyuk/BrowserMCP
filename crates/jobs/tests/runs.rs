@@ -402,6 +402,16 @@ async fn heal_pauses_and_patch_resumes() {
     assert_eq!(applied["script"], "login.v2");
     assert_eq!(applied["requeued"], 1);
 
+    // The heal request is answered: a second (outdated) patch is refused, the run keeps v2.
+    let again = env
+        .call(
+            "run.heal_apply",
+            json!({"id": id, "patched_code": "result {\"stale\": true}"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(again.message.contains("not waiting for a fix"), "{again:?}");
+
     let status = env.wait_status(&id, &["finished"]).await;
     assert_eq!(status["script"], "login.v2");
     assert_eq!(status["counts"]["ok"], 3);

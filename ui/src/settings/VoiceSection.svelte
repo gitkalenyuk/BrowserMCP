@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { BrowserApi } from '../lib/api';
+  import { VOICE_TRANSCRIBE_TIMEOUT_MS, type BrowserApi } from '../lib/api';
   import type {
     VoiceCloudEngine,
     VoiceEngineId,
@@ -175,7 +175,8 @@
       testLevel = 0;
       testing = 'transcribing';
       const language = s.language === '' ? locale() : s.language;
-      const r = await api.call('voice.transcribe', { audio_base64: bytesToBase64(encodeWav(samples)), mime: 'audio/wav', language });
+      // Transcribing takes longer than the default 15 s call limit (a local engine starts first).
+      const r = await api.call('voice.transcribe', { audio_base64: bytesToBase64(encodeWav(samples)), mime: 'audio/wav', language }, { timeout: VOICE_TRANSCRIBE_TIMEOUT_MS });
       testResult = { ok: true, r };
     } catch (err) {
       const error =

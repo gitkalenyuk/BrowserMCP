@@ -74,7 +74,9 @@ run.start {script, data: {csv_path | json_path | xlsx_path | rows: [...]},
 the run pauses and `run.heal_needed {id, row, script, error, step, line}` is emitted. An agent
 proposes a fix and calls `run.heal_apply {id, patched_code}`: the code is saved as
 `<name>.v2.ts` (then `.v3` …), the waiting rows go back into the queue and the run continues
-with the new version. `run.resume` instead skips the fix (those rows count as failed).
+with the new version. Only a run with an open heal request (`heal` in `run.status`) takes a
+patch: a second, outdated one for the same break is refused. `run.resume` instead skips the fix
+(those rows count as failed).
 `heal` is `"ask"` (default), `"auto"` or `"off"` (`true`/`false` = ask/off); the mode is
 in the event as `mode`. A hook (`JobsService::set_heal_hook`, installed by `crates/heal`) takes a
 page snapshot before the event goes out; it is stored in the `heal_snapshots` table
