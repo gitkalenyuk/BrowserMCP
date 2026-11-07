@@ -45,4 +45,5 @@ export default {
   'commands.zoom.out': 'Zoom out',
   'commands.zoom.reset': 'Reset zoom',
   'commands.settings.open': 'Settings',
+  'commands.help.guide': 'Guide: how everything works',
 };

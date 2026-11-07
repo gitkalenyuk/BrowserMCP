@@ -194,6 +194,7 @@ const VK_OEM_COMMA: i32 = 0xBC;
 const VK_OEM_MINUS: i32 = 0xBD;
 /// The Ctrl key itself (its key-up ends a Ctrl+wheel zoom, see `zoom.rs`).
 pub const VK_CONTROL: i32 = 0x11;
+const VK_F1: i32 = 0x70;
 const VK_F4: i32 = 0x73;
 const VK_F5: i32 = 0x74;
 const VK_F6: i32 = 0x75;
@@ -250,6 +251,8 @@ pub fn shortcut(key_code: i32, m: Modifiers) -> Option<Shortcut> {
         VK_B if ctrl_shift => Ui("ui.toggleBookmarksBar"),
         // Settings page (bmcp://ui/settings.html, opened by the chrome).
         VK_OEM_COMMA if ctrl => Ui("settings.open"),
+        // The user guide (Settings → Guide).
+        VK_F1 if plain => Ui("help.guide"),
         // Zoom: Ctrl+= (also Ctrl+Shift+= = Ctrl++), Ctrl+-, Ctrl+0, numpad keys.
         VK_OEM_PLUS | VK_ADD if ctrl || ctrl_shift => Ui("zoom.in"),
         VK_OEM_MINUS | VK_SUBTRACT if ctrl => Ui("zoom.out"),
@@ -481,6 +484,10 @@ mod tests {
             Some(Shortcut::Ui("ui.toggleBookmarksBar"))
         );
         assert_eq!(shortcut(0xBC, ctrl), Some(Shortcut::Ui("settings.open")));
+        assert_eq!(
+            shortcut(0x70, Modifiers::default()),
+            Some(Shortcut::Ui("help.guide"))
+        );
         assert_eq!(shortcut(0xBB, ctrl), Some(Shortcut::Ui("zoom.in")));
         assert_eq!(shortcut(0xBB, ctrl_shift), Some(Shortcut::Ui("zoom.in")));
         assert_eq!(shortcut(0x6B, ctrl), Some(Shortcut::Ui("zoom.in")));

@@ -74,7 +74,7 @@ describe('keymap overrides', () => {
 
   it('has a translation for every command', () => {
     const missing = COMMAND_IDS.filter((id) => {
-      const key = /^tab\.select\d$/.test(id) ? 'settings.keyboard.cmd.tab.selectN' : `settings.keyboard.cmd.${id}`;
+      const key = `commands.${id}`;
       return !(key in DICTS.en) || !(key in DICTS.uk);
     });
     expect(missing).toEqual([]);

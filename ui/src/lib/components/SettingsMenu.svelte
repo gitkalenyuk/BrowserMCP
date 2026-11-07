@@ -115,6 +115,10 @@
             <span>{t('components.menu.allSettings')}</span>
             {#if chrome.keymap['settings.open'][0]}<kbd>{chrome.keymap['settings.open'][0]}</kbd>{/if}
           </button>
+          <button onclick={() => ((open = false), chrome.run('help.guide'))}>
+            <span>{t('commands.help.guide')}</span>
+            {#if chrome.keymap['help.guide'][0]}<kbd>{chrome.keymap['help.guide'][0]}</kbd>{/if}
+          </button>
         </div>
       </section>
       <footer>

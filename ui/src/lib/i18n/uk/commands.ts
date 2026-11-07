@@ -45,4 +45,5 @@ export default {
   'commands.zoom.out': 'Зменшити масштаб',
   'commands.zoom.reset': 'Скинути масштаб',
   'commands.settings.open': 'Налаштування',
+  'commands.help.guide': 'Посібник: як усе працює',
 };

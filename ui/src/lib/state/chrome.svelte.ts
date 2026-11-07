@@ -5,7 +5,7 @@ import { buildKeyIndex, commandForEvent, type CommandId, type Keymap, type KeyLi
 import { AiStore } from '../ai/store.svelte';
 import { chromeBookmarks } from '../data/chrome-bookmarks.svelte';
 import { openLibrary } from '../data/library';
-import { openSettings } from '../settings/open';
+import { openGuide, openSettings } from '../settings/open';
 import { effectiveKeymap, onOverrides } from '../settings/keys';
 import { windowKey, type NativeHost } from '../native';
 import { NetStore } from '../net/store.svelte';
@@ -494,6 +494,7 @@ export class ChromeController {
       case 'bookmark.toggle': return void chromeBookmarks(this.api).toggle(this.active?.url, this.active?.title);
       case 'ui.toggleBookmarksBar': return settings.update({ bookmarksBar: !settings.value.bookmarksBar });
       case 'settings.open': return openSettings(this);
+      case 'help.guide': return openGuide(this, 'start');
     }
   }
 

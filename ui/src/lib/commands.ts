@@ -64,6 +64,7 @@ export const COMMANDS: CommandMeta[] = [
   cmd('zoom.out'),
   cmd('zoom.reset'),
   cmd('settings.open'),
+  cmd('help.guide'),
   cmd('palette.open', true),
   ...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) => cmd(`tab.select${n}`, true)),
   cmd('tab.selectLast', true),
