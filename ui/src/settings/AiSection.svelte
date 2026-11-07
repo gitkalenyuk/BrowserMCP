@@ -2,6 +2,7 @@
   import type { BrowserApi } from '../lib/api';
   import { AiStore } from '../lib/ai/store.svelte';
   import AiSettings from '../lib/components/panels/AiSettings.svelte';
+  import { t } from '../lib/i18n/index.svelte';
 
   let { api }: { api: BrowserApi } = $props();
 
@@ -16,38 +17,43 @@
 
   const def = $derived(store.providers.find((p) => p.is_default) ?? null);
   const chat = $derived(store.providers.find((p) => p.id === store.provider) ?? null);
+
+  /** "Text with `code`" → parts, odd ones shown as code (translations keep the backticks). */
+  function codeParts(text: string): { text: string; code: boolean }[] {
+    return text.split('`').map((part, i) => ({ text: part, code: i % 2 === 1 }));
+  }
 </script>
 
 <div class="set-page">
   <header>
-    <h2>AI</h2>
+    <h2>{t('aiProviders.section.title')}</h2>
     <p>
-      Providers for the AI side panel and for background features: self-healing of mass runs and
-      <span class="set-mono">page.extract</span>. Keys are stored in <span class="set-mono">data/config/ai.json</span> on this
-      computer; <b>Test</b> only lists models or runs <span class="set-mono">--version</span> and spends no tokens.
+      {#each codeParts(t('aiProviders.section.lead')) as part, i (i)}
+        {#if part.code}<span class="set-mono">{part.text}</span>{:else}{part.text}{/if}
+      {/each}
     </p>
   </header>
 
   <section class="set-card" aria-labelledby="ai-use">
-    <h3 id="ai-use">In use</h3>
+    <h3 id="ai-use">{t('aiProviders.section.inUse')}</h3>
     <div class="set-row">
       <div class="text">
-        <span class="label">New chats in the AI panel</span>
-        <span class="help">Pick “Use for new chats” on a provider below.</span>
+        <span class="label">{t('aiProviders.section.chat')}</span>
+        <span class="help">{t('aiProviders.section.chatHelp')}</span>
       </div>
       <div class="ctl"><span class="lib-chip">{chat?.name ?? store.provider}</span></div>
     </div>
     <div class="set-row">
       <div class="text">
-        <span class="label">Background AI (self-healing, page.extract)</span>
-        <span class="help">Without a default the first configured provider is used (Claude Code when installed).</span>
+        <span class="label">{t('aiProviders.section.background')}</span>
+        <span class="help">{t('aiProviders.section.backgroundHelp')}</span>
       </div>
-      <div class="ctl"><span class="lib-chip" class:warn={!def}>{def?.name ?? 'Automatic'}</span></div>
+      <div class="ctl"><span class="lib-chip" class:warn={!def}>{def?.name ?? t('aiProviders.section.automatic')}</span></div>
     </div>
   </section>
 
   <section class="set-card providers" aria-labelledby="ai-prov">
-    <h3 id="ai-prov">Providers</h3>
+    <h3 id="ai-prov">{t('aiProviders.section.providers')}</h3>
     <AiSettings {store} />
   </section>
 </div>

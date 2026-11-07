@@ -3,8 +3,8 @@
 // commands (crates/ai, crates/net); behaviour is only plausible, not a spec.
 
 import { RpcError } from './client';
+import { createProviderMocks } from './mock-ai-providers';
 import type {
-  AiProvider,
   AiSession,
   AiTranscriptEntry,
   ApiEvents,
@@ -27,60 +27,6 @@ export type PanelHandlers = { [M in PanelMethod]: (params: Params<M>) => Result<
 type Emit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
 
 const AGENT_COLORS = ['#3b82f6', '#f97316', '#22c55e', '#a855f7', '#ec4899', '#14b8a6', '#eab308', '#ef4444'];
-
-function provider(
-  id: string,
-  name: string,
-  kind: 'api' | 'cli',
-  protocol: AiProvider['protocol'],
-  base_url: string,
-  opts: Partial<AiProvider> = {},
-): AiProvider {
-  const needs_key = opts.needs_key ?? kind === 'api';
-  const has_key = opts.has_key ?? false;
-  return {
-    id,
-    name,
-    kind,
-    protocol,
-    needs_key,
-    has_key,
-    base_url,
-    model: null,
-    models: [],
-    path: null,
-    configured: kind === 'cli' ? Boolean(opts.path) : Boolean(base_url) && (!needs_key || has_key),
-    is_default: false,
-    ...opts,
-  };
-}
-
-function seedProviders(): AiProvider[] {
-  return [
-    provider('claude-code', 'Claude Code', 'cli', 'claude-code', '', {
-      path: 'C:\\Users\\you\\.local\\bin\\claude.exe',
-      models: ['opus', 'sonnet', 'haiku', 'fable'],
-    }),
-    provider('codex', 'Codex', 'cli', 'codex', ''),
-    provider('anthropic', 'Anthropic', 'api', 'anthropic', 'https://api.anthropic.com', {
-      model: 'claude-opus-5-5',
-      models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'],
-    }),
-    provider('openai', 'OpenAI', 'api', 'openai', 'https://api.openai.com/v1'),
-    provider('gemini', 'Google Gemini', 'api', 'gemini', 'https://generativelanguage.googleapis.com'),
-    provider('openrouter', 'OpenRouter', 'api', 'openai', 'https://openrouter.ai/api/v1'),
-    provider('mistral', 'Mistral', 'api', 'openai', 'https://api.mistral.ai/v1'),
-    provider('deepseek', 'DeepSeek', 'api', 'openai', 'https://api.deepseek.com/v1', {
-      model: 'deepseek-chat',
-      models: ['deepseek-chat', 'deepseek-reasoner'],
-    }),
-    provider('xai', 'xAI', 'api', 'openai', 'https://api.x.ai/v1'),
-    provider('groq', 'Groq', 'api', 'openai', 'https://api.groq.com/openai/v1'),
-    provider('ollama', 'Ollama', 'api', 'openai', 'http://localhost:11434/v1', { needs_key: false, model: 'qwen3:8b', models: ['qwen3:8b', 'llama3.3:70b'] }),
-    provider('lmstudio', 'LM Studio', 'api', 'openai', 'http://localhost:1234/v1', { needs_key: false }),
-    provider('custom', 'Custom (OpenAI-compatible)', 'api', 'openai', '', { needs_key: false }),
-  ];
-}
 
 // ---- net text formats (crates/net/src/format.rs) -----------------------------------------
 
@@ -275,17 +221,13 @@ interface MockTerm {
 
 export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): PanelHandlers {
   // ---- AI --------------------------------------------------------------------------------
-  let providers = seedProviders();
+  // Providers (built-in and the user's own) live in mock-ai-providers.ts.
+  const providerMocks = createProviderMocks();
+  const getProvider = providerMocks.get;
   const sessions = new Map<string, AiSession>();
   const transcripts = new Map<string, AiTranscriptEntry[]>();
   const runs = new Map<string, ReturnType<typeof setTimeout>[]>();
   let sessionCount = 0;
-
-  const getProvider = (id: string) => {
-    const p = providers.find((x) => x.id === id);
-    if (!p) throw new RpcError('NOT_FOUND', `unknown AI provider '${id}'`);
-    return p;
-  };
 
   const setStatus = (s: AiSession, status: AiSession['status']) => {
     if (s.status === status) return;
@@ -614,33 +556,7 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
 
   return {
     // ---- ai ----
-    'ai.providers': () => ({ providers }),
-    'ai.provider_set': ({ id, api_key, base_url, model, path, default: isDefault }) => {
-      const p = getProvider(id);
-      const clear = (v: string | undefined, fallback: string | null) => (v === undefined ? fallback : v.trim() || null);
-      const next: AiProvider = { ...p };
-      if (api_key !== undefined) next.has_key = api_key.trim() !== '';
-      if (base_url !== undefined) next.base_url = clear(base_url, p.base_url) ?? seedProviders().find((x) => x.id === id)!.base_url;
-      if (model !== undefined) next.model = clear(model, p.model);
-      if (path !== undefined) next.path = clear(path, p.path);
-      next.configured = next.kind === 'cli' ? Boolean(next.path) : Boolean(next.base_url) && (!next.needs_key || next.has_key);
-      if (isDefault !== undefined) next.is_default = isDefault;
-      providers = providers.map((x) => (x.id === id ? next : isDefault ? { ...x, is_default: false } : x));
-      return next;
-    },
-    'ai.provider_test': async ({ id }) => {
-      const p = getProvider(id);
-      await new Promise((r) => setTimeout(r, 450));
-      if (p.kind === 'cli') {
-        if (!p.path) return { id, ok: false, models: [], version: null, error: `${p.name} not found` };
-        return { id, ok: true, models: [], version: p.id === 'codex' ? 'codex-cli 0.98.0' : '2.4.1 (Claude Code)', error: null };
-      }
-      if (!p.base_url) return { id, ok: false, models: [], version: null, error: 'no base_url set' };
-      if (p.needs_key && !p.has_key) return { id, ok: false, models: [], version: null, error: 'HTTP 401: missing API key' };
-      const models = p.models.length ? p.models : [`${p.id}-large`, `${p.id}-small`];
-      providers = providers.map((x) => (x.id === id ? { ...x, models } : x));
-      return { id, ok: true, models, version: null, error: null };
-    },
+    ...providerMocks.handlers,
     'ai.session_start': ({ provider: pid, prompt, model }) => {
       const p = getProvider(pid);
       if (!prompt.trim()) throw new RpcError('INVALID_PARAMS', 'prompt is empty');

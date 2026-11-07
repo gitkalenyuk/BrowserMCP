@@ -1,5 +1,6 @@
 import type { BrowserApi } from '../api/client';
 import type { AiProvider, AiProviderSet, AiProviderTest, AiSession, AiSessionStatus } from '../api/types';
+import { useLiveProviders } from '../providers';
 import { load, save } from '../storage';
 import { applyAiEvent, threadFromTranscript, type AiEvent, type ChatItem } from './thread';
 
@@ -29,6 +30,8 @@ export class AiStore {
 
   constructor(api: BrowserApi) {
     this.api = api;
+    // Hints of the user's own providers (providerHint) come from this live list.
+    useLiveProviders(() => this.providers);
   }
 
   start(): void {

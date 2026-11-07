@@ -195,8 +195,11 @@ starts the mock empty (wizard).
 ### Side panels
 
 * **AI** (`panels/AiPanel.svelte`, `ai/store.svelte.ts`, `ai/thread.ts`): provider picker from
-  `ai.providers`, a settings sub-view (`AiSettings.svelte`: key / base URL / model / CLI path via
-  `ai.provider_set`, free check via `ai.provider_test`), sessions as colored chips, one thread per
+  `ai.providers`, a settings sub-view (`AiSettings.svelte` + `ProviderForm.svelte`: CLI agents,
+  built-in providers and "My providers" — any number of user endpoints added from a template with
+  `ai.provider_add`, renamed / edited via `ai.provider_set`, deleted with `ai.provider_remove`;
+  key (masked, show/hide) / base URL / model picker / extra headers, unsaved-changes guard, free
+  check via `ai.provider_test`; form logic in `ai/provider-form.ts`), sessions as colored chips, one thread per
   session folded from `ai.*` events (`text_delta` streams, `text` replaces and closes the row; tool
   calls are collapsible rows), stop button. New chat = `ai.session_start`, reply = `ai.session_send`.
 * **Terminal** (`TerminalPanel.svelte`, `XTermView.svelte`, `term/store.svelte.ts`): xterm.js +
@@ -249,8 +252,8 @@ URL; `crates/cef/src/scheme.rs` allow-list). Opened by Ctrl+, (`settings.open`),
 
 * **General**: theme, accent, density (compact = shorter strip / toolbar / tabs, `data-density` on
   `:root`), vertical tabs, bookmarks bar, new tab widgets (all `settings.svelte.ts`, localStorage).
-* **AI**: `AiSettings.svelte` from the AI panel with its own `AiStore` (keys / base URLs / models /
-  CLI path, Test, *Use for new chats*, *Make default for background AI* = `ai.provider_set
+* **AI**: `AiSettings.svelte` from the AI panel with its own `AiStore` (built-in and the user's own
+  providers: keys / base URLs / models / headers / CLI path, add / rename / delete, Test, *Use for new chats*, *Make default for background AI* = `ai.provider_set
   {default: true}`, `is_default` badge).
 * **Notifications**: `notify.config_get/config_set/test`; channels UI / Windows / Telegram (token
   masked as `…abcd` by the core, sending it back keeps it) / webhook with *Test* (*Save & test*
