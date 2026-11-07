@@ -194,6 +194,54 @@ impl Command for List {
     }
 }
 
+/// Remove finished downloads (complete, cancelled, interrupted) started at or after `since`
+/// (Unix ms; `None` = all) from the list. The files stay on disk; running downloads stay
+/// listed. Returns how many rows went.
+pub fn clear(conn: &Connection, since: Option<i64>) -> DataResult<usize> {
+    Ok(conn.execute(
+        "DELETE FROM downloads WHERE state != 'in_progress' AND started >= ?1",
+        [since.unwrap_or(i64::MIN)],
+    )?)
+}
+
+/// `downloads.clear`.
+pub struct Clear;
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClearArgs {
+    /// Only downloads started at or after this time (Unix ms). Default: all.
+    pub since: Option<i64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ClearOutput {
+    /// How many entries were removed from the list.
+    pub removed: usize,
+}
+
+impl Command for Clear {
+    const NAME: &'static str = "downloads.clear";
+    type Args = ClearArgs;
+    type Output = ClearOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Clear the downloads list (finished downloads; optionally only those started since a \
+             time, Unix ms). The downloaded files stay on disk. Returns {removed}.",
+            Toolset::Data,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: ClearArgs) -> Result<ClearOutput, CmdError> {
+        let removed = DataStore::from_ctx(&ctx)?
+            .run(move |c| clear(c, args.since))
+            .await?;
+        Ok(ClearOutput { removed })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -237,6 +285,44 @@ mod tests {
         assert_eq!(list[0]["started"], 5_000);
         assert_eq!(list[1]["state"], "complete");
         assert_eq!(list[1]["ended"], 2_000);
+    }
+
+    #[tokio::test]
+    async fn clear_keeps_running_downloads_and_respects_since() {
+        let (registry, ctx) = setup();
+        let store = DataStore::from_ctx(&ctx).unwrap();
+        for (state, started) in [
+            ("complete", 1_000),
+            ("in_progress", 2_000),
+            ("cancelled", 3_000),
+            ("complete", 4_000),
+        ] {
+            let d = Download {
+                id: 0,
+                url: format!("https://a.test/{started}"),
+                path: String::new(),
+                mime: String::new(),
+                total_bytes: None,
+                received_bytes: 0,
+                state: state.into(),
+                started,
+                ended: None,
+            };
+            store.with(|c| upsert_download(c, &d)).unwrap();
+        }
+        let out = call(
+            &registry,
+            &ctx,
+            "downloads.clear",
+            json!({ "since": 3_000 }),
+        )
+        .await;
+        assert_eq!(out, json!({ "removed": 2 }));
+        let out = call(&registry, &ctx, "downloads.clear", json!({})).await;
+        assert_eq!(out, json!({ "removed": 1 }));
+        let list = call(&registry, &ctx, "downloads.list", json!({})).await;
+        assert_eq!(list["downloads"].as_array().unwrap().len(), 1);
+        assert_eq!(list["downloads"][0]["state"], "in_progress");
     }
 
     #[tokio::test]

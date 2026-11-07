@@ -38,16 +38,25 @@ pub fn register(registry: &mut Registry) {
 // Path checks
 // ---------------------------------------------------------------------------------------------
 
-/// The folders the commands may show: the data folder (when the app registered one) and the
-/// user's Downloads folder.
+/// The folders the commands may show: the data folder (when the app registered one), the
+/// user's Downloads folder and the app's [`ExtraRoots`].
 pub fn allowed_roots(ctx: &Ctx) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(data) = ctx.extensions.get::<DataDir>() {
         roots.push(data.root().to_path_buf());
     }
     roots.extend(downloads_dir());
+    if let Some(extra) = ctx.extensions.get::<ExtraRoots>() {
+        roots.extend((extra.0)());
+    }
     roots
 }
+
+/// More folders the app lets these commands show, asked on every call (they can change while
+/// the browser runs): the download folder chosen in Settings and the folder of the exe (its
+/// license files). Put into the registry extensions by the app.
+#[derive(Clone)]
+pub struct ExtraRoots(pub Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync>);
 
 /// `%USERPROFILE%\Downloads` (the default location; a moved Downloads folder is not followed).
 pub fn downloads_dir() -> Option<PathBuf> {

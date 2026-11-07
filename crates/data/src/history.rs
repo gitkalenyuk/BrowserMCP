@@ -214,6 +214,32 @@ pub fn delete_visits(conn: &mut Connection, filter: &VisitFilter) -> DataResult<
     Ok(Deleted { visits, urls })
 }
 
+/// The web origins (`https://host[:port]`) with a visit at or after `since` (Unix ms; `None`
+/// = any time), sorted. For clearing site data of the sites visited in a time range.
+pub fn visited_origins(conn: &Connection, since: Option<i64>) -> DataResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT u.url FROM urls u JOIN visits v ON v.url_id = u.id
+         WHERE v.visit_time >= ?1",
+    )?;
+    let urls: Vec<String> = stmt
+        .query_map([since.unwrap_or(i64::MIN)], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut origins: Vec<String> = urls.iter().filter_map(|u| web_origin(u)).collect();
+    origins.sort();
+    origins.dedup();
+    Ok(origins)
+}
+
+/// `https://a.test:8080/x?y` → `https://a.test:8080`; non-web URLs → `None`.
+pub fn web_origin(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let origin = parsed.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
+}
+
 /// Recompute `visit_count` / `last_visit` of one URL from its visits.
 fn recompute_url(conn: &Connection, id: i64) -> DataResult<()> {
     conn.execute(
@@ -508,6 +534,24 @@ mod tests {
         store
             .with(|c| record_visit(c, url, title, transition, time))
             .unwrap()
+    }
+
+    #[test]
+    fn visited_origins_since_a_time() {
+        let store = store();
+        visit(&store, "https://a.test/x", "", "link", 1_000);
+        visit(&store, "https://a.test/y?q=1", "", "link", 5_000);
+        visit(&store, "http://b.test:8080/", "", "link", 6_000);
+        visit(&store, "file:///C:/x.html", "", "link", 7_000);
+        let all = store.with(|c| visited_origins(c, None)).unwrap();
+        assert_eq!(all, ["http://b.test:8080", "https://a.test"]);
+        let recent = store.with(|c| visited_origins(c, Some(5_500))).unwrap();
+        assert_eq!(recent, ["http://b.test:8080"]);
+        assert_eq!(
+            web_origin("https://A.test:443/p"),
+            Some("https://a.test".into())
+        );
+        assert_eq!(web_origin("about:blank"), None);
     }
 
     #[test]

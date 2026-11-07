@@ -62,6 +62,7 @@ pub fn register(registry: &mut Registry) {
         .add::<history::Delete>()
         .add::<history::TopSites>()
         .add::<downloads::List>()
+        .add::<downloads::Clear>()
         .add::<passwords::List>()
         .add::<passwords::Get>()
         .add::<passwords::Save>()

@@ -141,6 +141,17 @@ pub enum ZoomChange {
     Steps(i32),
 }
 
+/// One entry of the recently-closed-tabs list (`tabs.closed`), most recent first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ClosedTabInfo {
+    /// Position in the list: 0 = closed most recently. Pass it to `tabs.closed_reopen`.
+    pub index: usize,
+    pub url: String,
+    pub title: String,
+    /// The tab's profile; `null` = the profile the browser started with.
+    pub profile: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum BackendError {
     #[error("tab {0} not found")]
@@ -323,9 +334,40 @@ pub trait BrowserBackend: Send + Sync + 'static {
         Box::pin(async { Err(BackendError::Unsupported("closed tabs".into())) })
     }
 
+    /// The recently closed tabs, most recent first (what Ctrl+Shift+T would reopen, in
+    /// order). Default: unsupported.
+    fn closed_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<ClosedTabInfo>>> {
+        Box::pin(async { Err(BackendError::Unsupported("closed tabs".into())) })
+    }
+
+    /// Re-open entry `index` of [`Self::closed_tabs`] (0 = like [`Self::restore_closed`])
+    /// and drop it from the list. `None` = no such entry. Default: unsupported.
+    fn restore_closed_at(&self, index: usize) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        let _ = index;
+        Box::pin(async { Err(BackendError::Unsupported("closed tabs".into())) })
+    }
+
+    /// Forget every recently closed tab; returns how many there were. Default: unsupported.
+    fn clear_closed(&self) -> BoxFuture<'_, BackendResult<usize>> {
+        Box::pin(async { Err(BackendError::Unsupported("closed tabs".into())) })
+    }
+
     /// Change a tab's page zoom; returns the new zoom in percent. Default: unsupported.
     fn zoom(&self, tab: TabId, change: ZoomChange) -> BoxFuture<'_, BackendResult<f64>> {
         let _ = (tab, change);
+        Box::pin(async { Err(BackendError::Unsupported("page zoom".into())) })
+    }
+
+    /// The remembered per-site zoom levels: host → percent (hosts at 100 % are not listed).
+    /// Default: unsupported.
+    fn zoom_levels(&self) -> BoxFuture<'_, BackendResult<Vec<(String, f64)>>> {
+        Box::pin(async { Err(BackendError::Unsupported("page zoom".into())) })
+    }
+
+    /// Forget the zoom of `host` (`None` = of every site) and show its open tabs at 100 %.
+    /// Returns the hosts that were reset. Default: unsupported.
+    fn reset_zoom(&self, host: Option<String>) -> BoxFuture<'_, BackendResult<Vec<String>>> {
+        let _ = host;
         Box::pin(async { Err(BackendError::Unsupported("page zoom".into())) })
     }
 

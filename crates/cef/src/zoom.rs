@@ -168,6 +168,49 @@ pub(crate) fn check_after_ctrl(key: i32) {
     }
 }
 
+/// `zoom.list`: every remembered host and its zoom.
+pub(crate) fn levels() -> Vec<(String, f64)> {
+    with_store(|m| m.iter().map(|(h, p)| (h.clone(), *p)).collect())
+}
+
+/// `zoom.reset`: forget `host` (`None` = every host), write the file and show the open tabs
+/// of those hosts at 100 %. Returns the hosts that were reset. UI thread.
+pub(crate) fn reset(host: Option<&str>) -> Vec<String> {
+    let (hosts, text) = with_store(|m| {
+        let hosts = forget(m, host);
+        (hosts, serde_json::to_string_pretty(m).unwrap_or_default())
+    });
+    if hosts.is_empty() {
+        return hosts;
+    }
+    let path = path();
+    if let Err(err) = std::fs::write(&path, text) {
+        tracing::warn!(path = %path.display(), %err, "zoom.json not written");
+    }
+    let tabs: Vec<(TabId, Browser)> = with_ui(|ui| {
+        ui.tabs
+            .iter()
+            .filter(|(_, t)| host_of(&t.url).is_some_and(|h| hosts.contains(&h)))
+            .map(|(id, t)| (*id, t.browser.clone()))
+            .collect()
+    });
+    for (id, browser) in tabs {
+        set(id, &browser, 100.0);
+    }
+    hosts
+}
+
+/// Remove `host` (`None` = all) from the map; returns the removed hosts (pure).
+pub(crate) fn forget(map: &mut BTreeMap<String, f64>, host: Option<&str>) -> Vec<String> {
+    match host {
+        Some(host) => {
+            let host = host.trim().to_ascii_lowercase();
+            map.remove(&host).map(|_| vec![host]).unwrap_or_default()
+        }
+        None => std::mem::take(map).into_keys().collect(),
+    }
+}
+
 /// The per-host map after a zoom change (pure): 100 % is the default and is not stored.
 pub(crate) fn update_map(map: &mut BTreeMap<String, f64>, host: &str, percent: f64) {
     if is_default(percent) {
@@ -184,7 +227,21 @@ pub(crate) fn badge(percent: f64) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge, update_map};
+    use super::{badge, forget, update_map};
+
+    #[test]
+    fn forget_one_host_or_all() {
+        let mut map = std::collections::BTreeMap::new();
+        update_map(&mut map, "a.test", 125.0);
+        update_map(&mut map, "b.test", 90.0);
+        assert_eq!(forget(&mut map, Some("x.test")), Vec::<String>::new());
+        assert_eq!(
+            forget(&mut map, Some(" A.test ")),
+            vec!["a.test".to_string()]
+        );
+        assert_eq!(forget(&mut map, None), vec!["b.test".to_string()]);
+        assert!(map.is_empty());
+    }
 
     #[test]
     fn map_stores_only_non_default_zoom() {

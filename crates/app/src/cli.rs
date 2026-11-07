@@ -12,6 +12,9 @@ pub const DEFAULT_API_PORT: u16 = 47800;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cli {
     pub url: String,
+    /// `--url` (or a bare URL) was on the command line; otherwise Settings → Startup decides
+    /// what opens.
+    pub url_given: bool,
     pub data_dir: Option<PathBuf>,
     pub profile: String,
     pub chrome_style: bool,
@@ -42,6 +45,7 @@ impl Default for Cli {
     fn default() -> Self {
         Self {
             url: DEFAULT_URL.to_owned(),
+            url_given: false,
             data_dir: None,
             profile: "default".to_owned(),
             chrome_style: false,
@@ -67,7 +71,7 @@ browsermcp mcp-stdio [--data-dir <PATH>] [--api-port <PORT>] [--headless ...]
     options below are passed on to it).
 
 Options:
-  --url <URL>          Page to open (default: https://example.com/)
+  --url <URL>          Page to open (default: Settings → Startup & tabs; headless: https://example.com/)
   --data-dir <PATH>    Data folder (default: ./data next to the executable)
   --profile <ID>       Profile to use (default: default)
   --chrome-style       Use CEF Chrome runtime style (experimental; default is Alloy)
@@ -82,7 +86,8 @@ Options:
   --cdp-port <PORT>    Open the Chrome DevTools Protocol port for Playwright/Puppeteer
                        (connectOverCDP http://127.0.0.1:<PORT>). Off by default; refused
                        while any profile has a stealth identity
-  --no-restore         Do not re-open the last session's tabs (data/runtime/session.json)
+  --no-restore         Do not re-open the last session's tabs (data/runtime/session.json),
+                       whatever Settings → Startup & tabs says
   --headless           No window at all: the first tab and every later tab are
                        off-screen pages (screenshots, video, CDP input work); the
                        process stays up after the last tab closes, until system.quit
@@ -120,6 +125,7 @@ impl Cli {
                 "--url" => {
                     if let Some(v) = value(&mut args) {
                         cli.url = v;
+                        cli.url_given = true;
                     }
                 }
                 "--data-dir" => cli.data_dir = value(&mut args).map(PathBuf::from),
@@ -159,7 +165,10 @@ impl Cli {
                 }
                 "-h" | "--help" => cli.help = true,
                 // Bare positional argument = URL.
-                other if !other.starts_with('-') => cli.url = other.to_owned(),
+                other if !other.starts_with('-') => {
+                    cli.url = other.to_owned();
+                    cli.url_given = true;
+                }
                 // Unknown switch: belongs to Chromium.
                 _ => {}
             }

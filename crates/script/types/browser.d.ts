@@ -881,6 +881,92 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- browsing_data.clear ----
+
+  /** Arguments of `browsing_data.clear`. */
+  export interface BrowsingDataClearArgs {
+    /** Only data from this time on (Unix ms); omitted = all time. */
+    since?: number | null;
+    /**
+     * Profile whose cookies, cache and site data are cleared (default: the one the browser
+     * started with). History and downloads are shared by all profiles.
+     */
+    profile?: string | null;
+    /**
+     * Browsing history (visits in the time range).
+     * @default false
+     */
+    history?: boolean;
+    /**
+     * The downloads list (the files stay on disk).
+     * @default false
+     */
+    downloads?: boolean;
+    /**
+     * Cookies (signs you out of sites).
+     * @default false
+     */
+    cookies?: boolean;
+    /**
+     * Cached images and files (always the whole cache).
+     * @default false
+     */
+    cache?: boolean;
+    /**
+     * Site data: local storage, IndexedDB, service workers, cache storage, file systems.
+     * @default false
+     */
+    site_data?: boolean;
+  }
+
+  /** Result of `browsing_data.clear`. */
+  export interface BrowsingDataClearOutput {
+    /** The profile that was cleared. */
+    profile: string;
+    /** History visits removed. */
+    history_visits?: number | null;
+    /** Downloads list entries removed. */
+    downloads?: number | null;
+    /** Cookies deleted. */
+    cookies?: number | null;
+    /** The HTTP cache was cleared. */
+    cache: boolean;
+    /** Sites whose stored data was cleared. */
+    site_data_origins?: number | null;
+    /** Parts that failed: {part, error}. */
+    errors: {
+      /** history | downloads | cookies | cache | site_data */
+      part: string;
+      error: string;
+    }[];
+  }
+
+  // ---- browsing_data.usage ----
+
+  /**
+   * Arguments of `browsing_data.usage`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type BrowsingDataUsageArgs = Record<string, never>;
+
+  /** Result of `browsing_data.usage`. */
+  export interface BrowsingDataUsageOutput {
+    /** The data folder. */
+    root: string;
+    total_bytes: number;
+    /** Biggest first. */
+    areas: {
+      /**
+       * Folder name inside the data folder (`profiles`, `db`, `downloads`, …); `profiles/<id>`
+       * for one profile; `(files)` for loose files at the top.
+       */
+      id: string;
+      path: string;
+      bytes: number;
+      files: number;
+    }[];
+  }
+
   // ---- clipboard.write ----
 
   /** Arguments of `clipboard.write`. */
@@ -1143,6 +1229,42 @@ declare namespace BrowserMCP {
     applied: string[];
     /** Things that did not work or do not fit (the rest was still applied). */
     warnings: string[];
+  }
+
+  // ---- downloads.clear ----
+
+  /** Arguments of `downloads.clear`. */
+  export interface DownloadsClearArgs {
+    /** Only downloads started at or after this time (Unix ms). Default: all. */
+    since?: number | null;
+  }
+
+  /** Result of `downloads.clear`. */
+  export interface DownloadsClearOutput {
+    /** How many entries were removed from the list. */
+    removed: number;
+  }
+
+  // ---- downloads.config ----
+
+  /** Arguments of `downloads.config`. */
+  export interface DownloadsConfigArgs {
+    /** New download folder (absolute; created if missing); "" = back to data/downloads. */
+    dir?: string | null;
+    /** true: show the Save as dialog for every download. */
+    ask?: boolean | null;
+  }
+
+  /** Result of `downloads.config`. */
+  export interface DownloadsConfigOutput {
+    /** The folder downloads go to now. */
+    dir: string;
+    /** The default folder (data/downloads). */
+    default_dir: string;
+    /** true when `dir` was chosen in Settings. */
+    custom: boolean;
+    /** The Save as dialog is shown for every download. */
+    ask: boolean;
   }
 
   // ---- downloads.list ----
@@ -6376,6 +6498,75 @@ declare namespace BrowserMCP {
     modified_ms: number;
   }
 
+  // ---- search.config ----
+
+  /** Arguments of `search.config`. */
+  export interface SearchConfigArgs {
+    /** Make this engine (id) the address bar's default. */
+    default?: string | null;
+    /** Add an engine: {name, url with %s, keyword?}. */
+    add?: {
+      name: string;
+      /** Search URL with `%s` where the words go. */
+      url: string;
+      /** Address bar shortcut (letters/digits, no spaces). Default: derived from the name. */
+      keyword?: string | null;
+    } | null;
+    /** Change an added engine: its id plus the new {name, url, keyword?}. */
+    update?: {
+      /** Id of the added engine to change. */
+      id: string;
+      name: string;
+      /** Search URL with `%s` where the words go. */
+      url: string;
+      /** Address bar shortcut. Default: derived from the name. */
+      keyword?: string | null;
+    } | null;
+    /** Remove an added engine by id. */
+    remove?: string | null;
+  }
+
+  /** Result of `search.config`. */
+  export interface SearchConfigOutput {
+    /** Id of the default engine. */
+    default: string;
+    /** Every engine: built-ins first, then the added ones. */
+    engines: {
+      /** Stable id: `google`, `bing`, … for built-ins, `custom-<name>` for added ones. */
+      id: string;
+      name: string;
+      /** Search URL with `%s` where the words go, e.g. `https://example.com/search?q=%s`. */
+      url: string;
+      /** Shortcut typed before the words in the address bar (`g cats`); unique. */
+      keyword: string;
+      /**
+       * Built-in engines cannot be removed or edited.
+       * @default false
+       */
+      builtin: boolean;
+    }[];
+    /** Id of the engine `add` created. */
+    added?: string | null;
+  }
+
+  // ---- search.url ----
+
+  /** Arguments of `search.url`. */
+  export interface SearchUrlArgs {
+    /** What would be typed in the address bar: "cats", or "<keyword> cats". */
+    query: string;
+    /** Use this engine (id) instead of the default / keyword. */
+    engine?: string | null;
+  }
+
+  /** Result of `search.url`. */
+  export interface SearchUrlOutput {
+    /** The search results URL (open it with nav_goto or tabs_open). */
+    url: string;
+    /** Id of the engine used. */
+    engine: string;
+  }
+
   // ---- simplify.get ----
 
   /** Arguments of `simplify.get`. */
@@ -6591,6 +6782,93 @@ declare namespace BrowserMCP {
     };
   }
 
+  // ---- startup.config ----
+
+  /**
+   * Arguments of `startup.config`.
+   * Every field is optional; only the given ones change.
+   */
+  export interface StartupConfigArgs {
+    /**
+     * restore (last session) | new_tab | pages.
+     *
+     * - `"restore"`: Reopen the tabs of the last session (each window, active tab, split view).
+     * - `"new_tab"`: One window with the new tab page.
+     * - `"pages"`: The pages in `pages`, each in its own tab.
+     */
+    on_startup?: "restore" | "new_tab" | "pages" | null;
+    /** Pages for on_startup = "pages" (replaces the list; "example.com" becomes https://…). */
+    pages?: string[] | null;
+    /** Home button page; "" = the new tab page. */
+    home_page?: string | null;
+    show_home_button?: boolean | null;
+    /** What a new tab shows; "" = the built-in new tab page. */
+    new_tab_url?: string | null;
+    /**
+     * end | after_active.
+     *
+     * - `"end"`: After the last tab (like Chrome's Ctrl+T).
+     * - `"after_active"`: Right after the tab shown in the window.
+     */
+    new_tab_position?: "end" | "after_active" | null;
+    /** true: closing the last tab keeps the window (with a new tab page). */
+    keep_window_on_last_tab?: boolean | null;
+    /** Back to the defaults first. */
+    reset?: boolean | null;
+  }
+
+  /** Result of `startup.config`. */
+  export interface StartupConfigOutput {
+    /** The settings in force (saved in data/config/startup.json). */
+    config: {
+      /**
+       * What the browser opens when it starts.
+       *
+       * - `"restore"`: Reopen the tabs of the last session (each window, active tab, split view).
+       * - `"new_tab"`: One window with the new tab page.
+       * - `"pages"`: The pages in `pages`, each in its own tab.
+       * @default "restore"
+       */
+      on_startup: "restore" | "new_tab" | "pages";
+      /**
+       * The pages for `on_startup: "pages"`.
+       * @default []
+       */
+      pages: string[];
+      /**
+       * Page of the Home button; `null` = the new tab page.
+       * @default null
+       */
+      home_page: string | null;
+      /**
+       * Show the Home button in the toolbar.
+       * @default false
+       */
+      show_home_button: boolean;
+      /**
+       * What a new tab shows; `null` = the built-in new tab page (`bmcp://ui/newtab.html`).
+       * @default null
+       */
+      new_tab_url: string | null;
+      /**
+       * Where a new tab (Ctrl+T, the + button, `tabs.open`) is put in the tab strip.
+       *
+       * - `"end"`: After the last tab (like Chrome's Ctrl+T).
+       * - `"after_active"`: Right after the tab shown in the window.
+       * @default "end"
+       */
+      new_tab_position: "end" | "after_active";
+      /**
+       * Closing the last tab of a window keeps the window with a new tab page (default: the
+       * window closes, like Chrome).
+       * @default false
+       */
+      keep_window_on_last_tab: boolean;
+    };
+    /** The URL a new tab opens (new_tab_url or the built-in page). */
+    new_tab_page: string;
+  }
+
   // ---- stealth.check ----
 
   /** Arguments of `stealth.check`. */
@@ -6773,6 +7051,44 @@ declare namespace BrowserMCP {
     warnings: string[];
   }
 
+  // ---- system.about ----
+
+  /**
+   * Arguments of `system.about`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type SystemAboutArgs = Record<string, never>;
+
+  /** Result of `system.about`. */
+  export interface SystemAboutOutput {
+    name: string;
+    /** BrowserMCP version. */
+    version: string;
+    cef_version: string;
+    chromium_version: string;
+    /** e.g. "windows x86_64". */
+    os: string;
+    pid: number;
+    /** Seconds since the browser started. */
+    uptime_secs: number;
+    exe_dir: string;
+    data_dir: string;
+    config_dir: string;
+    logs_dir: string;
+    api: {
+      /** 127.0.0.1 port of MCP / REST / WebSocket. */
+      port: number;
+      mcp: string;
+      rest: string;
+      ws: string;
+    };
+    licenses: {
+      /** File or folder name, e.g. `CREDITS.html`. */
+      name: string;
+      path: string;
+    }[];
+  }
+
   // ---- system.open_path ----
 
   /** Arguments of `system.open_path`. */
@@ -6864,6 +7180,55 @@ declare namespace BrowserMCP {
    * Arguments/output for commands that take or return nothing: `{}`.
    */
   export type TabsCloseOutput = Record<string, never>;
+
+  // ---- tabs.closed ----
+
+  /**
+   * Arguments of `tabs.closed`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type TabsClosedArgs = Record<string, never>;
+
+  /** Result of `tabs.closed`. */
+  export interface TabsClosedOutput {
+    /** Most recent first (at most 25; incognito and off-screen tabs are never listed). */
+    tabs: {
+      /** Position in the list: 0 = closed most recently. Pass it to `tabs.closed_reopen`. */
+      index: number;
+      url: string;
+      title: string;
+      /** The tab's profile; `null` = the profile the browser started with. */
+      profile: string | null;
+    }[];
+  }
+
+  // ---- tabs.closed_clear ----
+
+  /**
+   * Arguments of `tabs.closed_clear`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type TabsClosedClearArgs = Record<string, never>;
+
+  /** Result of `tabs.closed_clear`. */
+  export interface TabsClosedClearOutput {
+    /** How many entries were forgotten. */
+    cleared: number;
+  }
+
+  // ---- tabs.closed_reopen ----
+
+  /** Arguments of `tabs.closed_reopen`. */
+  export interface TabsClosedReopenArgs {
+    /** `index` from tabs_closed (0 = the tab closed last). */
+    index: number;
+  }
+
+  /** Result of `tabs.closed_reopen`. */
+  export interface TabsClosedReopenOutput {
+    /** The re-opened tab; null when no closed tab is remembered. */
+    tab: number | null;
+  }
 
   // ---- tabs.freeze ----
 
@@ -7850,6 +8215,39 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- zoom.list ----
+
+  /**
+   * Arguments of `zoom.list`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type ZoomListArgs = Record<string, never>;
+
+  /** Result of `zoom.list`. */
+  export interface ZoomListOutput {
+    /** Sorted by host. */
+    sites: {
+      /** Host name, e.g. `example.com`. */
+      host: string;
+      /** Zoom in percent (100 = normal; such hosts are not listed). */
+      percent: number;
+    }[];
+  }
+
+  // ---- zoom.reset ----
+
+  /** Arguments of `zoom.reset`. */
+  export interface ZoomResetArgs {
+    /** Host to reset (e.g. "example.com"); omitted = every site. */
+    host?: string | null;
+  }
+
+  /** Result of `zoom.reset`. */
+  export interface ZoomResetOutput {
+    /** Hosts whose zoom went back to 100 %. */
+    reset: string[];
+  }
+
   /** Every command by dotted name, with its argument and result types. */
   export interface Commands {
     /** Enforce adblock + site policies in a tab now: cosmetic CSS in an isolated world; requests are blocked by the browser's network hook for every tab (report.network = "cef"), or by CDP Fetch interception of this tab where that hook is missing ("cdp"). Downloads the filter lists on first use. Reload the page to see the full effect. */
@@ -7896,6 +8294,10 @@ declare namespace BrowserMCP {
     "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
     /** Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit. */
     "bookmarks.update": { args: BookmarksUpdateArgs; output: BookmarksUpdateOutput };
+    /** Clear browsing data: history, downloads (list), cookies, cache, site_data (local storage, IndexedDB, service workers…), each true/false; since = only from this time (Unix ms, omitted = all time); profile = whose cookies/cache/site data (default: the launch profile). Returns counts per part and {errors} for parts that failed. */
+    "browsing_data.clear": { args: BrowsingDataClearArgs; output: BrowsingDataClearOutput };
+    /** How much disk space the BrowserMCP data folder uses, by area (each profile's cache and site data, db, downloads, recordings, logs, …). Returns {root, total_bytes, areas:[{id, path, bytes, files}]}. */
+    "browsing_data.usage": { args: BrowsingDataUsageArgs; output: BrowsingDataUsageOutput };
     /** Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused). */
     "clipboard.write": { args: ClipboardWriteArgs; output: ClipboardWriteOutput };
     /** Move cookies waiting from import_chrome (cookies JSON) into a profile's cookie jar. Runs by itself at startup and after each import. */
@@ -7914,6 +8316,10 @@ declare namespace BrowserMCP {
     "device.clear": { args: DeviceClearArgs; output: DeviceClearOutput };
     /** Emulate a phone or tablet in a tab (user agent, screen size, pixel ratio, touch) for responsive testing. Keeps the real timezone and language. Not stealth: use stealth_fingerprint_set for that. */
     "device.emulate": { args: DeviceEmulateArgs; output: DeviceEmulateOutput };
+    /** Clear the downloads list (finished downloads; optionally only those started since a time, Unix ms). The downloaded files stay on disk. Returns {removed}. */
+    "downloads.clear": { args: DownloadsClearArgs; output: DownloadsClearOutput };
+    /** Read or change where downloads go (data/config/downloads.json): dir (absolute folder, "" = data/downloads), ask (show the Save as dialog for each file). No arguments = read. Tabs of mass runs always save into data/runs/<run>/downloads. */
+    "downloads.config": { args: DownloadsConfigArgs; output: DownloadsConfigOutput };
     /** List downloads, newest first: url, path, mime, sizes, state, start/end time. */
     "downloads.list": { args: DownloadsListArgs; output: DownloadsListOutput };
     /** Find where an IP is (country, city, timezone, coordinates) — directly or through a proxy — and suggest the locale/Accept-Language. Feed timezone/country into identity_generate to fit a fingerprint to the proxy's IP. */
@@ -8160,6 +8566,10 @@ declare namespace BrowserMCP {
     "script.run": { args: ScriptRunArgs; output: ScriptRunOutput };
     /** Create or overwrite a saved TypeScript script in data/scripts/<name>.ts. */
     "script.save": { args: ScriptSaveArgs; output: ScriptSaveOutput };
+    /** Read or change the address bar's search engines (data/config/search.json): default (engine id), add {name, url with %s, keyword?}, update {id, name, url, keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}. */
+    "search.config": { args: SearchConfigArgs; output: SearchConfigOutput };
+    /** The search results URL for a query with the browser's search engines (the default one, or "<keyword> words", or `engine`). Opens nothing: pass the url to nav_goto. Returns {url, engine}. */
+    "search.url": { args: SearchUrlArgs; output: SearchUrlOutput };
     /** Effective simplification policy of a host (merged from matching patterns), its CEF content settings and whether ad blocking applies there. */
     "simplify.get": { args: SimplifyGetArgs; output: SimplifyGetOutput };
     /** All stored site simplification policies, plus the adblock settings (on/off, allowlist, lists). */
@@ -8170,12 +8580,16 @@ declare namespace BrowserMCP {
     "simplify.reader": { args: SimplifyReaderArgs; output: SimplifyReaderOutput };
     /** Set what a site may load: js, images, fonts, media, third_party, animations (true = allow, false = block; omitted = unchanged). Saved in simplify.json; takes effect on the next request/navigation. */
     "simplify.site": { args: SimplifySiteArgs; output: SimplifySiteOutput };
+    /** Read or change the startup & tab settings (data/config/startup.json): on_startup (restore | new_tab | pages) with pages, home_page and show_home_button, new_tab_url, new_tab_position (end | after_active), keep_window_on_last_tab; reset goes back to the defaults. No arguments = read. Startup choices apply on the next start; the rest at once. */
+    "startup.config": { args: StartupConfigArgs; output: StartupConfigOutput };
     /** Probe the page like a fingerprinting script: webdriver flag, UA vs client hints vs platform, timezone vs Intl, languages, screen, WebGL strings, window.chrome, permissions, CDP-detection tricks, worker consistency and the applied identity. Returns a pass/warn/fail table. */
     "stealth.check": { args: StealthCheckArgs; output: StealthCheckOutput };
     /** Remove the fingerprint overrides from a tab (back to the real browser values; patch scripts disappear on the next page load). */
     "stealth.fingerprint_clear": { args: StealthFingerprintClearArgs; output: StealthFingerprintClearOutput };
     /** Apply a fingerprint identity to a tab: user agent + client hints, Accept-Language, timezone, locale, screen/DPR, touch, geolocation, CPU cores and (by a minimal patch script) deviceMemory, webdriver and WebGL GPU strings. Give identity_id, identity or preset. Check the result with stealth_check. */
     "stealth.fingerprint_set": { args: StealthFingerprintSetArgs; output: StealthFingerprintSetOutput };
+    /** About this browser: BrowserMCP, CEF and Chromium versions, OS, process id and uptime, the exe / data / config / logs folders, the API endpoints (MCP, REST, WebSocket) and the license files next to the exe. */
+    "system.about": { args: SystemAboutArgs; output: SystemAboutOutput };
     /** Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}. */
     "system.open_path": { args: SystemOpenPathArgs; output: SystemOpenPathOutput };
     /** Check that BrowserMCP is running. Returns its name and version. */
@@ -8188,6 +8602,12 @@ declare namespace BrowserMCP {
     "tabs.activate": { args: TabsActivateArgs; output: TabsActivateOutput };
     /** Close a tab. If it is the last tab of its window, the new tab page takes its place and the window stays open (only a person closing the last tab closes the window). */
     "tabs.close": { args: TabsCloseArgs; output: TabsCloseOutput };
+    /** List the recently closed tabs, most recent first: index, url, title, profile. Reopen one with tabs_closed_reopen {index}. */
+    "tabs.closed": { args: TabsClosedArgs; output: TabsClosedOutput };
+    /** Forget the recently closed tabs (Ctrl+Shift+T then has nothing to reopen). Returns how many were forgotten. */
+    "tabs.closed_clear": { args: TabsClosedClearArgs; output: TabsClosedClearOutput };
+    /** Reopen entry `index` of tabs_closed (URL and profile, at its old place) and remove it from the list. Returns the new tab, or null when there is no such entry. */
+    "tabs.closed_reopen": { args: TabsClosedReopenArgs; output: TabsClosedReopenOutput };
     /** Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state. */
     "tabs.freeze": { args: TabsFreezeArgs; output: TabsFreezeOutput };
     /** Tab groups (one colored group per agent) with their tab ids. */
@@ -8250,6 +8670,10 @@ declare namespace BrowserMCP {
     "userscripts.list": { args: UserscriptsListArgs; output: UserscriptsListOutput };
     /** Create or overwrite a userscript in data/userscripts/<name>.ts (header with @match is required). It runs on the next matching page load. */
     "userscripts.save": { args: UserscriptsSaveArgs; output: UserscriptsSaveOutput };
+    /** List the sites with a remembered page zoom other than 100 % (set with page_zoom or Ctrl+=/-, saved per host in data/config/zoom.json). Returns {sites:[{host, percent}]}. */
+    "zoom.list": { args: ZoomListArgs; output: ZoomListOutput };
+    /** Forget the remembered page zoom of a site (host) or of every site; its open tabs go back to 100 % at once. Returns the hosts that were reset. */
+    "zoom.reset": { args: ZoomResetArgs; output: ZoomResetOutput };
   }
 
   /** The global `browser`: `browser.<group>.<action>(args)` sends that command. */
@@ -8408,6 +8832,21 @@ declare namespace BrowserMCP {
        */
       update(args: BookmarksUpdateArgs): Promise<BookmarksUpdateOutput>;
     };
+    /** Commands `browsing_data.*`. */
+    browsing_data: {
+      /**
+       * Clear browsing data: history, downloads (list), cookies, cache, site_data (local storage, IndexedDB, service workers…), each true/false; since = only from this time (Unix ms, omitted = all time); profile = whose cookies/cache/site data (default: the launch profile). Returns counts per part and {errors} for parts that failed.
+       *
+       * `browsing_data.clear` (MCP: `browsing_data_clear`): toolset `data`, act.
+       */
+      clear(args?: BrowsingDataClearArgs): Promise<BrowsingDataClearOutput>;
+      /**
+       * How much disk space the BrowserMCP data folder uses, by area (each profile's cache and site data, db, downloads, recordings, logs, …). Returns {root, total_bytes, areas:[{id, path, bytes, files}]}.
+       *
+       * `browsing_data.usage` (MCP: `browsing_data_usage`): toolset `system`, read.
+       */
+      usage(args?: BrowsingDataUsageArgs): Promise<BrowsingDataUsageOutput>;
+    };
     /** Commands `clipboard.*`. */
     clipboard: {
       /**
@@ -8476,6 +8915,18 @@ declare namespace BrowserMCP {
     };
     /** Commands `downloads.*`. */
     downloads: {
+      /**
+       * Clear the downloads list (finished downloads; optionally only those started since a time, Unix ms). The downloaded files stay on disk. Returns {removed}.
+       *
+       * `downloads.clear` (MCP: `downloads_clear`): toolset `data`, act.
+       */
+      clear(args?: DownloadsClearArgs): Promise<DownloadsClearOutput>;
+      /**
+       * Read or change where downloads go (data/config/downloads.json): dir (absolute folder, "" = data/downloads), ask (show the Save as dialog for each file). No arguments = read. Tabs of mass runs always save into data/runs/<run>/downloads.
+       *
+       * `downloads.config` (MCP: `downloads_config`): toolset `data`, act.
+       */
+      config(args?: DownloadsConfigArgs): Promise<DownloadsConfigOutput>;
       /**
        * List downloads, newest first: url, path, mime, sizes, state, start/end time.
        *
@@ -9273,6 +9724,21 @@ declare namespace BrowserMCP {
        */
       save(args: ScriptSaveArgs): Promise<ScriptSaveOutput>;
     };
+    /** Commands `search.*`. */
+    search: {
+      /**
+       * Read or change the address bar's search engines (data/config/search.json): default (engine id), add {name, url with %s, keyword?}, update {id, name, url, keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}.
+       *
+       * `search.config` (MCP: `search_config`): toolset `system`, act.
+       */
+      config(args?: SearchConfigArgs): Promise<SearchConfigOutput>;
+      /**
+       * The search results URL for a query with the browser's search engines (the default one, or "<keyword> words", or `engine`). Opens nothing: pass the url to nav_goto. Returns {url, engine}.
+       *
+       * `search.url` (MCP: `search_url`): toolset `system`, read.
+       */
+      url(args: SearchUrlArgs): Promise<SearchUrlOutput>;
+    };
     /** Commands `simplify.*`. */
     simplify: {
       /**
@@ -9306,6 +9772,15 @@ declare namespace BrowserMCP {
        */
       site(args: SimplifySiteArgs): Promise<SimplifySiteOutput>;
     };
+    /** Commands `startup.*`. */
+    startup: {
+      /**
+       * Read or change the startup & tab settings (data/config/startup.json): on_startup (restore | new_tab | pages) with pages, home_page and show_home_button, new_tab_url, new_tab_position (end | after_active), keep_window_on_last_tab; reset goes back to the defaults. No arguments = read. Startup choices apply on the next start; the rest at once.
+       *
+       * `startup.config` (MCP: `startup_config`): toolset `system`, act.
+       */
+      config(args?: StartupConfigArgs): Promise<StartupConfigOutput>;
+    };
     /** Commands `stealth.*`. */
     stealth: {
       /**
@@ -9329,6 +9804,12 @@ declare namespace BrowserMCP {
     };
     /** Commands `system.*`. */
     system: {
+      /**
+       * About this browser: BrowserMCP, CEF and Chromium versions, OS, process id and uptime, the exe / data / config / logs folders, the API endpoints (MCP, REST, WebSocket) and the license files next to the exe.
+       *
+       * `system.about` (MCP: `system_about`): toolset `system`, read.
+       */
+      about(args?: SystemAboutArgs): Promise<SystemAboutOutput>;
       /**
        * Open a folder in Windows Explorer (folders only; use system.reveal_path for a file). Only folders inside the BrowserMCP data folder or Downloads. Returns {path}.
        *
@@ -9368,6 +9849,24 @@ declare namespace BrowserMCP {
        * `tabs.close` (MCP: `tabs_close`): toolset `core`, act, mutates the tab.
        */
       close(args: TabsCloseArgs): Promise<TabsCloseOutput>;
+      /**
+       * List the recently closed tabs, most recent first: index, url, title, profile. Reopen one with tabs_closed_reopen {index}.
+       *
+       * `tabs.closed` (MCP: `tabs_closed`): toolset `system`, read.
+       */
+      closed(args?: TabsClosedArgs): Promise<TabsClosedOutput>;
+      /**
+       * Forget the recently closed tabs (Ctrl+Shift+T then has nothing to reopen). Returns how many were forgotten.
+       *
+       * `tabs.closed_clear` (MCP: `tabs_closed_clear`): toolset `system`, act.
+       */
+      closed_clear(args?: TabsClosedClearArgs): Promise<TabsClosedClearOutput>;
+      /**
+       * Reopen entry `index` of tabs_closed (URL and profile, at its old place) and remove it from the list. Returns the new tab, or null when there is no such entry.
+       *
+       * `tabs.closed_reopen` (MCP: `tabs_closed_reopen`): toolset `system`, act.
+       */
+      closed_reopen(args: TabsClosedReopenArgs): Promise<TabsClosedReopenOutput>;
       /**
        * Save resources on a background tab: mode freeze pauses it, discard unloads it (restored on activation or with mode thaw), thaw resumes/reloads it. Active, locked, recorded, recently used and audible tabs are refused. Returns the new state.
        *
@@ -9569,6 +10068,21 @@ declare namespace BrowserMCP {
        * `userscripts.save` (MCP: `userscripts_save`): toolset `script`, act.
        */
       save(args: UserscriptsSaveArgs): Promise<UserscriptsSaveOutput>;
+    };
+    /** Commands `zoom.*`. */
+    zoom: {
+      /**
+       * List the sites with a remembered page zoom other than 100 % (set with page_zoom or Ctrl+=/-, saved per host in data/config/zoom.json). Returns {sites:[{host, percent}]}.
+       *
+       * `zoom.list` (MCP: `zoom_list`): toolset `system`, read.
+       */
+      list(args?: ZoomListArgs): Promise<ZoomListOutput>;
+      /**
+       * Forget the remembered page zoom of a site (host) or of every site; its open tabs go back to 100 % at once. Returns the hosts that were reset.
+       *
+       * `zoom.reset` (MCP: `zoom_reset`): toolset `system`, act.
+       */
+      reset(args?: ZoomResetArgs): Promise<ZoomResetOutput>;
     };
   }
 }

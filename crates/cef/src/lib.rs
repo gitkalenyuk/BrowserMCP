@@ -50,6 +50,26 @@ pub(crate) fn permission_store() -> Option<&'static PermissionStore> {
     PERMISSIONS.get()
 }
 
+/// Browser settings (shared with the `startup.*` / `downloads.*` commands).
+static SETTINGS: OnceLock<bmcp_settings::BrowserSettings> = OnceLock::new();
+
+pub(crate) fn settings() -> Option<&'static bmcp_settings::BrowserSettings> {
+    SETTINGS.get()
+}
+
+/// The CEF version these bindings were built for (and `api_hash` checks libcef against),
+/// e.g. `156.0.15+gcf671c0+chromium-156.0.8078.80`.
+pub fn cef_version() -> String {
+    String::from_utf8_lossy(sys::CEF_VERSION)
+        .trim_end_matches('\0')
+        .to_string()
+}
+
+/// The page a new tab shows (Settings → Startup & tabs; default: the new tab page).
+pub(crate) fn new_tab_page() -> String {
+    settings().map_or_else(|| bmcp_core::NEW_TAB_URL.to_string(), |s| s.new_tab_page())
+}
+
 /// Which CEF runtime style windows use.
 ///
 /// Alloy is the default (spike S1/S2 decision, see docs/spikes/S1-S2-S3.md): it gives us
@@ -103,6 +123,8 @@ pub struct LaunchOptions {
     pub resource_gate: Option<Arc<dyn ResourceGate>>,
     /// Site permission rules; `None` = every web permission request is denied.
     pub permissions: Option<PermissionStore>,
+    /// Startup, tab and download settings (`data/config`); `None` = the defaults.
+    pub settings: Option<bmcp_settings::BrowserSettings>,
     /// Open Chromium's remote debugging port (for Playwright/Puppeteer `connectOverCDP`).
     /// Off by default; the caller must not combine it with stealth profiles (a debugging
     /// port is easy to detect).
@@ -191,6 +213,9 @@ impl Browser {
         }
         if let Some(permissions) = opts.permissions {
             let _ = PERMISSIONS.set(permissions);
+        }
+        if let Some(settings) = opts.settings {
+            let _ = SETTINGS.set(settings);
         }
         if let Some(headless) = opts.headless {
             osr::configure_headless(headless);

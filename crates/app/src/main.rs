@@ -92,6 +92,18 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     adblock.gate.set_native(true); // adblock.apply then skips its CDP Fetch interception
     let gate: Arc<dyn bmcp_adblock::ResourceGate> = adblock.gate.clone();
     let permissions = bmcp_profiles::PermissionStore::load(data.config().join("permissions.json"));
+    // Startup & tabs, search engines, downloads (data/config): the browser and the commands
+    // share this instance.
+    let settings = bmcp_settings::BrowserSettings::load(&data);
+    // What opens first: `--url`, else Settings → Startup & tabs. `--dump-ax` prints the start
+    // page and headless runs start clean: neither restores a session, both keep the old
+    // default page when no URL is given.
+    let automation = cli.dump_ax || cli.headless;
+    let start = bmcp_settings::startup::plan(
+        &settings.startup(),
+        (cli.url_given || automation).then_some(cli.url.as_str()),
+        !cli.no_restore && !automation,
+    );
     let cdp_port = checked_cdp_port(cli.cdp_port, &data);
 
     let on_ready: bmcp_cef::ReadyCallback = {
@@ -100,6 +112,8 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         let events = events.clone();
         let data = data.clone();
         let permissions = permissions.clone();
+        let settings = settings.clone();
+        let more_urls = start.more_urls.clone();
         let profile = profile.to_string();
         Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
             None => {
@@ -116,6 +130,8 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
                         data,
                         adblock,
                         permissions,
+                        settings,
+                        more_urls,
                         profile,
                     },
                 ));
@@ -124,7 +140,7 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     };
 
     browser.run(bmcp_cef::LaunchOptions {
-        start_url: cli.url,
+        start_url: start.first_url,
         data: data.clone(),
         profile,
         style: if cli.chrome_style {
@@ -146,10 +162,9 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         on_ready: Some(on_ready),
         resource_gate: Some(gate),
         permissions: Some(permissions),
+        settings: Some(settings),
         cdp_port,
-        // `--dump-ax` prints the start page and headless runs start clean: neither
-        // restores a session.
-        restore_session: !cli.no_restore && !cli.dump_ax && !cli.headless,
+        restore_session: start.restore,
         headless: cli.headless.then(|| {
             let mut headless = bmcp_cef::HeadlessOptions::default();
             if let Some((width, height)) = cli.window_size {
@@ -210,6 +225,9 @@ struct ApiServices {
     data: DataDir,
     adblock: bmcp_adblock::AdblockService,
     permissions: bmcp_profiles::PermissionStore,
+    settings: bmcp_settings::BrowserSettings,
+    /// Settings → Startup "open specific pages": the pages after the first one.
+    more_urls: Vec<String>,
     /// The profile the browser runs with (`--profile`).
     profile: String,
 }
@@ -223,13 +241,32 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         data,
         adblock,
         permissions,
+        settings,
+        more_urls,
         profile,
     } = services;
     let port = listener.local_addr().map_or(0, |addr| addr.port());
+    // The browser is up (this runs once its first window exists): Settings → About's uptime.
+    let started_ms = bmcp_data::store::now_ms();
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
     // Command crates that keep files (filter lists, site policies…) find the data folder here.
     registry.extensions().insert(data.clone());
+    // startup.config / search.config / downloads.config change the instance the browser reads.
+    registry.extensions().insert(settings.clone());
+    // system.open_path / reveal_path may also show the chosen download folder and the exe's
+    // folder (its license files, Settings → About).
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_default();
+    registry
+        .extensions()
+        .insert(bmcp_system::ExtraRoots(Arc::new({
+            let settings = settings.clone();
+            let exe_dir = exe_dir.clone();
+            move || vec![settings.download_dir(None), exe_dir.clone()]
+        })));
     // Identities and proxy pools in data/config.
     bmcp_identity::install(&registry, data.config());
     // The adblock service whose gate the browser already asks for every request; load the
@@ -338,6 +375,8 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         backend.clone(),
         events.clone(),
     );
+    // Settings → About and the extra startup pages need these once the API listens.
+    let (about_registry, about_backend) = (registry.clone(), backend.clone());
     // Serve on the socket bound before CEF started (binding the port again would fail).
     match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
@@ -357,6 +396,24 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
                 }
                 plugins.shutdown();
             });
+            // Settings → About.
+            let cef_version = bmcp_cef::cef_version();
+            about_registry.extensions().insert(bmcp_settings::AppInfo {
+                chromium_version: bmcp_settings::about::chromium_from_cef(&cef_version),
+                cef_version,
+                exe_dir,
+                api_port: port,
+                mcp_url: server.mcp_url(),
+                rest_url: server.rest_url(),
+                ws_url: server.ws_url(),
+                started_ms,
+            });
+            // Settings → Startup "open specific pages": the rest of the pages, in order.
+            for url in more_urls {
+                if let Err(err) = about_backend.open_tab(url.clone(), true).await {
+                    tracing::warn!(url, %err, "startup page not opened");
+                }
+            }
             // Lets tools (and the future `mcp-stdio` proxy) find the running instance.
             let endpoint = serde_json::json!({
                 "pid": std::process::id(),

@@ -496,6 +496,7 @@ dependencies = [
  "bmcp-core",
  "bmcp-data",
  "bmcp-profiles",
+ "bmcp-settings",
  "cef",
  "include_dir",
  "serde",
@@ -756,6 +757,7 @@ dependencies = [
  "bmcp-plugins",
  "bmcp-profiles",
  "bmcp-record",
+ "bmcp-settings",
  "bmcp-system",
 ]
 
@@ -778,6 +780,21 @@ dependencies = [
  "deno_error",
  "tokio",
  "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "bmcp-settings"
+version = "0.1.0"
+dependencies = [
+ "bmcp-core",
+ "bmcp-data",
+ "bmcp-profiles",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -825,6 +842,8 @@ dependencies = [
  "bmcp-profiles",
  "bmcp-record",
  "bmcp-registry",
+ "bmcp-settings",
+ "bmcp-system",
  "serde_json",
  "tokio",
  "tokio-util",

@@ -57,6 +57,8 @@ struct FakeState {
     cdp_events: HashMap<TabId, tokio::sync::broadcast::Sender<CdpEvent>>,
     /// URLs of closed tabs, most recent last (`restore_closed`).
     closed: Vec<String>,
+    /// Remembered zoom per host (`zoom` stores it like the real browser, 100 % removes it).
+    zoom_hosts: std::collections::BTreeMap<String, f64>,
 }
 
 impl FakeBackend {
@@ -309,7 +311,73 @@ impl BrowserBackend for FakeBackend {
                 crate::backend::ZoomChange::Steps(n) => crate::zoom::step(current, n),
             };
             info.zoom = (!crate::zoom::is_default(level)).then_some(level as u16);
+            let url = info.url.clone();
+            if let Some(host) = crate::zoom::host_of(&url) {
+                if crate::zoom::is_default(level) {
+                    s.zoom_hosts.remove(&host);
+                } else {
+                    s.zoom_hosts.insert(host, level);
+                }
+            }
             Ok(level)
+        })
+    }
+
+    fn closed_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<crate::backend::ClosedTabInfo>>> {
+        self.with_state("closed_tabs".into(), |s| {
+            Ok(s.closed
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(index, url)| crate::backend::ClosedTabInfo {
+                    index,
+                    url: url.clone(),
+                    title: url.clone(),
+                    profile: None,
+                })
+                .collect())
+        })
+    }
+
+    fn restore_closed_at(&self, index: usize) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        self.with_state(format!("restore_closed_at {index}"), move |s| {
+            let Some(at) = s.closed.len().checked_sub(index + 1) else {
+                return Ok(None);
+            };
+            let url = s.closed.remove(at);
+            Ok(Some(s.add_tab(url, false)))
+        })
+    }
+
+    fn clear_closed(&self) -> BoxFuture<'_, BackendResult<usize>> {
+        self.with_state("clear_closed".into(), |s| {
+            Ok(std::mem::take(&mut s.closed).len())
+        })
+    }
+
+    fn zoom_levels(&self) -> BoxFuture<'_, BackendResult<Vec<(String, f64)>>> {
+        self.with_state("zoom_levels".into(), |s| {
+            Ok(s.zoom_hosts.iter().map(|(h, p)| (h.clone(), *p)).collect())
+        })
+    }
+
+    fn reset_zoom(&self, host: Option<String>) -> BoxFuture<'_, BackendResult<Vec<String>>> {
+        self.with_state(format!("reset_zoom {host:?}"), move |s| {
+            let hosts: Vec<String> = match host {
+                Some(h) => s
+                    .zoom_hosts
+                    .remove_entry(&h)
+                    .map(|(h, _)| h)
+                    .into_iter()
+                    .collect(),
+                None => std::mem::take(&mut s.zoom_hosts).into_keys().collect(),
+            };
+            for info in s.tabs.values_mut() {
+                if crate::zoom::host_of(&info.url).is_some_and(|h| hosts.contains(&h)) {
+                    info.zoom = None;
+                }
+            }
+            Ok(hosts)
         })
     }
 

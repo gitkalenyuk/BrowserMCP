@@ -197,6 +197,28 @@ pub(crate) fn push_closed(stack: &mut Vec<ClosedTab>, tab: ClosedTab) {
     }
 }
 
+/// Take entry `index` of the closed-tabs stack, counted from the most recent (0 = the top,
+/// what Ctrl+Shift+T reopens). Pure.
+pub(crate) fn take_closed(stack: &mut Vec<ClosedTab>, index: usize) -> Option<ClosedTab> {
+    let at = stack.len().checked_sub(index.checked_add(1)?)?;
+    Some(stack.remove(at))
+}
+
+/// The closed-tabs stack as `tabs.closed` lists it: most recent first. Pure.
+pub(crate) fn closed_infos(stack: &[ClosedTab]) -> Vec<bmcp_core::ClosedTabInfo> {
+    stack
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(index, t)| bmcp_core::ClosedTabInfo {
+            index,
+            url: t.url.clone(),
+            title: t.title.clone(),
+            profile: t.profile.clone(),
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------ state (UI thread)
 
 /// A window being restored, by restore tag.
@@ -470,11 +492,15 @@ pub(crate) fn remember_closed(key: i32, index: usize, id: TabId) {
     changed();
 }
 
-/// `tabs.restore_closed`: re-open the most recent closed tab at its old place. `reply`
-/// learns the new tab's id; `Ok(false)` = nothing to restore. UI thread.
-pub(crate) fn reopen_closed(reply: oneshot::Sender<TabId>) -> Result<bool, BackendError> {
+/// `tabs.restore_closed` (index 0) / `tabs.closed_reopen`: re-open entry `index` of the
+/// closed tabs (0 = most recent) at its old place. `reply` learns the new tab's id;
+/// `Ok(false)` = no such entry. UI thread.
+pub(crate) fn reopen_closed(
+    index: usize,
+    reply: oneshot::Sender<TabId>,
+) -> Result<bool, BackendError> {
     let ctx = with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
-    let Some(closed) = with_ui(|ui| ui.session.closed.pop()) else {
+    let Some(closed) = with_ui(|ui| take_closed(&mut ui.session.closed, index)) else {
         return Ok(false);
     };
     changed();
@@ -501,9 +527,43 @@ pub(crate) fn reopen_closed(reply: oneshot::Sender<TabId>) -> Result<bool, Backe
     Ok(true)
 }
 
+/// `tabs.closed`. UI thread.
+pub(crate) fn closed_list() -> Vec<bmcp_core::ClosedTabInfo> {
+    with_ui(|ui| closed_infos(&ui.session.closed))
+}
+
+/// `tabs.closed_clear`: forget every closed tab (saved with the session). UI thread.
+pub(crate) fn clear_closed() -> usize {
+    let cleared = with_ui(|ui| std::mem::take(&mut ui.session.closed).len());
+    if cleared > 0 {
+        changed();
+    }
+    cleared
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn closed(url: &str) -> ClosedTab {
+        ClosedTab {
+            url: url.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn closed_entries_count_from_the_most_recent() {
+        let mut stack = vec![closed("a"), closed("b"), closed("c")];
+        let infos = closed_infos(&stack);
+        assert_eq!(infos[0].url, "c");
+        assert_eq!(infos[2].index, 2);
+        assert_eq!(take_closed(&mut stack, 1).map(|t| t.url), Some("b".into()));
+        assert_eq!(take_closed(&mut stack, 0).map(|t| t.url), Some("c".into()));
+        assert_eq!(take_closed(&mut stack, 1), None);
+        assert_eq!(take_closed(&mut stack, usize::MAX), None);
+        assert_eq!(stack, vec![closed("a")]);
+    }
 
     fn tab(id: i32, url: &str, profile: Option<&str>, incognito: bool) -> LiveTab {
         LiveTab {

@@ -58,7 +58,7 @@ pub fn drain_events(
 #[test]
 fn every_command_is_in_the_data_toolset() {
     let (registry, _) = setup();
-    assert_eq!(registry.len(), 17);
+    assert_eq!(registry.len(), 18);
     for info in registry.list(None) {
         assert_eq!(info.toolset, Toolset::Data, "{}", info.name);
     }
