@@ -2,6 +2,7 @@
 // demos every panel without a backend. Output shapes and text formats follow the Rust
 // commands (crates/ai, crates/net); behaviour is only plausible, not a spec.
 
+import { autoTitle } from '../ai/sessions';
 import { RpcError } from './client';
 import { createProviderMocks } from './mock-ai-providers';
 import type {
@@ -230,38 +231,79 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
   const sessions = new Map<string, AiSession>();
   const transcripts = new Map<string, AiTranscriptEntry[]>();
   const runs = new Map<string, ReturnType<typeof setTimeout>[]>();
+  /** Messages sent while a chat works, oldest first (taken when the turn ends, like Codex);
+   *  as in the core, each is already in the transcript (`queued: true`) under its number. */
+  const queues = new Map<string, { text: string; index: number }[]>();
   let sessionCount = 0;
 
-  /** Like the core: every change publishes the whole session as `ai.session`. */
-  const update = (s: AiSession) => {
-    s.updated_ms = Date.now();
-    emit('ai.session', { ...s, session: s.id });
-  };
-  const setStatus = (s: AiSession, status: AiSession['status']) => {
-    if (s.status === status) return;
-    s.status = status;
-    update(s);
-  };
-  const getSession = (id: string) => {
+  const session = (id: string): AiSession => {
     const s = sessions.get(id);
     if (!s) throw new RpcError('NOT_FOUND', `no AI session '${id}'`);
     return s;
   };
-  /** First user message, whitespace collapsed, cut to 48 chars with "…" (session.rs auto_title). */
-  const autoTitle = (text: string): string | null => {
-    const t = text.split(/\s+/).filter(Boolean).join(' ');
-    if (!t) return null;
-    const chars = [...t];
-    return chars.length <= 48 ? t : `${chars.slice(0, 47).join('').trimEnd()}…`;
+
+  /** The `ai.session` event with the SessionInfo fields (title, model, archived, queued…). */
+  const publish = (s: AiSession) => {
+    const { id, ...info } = s;
+    emit('ai.session', { session: id, ...info });
   };
-  /** Automatic titles (the provider's name until the first message); user titles win. */
-  const autoTitles = new Map<string, string | null>();
-  const refreshTitle = (s: AiSession) => {
-    if (!s.title_set) s.title = autoTitles.get(s.id) ?? getProvider(s.provider).name;
+
+  const setStatus = (s: AiSession, status: AiSession['status']) => {
+    if (s.status === status) return;
+    s.status = status;
+    s.updated_ms = Date.now();
+    publish(s);
   };
-  /** Indexes of user messages sent while the agent was busy, not taken yet. */
-  const queues = new Map<string, number[]>();
-  const userCount = (id: string) => transcripts.get(id)!.filter((e) => e.type === 'user').length;
+
+  const userCount = (id: string) => (transcripts.get(id) ?? []).filter((e) => e.type === 'user').length;
+  /** Refuse to write into a closed chat, as the core does. */
+  const writable = (s: AiSession) => {
+    if (s.archived) throw new RpcError('NOT_FOUND', `chat '${s.id}' is closed; reopen it first (ai.session_reopen)`);
+  };
+
+  /** The automatic title: the first user message, until then the provider's name. */
+  const retitle = (s: AiSession) => {
+    if (s.title_set) return;
+    const first = transcripts.get(s.id)?.find((e) => e.type === 'user');
+    s.title = first && 'text' in first ? autoTitle(first.text) : getProvider(s.provider).name;
+  };
+
+  // Two closed chats, so the History drawer has something to show in `pnpm dev`.
+  const seedClosed = (id: string, provider: string, model: string | null, title: string, ago: number, entries: AiTranscriptEntry[]) => {
+    const created = Date.now() - ago;
+    sessions.set(id, {
+      id,
+      provider,
+      model,
+      color: AGENT_COLORS[(sessions.size + 3) % AGENT_COLORS.length],
+      status: 'stopped',
+      tabs: [],
+      created_ms: created,
+      title,
+      title_set: false,
+      archived: true,
+      updated_ms: created + 60_000,
+      queued: 0,
+      access: null,
+      pending_permissions: 0,
+    });
+    transcripts.set(id, entries.map((e) => ({ ...e, ts_ms: created })));
+  };
+  seedClosed('claude-code-90', 'claude-code', 'sonnet', 'Find direct flights to Lviv next Friday', 26 * 3600_000, [
+    { type: 'user', text: 'Find direct flights to Lviv next Friday' },
+    { type: 'tool_call', name: 'tabs_open', args: { url: 'https://flights.example.com/?to=LWO' } },
+    { type: 'tool_result', name: 'tabs_open', ok: true, summary: '{"tab":7}' },
+    {
+      type: 'assistant',
+      text: '## Direct flights\n\n| Time | Airline | Price |\n|---|---|--:|\n| 07:40 | LOT | €129 |\n| 18:15 | Wizz Air | €84 |\n\nThe **evening Wizz Air** flight is the cheapest. Book at [flights.example.com](https://flights.example.com).',
+    },
+    { type: 'done', reason: 'end_turn' },
+  ]);
+  seedClosed('codex-91', 'codex', null, 'Clean up the build folder', 4 * 86400_000, [
+    { type: 'user', text: 'Clean up the build folder' },
+    { type: 'assistant', text: 'Removed `build/` (14 files):\n\n```powershell\nRemove-Item -Recurse build\n```' },
+    { type: 'done', reason: 'end_turn' },
+  ]);
 
   /** Play a scripted answer: streamed text, two tool calls, a streamed summary. */
   const answer = (s: AiSession, prompt: string) => {
@@ -293,61 +335,47 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     tool('tabs_open', { url: 'https://shop.example.com/laptops', background: true }, true, `{"tab":${tab},"url":"https://shop.example.com/laptops","title":"Laptops · Example Shop"}`, 500);
     tool('page_read', { tab, max_tokens: 2000 }, true, 'Laptops · Example Shop — 24 products, filters: brand, price, RAM; table with 12 rows', 700);
     tool('page_find', { tab, query: 'pricing table' }, false, 'NOT_FOUND: no element matches "pricing table" (try page_snapshot)', 400);
+    tool('page_snapshot', { tab, max_nodes: 400 }, true, 'table "Laptops" (12 rows): X1 Carbon $1,499 · T14s $1,129 · ZBook $1,890 …', 500);
     stream(
-      'Here is what I found:\n\n• ThinkPad X1 Carbon — $1,499\n• ThinkPad T14s — $1,129\n• HP ZBook — $1,890\n\nThe cheapest option with 32 GB RAM is the T14s. Want me to compare shipping times too?',
+      'Here is what I found:\n\n| Laptop | Price |\n|---|--:|\n| ThinkPad X1 Carbon | $1,499 |\n| ThinkPad T14s | $1,129 |\n| HP ZBook | $1,890 |\n\nThe cheapest option with 32 GB RAM is the **T14s** ([details](https://shop.example.com/laptops/t14s)). Want me to compare shipping times too?',
     );
     at(60, () => {
       if (!s.tabs.includes(tab)) s.tabs.push(tab);
       log.push({ type: 'done', reason: 'end_turn' });
-      runs.delete(s.id);
-      // Messages still waiting start the next turn: the chat stays running.
-      const waiting = takeQueued(s);
-      if (!waiting.length) setStatus(s, 'idle'); // like the browser: status first, then ai.done
+      setStatus(s, 'idle'); // like the browser: status first, then ai.done
       emit('ai.done', { session: s.id, reason: 'end_turn' });
-      if (waiting.length) answer(s, waiting.join('\n\n'));
+      runs.delete(s.id);
+      turnEnded(s);
     });
   };
 
-  /** The agent takes every queued message of `s`: ai.message_taken each, an update. */
-  const takeQueued = (s: AiSession): string[] => {
-    const queue = queues.get(s.id) ?? [];
-    if (!queue.length) return [];
-    queues.set(s.id, []);
-    const log = transcripts.get(s.id)!;
-    const texts: string[] = [];
-    for (const index of queue) {
-      const entry = log.find((e) => e.type === 'user' && e.index === index);
-      if (entry && entry.type === 'user') {
-        delete entry.queued;
-        texts.push(entry.text);
-      }
-      emit('ai.message_taken', { session: s.id, index });
-    }
-    s.queued = 0;
-    update(s);
-    return texts;
+  /** A turn is over: the agent takes the oldest queued message, if any, as its next turn. */
+  const turnEnded = (s: AiSession) => {
+    const queue = queues.get(s.id);
+    const next = queue?.shift();
+    if (next === undefined) return;
+    const { text, index } = next;
+    s.queued = queue!.length;
+    for (const e of transcripts.get(s.id)!) if (e.type === 'user' && e.index === index) delete e.queued;
+    emit('ai.message_taken', { session: s.id, index });
+    setStatus(s, 'running');
+    publish(s);
+    runs.set(s.id, [setTimeout(() => startTurn(s, text), 150)]);
   };
 
-  /** A message sent while the agent works: queued, then folded into the running turn. */
-  const queueUser = (s: AiSession, text: string) => {
-    const log = transcripts.get(s.id)!;
-    const index = userCount(s.id);
-    log.push({ type: 'user', text, index, queued: true });
-    queues.set(s.id, [...(queues.get(s.id) ?? []), index]);
-    s.queued = queues.get(s.id)!.length;
-    emit('ai.message', { session: s.id, role: 'user', text, index, queued: true });
-    update(s);
-    const timers = runs.get(s.id) ?? [];
-    timers.push(
-      setTimeout(() => {
-        if (!runs.has(s.id) || !(queues.get(s.id) ?? []).includes(index)) return;
-        takeQueued(s);
-        const note = `Noted: "${text}" — I'll take that into account.`;
-        log.push({ type: 'assistant', text: note });
-        emit('ai.message', { session: s.id, role: 'assistant', text: note });
-      }, 600),
-    );
-    runs.set(s.id, timers);
+  /** Run the agent on `text` (already in the transcript). */
+  const startTurn = (s: AiSession, text: string) => {
+    setStatus(s, 'running');
+    const asks = s.access && (s.provider === 'codex' || s.access.permission_mode === 'ask');
+    if (asks && /\b(run|bash|command|files?)\b/i.test(text)) answerWithApproval(s, text);
+    else answer(s, text);
+  };
+
+  /** Stop what runs now (timers, approval cards). */
+  const halt = (s: AiSession) => {
+    runs.get(s.id)?.forEach(clearTimeout);
+    runs.delete(s.id);
+    cancelApprovals(s.id);
   };
 
   // Approval requests (like crates/ai/src/cli/permission.rs): pending ones, and the tools a
@@ -380,11 +408,10 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       log.push({ type: 'assistant', text });
       emit('ai.message', { session: s.id, role: 'assistant', text });
       log.push({ type: 'done', reason: 'end_turn' });
-      runs.delete(s.id);
-      const waiting = takeQueued(s);
-      if (!waiting.length) setStatus(s, 'idle');
+      setStatus(s, 'idle');
       emit('ai.done', { session: s.id, reason: 'end_turn' });
-      if (waiting.length) answer(s, waiting.join('\n\n'));
+      runs.delete(s.id);
+      turnEnded(s);
     };
     const run = (ok: boolean, summary: string) => {
       log.push({ type: 'tool_result', name: tool, ok, summary });
@@ -449,40 +476,25 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     if (s) s.pending_permissions = 0;
   };
 
-  /** Cut a chat's runs and forget what was queued for them (stop, close, edit). */
-  const endRun = (s: AiSession) => {
-    runs.get(s.id)?.forEach(clearTimeout);
-    runs.delete(s.id);
-    cancelApprovals(s.id);
-    for (const e of transcripts.get(s.id) ?? []) if (e.type === 'user') delete e.queued;
-    queues.set(s.id, []);
-    s.queued = 0;
-  };
-
-  /** ai.session_delete: gone for good, transcript and all. */
-  const deleteSession = (id: string) => {
-    const s = sessions.get(id);
-    if (s) endRun(s);
-    sessions.delete(id);
-    transcripts.delete(id);
-    queues.delete(id);
-    autoTitles.delete(id);
-    emit('ai.session_closed', { session: id });
-    emit('ai.session_deleted', { session: id });
-  };
-
+  /** A user message: a new turn, or queued while the agent works (never refused). */
   const sendUser = (s: AiSession, text: string) => {
-    const index = userCount(s.id);
-    transcripts.get(s.id)!.push({ type: 'user', text, index });
-    emit('ai.message', { session: s.id, role: 'user', text, index });
-    if (!autoTitles.get(s.id)) {
-      autoTitles.set(s.id, autoTitle(text));
-      refreshTitle(s);
+    if (s.status === 'running') {
+      const queue = queues.get(s.id) ?? [];
+      queues.set(s.id, queue);
+      const index = userCount(s.id);
+      queue.push({ text, index });
+      s.queued = queue.length;
+      transcripts.get(s.id)!.push({ type: 'user', text, index, queued: true, ts_ms: Date.now() });
+      emit('ai.message', { session: s.id, role: 'user', text, index, queued: true });
+      publish(s);
+      return;
     }
-    setStatus(s, 'running'); // publishes the new title too
-    const asks = s.access && (s.provider === 'codex' || s.access.permission_mode === 'ask');
-    if (asks && /\b(run|bash|command|files?)\b/i.test(text)) answerWithApproval(s, text);
-    else answer(s, text);
+    const index = userCount(s.id);
+    transcripts.get(s.id)!.push({ type: 'user', text, index, ts_ms: Date.now() });
+    if (index === 0) retitle(s);
+    emit('ai.message', { session: s.id, role: 'user', text, index });
+    startTurn(s, text);
+    publish(s);
   };
 
   // ---- terminals ---------------------------------------------------------------------------
@@ -765,15 +777,14 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       if (cwd && /missing|nope/i.test(cwd)) throw new RpcError('INVALID_PARAMS', `folder not found: ${cwd}`);
       sessionCount++;
       const defaults = accessOf(pid);
-      const now = Date.now();
       const s: AiSession = {
         id: `${pid}-${sessionCount}`,
         provider: pid,
-        model: model && model !== 'default' ? model : p.model,
+        model: model ?? p.model,
         color: AGENT_COLORS[(sessionCount - 1) % AGENT_COLORS.length],
         status: 'idle',
         tabs: [],
-        created_ms: now,
+        created_ms: Date.now(),
         access:
           p.kind === 'cli'
             ? {
@@ -789,7 +800,7 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
         title: p.name,
         title_set: false,
         archived: false,
-        updated_ms: now,
+        updated_ms: Date.now(),
         queued: 0,
       };
       sessions.set(s.id, s);
@@ -797,136 +808,140 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       sendUser(s, prompt);
       return { ...s };
     },
-    // Like the core: a stopped or failed chat is continued, never replaced; a busy one takes
-    // the message while it works (queued until then).
+    // Like the core: a stopped or failed chat is continued, never replaced; while it works the
+    // message is queued (never refused).
     'ai.session_send': ({ id, text }) => {
-      const s = getSession(id);
-      if (s.archived) throw new RpcError('NOT_FOUND', `AI session '${id}' was closed`);
-      if (s.status === 'running' && runs.has(id)) {
-        queueUser(s, text);
-        return { ...s };
-      }
-      runs.get(id)?.forEach(clearTimeout);
+      const s = session(id);
+      writable(s);
       if (s.status === 'stopped' || s.status === 'failed') setStatus(s, 'idle');
       sendUser(s, text);
       return { ...s };
     },
     'ai.session_stop': ({ id }) => {
-      const s = getSession(id);
-      const running = s.status === 'running';
-      endRun(s);
-      if (running) transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
-      setStatus(s, 'stopped');
-      if (running) emit('ai.done', { session: id, reason: 'stopped' });
+      const s = session(id);
+      halt(s);
+      queues.delete(id);
+      s.queued = 0;
+      if (s.status === 'running') {
+        transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
+        setStatus(s, 'stopped');
+        emit('ai.done', { session: id, reason: 'stopped' });
+      } else setStatus(s, 'stopped');
       return { ...s };
     },
-    /** Like stop, but the chat stays alive: idle, not stopped. */
     'ai.session_interrupt': ({ id }) => {
-      const s = getSession(id);
+      const s = session(id);
       if (s.status !== 'running') return { ...s };
-      endRun(s);
+      halt(s);
       transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
       setStatus(s, 'idle');
       emit('ai.done', { session: id, reason: 'stopped' });
+      turnEnded(s);
       return { ...s };
     },
-    /** Archives: stops it, keeps the transcript, leaves the open chats. */
+    // Close = archive: every file stays; History lists it.
     'ai.session_close': ({ id, delete_transcript }) => {
-      const s = getSession(id);
+      const s = session(id);
       if (delete_transcript) {
-        deleteSession(id);
+        halt(s);
+        queues.delete(id);
+        sessions.delete(id);
+        transcripts.delete(id);
+        emit('ai.session_closed', { session: id });
+        emit('ai.session_deleted', { session: id });
         return { closed: id };
       }
-      if (s.archived) return { closed: id };
-      endRun(s);
-      s.status = s.status === 'running' || s.status === 'idle' ? 'stopped' : s.status;
+      halt(s);
+      queues.delete(id);
+      s.queued = 0;
       s.archived = true;
-      update(s);
+      if (s.status === 'running') transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
+      s.status = 'stopped';
+      s.updated_ms = Date.now();
       emit('ai.session_closed', { session: id });
       return { closed: id };
     },
     'ai.session_reopen': ({ id }) => {
-      const s = getSession(id);
-      if (s.archived) {
-        s.archived = false;
-        update(s);
-      }
+      const s = session(id);
+      s.archived = false;
+      s.updated_ms = Date.now();
+      publish(s);
       return { ...s };
     },
     'ai.session_delete': ({ id }) => {
-      getSession(id);
-      deleteSession(id);
+      const s = session(id);
+      halt(s);
+      queues.delete(id);
+      sessions.delete(id);
+      transcripts.delete(id);
+      emit('ai.session_closed', { session: id });
+      emit('ai.session_deleted', { session: id });
       return { deleted: true };
     },
     'ai.session_rename': ({ id, title }) => {
-      const s = getSession(id);
-      const t = title.split(/\s+/).filter(Boolean).join(' ');
-      s.title_set = !!t;
-      if (t) s.title = t;
-      refreshTitle(s);
-      update(s);
+      const s = session(id);
+      const name = title.replace(/\s+/g, ' ').trim();
+      s.title_set = name !== '';
+      if (name) s.title = name;
+      else retitle(s);
+      publish(s);
       return { ...s };
     },
-    'ai.models': ({ provider: pid }) => {
-      const p = getProvider(pid);
+    'ai.models': ({ provider }) => {
+      const p = getProvider(provider);
       if (p.protocol === 'claude-code') {
         return {
+          default: 'default',
           models: [
-            { id: 'default', name: 'Default', hint: "Claude Code's own choice" },
-            { id: 'opus', name: 'Opus', hint: 'alias: the latest Opus' },
-            { id: 'sonnet', name: 'Sonnet', hint: 'alias: the latest Sonnet' },
-            { id: 'haiku', name: 'Haiku', hint: 'alias: the latest Haiku' },
-            { id: 'fable', name: 'Fable', hint: 'alias: the latest Fable' },
-            { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
-            { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5' },
-            { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' },
-            { id: 'claude-fable-5-1', name: 'Claude Fable 5.1' },
+            { id: 'default', name: 'Default', hint: 'Your account’s default model' },
+            { id: 'fable', name: 'Fable', hint: 'Latest Fable · claude-fable-5-1' },
+            { id: 'opus', name: 'Opus', hint: 'Latest Opus · claude-opus-5-5' },
+            { id: 'sonnet', name: 'Sonnet', hint: 'Latest Sonnet · claude-sonnet-5-5' },
+            { id: 'haiku', name: 'Haiku', hint: 'Latest Haiku · claude-haiku-5-5' },
+            { id: 'claude-fable-5-1', name: 'claude-fable-5-1' },
+            { id: 'claude-opus-5-5', name: 'claude-opus-5-5' },
+            { id: 'claude-sonnet-5-5', name: 'claude-sonnet-5-5' },
+            { id: 'claude-haiku-5-5', name: 'claude-haiku-5-5' },
           ],
-          default: p.model ?? 'default',
         };
       }
       if (p.protocol === 'codex') {
         return {
+          default: 'gpt-5-codex',
           models: [
-            { id: 'default', name: 'Default', hint: "Codex's own choice" },
-            { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
-            { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini' },
+            { id: 'gpt-5-codex', name: 'gpt-5-codex', hint: 'Tuned for coding' },
+            { id: 'gpt-5', name: 'gpt-5' },
+            { id: 'gpt-5-mini', name: 'gpt-5-mini', hint: 'Faster, cheaper' },
           ],
-          default: p.model ?? undefined,
         };
       }
-      const ids = p.model && !p.models.includes(p.model) ? [p.model, ...p.models] : p.models;
-      return { models: ids.map((m) => ({ id: m, name: m })), default: p.model ?? undefined };
+      const ids = p.models.length ? p.models : p.model ? [p.model] : [];
+      return { default: p.model ?? undefined, models: ids.map((m) => ({ id: m, name: m })) };
     },
     'ai.session_set_model': ({ id, model }) => {
-      const s = getSession(id);
+      const s = session(id);
+      // Like the core: "" or "default" = the provider's own default (stored as null).
       const m = model.trim();
-      s.model = m && m !== 'default' ? m : getProvider(s.provider).kind === 'cli' ? null : getProvider(s.provider).model;
-      update(s);
+      s.model = m === '' || m === 'default' ? null : m;
+      publish(s);
       return { ...s };
     },
-    /** Cut the transcript before user message `index`, then send `text` in its place. */
+    // Rewind to just before user message `index` and send `text` instead.
     'ai.session_edit': ({ id, index, text }) => {
-      const s = getSession(id);
-      if (s.archived) throw new RpcError('NOT_FOUND', `AI session '${id}' was closed`);
+      const s = session(id);
+      writable(s);
       if (!text.trim()) throw new RpcError('INVALID_PARAMS', 'text is empty');
       const log = transcripts.get(id)!;
-      const users = log.flatMap((e, at) => (e.type === 'user' ? [at] : []));
-      if (index < 0 || index >= users.length) {
-        throw new RpcError('INVALID_PARAMS', `chat ${id} has ${users.length} user message(s); there is no message ${index}`);
-      }
-      const running = s.status === 'running';
-      endRun(s);
-      if (running) {
-        setStatus(s, 'stopped');
-        emit('ai.done', { session: id, reason: 'stopped' });
-      }
-      log.splice(users[index]);
-      if (index === 0) autoTitles.delete(id);
-      refreshTitle(s);
+      let n = -1;
+      const at = log.findIndex((e) => e.type === 'user' && ++n === index);
+      if (at < 0) throw new RpcError('INVALID_PARAMS', `chat '${id}' has no message ${index}`);
+      halt(s);
+      queues.delete(id);
+      s.queued = 0;
+      log.splice(at);
       emit('ai.session_rewound', { session: id, index });
-      setStatus(s, 'idle');
-      sendUser(s, text);
+      if (s.status !== 'idle') setStatus(s, 'idle');
+      sendUser(s, text.trim()); // a first message renames an untouched chat
       return { ...s };
     },
     'ai.permissions_list': ({ session } = {}) => ({
@@ -958,11 +973,9 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       access.set(id, next);
       return { ...next };
     },
-    'ai.sessions_list': (params) => {
-      const archived = params ? (params.archived ?? false) : false;
-      const list = [...sessions.values()].filter((s) => s.archived === archived).map((s) => ({ ...s }));
-      // Open chats oldest first, archived ones most recently active first (like the core).
-      list.sort((a, b) => (archived ? b.updated_ms - a.updated_ms : a.created_ms - b.created_ms));
+    'ai.sessions_list': ({ archived } = {}) => {
+      const list = [...sessions.values()].filter((s) => !!s.archived === !!archived).map((s) => ({ ...s }));
+      if (archived) list.sort((a, b) => (b.updated_ms ?? b.created_ms) - (a.updated_ms ?? a.created_ms));
       return { sessions: list };
     },
     'ai.session_transcript': ({ id }) => {

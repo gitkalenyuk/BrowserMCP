@@ -7,20 +7,30 @@ import {
   doneLabel,
   failureReason,
   noticeText,
+  groupTools,
+  lastUserIndex,
+  queuedCount,
+  settleQueued,
   summaryText,
   threadFromTranscript,
+  threadMarkdown,
   toolLabel,
+  truncateAtUser,
+  userOrdinal,
   withPending,
   type AiEvent,
   type ChatItem,
 } from './thread';
 
 const S = 'anthropic-1';
-const msg = (role: 'user' | 'assistant' | 'system', p: { text?: string; text_delta?: string }): AiEvent => ({
+const msg = (
+  role: 'user' | 'assistant' | 'system',
+  p: { text?: string; text_delta?: string; queued?: boolean; taken?: boolean },
+): AiEvent => ({
   type: 'ai.message',
   payload: { session: S, role, ...p },
 });
-const fold = (events: AiEvent[], start: ChatItem[] = []) => events.reduce(applyAiEvent, start);
+const fold = (events: AiEvent[], start: ChatItem[] = []) => events.reduce((items, e) => applyAiEvent(items, e), start);
 
 // Labels are checked in English, whatever the machine's language.
 beforeAll(() => {
@@ -216,5 +226,113 @@ describe('approval requests', () => {
     const tool: Extract<ChatItem, { kind: 'tool' }> = { kind: 'tool', name: 'x', args: null, pending: false, ok: false, summary: '' };
     expect(failureReason(tool)).toBe('Failed without saying why');
     expect(failureReason({ ...tool, ok: true })).toBeNull();
+  });
+});
+
+const call = (name: string): AiEvent => ({ type: 'ai.tool_call', payload: { session: S, name, args: { n: name } } });
+
+describe('messages sent while the agent works', () => {
+  it('a queued message stays at the bottom while the answer streams on above it', () => {
+    const items = fold([
+      msg('user', { text: 'find flights' }),
+      msg('assistant', { text_delta: 'Look' }),
+      msg('user', { text: 'only direct ones', queued: true }),
+      msg('assistant', { text_delta: 'ing…' }),
+      call('tabs_open'),
+      msg('assistant', { text: 'Found 3.' }),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(['user', 'assistant', 'tool', 'assistant', 'user']);
+    expect(items[1]).toEqual({ kind: 'assistant', text: 'Looking…', streaming: false });
+    expect(items[4]).toEqual({ kind: 'user', text: 'only direct ones', queued: true });
+    expect(queuedCount(items)).toBe(1);
+  });
+
+  it('taken: the message moves to the end of the conversation, no longer queued', () => {
+    const base = fold([msg('user', { text: 'a' }), msg('user', { text: 'b', queued: true }), msg('user', { text: 'c', queued: true })]);
+    const taken = applyAiEvent(base, msg('user', { text: 'b', taken: true }));
+    expect(taken).toEqual([
+      { kind: 'user', text: 'a' },
+      { kind: 'user', text: 'b' },
+      { kind: 'user', text: 'c', queued: true },
+    ]);
+    // The same text again with queued:false counts as taken too (no duplicate row).
+    const again = applyAiEvent(taken, msg('user', { text: 'c', queued: false }));
+    expect(again.map((i) => [i.kind, (i as { queued?: boolean }).queued ?? false])).toEqual([
+      ['user', false],
+      ['user', false],
+      ['user', false],
+    ]);
+    // A follow-up for a message this window never saw changes nothing.
+    expect(applyAiEvent(again, msg('user', { text: 'zzz', taken: true }))).toEqual(again);
+  });
+
+  it('the queued count from the core settles messages whose follow-up was missed', () => {
+    const items = fold([msg('user', { text: 'a' }), msg('user', { text: 'b', queued: true }), msg('user', { text: 'c', queued: true })]);
+    expect(queuedCount(settleQueued(items, 2))).toBe(2);
+    const one = settleQueued(items, 1);
+    expect(one[1]).toEqual({ kind: 'user', text: 'b' });
+    expect(one[2]).toEqual({ kind: 'user', text: 'c', queued: true });
+    expect(queuedCount(settleQueued(items, 0))).toBe(0);
+  });
+
+  it('timestamps come with the events and the transcript', () => {
+    const items = applyAiEvent([], msg('user', { text: 'hi' }), 1234);
+    expect(items[0]).toEqual({ kind: 'user', text: 'hi', ts: 1234 });
+    const t2 = threadFromTranscript([{ type: 'assistant', text: 'yo', ts_ms: 99 }]);
+    expect(t2[0]).toEqual({ kind: 'assistant', text: 'yo', streaming: false, ts: 99 });
+  });
+});
+
+describe('editing an earlier message', () => {
+  const thread = fold([
+    msg('user', { text: 'one' }),
+    msg('assistant', { text: 'A1' }),
+    msg('user', { text: 'two' }),
+    call('page_read'),
+    msg('assistant', { text: 'A2' }),
+    msg('user', { text: 'three', queued: true }),
+  ]);
+
+  it('user ordinals skip other rows and queued messages', () => {
+    expect(userOrdinal(thread, 0)).toBe(0);
+    expect(userOrdinal(thread, 2)).toBe(1);
+    expect(userOrdinal(thread, 1)).toBe(-1);
+    expect(userOrdinal(thread, 5)).toBe(-1);
+    expect(lastUserIndex(thread)).toBe(2);
+  });
+
+  it('truncates to just before that message (later rows and queued ones go)', () => {
+    expect(truncateAtUser(thread, 1).map((i) => i.kind)).toEqual(['user', 'assistant']);
+    expect(truncateAtUser(thread, 0)).toEqual([]);
+    expect(truncateAtUser(thread, 7)).toBe(thread);
+    // The resent text then arrives as an ordinary user message.
+    const resent = applyAiEvent(truncateAtUser(thread, 1), msg('user', { text: 'two, but shorter' }));
+    expect(resent.at(-1)).toEqual({ kind: 'user', text: 'two, but shorter' });
+  });
+});
+
+describe('tool groups and Markdown export', () => {
+  it('folds runs of 4+ tool calls into one group', () => {
+    const items = fold([msg('user', { text: 'go' }), call('a'), call('b'), call('c'), call('d'), msg('assistant', { text: 'ok' }), call('e')]);
+    const rows = groupTools(items);
+    expect(rows.map((r) => r.kind)).toEqual(['item', 'tools', 'item', 'item']);
+    const group = rows[1] as Extract<ReturnType<typeof groupTools>[number], { kind: 'tools' }>;
+    expect(group.start).toBe(1);
+    expect(group.items.map((r) => r.index)).toEqual([1, 2, 3, 4]);
+    expect(groupTools(fold([call('a'), call('b'), call('c')])).every((r) => r.kind === 'item')).toBe(true);
+  });
+
+  it('exports the chat as Markdown', () => {
+    const items = fold([
+      msg('user', { text: 'Compare prices' }),
+      call('tabs_open'),
+      call('page_read'),
+      { type: 'ai.tool_result', payload: { session: S, name: 'page_read', ok: false, summary: 'boom' } },
+      msg('assistant', { text: '**Done.**' }),
+      { type: 'ai.done', payload: { session: S, reason: 'stopped' } },
+    ]);
+    expect(threadMarkdown(items, 'Prices')).toBe(
+      '# Prices\n\n**You:**\n\nCompare prices\n\n- – `tabs_open` {"n":"tabs_open"}\n- ✗ `page_read` {"n":"page_read"}\n\n**Agent:**\n\n**Done.**\n\n_Stopped_\n',
+    );
   });
 });

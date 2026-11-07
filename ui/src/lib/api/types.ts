@@ -197,6 +197,11 @@ export interface ApiError {
   hint?: string;
 }
 
+export interface AiModels {
+  models: AiModel[];
+  default?: string;
+}
+
 type TabParam = { tab: TabId };
 
 /** Every JSON-RPC method the chrome calls: name -> params / result. */
@@ -264,7 +269,7 @@ export interface RpcMethods {
   'ai.session_reopen': { params: { id: string }; result: AiSession };
   /** Permanent: stops it and removes all its files. */
   'ai.session_delete': { params: { id: string }; result: { deleted: true } };
-  'ai.models': { params: { provider: string }; result: { models: AiModel[]; default?: string } };
+  'ai.models': { params: { provider: string }; result: AiModels };
   /** From the next turn on; `""` / `"default"` = the provider's default. */
   'ai.session_set_model': { params: { id: string; model: string }; result: AiSession };
   /** Stop the current turn, keep the chat (and the CLI process) alive. */
@@ -346,7 +351,7 @@ export interface ApiEvents {
   /** The agent finished answering one user message (`end_turn`, `max_steps`, `stopped`, `error: …`). */
   'ai.done': { session: string; reason: string };
   /** The whole session whenever it changes (status, title, model, archived, queued…). */
-  'ai.session': AiSession & { session: string };
+  'ai.session': { session: string; status: AiSessionStatus } & Partial<Omit<AiSession, 'id' | 'status'>>;
   /** The agent took user message `index`, sent while it was busy (`queued: true`). */
   'ai.message_taken': { session: string; index: number };
   /** ai.session_edit cut the transcript before user message `index` (the new text follows). */
@@ -435,14 +440,14 @@ export interface AiSession {
   created_ms: number;
   /** Name to show (never show `id`): the user's, else the first message (~48 chars with "…"),
    *  else the provider's name. */
-  title: string;
+  title?: string;
   /** The user renamed it: the automatic title no longer replaces it. */
-  title_set: boolean;
+  title_set?: boolean;
   /** Closed (ai.session_close): not in the tab strip, listed in the history. */
-  archived: boolean;
-  updated_ms: number;
+  archived?: boolean;
+  updated_ms?: number;
   /** User messages sent while the agent was busy, not taken by it yet. */
-  queued: number;
+  queued?: number;
 }
 
 /** One entry of `ai.models`. */
@@ -474,6 +479,8 @@ export interface AiMessageEvent {
   index?: number;
   /** User messages sent while the agent was busy; ai.message_taken follows. */
   queued?: boolean;
+  /** User messages: the follow-up of a queued one (older/mock form of ai.message_taken). */
+  taken?: boolean;
 }
 
 export type AiTranscriptEntry = { ts_ms?: number } & (

@@ -42,3 +42,52 @@ export function applyPermission(pending: AiPermission[], event: AiPermission): A
 export function closeNeedsConfirm(session: AiSession, pending: AiPermission[]): boolean {
   return session.status === 'running' || pending.some((p) => p.session === session.id);
 }
+
+// ---- names, history, models ------------------------------------------------------------
+
+/** Longest automatic title (the core cuts the same way). */
+export const TITLE_MAX = 48;
+
+/** The automatic title of a chat from its first message: whitespace collapsed, cut with "…". */
+export function autoTitle(text: string, max = TITLE_MAX): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const chars = [...flat];
+  return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : flat;
+}
+
+/**
+ * What a chat is called in the panel: its title, or the provider's name before it has one
+ * (and with older cores, which send none). Never the internal id ("claude-code-24").
+ */
+export function chatTitle(session: Pick<AiSession, 'title'>, providerName: string): string {
+  return session.title?.trim() || providerName;
+}
+
+/** When a chat was last active, for sorting the history. */
+export const lastActive = (s: Pick<AiSession, 'updated_ms' | 'created_ms'>): number => s.updated_ms ?? s.created_ms;
+
+/**
+ * Closed chats matching a search (every word must appear in the title, provider name or
+ * model, case-insensitive), most recently active first.
+ */
+export function filterHistory(sessions: AiSession[], query: string, providerName: (id: string) => string): AiSession[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return sessions
+    .filter((s) => {
+      if (!words.length) return true;
+      const name = providerName(s.provider);
+      const hay = [chatTitle(s, name), name, s.model ?? ''].join(' ').toLowerCase();
+      return words.every((w) => hay.includes(w));
+    })
+    .sort((a, b) => lastActive(b) - lastActive(a));
+}
+
+/**
+ * The model preselected for a new chat: the one remembered for this provider while the
+ * provider still offers it (or its list is not known yet); "" = the provider's default.
+ */
+export function pickModel(models: { id: string }[] | null | undefined, remembered: string | undefined): string {
+  if (!remembered) return '';
+  if (!models?.length) return remembered;
+  return models.some((m) => m.id === remembered) ? remembered : '';
+}

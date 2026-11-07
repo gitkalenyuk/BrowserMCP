@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BrowserApi } from '../api/client';
 import type { AiPermission, AiSession, ApiEvents, CallArgs, EventName, Method, Result } from '../api/types';
 import { AiStore } from './store.svelte';
+import type { ChatItem } from './thread';
 
 /** Records calls, answers them from `replies`, and lets the test emit events. */
 class FakeApi implements BrowserApi {
@@ -232,5 +233,126 @@ describe('AiStore', () => {
     expect(ai.sessions).toEqual([]);
     expect(ai.activeId).toBeNull();
     ai.stop();
+  });
+});
+
+describe('AiStore: names, history, models, queue, edit', () => {
+  const titled = (id: string, title: string, extra: Partial<AiSession> = {}): AiSession => ({ ...session(id, 'idle'), title, ...extra });
+
+  it('ai.session events carry the new fields: title, model, queued; archived leaves the strip', async () => {
+    const api = new FakeApi({});
+    const ai = new AiStore(api);
+    ai.start();
+    ai.sessions = [titled('a', 'Claude Code'), titled('b', 'x')];
+    ai.threads.a = [
+      { kind: 'user', text: 'one' },
+      { kind: 'user', text: 'two', queued: true },
+    ];
+    api.emit('ai.session', { session: 'a', status: 'running', title: 'Flights to Lviv', model: 'opus', queued: 0 });
+    expect(ai.sessions[0]).toMatchObject({ title: 'Flights to Lviv', model: 'opus', status: 'running', queued: 0 });
+    // The core says nothing waits any more: the queued mark goes.
+    expect(ai.threads.a[1]).toEqual({ kind: 'user', text: 'two' });
+    api.emit('ai.session', { session: 'b', status: 'stopped', archived: true });
+    expect(ai.sessions.map((s) => s.id)).toEqual(['a']);
+    ai.stop();
+  });
+
+  it('close archives into History; reopen brings it back with its transcript; delete is permanent', async () => {
+    const api = new FakeApi({
+      'ai.session_close': (p: { id: string }) => ({ closed: p.id }),
+      'ai.sessions_list': (p: { archived?: boolean }) => ({ sessions: p.archived ? [titled('old', 'Old one', { archived: true, status: 'stopped' })] : [] }),
+      'ai.session_reopen': (p: { id: string }) => titled(p.id, 'Old one', { status: 'stopped' }),
+      'ai.session_transcript': (p: { id: string }) => ({ id: p.id, entries: [{ type: 'user', text: 'hello' }] }),
+      'ai.session_delete': () => ({ deleted: true }),
+    });
+    const ai = new AiStore(api);
+    ai.sessions = [titled('a', 'Prices')];
+    ai.activeId = 'a';
+    await ai.loadHistory();
+    expect(api.calls.at(-1)).toEqual({ method: 'ai.sessions_list', params: { archived: true } });
+    await ai.closeSession('a');
+    expect(api.calls.at(-1)).toEqual({ method: 'ai.session_close', params: { id: 'a' } });
+    expect(ai.sessions).toEqual([]);
+    expect(ai.history.map((s) => [s.id, s.archived])).toEqual([
+      ['a', true],
+      ['old', true],
+    ]);
+
+    await ai.reopen('old');
+    expect(ai.sessions.map((s) => s.id)).toEqual(['old']);
+    expect(ai.activeId).toBe('old');
+    expect(ai.threads.old).toEqual([{ kind: 'user', text: 'hello' }]);
+    expect(ai.history.map((s) => s.id)).toEqual(['a']);
+
+    await ai.deleteSession('old');
+    expect(ai.sessions).toEqual([]);
+    expect(await ai.deleteAllClosed()).toBe(1);
+    expect(ai.history).toEqual([]);
+    expect(api.methods().filter((m) => m === 'ai.session_delete')).toHaveLength(2);
+  });
+
+  it('rename sends the trimmed title; a renamed closed chat stays in History', async () => {
+    const api = new FakeApi({
+      'ai.session_rename': (p: { id: string; title: string }) => titled(p.id, p.title, p.id === 'h' ? { archived: true } : {}),
+    });
+    const ai = new AiStore(api);
+    ai.sessions = [titled('a', 'Claude Code')];
+    ai.history = [titled('h', 'Old', { archived: true })];
+    await ai.rename('a', '  Trip  ');
+    expect(api.calls[0].params).toEqual({ id: 'a', title: 'Trip' });
+    expect(ai.sessions[0].title).toBe('Trip');
+    await ai.rename('h', 'Older');
+    expect(ai.history[0].title).toBe('Older');
+    expect(ai.sessions.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('edit cuts the thread at once and puts it back if the core refuses', async () => {
+    let fail = false;
+    const api = new FakeApi({
+      'ai.session_edit': () => {
+        if (fail) throw new Error('nope');
+        return titled('a', 't', { status: 'running' });
+      },
+    });
+    const ai = new AiStore(api);
+    ai.sessions = [titled('a', 't')];
+    const thread: ChatItem[] = [
+      { kind: 'user', text: 'one' },
+      { kind: 'assistant', text: 'A', streaming: false },
+      { kind: 'user', text: 'two' },
+      { kind: 'assistant', text: 'B', streaming: false },
+    ];
+    ai.threads.a = thread;
+    await ai.edit('a', 1, ' two, shorter ');
+    expect(api.calls[0].params).toEqual({ id: 'a', index: 1, text: 'two, shorter' });
+    expect(ai.threads.a.map((i) => i.kind)).toEqual(['user', 'assistant']);
+    fail = true;
+    ai.threads.a = thread;
+    await expect(ai.edit('a', 0, 'x')).rejects.toThrow('nope');
+    expect(ai.threads.a).toEqual(thread);
+  });
+
+  it('models: loaded once per provider; the new-chat model is passed and remembered', async () => {
+    const api = new FakeApi({
+      'ai.models': () => ({ models: [{ id: 'default', name: 'Default' }, { id: 'opus', name: 'Opus' }], default: 'default' }),
+      'ai.session_start': (p: { provider: string }) => ({ ...session('claude-code-1', 'running'), provider: p.provider }),
+      'ai.session_set_model': (p: { id: string; model: string }) => ({ ...session(p.id, 'idle'), model: p.model }),
+      'ai.session_interrupt': (p: { id: string }) => session(p.id, 'idle'),
+    });
+    const ai = new AiStore(api);
+    await Promise.all([ai.loadModels('claude-code'), ai.loadModels('claude-code')]);
+    expect(api.methods().filter((m) => m === 'ai.models')).toHaveLength(1);
+    expect(ai.models['claude-code'].models).toHaveLength(2);
+
+    ai.setNewChatModel('claude-code', 'opus');
+    await ai.send('hi');
+    expect(api.calls.at(-1)).toMatchObject({ method: 'ai.session_start', params: { provider: 'claude-code', prompt: 'hi', model: 'opus' } });
+    ai.setNewChatModel('claude-code', '');
+    expect(ai.newChatModel).toEqual({});
+
+    await ai.setModel('claude-code-1', 'haiku');
+    expect(ai.sessions[0].model).toBe('haiku');
+    await ai.interrupt('claude-code-1');
+    expect(api.calls.at(-1)).toEqual({ method: 'ai.session_interrupt', params: { id: 'claude-code-1' } });
   });
 });

@@ -12,6 +12,10 @@ function setup() {
   return { h, seen, of };
 }
 
+/** The mock seeds two closed chats for `pnpm dev`; these tests look at their own chats only. */
+const SEEDED = new Set(['claude-code-90', 'codex-91']);
+const own = <T extends { id: string }>(list: T[]) => list.filter((s) => !SEEDED.has(s.id));
+
 const users = (entries: AiTranscriptEntry[]) => entries.flatMap((e) => (e.type === 'user' ? [e.text] : []));
 
 describe('AI chat mocks (follow crates/ai)', () => {
@@ -22,7 +26,7 @@ describe('AI chat mocks (follow crates/ai)', () => {
     const { h, of } = setup();
     const s = await h['ai.session_start']({ provider: 'claude-code', prompt: '  Compare   laptop prices on three shops and pick the best one please ' });
     expect(s.title).toBe('Compare laptop prices on three shops and pick t…');
-    expect([...s.title].length).toBe(48);
+    expect([...(s.title ?? '')].length).toBe(48);
     expect(s).toMatchObject({ title_set: false, archived: false, queued: 0 });
     const renamed = await h['ai.session_rename']({ id: s.id, title: ' Laptops ' });
     expect(renamed).toMatchObject({ title: 'Laptops', title_set: true });
@@ -40,12 +44,13 @@ describe('AI chat mocks (follow crates/ai)', () => {
     expect(of('ai.message').at(-1)).toMatchObject({ role: 'user', text: 'only 32 GB', index: 1, queued: true });
     const { entries } = await h['ai.session_transcript']({ id: s.id });
     expect(entries.at(-1)).toMatchObject({ type: 'user', index: 1, queued: true });
-    await vi.advanceTimersByTimeAsync(700);
-    expect(of('ai.message_taken')).toEqual([{ session: s.id, index: 1 }]);
+    // The mock takes it when the turn ends (like Codex without turn/steer; Claude Code folds it
+    // into the running turn): either way ai.message_taken names it by its number.
     await vi.runAllTimersAsync();
-    const [chat] = (await h['ai.sessions_list']()).sessions;
+    expect(of('ai.message_taken')).toEqual([{ session: s.id, index: 1 }]);
+    const [chat] = own((await h['ai.sessions_list']()).sessions);
     expect(chat).toMatchObject({ status: 'idle', queued: 0 });
-    expect(of('ai.done')).toHaveLength(1);
+    expect(of('ai.done')).toHaveLength(2);
   });
 
   it('interrupts a turn but keeps the chat; changes the model', async () => {
@@ -91,7 +96,7 @@ describe('AI chat mocks (follow crates/ai)', () => {
     expect(await h['ai.session_close']({ id: a.id })).toEqual({ closed: a.id });
     expect(of('ai.session_closed')).toEqual([{ session: a.id }]);
     expect((await h['ai.sessions_list']()).sessions.map((s) => s.id)).toEqual([b.id]);
-    const archived = (await h['ai.sessions_list']({ archived: true })).sessions;
+    const archived = own((await h['ai.sessions_list']({ archived: true })).sessions);
     expect(archived.map((s) => s.id)).toEqual([a.id]);
     expect(archived[0]).toMatchObject({ archived: true, status: 'stopped' });
     // The history stays readable; writing needs a reopen.
@@ -104,6 +109,6 @@ describe('AI chat mocks (follow crates/ai)', () => {
     expect(of('ai.session_deleted')).toEqual([{ session: b.id }]);
     expect(() => h['ai.session_transcript']({ id: b.id })).toThrow(/no AI session/);
     await h['ai.session_close']({ id: a.id, delete_transcript: true });
-    expect((await h['ai.sessions_list']({ archived: true })).sessions).toEqual([]);
+    expect(own((await h['ai.sessions_list']({ archived: true })).sessions)).toEqual([]);
   });
 });

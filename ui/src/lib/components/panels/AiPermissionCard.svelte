@@ -15,7 +15,7 @@
     onanswer,
   }: {
     request: AiPermission;
-    /** Display name of the agent ("Claude Code #2"). */
+    /** Display name of the agent ("Claude Code"; never the chat's internal id). */
     agent: string;
     /**
      * Whether a deny reason is passed on to the agent. Claude Code gets it; Codex's approval
