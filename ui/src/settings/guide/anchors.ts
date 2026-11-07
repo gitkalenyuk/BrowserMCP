@@ -49,6 +49,7 @@ export const HELP_FOR: Record<Exclude<SettingsSection, 'guide'>, GuideAnchor> = 
   profiles: { chapter: 'stealth', section: 'identity' },
   proxies: { chapter: 'stealth', section: 'proxies' },
   recording: { chapter: 'recording' },
+  voice: { chapter: 'voice' },
 };
 
 export function helpFor(section: string): GuideAnchor | null {

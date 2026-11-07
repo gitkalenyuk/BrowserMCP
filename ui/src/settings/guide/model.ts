@@ -95,6 +95,7 @@ export const CHAPTER_IDS = [
   'library',
   'newtab',
   'ai-panel',
+  'voice',
   'connect',
   'perception',
   'traffic',

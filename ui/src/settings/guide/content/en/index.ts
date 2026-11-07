@@ -5,6 +5,7 @@ import { recording, runs, scripts, traffic } from './automation';
 import { keyboard, library, newtab, start, tabs } from './basics';
 import { glossary, troubleshooting } from './help';
 import { adblock, data, languages, notifications, performance, stealth } from './privacy';
+import { voice } from './voice';
 
 const chapters: Chapter[] = [
   start,
@@ -13,6 +14,7 @@ const chapters: Chapter[] = [
   library,
   newtab,
   aiPanel,
+  voice,
   connect,
   perception,
   traffic,
