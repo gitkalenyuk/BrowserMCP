@@ -34,14 +34,14 @@ export function resolveOmniboxInput(raw: string, searchTemplate = DEFAULT_SEARCH
       return `${local ? 'http' : 'https'}://${input}`;
     }
   }
-  return searchTemplate.replace('%s', encodeURIComponent(input));
+  return searchTemplate.replaceAll('%s', encodeURIComponent(input));
 }
 
 /** Whether Enter would open the input as an address or search for it. */
 export function omniboxIntent(raw: string, searchTemplate = DEFAULT_SEARCH): 'url' | 'search' | null {
   const url = resolveOmniboxInput(raw, searchTemplate);
   if (!url) return null;
-  return url === searchTemplate.replace('%s', encodeURIComponent(raw.trim())) ? 'search' : 'url';
+  return url === searchTemplate.replaceAll('%s', encodeURIComponent(raw.trim())) ? 'search' : 'url';
 }
 
 export function hostOf(url: string): string {

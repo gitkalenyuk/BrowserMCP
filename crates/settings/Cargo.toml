@@ -1,0 +1,26 @@
+[package]
+name = "bmcp-settings"
+description = "BrowserMCP browser settings in data/config (startup & tabs, search engines, downloads) plus clear browsing data, data folder usage, site zoom and the About info (no CEF dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bmcp-core.workspace = true
+# History / downloads list for browsing_data.clear.
+bmcp-data = { path = "../data" }
+# Cookies of a profile (ProfileBackend) for browsing_data.clear.
+bmcp-profiles = { path = "../profiles" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+# WHATWG URL parsing, so page URLs are normalized exactly like the UI's `new URL()`.
+url = "2.5"
+
+[dev-dependencies]
+bmcp-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

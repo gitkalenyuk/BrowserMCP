@@ -31,8 +31,6 @@ export default {
   'components.omnibox.searchOrUrl': 'Search or type URL',
   'components.omnibox.placeholder': 'Search or enter address',
   'components.omnibox.label': 'Address and search bar',
-  'components.omnibox.searchGoogle': 'Search Google',
-  'components.omnibox.open': 'Open',
   'components.omnibox.zoom': 'Zoom {zoom}% — click to reset',
   'components.bookmark.add': 'Bookmark this page',
   'components.bookmark.remove': 'Remove bookmark',

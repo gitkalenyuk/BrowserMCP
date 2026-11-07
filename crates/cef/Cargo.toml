@@ -17,6 +17,9 @@ bmcp-profiles = { path = "../profiles" }
 bmcp-data = { path = "../data" }
 # Website languages, Chromium locale, spellcheck (data/config/languages.json).
 bmcp-languages = { path = "../languages" }
+# Settings → Startup & tabs / Downloads: download folder and dialog, new tab page and position,
+# what closing the last tab does (CEF-free, data/config/*.json).
+bmcp-settings = { path = "../settings" }
 cef.workspace = true
 # CSP hash of the config script injected into our UI pages.
 sha2 = "0.11"

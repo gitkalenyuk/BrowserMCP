@@ -107,6 +107,26 @@ async fn reveals_a_file_in_the_data_folder() {
 }
 
 #[tokio::test]
+async fn extra_roots_of_the_app_are_allowed_too() {
+    let s = Setup::new();
+    let outside = s.path("outside");
+    assert!(s.call("system.open_path", &outside).await.is_err());
+    // E.g. the download folder chosen in Settings.
+    let root = PathBuf::from(&outside);
+    s.registry
+        .extensions()
+        .insert(ExtraRoots(Arc::new(move || vec![root.clone()])));
+    let mut ctx = s.ctx.clone();
+    ctx.extensions = s.registry.extensions().clone();
+    let out = s
+        .registry
+        .call(ctx, "system.open_path", json!({ "path": outside }))
+        .await
+        .unwrap();
+    assert_eq!(out["path"], resolved(&outside).display().to_string());
+}
+
+#[tokio::test]
 async fn opens_folders_only() {
     let s = Setup::new();
     let dir = s.path("data/videos");

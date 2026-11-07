@@ -13,11 +13,24 @@
   import PerformanceSection from './PerformanceSection.svelte';
   import PluginsSection from './PluginsSection.svelte';
   import PrivacySection from './PrivacySection.svelte';
+  import { t } from '../lib/i18n/index.svelte';
+  import AboutSection from './AboutSection.svelte';
+  import DataSection from './DataSection.svelte';
+  import DownloadsSection from './DownloadsSection.svelte';
+  import SearchSection from './SearchSection.svelte';
+  import SiteSettingsSection from './SiteSettingsSection.svelte';
+  import StartupSection from './StartupSection.svelte';
 
   let { api }: { api: BrowserApi } = $props();
 
   const SECTIONS: { id: SettingsSection; label: string; icon: IconName }[] = [
     { id: 'general', label: 'General', icon: 'settings' },
+    // Getters: t() is read when the nav renders, so the labels follow the UI language.
+    { id: 'startup', get label() { return t('settings.startup.nav'); }, icon: 'home' },
+    { id: 'search', get label() { return t('settings.search.nav'); }, icon: 'search' },
+    { id: 'downloads', get label() { return t('settings.downloads.nav'); }, icon: 'download' },
+    { id: 'sites', get label() { return t('settings.sites.nav'); }, icon: 'globe' },
+    { id: 'data', get label() { return t('settings.data.nav'); }, icon: 'folder' },
     { id: 'ai', label: 'AI', icon: 'sparkles' },
     { id: 'notifications', label: 'Notifications', icon: 'alert' },
     { id: 'performance', label: 'Performance', icon: 'runs' },
@@ -25,6 +38,7 @@
     { id: 'hints', label: 'Link hints', icon: 'hand' },
     { id: 'plugins', label: 'Plugins & userscripts', icon: 'layers' },
     { id: 'keyboard', label: 'Keyboard', icon: 'command' },
+    { id: 'about', get label() { return t('settings.about.nav'); }, icon: 'info' },
   ];
 
   // The chrome asks for a section through localStorage (the URL has no query); otherwise the
@@ -81,6 +95,18 @@
     {#key section}
       {#if section === 'general'}
         <GeneralSection />
+      {:else if section === 'startup'}
+        <StartupSection {api} {notify} {fail} />
+      {:else if section === 'search'}
+        <SearchSection {api} {notify} {fail} />
+      {:else if section === 'downloads'}
+        <DownloadsSection {api} {notify} {fail} />
+      {:else if section === 'sites'}
+        <SiteSettingsSection {api} {notify} {fail} />
+      {:else if section === 'data'}
+        <DataSection {api} {notify} {fail} />
+      {:else if section === 'about'}
+        <AboutSection {api} {notify} {fail} />
       {:else if section === 'ai'}
         <AiSection {api} />
       {:else if section === 'notifications'}

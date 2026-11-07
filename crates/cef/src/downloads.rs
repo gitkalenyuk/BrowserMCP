@@ -1,7 +1,10 @@
-//! Downloads: no dialog, straight into the data folder.
+//! Downloads: straight into the download folder, or through the Save as dialog.
 //!
-//! * a tab of a mass run → `data/runs/<run>/downloads/`, any other tab → `data/downloads/`
-//!   (policy and safe file names: `bmcp_profiles::downloads`);
+//! * a tab of a mass run → `data/runs/<run>/downloads/`, any other tab → the folder chosen in
+//!   Settings → Downloads (default `data/downloads/`; `bmcp_settings::downloads`, safe file
+//!   names: `bmcp_profiles::downloads`);
+//! * "Ask where to save each file" shows Chromium's Save as dialog with that path filled in
+//!   (never for mass-run tabs: nobody would answer it);
 //! * events on the bus: `download.started`, `download.progress` (at most every 500 ms per
 //!   download), `download.done` (complete, cancelled or interrupted). `bmcp_data` records
 //!   them in the `downloads` table (`downloads.list`).
@@ -16,6 +19,7 @@ use std::time::{Duration, Instant};
 use bmcp_core::TabId;
 use bmcp_profiles::cookies::cef_to_unix_ms;
 use bmcp_profiles::downloads::{download_dir, safe_file_name, unique_path};
+use bmcp_settings::DownloadsConfig;
 use cef::*;
 use serde_json::{Value, json};
 
@@ -42,6 +46,15 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     f(state.get_or_insert_with(State::default))
+}
+
+/// The folder for a download of a tab of `run` (if any).
+fn target_dir(config: &DownloadsConfig, run: Option<&str>) -> PathBuf {
+    let data_root = &crate::profiles::launch().data_root;
+    match crate::settings() {
+        Some(_) => bmcp_settings::downloads::download_dir(config, data_root, run),
+        None => download_dir(data_root, run),
+    }
 }
 
 pub(crate) fn handler() -> DownloadHandler {
@@ -114,7 +127,9 @@ wrap_download_handler! {
             let (Some(item), Some(callback)) = (download_item, callback) else { return 0 };
             let tab = browser.map(|b| TabId(b.identifier()));
             let run = tab.and_then(|id| with_ui(|ui| ui.tabs.get(&id).and_then(|t| t.run.clone())));
-            let dir = download_dir(&crate::profiles::launch().data_root, run.as_deref());
+            let config = crate::settings().map(|s| s.downloads()).unwrap_or_default();
+            let ask = config.ask && run.is_none();
+            let dir = target_dir(&config, run.as_deref());
             if let Err(err) = std::fs::create_dir_all(&dir) {
                 tracing::warn!(dir = %dir.display(), %err, "download folder not created");
             }
@@ -129,8 +144,8 @@ wrap_download_handler! {
                 path
             });
             tracing::info!(path = %path.display(), "download started");
-            // No "Save as" dialog.
-            callback.cont(Some(&CefString::from(crate::native_path(&path).as_str())), 0);
+            // The Save as dialog only when the user asked for it in Settings.
+            callback.cont(Some(&CefString::from(crate::native_path(&path).as_str())), i32::from(ask));
             let data = with_state(|s| payload(item, s.downloads.get(&item.id())));
             emit(bmcp_data::downloads::DOWNLOAD_STARTED, data);
             1

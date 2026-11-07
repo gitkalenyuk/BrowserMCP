@@ -33,6 +33,10 @@ bmcp-notify = { path = "../notify" }
 bmcp-hints = { path = "../hints" }
 # Languages service (data/config/languages.json), applied through the CEF backend.
 bmcp-languages = { path = "../languages" }
+# Settings → Startup & tabs / Search / Downloads / Data / About (data/config/*.json).
+bmcp-settings = { path = "../settings" }
+# ExtraRoots: lets system.open_path / reveal_path show the chosen download folder.
+bmcp-system = { path = "../system" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

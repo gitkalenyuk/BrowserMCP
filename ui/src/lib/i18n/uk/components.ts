@@ -31,8 +31,6 @@ export default {
   'components.omnibox.searchOrUrl': 'Пошук або URL',
   'components.omnibox.placeholder': 'Шукайте або введіть адресу',
   'components.omnibox.label': 'Адресний рядок і пошук',
-  'components.omnibox.searchGoogle': 'Шукати в Google',
-  'components.omnibox.open': 'Відкрити',
   'components.omnibox.zoom': 'Масштаб {zoom}% — клацніть, щоб скинути',
   'components.bookmark.add': 'Додати сторінку в закладки',
   'components.bookmark.remove': 'Видалити закладку',

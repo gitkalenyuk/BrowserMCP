@@ -21,7 +21,8 @@ import {
 
 type DataMethod = keyof DataRpcMethods;
 type DataEmit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
-export type DataHandlers = { [M in DataMethod]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
+// `downloads.clear` (Settings → Downloads / Data & storage) is typed in lib/settings/e1-types.ts.
+export type DataHandlers = { [M in DataMethod | 'downloads.clear']: (params: Params<M>) => Result<M> | Promise<Result<M>> };
 
 interface Node {
   id: number;
@@ -324,6 +325,13 @@ export function createDataMocks(opts: DataMockOptions = {}): DataHandlers {
       return { deleted_urls: urls, deleted_visits: visits };
     },
     'downloads.list': ({ limit }) => ({ downloads: downloads.slice(0, limit ?? 100) }),
+    // Like the core: finished downloads only, the files stay on disk.
+    'downloads.clear': (args) => {
+      const since = args?.since ?? -Infinity;
+      const before = downloads.length;
+      downloads = downloads.filter((d) => d.state === 'in_progress' || d.started < since);
+      return { removed: before - downloads.length };
+    },
     'passwords.list': ({ origin, reveal }) => {
       const only = origin ? originOf(origin) : null;
       return {

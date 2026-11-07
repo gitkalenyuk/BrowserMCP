@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::{Agents, TabGroup, TabLock};
-use crate::backend::{NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
+use crate::backend::{ClosedTabInfo, NEW_TAB_URL, OpenTabOptions, TabId, TabInfo, WindowTarget};
 use crate::command::{Caller, CmdError, Command, Ctx, Empty, Meta, Toolset};
 
 /// `tabs.list`: all open tabs.
@@ -353,6 +353,98 @@ impl Command for RestoreClosed {
             ctx.tab_opened(tab);
         }
         Ok(RestoreClosedOutput { tab })
+    }
+}
+
+/// `tabs.closed`: the recently closed tabs (Settings → Startup & tabs, Ctrl+Shift+T order).
+pub struct Closed;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ClosedOutput {
+    /// Most recent first (at most 25; incognito and off-screen tabs are never listed).
+    pub tabs: Vec<ClosedTabInfo>,
+}
+
+impl Command for Closed {
+    const NAME: &'static str = "tabs.closed";
+    type Args = Empty;
+    type Output = ClosedOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "List the recently closed tabs, most recent first: index, url, title, profile. \
+             Reopen one with tabs_closed_reopen {index}.",
+            Toolset::System,
+        )
+    }
+
+    async fn run(ctx: Ctx, _args: Empty) -> Result<ClosedOutput, CmdError> {
+        Ok(ClosedOutput {
+            tabs: ctx.backend.closed_tabs().await?,
+        })
+    }
+}
+
+/// `tabs.closed_reopen`: reopen one entry of `tabs.closed`.
+pub struct ClosedReopen;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClosedReopenArgs {
+    /// `index` from tabs_closed (0 = the tab closed last).
+    pub index: usize,
+}
+
+impl Command for ClosedReopen {
+    const NAME: &'static str = "tabs.closed_reopen";
+    type Args = ClosedReopenArgs;
+    type Output = RestoreClosedOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Reopen entry `index` of tabs_closed (URL and profile, at its old place) and remove \
+             it from the list. Returns the new tab, or null when there is no such entry.",
+            Toolset::System,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: ClosedReopenArgs) -> Result<RestoreClosedOutput, CmdError> {
+        let tab = ctx.backend.restore_closed_at(args.index).await?;
+        if let Some(tab) = tab {
+            ctx.tab_opened(tab);
+        }
+        Ok(RestoreClosedOutput { tab })
+    }
+}
+
+/// `tabs.closed_clear`: forget the recently closed tabs.
+pub struct ClosedClear;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ClosedClearOutput {
+    /// How many entries were forgotten.
+    pub cleared: usize,
+}
+
+impl Command for ClosedClear {
+    const NAME: &'static str = "tabs.closed_clear";
+    type Args = Empty;
+    type Output = ClosedClearOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Forget the recently closed tabs (Ctrl+Shift+T then has nothing to reopen). \
+             Returns how many were forgotten.",
+            Toolset::System,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, _args: Empty) -> Result<ClosedClearOutput, CmdError> {
+        Ok(ClosedClearOutput {
+            cleared: ctx.backend.clear_closed().await?,
+        })
     }
 }
 

@@ -101,6 +101,10 @@ impl BrowserBackend for CefBackend {
     }
 
     fn close_tab(&self, tab: TabId) -> BoxFuture<'_, BackendResult<()>> {
+        // Settings → Startup & tabs: "Keep the window when its last tab closes".
+        if crate::settings().is_some_and(|s| s.startup().keep_window_on_last_tab) {
+            return self.close_tab_keep_window(tab);
+        }
         Box::pin(async move { run_on_ui(move || crate::chrome::close_tab(tab)).await? })
     }
 
@@ -229,9 +233,29 @@ impl BrowserBackend for CefBackend {
     }
 
     fn restore_closed(&self) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
+        self.restore_closed_at(0)
+    }
+
+    fn closed_tabs(&self) -> BoxFuture<'_, BackendResult<Vec<bmcp_core::ClosedTabInfo>>> {
+        Box::pin(run_on_ui(crate::session::closed_list))
+    }
+
+    fn clear_closed(&self) -> BoxFuture<'_, BackendResult<usize>> {
+        Box::pin(run_on_ui(crate::session::clear_closed))
+    }
+
+    fn zoom_levels(&self) -> BoxFuture<'_, BackendResult<Vec<(String, f64)>>> {
+        Box::pin(run_on_ui(crate::zoom::levels))
+    }
+
+    fn reset_zoom(&self, host: Option<String>) -> BoxFuture<'_, BackendResult<Vec<String>>> {
+        Box::pin(run_on_ui(move || crate::zoom::reset(host.as_deref())))
+    }
+
+    fn restore_closed_at(&self, index: usize) -> BoxFuture<'_, BackendResult<Option<TabId>>> {
         Box::pin(async move {
             let (reply, created) = oneshot::channel();
-            let started = run_on_ui(move || crate::session::reopen_closed(reply)).await??;
+            let started = run_on_ui(move || crate::session::reopen_closed(index, reply)).await??;
             if !started {
                 return Ok(None);
             }

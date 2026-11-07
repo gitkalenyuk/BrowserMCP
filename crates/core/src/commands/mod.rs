@@ -34,6 +34,9 @@ pub fn register_builtin(registry: &mut Registry) {
         .add::<tabs::Split>()
         .add::<tabs::Unsplit>()
         .add::<tabs::RestoreClosed>()
+        .add::<tabs::Closed>()
+        .add::<tabs::ClosedReopen>()
+        .add::<tabs::ClosedClear>()
         .add::<nav::Goto>()
         .add::<nav::Stop>()
         .add::<page::Text>()
@@ -220,6 +223,31 @@ mod tests {
         // Nothing left.
         let out = call(&fake, "tabs.restore_closed", json!({})).await;
         assert_eq!(out, json!({ "tab": null }));
+    }
+
+    #[tokio::test]
+    async fn closed_tabs_list_reopen_one_and_clear() {
+        let fake =
+            FakeBackend::with_tabs(&["https://a.test/", "https://b.test/", "https://c.test/"]);
+        call(&fake, "tabs.close", json!({ "tab": 2 })).await;
+        call(&fake, "tabs.close", json!({ "tab": 3 })).await;
+        let list = call(&fake, "tabs.closed", json!({})).await;
+        assert_eq!(list["tabs"][0]["url"], "https://c.test/");
+        assert_eq!(list["tabs"][1]["index"], 1);
+        // Reopen the older one: the newer stays first in the list.
+        let out = call(&fake, "tabs.closed_reopen", json!({ "index": 1 })).await;
+        assert_eq!(out, json!({ "tab": 4 }));
+        let list = call(&fake, "tabs.closed", json!({})).await;
+        assert_eq!(list["tabs"].as_array().unwrap().len(), 1);
+        assert_eq!(list["tabs"][0]["url"], "https://c.test/");
+        let out = call(&fake, "tabs.closed_reopen", json!({ "index": 5 })).await;
+        assert_eq!(out, json!({ "tab": null }));
+        let out = call(&fake, "tabs.closed_clear", json!({})).await;
+        assert_eq!(out, json!({ "cleared": 1 }));
+        assert_eq!(
+            call(&fake, "tabs.closed", json!({})).await["tabs"],
+            json!([])
+        );
     }
 
     #[tokio::test]

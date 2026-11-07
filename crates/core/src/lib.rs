@@ -25,8 +25,8 @@ pub mod zoom;
 
 pub use agents::{AgentId, Agents};
 pub use backend::{
-    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, NEW_TAB_URL,
-    OpenTabOptions, SplitSide, TabId, TabInfo, TabSplit, WindowTarget, ZoomChange,
+    BackendError, BackendResult, BoxFuture, BrowserBackend, CdpEvent, CdpEvents, ClosedTabInfo,
+    NEW_TAB_URL, OpenTabOptions, SplitSide, TabId, TabInfo, TabSplit, WindowTarget, ZoomChange,
 };
 pub use command::{
     Caller, CmdError, Command, CommandGuard, CommandInfo, Ctx, ErrorCode, LockPolicy, Meta,

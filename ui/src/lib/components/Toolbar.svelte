@@ -47,6 +47,11 @@
         <Icon name="reload" size={16} />
       </button>
     {/if}
+    {#if chrome.prefs.showHome}
+      <button class="icon-btn" aria-label={t('settings.startup.homeButton')} title={t('settings.startup.homeButton')} onclick={chrome.home}>
+        <Icon name="home" size={16} />
+      </button>
+    {/if}
   </div>
 
   <Omnibox />

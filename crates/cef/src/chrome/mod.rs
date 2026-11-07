@@ -214,7 +214,19 @@ pub(crate) fn open_tab(pending: PendingTab) -> Result<(), BackendError> {
             .or_else(|| ui.windows.keys().next_back().copied())
     });
     match key {
-        Some(key) => add_tab(&ctx, key, pending),
+        Some(key) => {
+            let after_active = crate::settings().is_some_and(|s| {
+                s.startup().new_tab_position == bmcp_settings::NewTabPosition::AfterActive
+            });
+            let index = match pending.index {
+                None if after_active => with_ui(|ui| {
+                    let strip = &ui.windows.get(&key)?.strip;
+                    strip.index_of(strip.active()?).map(|i| i + 1)
+                }),
+                index => index,
+            };
+            add_tab(&ctx, key, PendingTab { index, ..pending });
+        }
         None => open_window(pending, &ctx),
     }
     Ok(())
@@ -492,7 +504,7 @@ pub(crate) fn open_new_tab_in(
     reply: tokio::sync::oneshot::Sender<TabId>,
 ) -> Result<(), BackendError> {
     let ctx = with_ui(|ui| ui.shell.clone()).ok_or(BackendError::ShuttingDown)?;
-    let mut pending = PendingTab::new(NEW_TAB_URL, ProfileKey::default(), None);
+    let mut pending = PendingTab::new(&crate::new_tab_page(), ProfileKey::default(), None);
     pending.reply = Some(reply);
     add_tab(&ctx, key, pending);
     Ok(())
@@ -503,7 +515,7 @@ pub(crate) fn show_new_tab(id: TabId) -> Result<(), BackendError> {
     let browser = with_ui(|ui| ui.tabs.get(&id).map(|t| t.browser.clone()))
         .ok_or(BackendError::TabNotFound(id))?;
     if let Some(frame) = browser.main_frame() {
-        frame.load_url(Some(&CefString::from(NEW_TAB_URL)));
+        frame.load_url(Some(&CefString::from(crate::new_tab_page().as_str())));
     }
     Ok(())
 }
