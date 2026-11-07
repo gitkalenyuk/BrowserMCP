@@ -143,15 +143,21 @@
     error = null;
   }
 
+  /**
+   * Send the box's text (or a suggestion). The box is emptied at once, so what the user types
+   * while the call is on its way is kept; on failure the text comes back if the box is empty.
+   */
   async function send(text = ai.draft) {
     if (!text.trim() || sending) return;
+    const fromBox = text === ai.draft;
+    if (fromBox) ai.draft = '';
     sending = true;
     error = null;
+    stick = true;
     try {
       await ai.send(text);
-      ai.draft = '';
-      stick = true;
     } catch (err) {
+      if (fromBox && !ai.draft.trim()) ai.draft = text;
       fail(err);
     } finally {
       sending = false;
@@ -373,9 +379,17 @@
         <span class="title" title={tabTitle(session)}>{sessionName}</span>
         <span class="status {session.status}">{statusLabel(session)}</span>
         {#if accessLabel(session)}
-          <span class="mode-chip" class:warn={session.access?.permission_mode === 'full_access'} title={tabTitle(session)}>
-            <Icon name={session.access?.permission_mode === 'full_access' ? 'lock-open' : 'lock'} size={11} />
-            {accessLabel(session)}
+          {@const full = session.access?.permission_mode === 'full_access' || session.access?.sandbox === 'full_access'}
+          <!-- Only the lock in the narrow bar (its name on hover); full access keeps its warning text. -->
+          <span
+            class="mode-chip"
+            class:warn={full}
+            role="img"
+            title={`${accessLabel(session)} · ${tabTitle(session)}`}
+            aria-label={accessLabel(session)}
+          >
+            <Icon name={full ? 'lock-open' : 'lock'} size={11} />
+            {#if full}{accessLabel(session)}{/if}
           </span>
         {/if}
         <AiModelPicker
@@ -758,14 +772,15 @@
   }
   .title {
     flex: 0 1 auto;
-    min-width: 0;
+    min-width: 56px;
     overflow: hidden;
     font-weight: 650;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
   .bar :global(.model) {
-    flex: 0 1 auto;
+    flex: 0 2 auto;
+    min-width: 64px;
   }
   .spacer {
     flex: 1 1 0;

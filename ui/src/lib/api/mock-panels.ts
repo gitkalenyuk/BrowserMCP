@@ -330,8 +330,9 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     tool('tabs_open', { url: 'https://shop.example.com/laptops', background: true }, true, `{"tab":${tab},"url":"https://shop.example.com/laptops","title":"Laptops · Example Shop"}`, 500);
     tool('page_read', { tab, max_tokens: 2000 }, true, 'Laptops · Example Shop — 24 products, filters: brand, price, RAM; table with 12 rows', 700);
     tool('page_find', { tab, query: 'pricing table' }, false, 'NOT_FOUND: no element matches "pricing table" (try page_snapshot)', 400);
+    tool('page_snapshot', { tab, max_nodes: 400 }, true, 'table "Laptops" (12 rows): X1 Carbon $1,499 · T14s $1,129 · ZBook $1,890 …', 500);
     stream(
-      'Here is what I found:\n\n• ThinkPad X1 Carbon — $1,499\n• ThinkPad T14s — $1,129\n• HP ZBook — $1,890\n\nThe cheapest option with 32 GB RAM is the T14s. Want me to compare shipping times too?',
+      'Here is what I found:\n\n| Laptop | Price |\n|---|--:|\n| ThinkPad X1 Carbon | $1,499 |\n| ThinkPad T14s | $1,129 |\n| HP ZBook | $1,890 |\n\nThe cheapest option with 32 GB RAM is the **T14s** ([details](https://shop.example.com/laptops/t14s)). Want me to compare shipping times too?',
     );
     at(60, () => {
       if (!s.tabs.includes(tab)) s.tabs.push(tab);

@@ -271,11 +271,13 @@
   }
   .edit-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 6px;
   }
   .hint {
-    flex: 1;
+    flex: 1 1 100%;
     min-width: 0;
     color: var(--fg-subtle);
     font-size: var(--fs-xs);

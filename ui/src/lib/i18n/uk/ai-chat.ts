@@ -13,7 +13,6 @@ export default {
   'aiChat.status.stopped': 'Зупинено',
   'aiChat.status.failed': 'Помилка',
   'aiChat.closeNamed': 'Закрити {name}',
-  'aiChat.closeTitle': 'Закрити цей чат (можна й середньою кнопкою миші)',
   'aiChat.closeFinished': 'Закрити завершені',
   'aiChat.closeFinishedTitle': 'Закрити всі чати, які зараз не працюють і не чекають на дозвіл',
   'aiChat.closeConfirm': '{name} ще працює. Все одно закрити? Агента буде зупинено.',

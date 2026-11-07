@@ -13,7 +13,6 @@ export default {
   'aiChat.status.stopped': 'Stopped',
   'aiChat.status.failed': 'Failed',
   'aiChat.closeNamed': 'Close {name}',
-  'aiChat.closeTitle': 'Close this chat (middle-click works too)',
   'aiChat.closeFinished': 'Close finished',
   'aiChat.closeFinishedTitle': 'Close every chat that is not working and waits for no approval',
   'aiChat.closeConfirm': '{name} is still working. Close it anyway? It will be stopped.',
