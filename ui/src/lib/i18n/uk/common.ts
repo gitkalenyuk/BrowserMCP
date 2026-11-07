@@ -1,0 +1,20 @@
+// Спільні рядки інтерфейсу. Правила: ../index.svelte.ts.
+export default {
+  'common.save': 'Зберегти',
+  'common.cancel': 'Скасувати',
+  'common.close': 'Закрити',
+  'common.delete': 'Видалити',
+  'common.edit': 'Змінити',
+  'common.add': 'Додати',
+  'common.back': 'Назад',
+  'common.test': 'Перевірити',
+  'common.on': 'Увімк.',
+  'common.off': 'Вимк.',
+  'common.loading': 'Завантаження…',
+  'common.copy': 'Копіювати',
+  'common.copied': 'Скопійовано',
+  'settings.language.label': 'Мова',
+  'settings.language.ui': 'Мова інтерфейсу',
+  'settings.language.uiHint': 'Мова меню, панелей і налаштувань. Застосовується одразу на всіх сторінках.',
+  'settings.language.system': 'Як у системі ({name})',
+};

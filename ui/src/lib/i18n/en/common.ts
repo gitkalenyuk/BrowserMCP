@@ -1,0 +1,20 @@
+// Strings shared by many parts of the UI. Conventions: ../index.svelte.ts.
+export default {
+  'common.save': 'Save',
+  'common.cancel': 'Cancel',
+  'common.close': 'Close',
+  'common.delete': 'Delete',
+  'common.edit': 'Edit',
+  'common.add': 'Add',
+  'common.back': 'Back',
+  'common.test': 'Test',
+  'common.on': 'On',
+  'common.off': 'Off',
+  'common.loading': 'Loading…',
+  'common.copy': 'Copy',
+  'common.copied': 'Copied',
+  'settings.language.label': 'Language',
+  'settings.language.ui': 'Interface language',
+  'settings.language.uiHint': 'Language of menus, panels and settings. Applies at once on every page.',
+  'settings.language.system': 'Same as the system ({name})',
+};

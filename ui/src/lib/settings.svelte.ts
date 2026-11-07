@@ -8,6 +8,8 @@ export type WidgetId = 'prompt' | 'agents' | 'scripts' | 'sites';
 export const ACCENTS = ['#3b82f6', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '#eab308', '#10b981', '#06b6d4'] as const;
 
 export interface Settings {
+  /** UI language (`system` = the browser's preferred languages). See `lib/i18n`. */
+  language: 'system' | 'en' | 'uk';
   theme: ThemePref;
   accent: string;
   /** Compact: shorter tab strip, toolbar and tabs. */
@@ -21,6 +23,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  language: 'system',
   theme: 'system',
   accent: '#3b82f6',
   density: 'comfortable',

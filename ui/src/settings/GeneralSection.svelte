@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { LOCALES, systemLocale, t } from '../lib/i18n/index.svelte';
   import { ACCENTS, settings, type Density, type ThemePref, type WidgetId } from '../lib/settings.svelte';
   import Toggle from './Toggle.svelte';
 
@@ -25,6 +26,23 @@
     <h2>General</h2>
     <p>How the browser looks. Saved on this computer and applied to every window right away.</p>
   </header>
+
+  <section class="set-card" aria-labelledby="g-lang">
+    <h3 id="g-lang">{t('settings.language.label')}</h3>
+    <div class="set-row">
+      <div class="text"><span class="label">{t('settings.language.ui')}</span><span class="help">{t('settings.language.uiHint')}</span></div>
+      <div class="ctl">
+        <div class="set-seg" role="radiogroup" aria-label={t('settings.language.ui')}>
+          <button role="radio" aria-checked={s.language === 'system'} onclick={() => settings.update({ language: 'system' })}>
+            {t('settings.language.system', { name: LOCALES.find((l) => l.id === systemLocale())?.name ?? 'English' })}
+          </button>
+          {#each LOCALES as l (l.id)}
+            <button role="radio" lang={l.id} aria-checked={s.language === l.id} onclick={() => settings.update({ language: l.id })}>{l.name}</button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  </section>
 
   <section class="set-card" aria-labelledby="g-look">
     <h3 id="g-look">Appearance</h3>
