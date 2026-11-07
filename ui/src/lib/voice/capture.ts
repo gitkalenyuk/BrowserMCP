@@ -70,6 +70,8 @@ export class MicCapture {
     };
     try {
       await ctx.audioWorklet.addModule(workletUrl);
+      // stop() while the module loaded: it has closed the context already.
+      if (this.#stopped) return this.stop();
       const node = new AudioWorkletNode(ctx, 'bmcp-pcm');
       node.port.onmessage = (e: MessageEvent<Float32Array>) => emit(e.data);
       source.connect(node);
@@ -79,13 +81,14 @@ export class MicCapture {
       node.connect(mute).connect(ctx.destination);
       this.#nodes.push(node, mute);
     } catch {
+      if (this.#stopped) return this.stop();
       const proc = ctx.createScriptProcessor(4096, 1, 1);
       proc.onaudioprocess = (e) => emit(new Float32Array(e.inputBuffer.getChannelData(0)));
       source.connect(proc);
       proc.connect(ctx.destination);
       this.#nodes.push(proc);
     }
-    if (h.onLevel) {
+    if (h.onLevel && !this.#stopped) {
       const buf = new Float32Array(analyser.fftSize);
       const tick = () => {
         if (this.#stopped) return;
@@ -97,6 +100,8 @@ export class MicCapture {
       this.#timer = setInterval(tick, 33);
     }
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    // stop() during resume(): clear what was set up after it ran (the level timer).
+    if (this.#stopped) this.stop();
   }
 
   stop(): void {

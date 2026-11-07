@@ -190,8 +190,18 @@ impl VoiceSettings {
         config_dir.join("voice.json")
     }
 
+    /// The stored settings; a hotkey edited by hand into something that is not a valid
+    /// combination (say plain `F`, which would steal typing) falls back to `Space`.
     pub fn load(config_dir: &Path) -> Result<Self, CmdError> {
-        config_file::load(&Self::path_in(config_dir))
+        let mut s: Self = config_file::load(&Self::path_in(config_dir))?;
+        s.hotkey = match normalize_hotkey(&s.hotkey) {
+            Ok(hotkey) => hotkey,
+            Err(err) => {
+                tracing::warn!(hotkey = s.hotkey, %err, "voice.json: invalid hotkey, using Space");
+                VoiceSettings::default().hotkey
+            }
+        };
+        Ok(s)
     }
 
     pub fn save(&self, config_dir: &Path) -> Result<(), CmdError> {
@@ -316,15 +326,13 @@ pub fn normalize_hotkey(hotkey: &str) -> Result<String, CmdError> {
     let key = match key.to_ascii_lowercase().as_str() {
         "space" | " " => "Space".to_string(),
         k if k.len() == 1 && k.chars().all(|c| c.is_ascii_alphanumeric()) => k.to_ascii_uppercase(),
-        k if k.starts_with('f') && k[1..].parse::<u8>().is_ok_and(|n| (1..=24).contains(&n)) => {
-            k.to_ascii_uppercase()
-        }
+        k if is_function_key(k) => k.to_ascii_uppercase(),
         "backquote" | "`" => "Backquote".to_string(),
         _ => return Err(bad()),
     };
     // A plain letter or digit would steal typing; Space alone is the documented exception.
     let plain = !flags.iter().any(|f| *f);
-    if plain && key != "Space" && !key.starts_with('F') {
+    if plain && key != "Space" && !is_function_key(&key) {
         return Err(bad().with_hint("Use Space, a function key, or a combo such as Alt+V."));
     }
     let names = ["Ctrl", "Alt", "Shift", "Meta"];
@@ -336,6 +344,14 @@ pub fn normalize_hotkey(hotkey: &str) -> Result<String, CmdError> {
         .collect();
     out.push(key);
     Ok(out.join("+"))
+}
+
+/// `F1`…`F24` (any case). Not `F` alone, not `F0`, `F25` or `F08`.
+fn is_function_key(key: &str) -> bool {
+    let Some(n) = key.strip_prefix(['f', 'F']) else {
+        return false;
+    };
+    !n.starts_with('0') && n.parse::<u8>().is_ok_and(|n| (1..=24).contains(&n))
 }
 
 #[cfg(test)]
@@ -363,6 +379,18 @@ mod tests {
         let s3 = VoiceSettings::load(dir.path()).unwrap();
         assert_eq!(s3.engine, EngineId::Deepgram);
         assert_eq!(s3.local.idle_minutes, 5);
+    }
+
+    #[test]
+    fn a_hand_edited_hotkey_is_checked_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = VoiceSettings::path_in(dir.path());
+        std::fs::write(&path, r#"{"hotkey":"F","engine":"groq"}"#).unwrap();
+        let s = VoiceSettings::load(dir.path()).unwrap();
+        assert_eq!(s.hotkey, "Space");
+        assert_eq!(s.engine, EngineId::Groq);
+        std::fs::write(&path, r#"{"hotkey":"alt + v"}"#).unwrap();
+        assert_eq!(VoiceSettings::load(dir.path()).unwrap().hotkey, "Alt+V");
     }
 
     #[test]
@@ -406,6 +434,14 @@ mod tests {
         assert_eq!(normalize_hotkey("Shift+Ctrl+F8").unwrap(), "Ctrl+Shift+F8");
         assert_eq!(normalize_hotkey("f8").unwrap(), "F8");
         assert!(normalize_hotkey("v").is_err());
+        // A plain letter F is a letter, not a function key: it would steal typing.
+        assert!(normalize_hotkey("F").is_err());
+        assert!(normalize_hotkey("f").is_err());
+        assert_eq!(normalize_hotkey("Alt+F").unwrap(), "Alt+F");
+        assert_eq!(normalize_hotkey("F24").unwrap(), "F24");
+        assert!(normalize_hotkey("F25").is_err());
+        assert!(normalize_hotkey("F0").is_err());
+        assert!(normalize_hotkey("F08").is_err());
         assert!(normalize_hotkey("Hyper+V").is_err());
         assert!(normalize_hotkey("").is_err());
     }

@@ -7,6 +7,9 @@
    *
    * Hotkeys work while `target` has focus (Space on an empty prompt by default, see
    * Settings → Voice). Hidden while dictation is off in the settings.
+   *
+   * The prompt's own send (Enter, the send button) asks `finishAndSubmit()` first: while
+   * dictating it finishes the dictation and sends the final text once, via `onsubmit`.
    */
   import { untrack } from 'svelte';
   import type { BrowserApi } from '../../api';
@@ -47,6 +50,19 @@
     if (!el) return;
     return untrack(() => voice.attach(el));
   });
+
+  let micButton = $state<HTMLButtonElement>();
+  $effect(() => {
+    voice.button = micButton ?? null;
+  });
+
+  /**
+   * Call before sending the prompt. While dictating: finishes it and sends the final text
+   * once (through `onsubmit`); returns true and the caller must not send now.
+   */
+  export function finishAndSubmit(): boolean {
+    return voice.finishAndSubmit();
+  }
 
   const key = $derived(voice.hotkeyLabel === 'Space' ? t('voice.key.space') : voice.hotkeyLabel);
   const recording = $derived(voice.phase === 'recording' || voice.phase === 'starting');
@@ -97,6 +113,7 @@
 {#if voice.enabled}
   <div class="voice" style:--size="{size}px" style:--lvl={voice.level.toFixed(3)}>
     <button
+      bind:this={micButton}
       type="button"
       class="mic"
       class:rec={recording}

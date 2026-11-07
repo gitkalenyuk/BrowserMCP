@@ -449,8 +449,11 @@ impl LocalWhisper {
             return Err(err);
         }
         self.set_phase(DownloadPhase::Installing);
-        // The running server keeps its exe and DLLs open.
-        self.stop_server();
+        // No server may start from bin/ while it is swapped: `ensure_server` waits for this
+        // lock (a transcription that comes in now starts the new engine afterwards).
+        let _starting = self.starting.lock().await;
+        // The running server keeps its exe and DLLs open: wait until it is gone.
+        self.stop_server_and_wait().await;
         let bin = self.bin_dir();
         let staging = self.dir.join("bin.new");
         let install = EngineInstall {
@@ -531,6 +534,14 @@ impl LocalWhisper {
             .with_hint("Settings → Voice → Local Whisper: click Download next to the engine."));
         }
         let _starting = self.starting.lock().await;
+        // An engine reinstall held the lock: bin/ may have changed while we waited.
+        if !self.engine_installed() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                "the whisper.cpp engine is not downloaded",
+            )
+            .with_hint("Settings → Voice → Local Whisper: click Download next to the engine."));
+        }
         if let Some(info) = self.server_info()
             && info.model == model.id
             && lock(&self.server)
@@ -657,6 +668,17 @@ impl LocalWhisper {
     pub fn stop_server(&self) {
         if let Some(mut server) = lock(&self.server).take() {
             let _ = server.child.start_kill();
+            tracing::info!(port = server.info.port, "whisper-server stopped");
+        }
+    }
+
+    /// Stop the sidecar and wait (up to 5 s) until the process has exited, so its files can
+    /// be replaced.
+    async fn stop_server_and_wait(&self) {
+        let server = lock(&self.server).take();
+        if let Some(mut server) = server {
+            let _ = server.child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(5), server.child.wait()).await;
             tracing::info!(port = server.info.port, "whisper-server stopped");
         }
     }
@@ -848,16 +870,54 @@ fn install_engine(
     let root = find_dir_with(staging, SERVER_EXE, 3).ok_or_else(|| {
         CmdError::internal(format!("{SERVER_EXE} is not in the whisper.cpp download"))
     })?;
-    match std::fs::remove_dir_all(bin) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_error("replace", bin, e)),
-    }
-    std::fs::rename(&root, bin).map_err(|e| io_error("install", bin, e))?;
     let json = serde_json::to_string_pretty(install).unwrap_or_default();
-    std::fs::write(bin.join("install.json"), json)
-        .map_err(|e| io_error("write", &bin.join("install.json"), e))?;
+    std::fs::write(root.join("install.json"), json)
+        .map_err(|e| io_error("write", &root.join("install.json"), e))?;
+    swap_dir(&root, bin)
+}
+
+/// Put the complete folder `new` in place of `bin` by renames only, so `bin` is always either
+/// the old engine or the new one, never a half-deleted mix: `bin` → `bin.old`, `new` → `bin`,
+/// then delete `bin.old`. When the second step fails, the old engine is moved back.
+fn swap_dir(new: &Path, bin: &Path) -> Result<(), CmdError> {
+    let mut old = bin.as_os_str().to_owned();
+    old.push(".old");
+    let old = PathBuf::from(old);
+    // Leftovers of an earlier swap that could not delete them.
+    let _ = std::fs::remove_dir_all(&old);
+    let had_old = match rename_retry(bin, &old) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(io_error("replace", bin, e)),
+    };
+    if let Err(e) = rename_retry(new, bin) {
+        if had_old && let Err(back) = rename_retry(&old, bin) {
+            tracing::warn!(%back, "could not restore the previous whisper.cpp engine");
+        }
+        return Err(io_error("install", bin, e));
+    }
+    if had_old && let Err(e) = std::fs::remove_dir_all(&old) {
+        // Harmless: the next install removes it first.
+        tracing::warn!(%e, path = %old.display(), "could not delete the previous engine");
+    }
     Ok(())
+}
+
+/// `rename`, retried for a moment: right after a process exits (or while an antivirus scans
+/// the new files) Windows may still refuse to move its folder.
+fn rename_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(e),
+            Err(_) if tries < 10 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// The folder under `dir` (itself included, `depth` levels down) that contains `file`.
@@ -952,5 +1012,130 @@ mod win {
                 CloseHandle(self.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    fn write(dir: &Path, name: &str, text: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+
+    fn zip_file(path: &Path, name: &str, bytes: &[u8]) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        z.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut z, bytes).unwrap();
+        z.finish().unwrap();
+    }
+
+    #[test]
+    fn the_new_engine_replaces_the_old_one_completely() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (bin, new) = (tmp.path().join("bin"), tmp.path().join("bin.new"));
+        write(&bin, SERVER_EXE, "old");
+        write(&bin, "old-only.dll", "old");
+        write(&new, SERVER_EXE, "new");
+        swap_dir(&new, &bin).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bin.join(SERVER_EXE)).unwrap(),
+            "new"
+        );
+        assert!(!bin.join("old-only.dll").exists());
+        assert!(!new.exists());
+        assert!(!tmp.path().join("bin.old").exists());
+        // First install: there is no old engine.
+        let (bin2, new2) = (tmp.path().join("b2"), tmp.path().join("b2.new"));
+        write(&new2, SERVER_EXE, "first");
+        swap_dir(&new2, &bin2).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bin2.join(SERVER_EXE)).unwrap(),
+            "first"
+        );
+    }
+
+    #[test]
+    fn a_failed_swap_keeps_the_old_engine_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        write(&bin, SERVER_EXE, "old");
+        write(&bin, "ggml.dll", "old");
+        // The new folder cannot be moved in (here: it does not exist).
+        let err = swap_dir(&tmp.path().join("missing"), &bin).unwrap_err();
+        assert!(err.message.contains("install"), "{err:?}");
+        assert_eq!(
+            std::fs::read_to_string(bin.join(SERVER_EXE)).unwrap(),
+            "old"
+        );
+        assert!(bin.join("ggml.dll").is_file());
+        assert!(!tmp.path().join("bin.old").exists());
+    }
+
+    #[test]
+    fn install_records_the_version_and_a_broken_download_keeps_the_engine() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (bin, staging) = (tmp.path().join("bin"), tmp.path().join("bin.new"));
+        write(&bin, SERVER_EXE, "old");
+        let zip_path = tmp.path().join("e.zip");
+        zip_file(&zip_path, &format!("Release/{SERVER_EXE}"), b"new");
+        let install = EngineInstall {
+            version: "b1".into(),
+            asset: ENGINE_ASSET.into(),
+            size: 3,
+            sha256: None,
+        };
+        install_engine(&zip_path, &staging, &bin, &install).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bin.join(SERVER_EXE)).unwrap(),
+            "new"
+        );
+        assert!(bin.join("install.json").is_file());
+        // A download without the server keeps the installed engine.
+        let empty = tmp.path().join("empty.zip");
+        zip_file(&empty, "readme.txt", b"");
+        assert!(install_engine(&empty, &staging, &bin, &install).is_err());
+        assert_eq!(
+            std::fs::read_to_string(bin.join(SERVER_EXE)).unwrap(),
+            "new"
+        );
+    }
+
+    /// A transcription that arrives while the engine is being replaced waits for the swap
+    /// and then sees the new bin/ (it never starts the old exe mid-delete).
+    #[tokio::test]
+    async fn ensure_server_waits_while_the_engine_is_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lw = Arc::new(LocalWhisper::new(tmp.path(), Sources::default()));
+        let model = MODELS.iter().min_by_key(|m| m.size).unwrap();
+        std::fs::create_dir_all(lw.models_dir()).unwrap();
+        std::fs::File::create(lw.model_path(model))
+            .unwrap()
+            .set_len(model.size)
+            .unwrap();
+        let settings = LocalSettings {
+            model: Some(model.id.to_string()),
+            ..LocalSettings::default()
+        };
+        write(&lw.bin_dir(), SERVER_EXE, "old");
+        // The install holds the lock and removes the engine (a failed reinstall).
+        let guard = lw.starting.lock().await;
+        let ensure = tokio::spawn({
+            let lw = lw.clone();
+            async move { lw.ensure_server(&settings).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !ensure.is_finished(),
+            "ensure_server must wait for the install"
+        );
+        std::fs::remove_dir_all(lw.bin_dir()).unwrap();
+        drop(guard);
+        let err = ensure.await.unwrap().unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound, "{err:?}");
+        assert!(lw.server_info().is_none());
     }
 }

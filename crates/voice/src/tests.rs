@@ -412,6 +412,46 @@ async fn batch_stream_sends_the_audio_once_at_stop_and_cancel_sends_nothing() {
 }
 
 #[tokio::test]
+async fn abandoned_streams_are_reaped_and_free_their_slots() {
+    let s = Setup::new();
+    s.call(
+        "voice.settings_set",
+        json!({"engine": "groq", "groq": {"api_key": "gsk", "base_url": "http://127.0.0.1:9"}}),
+    )
+    .await
+    .unwrap();
+    // Eight pages started a stream and went away without voice.stream_stop.
+    let mut ids = Vec::new();
+    for _ in 0..8 {
+        let start = s.call("voice.stream_start", json!({})).await.unwrap();
+        ids.push(start["stream"].as_str().unwrap().to_string());
+    }
+    let err = s.call("voice.stream_start", json!({})).await.unwrap_err();
+    assert!(err.message.contains("too many"), "{err:?}");
+    // The reaper (it runs on a timer while streams are open) drops only the idle ones.
+    for id in &ids[..7] {
+        s.service.age_stream(id, Duration::from_secs(61));
+    }
+    s.service.reap_now();
+    assert_eq!(s.service.open_streams(), 1);
+    let err = s
+        .call(
+            "voice.stream_push",
+            json!({"stream": ids[0], "pcm_base64": ""}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    s.call(
+        "voice.stream_push",
+        json!({"stream": ids[7], "pcm_base64": ""}),
+    )
+    .await
+    .unwrap();
+    s.call("voice.stream_start", json!({})).await.unwrap();
+}
+
+#[tokio::test]
 async fn stream_refuses_when_voice_is_off() {
     let s = Setup::new();
     s.call("voice.settings_set", json!({"enabled": false}))

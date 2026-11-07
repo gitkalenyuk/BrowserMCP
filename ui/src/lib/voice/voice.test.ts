@@ -117,6 +117,23 @@ describe('hold / tap state machine', () => {
     expect(m.keyup(ev('Space'))).toEqual({ prevent: true, action: 'stop' });
   });
 
+  it('a reset while the key is held (auto-stop, Esc) swallows its repeats until release', () => {
+    const m = new HotkeyMachine(space, 'hold', 1);
+    m.keydown(ev('Space'), { empty: true, recording: false });
+    expect(m.keydown(ev('Space', { repeat: true }), { empty: true, recording: false }).action).toBe('start');
+    m.reset();
+    expect(m.keydown(ev('Space', { repeat: true }), { empty: false, recording: false })).toEqual({ prevent: true, action: 'none' });
+    expect(m.keyup(ev('Space')).action).toBe('none');
+    // Released: Space types again.
+    expect(m.keydown(ev('Space'), { empty: false, recording: false })).toEqual({ prevent: false, action: 'none' });
+    // Tap mode: the key is not held after the press, so an auto-stop swallows nothing.
+    const tap = new HotkeyMachine(space, 'tap');
+    tap.keydown(ev('Space'), { empty: true, recording: false });
+    tap.keyup(ev('Space'));
+    tap.reset();
+    expect(tap.keydown(ev('Space', { repeat: true }), { empty: false, recording: false }).prevent).toBe(false);
+  });
+
   it('hold Space only works on an empty prompt; typing aborts the warm-up', () => {
     const m = new HotkeyMachine(space, 'hold');
     expect(m.keydown(ev('Space'), { empty: false, recording: false }).action).toBe('none');
