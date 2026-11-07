@@ -3,18 +3,22 @@
 // what changed with `notify.config_set`.
 
 import type { NotifyChannel, NotifyConfig, NotifyConfigPatch, NotifyRule, NotifyWhen } from '../api/types-settings';
+// `translate`: several helpers below use `t` for the trimmed topic / token.
+import { t as translate } from '../i18n/index.svelte';
+
+// Labels are getters: translate() runs when markup reads them, so they follow the language.
 
 export const CHANNELS: { id: NotifyChannel; label: string }[] = [
-  { id: 'ui', label: 'Browser' },
-  { id: 'os', label: 'Windows' },
-  { id: 'telegram', label: 'Telegram' },
-  { id: 'webhook', label: 'Webhook' },
+  { id: 'ui', get label() { return translate('settings.notify.channel.ui'); } },
+  { id: 'os', get label() { return translate('settings.notify.channel.os'); } },
+  { id: 'telegram', get label() { return translate('settings.notify.channel.telegram'); } },
+  { id: 'webhook', get label() { return translate('settings.notify.channel.webhook'); } },
 ];
 
 export const WHEN: { id: NotifyWhen; label: string }[] = [
-  { id: 'always', label: 'Always' },
-  { id: 'unfocused', label: 'Window in background' },
-  { id: 'failed', label: 'Only failures' },
+  { id: 'always', get label() { return translate('settings.notify.when.always'); } },
+  { id: 'unfocused', get label() { return translate('settings.notify.when.unfocused'); } },
+  { id: 'failed', get label() { return translate('settings.notify.when.failed'); } },
 ];
 
 const all: NotifyChannel[] = ['ui', 'os', 'telegram', 'webhook'];
@@ -110,8 +114,8 @@ const TOPIC_RE = /^(\*|[a-z0-9_]+(\.[a-z0-9_]+)*(\.\*)?)$/;
 
 export function topicError(topic: string): string | null {
   const t = topic.trim();
-  if (!t) return 'Enter an event topic';
-  if (!TOPIC_RE.test(t)) return 'Use an exact topic (run.finished), a prefix (run.*) or *';
+  if (!t) return translate('settings.notify.err.topicEmpty');
+  if (!TOPIC_RE.test(t)) return translate('settings.notify.err.topic');
   return null;
 }
 
@@ -121,12 +125,12 @@ export function ruleErrors(rules: NotifyRule[]): Map<number, string> {
   rules.forEach((r, i) => {
     const bad = topicError(r.topic);
     if (bad) return errors.set(i, bad);
-    if (r.channels.length === 0) return errors.set(i, 'Pick at least one channel');
+    if (r.channels.length === 0) return errors.set(i, translate('settings.notify.err.noChannel'));
     // An earlier rule with `when: always` that matches every topic this one matches hides it.
     const shadow = rules
       .slice(0, i)
       .findIndex((e) => e.when === 'always' && !topicError(e.topic) && covers(e.topic.trim(), r.topic.trim()));
-    if (shadow >= 0) errors.set(i, `Never used: rule ${shadow + 1} (${rules[shadow].topic.trim()}) catches these events first`);
+    if (shadow >= 0) errors.set(i, translate('settings.notify.err.shadowed', { n: shadow + 1, topic: rules[shadow].topic.trim() }));
   });
   return errors;
 }
@@ -158,34 +162,34 @@ export function isMaskedToken(token: string): boolean {
 
 export function botTokenError(token: string, enabled: boolean): string | null {
   const t = token.trim();
-  if (!t) return enabled ? 'Paste the token from @BotFather' : null;
+  if (!t) return enabled ? translate('settings.notify.err.tokenEmpty') : null;
   if (isMaskedToken(t)) return null;
-  if (!/^\d{5,}:[A-Za-z0-9_-]{20,}$/.test(t)) return 'A bot token looks like 123456789:AA… (numbers, a colon, then letters)';
+  if (!/^\d{5,}:[A-Za-z0-9_-]{20,}$/.test(t)) return translate('settings.notify.err.token');
   return null;
 }
 
 export function chatIdError(chat: string, enabled: boolean): string | null {
   const c = chat.trim();
-  if (!c) return enabled ? 'Enter your chat id (a number) or @channel' : null;
+  if (!c) return enabled ? translate('settings.notify.err.chatEmpty') : null;
   if (/^-?\d{1,20}$/.test(c) || /^@[A-Za-z0-9_]{5,32}$/.test(c)) return null;
-  return 'A chat id is a number like 123456789 (or -100… for groups), or @channelname';
+  return translate('settings.notify.err.chat');
 }
 
 export function webhookUrlError(url: string, enabled: boolean): string | null {
   const u = url.trim();
-  if (!u) return enabled ? 'Enter the URL that receives the POST' : null;
+  if (!u) return enabled ? translate('settings.notify.err.urlEmpty') : null;
   try {
     const parsed = new URL(u);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'Use an http:// or https:// URL';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return translate('settings.notify.err.urlScheme');
     return null;
   } catch {
-    return 'Not a valid URL';
+    return translate('settings.notify.err.url');
   }
 }
 
 export function limitError(value: number, min: number, max: number): string | null {
-  if (!Number.isFinite(value) || !Number.isInteger(value)) return 'Whole number';
-  if (value < min || value > max) return `Between ${min} and ${max}`;
+  if (!Number.isFinite(value) || !Number.isInteger(value)) return translate('settings.notify.err.whole');
+  if (value < min || value > max) return translate('settings.notify.err.between', { min, max });
   return null;
 }
 

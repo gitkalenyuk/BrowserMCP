@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { settings } from '../settings.svelte';
 import type { GovernorLimits, HintsConfig } from '../api/types-settings';
 import {
   addSite,
@@ -20,6 +21,9 @@ import {
   withProfile,
 } from './forms';
 import { parseSettingsRequest } from './open';
+
+// The messages checked below are the English ones: pin the UI language (the machine's may differ).
+settings.update({ language: 'en' });
 
 const limits: GovernorLimits = {
   profile: 'normal',

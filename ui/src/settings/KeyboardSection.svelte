@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../lib/components/Icon.svelte';
+  import { t, tp } from '../lib/i18n/index.svelte';
   import { chordId, chordLabels, parseChord, type CommandId } from '../lib/keymap';
   import {
     conflicts,
@@ -55,7 +56,7 @@
     const next = setBinding(overrides, id, [...keymap[id], text]);
     commit(next);
     const other = c ? keymapRows(effectiveKeymap(next), next).find((r) => r.id !== id && r.keys.some((k) => sameKey(k, chordId(c)))) : undefined;
-    if (other) notify(`${text} is also bound to “${other.title}”: the later command in the list wins`, true);
+    if (other) notify(t('settings.keyboard.alsoBound', { key: text, command: other.title }), true);
   }
 
   function sameKey(text: string, key: string): boolean {
@@ -73,49 +74,47 @@
 
 <div class="set-page">
   <header>
-    <h2>Keyboard</h2>
+    <h2>{t('settings.keyboard.title')}</h2>
     <p>
-      Every shortcut of the browser chrome. Changes apply at once in this browser and are kept on this computer (they will move
-      to <span class="set-mono">data/config/keymap.json</span> later). Keys pressed while a web page has the focus still use the
-      built-in map for now.
+      {t('settings.keyboard.intro')} (<span class="set-mono">data/config/keymap.json</span>). {t('settings.keyboard.introPages')}
     </p>
   </header>
 
   <section class="set-card" aria-labelledby="k-h">
     <h3 id="k-h">
-      <span class="grow">Shortcuts</span>
+      <span class="grow">{t('settings.keyboard.shortcuts')}</span>
       {#if customCount}
-        <button class="btn" onclick={() => (commit({}), notify('All shortcuts are back to the defaults'))}>Reset all ({customCount})</button>
+        <button class="btn" onclick={() => (commit({}), notify(t('settings.keyboard.resetDone')))}>{t('settings.keyboard.resetAll', { n: customCount })}</button>
       {/if}
     </h3>
     <div class="set-row">
       <label class="lib-search">
         <Icon name="search" size={14} />
-        <input class="lib-input" type="search" bind:value={query} placeholder="Search commands or keys (ctrl+t, history…)" aria-label="Search shortcuts" />
+        <input class="lib-input" type="search" bind:value={query} placeholder={t('settings.keyboard.search')} aria-label={t('settings.keyboard.searchLabel')} />
       </label>
-      {#if clashes.size}<span class="set-err">{clashes.size} shortcut{clashes.size === 1 ? ' is' : 's are'} used twice</span>{/if}
+      {#if clashes.size}<span class="set-err">{tp('settings.keyboard.clashes', clashes.size)}</span>{/if}
     </div>
     <div class="set-table-wrap">
       <table class="set-table keys">
-        <thead><tr><th>Command</th><th>Shortcuts</th><th><span class="sr">Actions</span></th></tr></thead>
+        <thead><tr><th>{t('settings.keyboard.command')}</th><th>{t('settings.keyboard.shortcuts')}</th><th><span class="sr">{t('settings.keyboard.actions')}</span></th></tr></thead>
         <tbody>
           {#each rows as r (r.id)}
             <tr>
               <td>
                 <span class="title">{r.title}</span>
                 <span class="set-mono id">{r.id}</span>
-                {#if r.custom}<span class="lib-chip">changed</span>{/if}
+                {#if r.custom}<span class="lib-chip">{t('settings.keyboard.changed')}</span>{/if}
               </td>
               <td>
                 <span class="chords">
                   {#each r.keys as k (k)}
-                    <span class="chord" class:clash={clashFor(k)} title={clashFor(k) ? 'Also bound to another command' : undefined}>
+                    <span class="chord" class:clash={clashFor(k)} title={clashFor(k) ? t('settings.keyboard.clash') : undefined}>
                       {#each chordLabels(k) as cap (cap)}<kbd>{cap}</kbd>{/each}
-                      <button class="icon-btn" aria-label="Remove {k} from {r.title}" onclick={() => removeKey(r.id, k)}><Icon name="x" size={11} /></button>
+                      <button class="icon-btn" aria-label={t('settings.keyboard.remove', { key: k, command: r.title })} onclick={() => removeKey(r.id, k)}><Icon name="x" size={11} /></button>
                     </span>
                   {/each}
                   {#if recording === r.id}
-                    <span class="rec" role="status">Press the keys… <kbd>Esc</kbd> cancels</span>
+                    <span class="rec" role="status">{t('settings.keyboard.pressKeys')} <kbd>Esc</kbd> {t('settings.keyboard.escCancels')}</span>
                   {:else if !r.keys.length}
                     <span class="set-muted">—</span>
                   {/if}
@@ -123,15 +122,15 @@
               </td>
               <td class="r acts">
                 <button class="btn sm" onclick={() => (recording = recording === r.id ? null : r.id)} aria-pressed={recording === r.id}>
-                  <Icon name="plus" size={12} /> Add
+                  <Icon name="plus" size={12} /> {t('common.add')}
                 </button>
                 {#if r.custom}
-                  <button class="btn sm" onclick={() => commit(resetBinding(overrides, r.id))}>Reset</button>
+                  <button class="btn sm" onclick={() => commit(resetBinding(overrides, r.id))}>{t('settings.keyboard.reset')}</button>
                 {/if}
               </td>
             </tr>
           {:else}
-            <tr><td colspan="3" class="set-muted">No command matches “{query}”.</td></tr>
+            <tr><td colspan="3" class="set-muted">{t('settings.keyboard.noMatch', { query })}</td></tr>
           {/each}
         </tbody>
       </table>

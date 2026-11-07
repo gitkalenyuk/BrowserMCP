@@ -2,6 +2,7 @@
   import type { BrowserApi } from '../lib/api';
   import type { AdblockListUpdate, AdblockSettings, AdblockStats, SimplifyCheck, SimplifySiteArgs, SitePolicy, SitePolicyKey } from '../lib/api/types-settings';
   import Icon from '../lib/components/Icon.svelte';
+  import { locale, t, tp } from '../lib/i18n/index.svelte';
   import { POLICY_KEYS, addSite, nextTriState, normalizeHost, policyRows, topCounts, type TriState } from '../lib/settings/forms';
   import Toggle from './Toggle.svelte';
 
@@ -61,7 +62,7 @@
   const setGlobal = (on: boolean) =>
     run(async () => {
       adblock = await api.call('adblock.toggle', { on });
-      notify(on ? 'Ad blocking is on' : 'Ad blocking is off (site policies still apply)');
+      notify(on ? t('settings.privacy.adblockOn') : t('settings.privacy.adblockOff'));
     });
 
   async function allowSite() {
@@ -73,7 +74,7 @@
     await run(async () => {
       adblock = await api.call('adblock.toggle', { host, on: false });
       allowInput = '';
-      notify(`Ads are allowed on ${host}`);
+      notify(t('settings.privacy.adsAllowedOn', { host }));
     });
   }
 
@@ -87,7 +88,7 @@
     try {
       update = await api.call('adblock.update_lists', { force });
       const failed = update.lists.filter((l) => l.status === 'failed').length;
-      notify(failed ? `${failed} list${failed === 1 ? '' : 's'} could not be downloaded` : update.compiled ? 'Filter lists updated' : 'Filter lists are up to date', failed > 0);
+      notify(failed ? tp('settings.privacy.listsFailed', failed) : update.compiled ? t('settings.privacy.listsUpdated') : t('settings.privacy.listsCurrent'), failed > 0);
       void load();
     } catch (err) {
       fail(err);
@@ -108,11 +109,11 @@
   function addPolicyHost() {
     const host = normalizeHost(policyInput);
     if (!host) {
-      policyError = 'Enter a site like news.example.com, or * for every site';
+      policyError = t('settings.privacy.err.policySite');
       return;
     }
     if (host in sites || pendingHosts.includes(host)) {
-      policyError = `${host} is already in the table`;
+      policyError = t('settings.privacy.err.inTable', { host });
       return;
     }
     policyError = null;
@@ -164,129 +165,127 @@
 
   const total = $derived(stats?.total ?? null);
   const pct = $derived(total && total.requests ? Math.round((total.blocked / total.requests) * 1000) / 10 : 0);
-  const fmt = new Intl.NumberFormat();
-  const label = (v: boolean | null | undefined) => (v === true ? 'Allowed' : v === false ? 'Blocked' : 'Inherited');
+  const fmt = $derived(new Intl.NumberFormat(locale()));
+  const label = (v: boolean | null | undefined) =>
+    v === true ? t('settings.privacy.allowed') : v === false ? t('settings.privacy.blocked') : t('settings.privacy.inherited');
 </script>
 
 <div class="set-page">
   <header>
-    <h2>Privacy &amp; blocking</h2>
-    <p>
-      Filter lists block ads and trackers for every tab, agents included. Site policies go further per site: no JavaScript, no
-      images, nothing from other sites — handy for heavy pages and for fast scraping.
-    </p>
+    <h2>{t('settings.privacy.title')}</h2>
+    <p>{t('settings.privacy.intro')}</p>
   </header>
 
   {#if loadError && !adblock}
-    <p class="lib-error" role="alert">Could not read the blocking settings: {loadError}</p>
-    <button class="btn" onclick={load}>Retry</button>
+    <p class="lib-error" role="alert">{t('settings.privacy.loadError', { error: loadError })}</p>
+    <button class="btn" onclick={load}>{t('settings.hints.retry')}</button>
   {:else if !adblock}
-    <p class="set-muted">Loading…</p>
+    <p class="set-muted">{t('common.loading')}</p>
   {:else}
     <section class="set-card" aria-labelledby="pr-ad">
-      <h3 id="pr-ad">Ad and tracker blocking</h3>
+      <h3 id="pr-ad">{t('settings.privacy.adblock')}</h3>
       <div class="set-row">
         <div class="text">
-          <span class="label">Block ads and trackers</span>
-          <span class="help">Lists: {adblock.lists.join(', ') || 'none'}{stats?.engine.loaded ? ` · engine ${Math.round(stats.engine.engine_bytes / 1024)} kB` : ' · not compiled yet'}</span>
+          <span class="label">{t('settings.privacy.block')}</span>
+          <span class="help">{t('settings.privacy.lists', { lists: adblock.lists.join(', ') || t('settings.privacy.none') })}{stats?.engine.loaded ? ` · ${t('settings.privacy.engine', { kb: Math.round(stats.engine.engine_bytes / 1024) })}` : ` · ${t('settings.privacy.notCompiled')}`}</span>
         </div>
-        <div class="ctl"><Toggle label="Block ads and trackers" checked={adblock.enabled} disabled={busy} onchange={setGlobal} /></div>
+        <div class="ctl"><Toggle label={t('settings.privacy.block')} checked={adblock.enabled} disabled={busy} onchange={setGlobal} /></div>
       </div>
       <div class="set-row">
         <div class="text">
-          <span class="label">Filter lists</span>
-          <span class="help">Downloads only what changed since the last update (HTTP 304 otherwise).</span>
+          <span class="label">{t('settings.privacy.filterLists')}</span>
+          <span class="help">{t('settings.privacy.filterListsHelp')}</span>
         </div>
         <div class="ctl">
-          <button class="btn" disabled={updating} onclick={() => updateLists(false)}>{updating ? 'Updating…' : 'Update now'}</button>
-          <button class="btn" disabled={updating} onclick={() => updateLists(true)} title="Download every list again">Force</button>
+          <button class="btn" disabled={updating} onclick={() => updateLists(false)}>{updating ? t('settings.privacy.updating') : t('settings.privacy.updateNow')}</button>
+          <button class="btn" disabled={updating} onclick={() => updateLists(true)} title={t('settings.privacy.forceHint')}>{t('settings.privacy.force')}</button>
         </div>
       </div>
       {#if update}
         <div class="set-table-wrap">
           <table class="set-table">
-            <thead><tr><th>List</th><th>Result</th><th class="r">Size</th></tr></thead>
+            <thead><tr><th>{t('settings.privacy.colList')}</th><th>{t('settings.privacy.colResult')}</th><th class="r">{t('settings.privacy.colSize')}</th></tr></thead>
             <tbody>
               {#each update.lists as l (l.id)}
                 <tr class:bad={l.status === 'failed'}>
                   <td><span class="set-mono">{l.id}</span></td>
                   <td>
-                    <span class="lib-chip" class:ok={l.status === 'updated'} class:bad={l.status === 'failed'}>{l.status.replace('_', ' ')}</span>
+                    <span class="lib-chip" class:ok={l.status === 'updated'} class:bad={l.status === 'failed'}>{t(`settings.privacy.status.${l.status}`)}</span>
                     {#if l.error}<span class="set-err inline">{l.error}</span>{/if}
                   </td>
-                  <td class="r">{Math.round(l.bytes / 1024)} kB</td>
+                  <td class="r">{t('settings.privacy.kb', { n: Math.round(l.bytes / 1024) })}</td>
                 </tr>
               {/each}
             </tbody>
           </table>
-          <p class="set-muted pad">{update.compiled ? `Recompiled in ${update.compile_ms} ms.` : 'Nothing changed, the engine was kept.'}</p>
+          <p class="set-muted pad">{update.compiled ? t('settings.privacy.recompiled', { ms: update.compile_ms }) : t('settings.privacy.kept')}</p>
         </div>
       {/if}
       {#if total}
         <div class="stats">
-          <div><b>{fmt.format(total.blocked)}</b><span>blocked of {fmt.format(total.requests)} requests ({pct}%)</span></div>
-          <div><b>{fmt.format(total.by_filter)}</b><span>by filter lists</span></div>
-          <div><b>{fmt.format(total.by_policy)}</b><span>by site policies</span></div>
+          <div><b>{fmt.format(total.blocked)}</b><span>{t('settings.privacy.blockedOf', { n: fmt.format(total.requests), pct })}</span></div>
+          <div><b>{fmt.format(total.by_filter)}</b><span>{t('settings.privacy.byFilter')}</span></div>
+          <div><b>{fmt.format(total.by_policy)}</b><span>{t('settings.privacy.byPolicy')}</span></div>
         </div>
         <div class="tops">
           <div>
-            <h4>Most blocked</h4>
+            <h4>{t('settings.privacy.mostBlocked')}</h4>
             {#each topCounts(total.blocked_hosts, 6) as h (h.key)}
               <div class="bar"><span class="set-mono">{h.key}</span><span class="r">{fmt.format(h.count)}</span></div>
-            {:else}<p class="set-muted">Nothing blocked yet.</p>{/each}
+            {:else}<p class="set-muted">{t('settings.privacy.nothingBlocked')}</p>{/each}
           </div>
           <div>
-            <h4>By type</h4>
+            <h4>{t('settings.privacy.byType')}</h4>
             {#each topCounts(total.blocked_by_type, 6) as h (h.key)}
               <div class="bar"><span>{h.key}</span><span class="r">{fmt.format(h.count)}</span></div>
             {:else}<p class="set-muted">—</p>{/each}
           </div>
         </div>
-        <div class="set-actions"><button class="btn" disabled={busy} onclick={resetStats}>Reset counters</button></div>
+        <div class="set-actions"><button class="btn" disabled={busy} onclick={resetStats}>{t('settings.privacy.resetCounters')}</button></div>
       {/if}
     </section>
 
     <section class="set-card" aria-labelledby="pr-allow">
-      <h3 id="pr-allow">Sites where ads are allowed</h3>
-      <p class="lead">Filter lists are not applied on these sites and their subdomains (site policies still are).</p>
+      <h3 id="pr-allow">{t('settings.privacy.allowTitle')}</h3>
+      <p class="lead">{t('settings.privacy.allowLead')}</p>
       <div class="set-row stack">
         <div class="set-chips">
           {#each adblock.allowlist as host (host)}
             <span class="set-chip">
               {host}
-              <button class="icon-btn" aria-label="Block ads on {host} again" disabled={busy} onclick={() => blockAgain(host)}><Icon name="x" size={12} /></button>
+              <button class="icon-btn" aria-label={t('settings.privacy.blockAgain', { host })} disabled={busy} onclick={() => blockAgain(host)}><Icon name="x" size={12} /></button>
             </span>
           {:else}
-            <span class="set-muted">None: ads are blocked everywhere.</span>
+            <span class="set-muted">{t('settings.privacy.noAllowed')}</span>
           {/each}
         </div>
         <form class="add" onsubmit={(e) => (e.preventDefault(), void allowSite())}>
-          <input class="lib-input wide" bind:value={allowInput} placeholder="example.com" spellcheck="false" aria-label="Site to allow ads on" aria-invalid={!!allowError} />
-          <button class="btn" type="submit" disabled={busy || !allowInput.trim()}>Allow ads</button>
+          <input class="lib-input wide" bind:value={allowInput} placeholder="example.com" spellcheck="false" aria-label={t('settings.privacy.allowInput')} aria-invalid={!!allowError} />
+          <button class="btn" type="submit" disabled={busy || !allowInput.trim()}>{t('settings.privacy.allowAds')}</button>
         </form>
         {#if allowError}<p class="set-err">{allowError}</p>{/if}
       </div>
     </section>
 
     <section class="set-card" aria-labelledby="pr-pol">
-      <h3 id="pr-pol">Site policies</h3>
+      <h3 id="pr-pol">{t('settings.privacy.policies')}</h3>
       <p class="lead">
-        Click a cell to cycle <b>inherited → blocked → allowed</b>. A site inherits from <span class="set-mono">*</span> and from
-        its parent domains. Takes effect on the next page load.
+        {t('settings.privacy.policiesLead1')} <b>{t('settings.privacy.cycle')}</b>. {t('settings.privacy.policiesLead2')} <span class="set-mono">*</span>
+        {t('settings.privacy.policiesLead3')}
       </p>
       <div class="set-table-wrap">
         <table class="set-table pol">
           <thead>
             <tr>
-              <th>Site</th>
+              <th>{t('settings.privacy.colSite')}</th>
               {#each POLICY_KEYS as k (k.key)}<th class="c">{k.label}</th>{/each}
-              <th><span class="sr">Remove</span></th>
+              <th><span class="sr">{t('settings.privacy.remove')}</span></th>
             </tr>
           </thead>
           <tbody>
             {#each rows as row (row.host)}
               <tr>
-                <td class="set-mono">{row.host === '*' ? '* (every site)' : row.host}</td>
+                <td class="set-mono">{row.host === '*' ? t('settings.privacy.everySite') : row.host}</td>
                 {#each POLICY_KEYS as k (k.key)}
                   {@const v = row.policy[k.key]}
                   <td class="c">
@@ -295,34 +294,34 @@
                       class:allow={v === true}
                       class:block={v === false}
                       disabled={busy}
-                      title="{k.label} on {row.host}: {label(v)}. Click to change."
-                      aria-label="{k.label} on {row.host}: {label(v)}"
+                      title={t('settings.privacy.cellHint', { what: k.label, host: row.host, state: label(v) })}
+                      aria-label={t('settings.privacy.cell', { what: k.label, host: row.host, state: label(v) })}
                       onclick={() => setPolicy(row.host, k.key, nextTriState(v))}
                     >
                       {#if v === true}<Icon name="check" size={13} stroke={2.25} />{:else if v === false}<Icon name="x" size={13} stroke={2.25} />{:else}<span aria-hidden="true">·</span>{/if}
                     </button>
                   </td>
                 {/each}
-                <td class="r"><button class="icon-btn" aria-label="Remove the policy of {row.host}" disabled={busy} onclick={() => removePolicy(row.host)}><Icon name="trash" size={13} /></button></td>
+                <td class="r"><button class="icon-btn" aria-label={t('settings.privacy.removePolicy', { host: row.host })} disabled={busy} onclick={() => removePolicy(row.host)}><Icon name="trash" size={13} /></button></td>
               </tr>
             {:else}
-              <tr><td colspan={POLICY_KEYS.length + 2} class="set-muted">No site policies: every site may load everything.</td></tr>
+              <tr><td colspan={POLICY_KEYS.length + 2} class="set-muted">{t('settings.privacy.noPolicies')}</td></tr>
             {/each}
           </tbody>
         </table>
       </div>
       <form class="add pad2" onsubmit={(e) => (e.preventDefault(), addPolicyHost())}>
-        <input class="lib-input wide" bind:value={policyInput} placeholder="news.example.com or *" spellcheck="false" aria-label="Site to add a policy for" aria-invalid={!!policyError} />
-        <button class="btn" type="submit" disabled={!policyInput.trim()}><Icon name="plus" size={13} /> Add site</button>
+        <input class="lib-input wide" bind:value={policyInput} placeholder={t('settings.privacy.policyPlaceholder')} spellcheck="false" aria-label={t('settings.privacy.policyInput')} aria-invalid={!!policyError} />
+        <button class="btn" type="submit" disabled={!policyInput.trim()}><Icon name="plus" size={13} /> {t('settings.privacy.addSite')}</button>
         {#if policyError}<p class="set-err">{policyError}</p>{/if}
       </form>
       <form class="add pad2 check" onsubmit={(e) => (e.preventDefault(), void checkSite())}>
-        <input class="lib-input wide" bind:value={checkInput} placeholder="Check a site: shop.example.com" spellcheck="false" aria-label="Site to check" />
-        <button class="btn" type="submit" disabled={busy || !checkInput.trim()}>Check</button>
+        <input class="lib-input wide" bind:value={checkInput} placeholder={t('settings.privacy.checkPlaceholder')} spellcheck="false" aria-label={t('settings.privacy.checkInput')} />
+        <button class="btn" type="submit" disabled={busy || !checkInput.trim()}>{t('settings.privacy.check')}</button>
         {#if check}
           <span class="set-muted" role="status">
-            {check.host}: ads {check.adblock ? 'blocked' : 'allowed'} ·
-            {POLICY_KEYS.filter((k) => !check!.policy[k.key]).map((k) => k.label).join(', ') || 'nothing'} blocked{check.matched.length ? ` (from ${check.matched.join(', ')})` : ''}
+            {check.host}: {check.adblock ? t('settings.privacy.adsBlocked') : t('settings.privacy.adsAllowed')} ·
+            {t('settings.privacy.blockedList', { list: POLICY_KEYS.filter((k) => !check!.policy[k.key]).map((k) => k.label).join(', ') || t('settings.privacy.nothing') })}{check.matched.length ? ` ${t('settings.privacy.from', { list: check.matched.join(', ') })}` : ''}
           </span>
         {/if}
       </form>

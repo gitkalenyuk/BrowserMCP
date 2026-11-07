@@ -1,0 +1,26 @@
+// Settings → Keyboard (settings/KeyboardSection.svelte). Conventions: ../index.svelte.ts.
+export default {
+  'settings.keyboard.title': 'Keyboard',
+  'settings.keyboard.intro': 'Every shortcut of the browser chrome. Changes apply at once in this browser and are kept on this computer (they will move to keymap.json later)',
+  'settings.keyboard.introPages': 'Keys pressed while a web page has the focus still use the built-in map for now.',
+  'settings.keyboard.shortcuts': 'Shortcuts',
+  'settings.keyboard.resetAll': 'Reset all ({n})',
+  'settings.keyboard.resetDone': 'All shortcuts are back to the defaults',
+  'settings.keyboard.search': 'Search commands or keys (ctrl+t, history…)',
+  'settings.keyboard.searchLabel': 'Search shortcuts',
+  'settings.keyboard.clashes.one': '{n} shortcut is used twice',
+  // English uses one/other; few/many exist so both dictionaries have the same keys.
+  'settings.keyboard.clashes.few': '{n} shortcuts are used twice',
+  'settings.keyboard.clashes.many': '{n} shortcuts are used twice',
+  'settings.keyboard.clashes.other': '{n} shortcuts are used twice',
+  'settings.keyboard.command': 'Command',
+  'settings.keyboard.actions': 'Actions',
+  'settings.keyboard.changed': 'changed',
+  'settings.keyboard.clash': 'Also bound to another command',
+  'settings.keyboard.remove': 'Remove {key} from {command}',
+  'settings.keyboard.pressKeys': 'Press the keys…',
+  'settings.keyboard.escCancels': 'cancels',
+  'settings.keyboard.reset': 'Reset',
+  'settings.keyboard.noMatch': 'No command matches “{query}”.',
+  'settings.keyboard.alsoBound': '{key} is also bound to “{command}”: the later command in the list wins',
+};

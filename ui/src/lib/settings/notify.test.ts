@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { settings } from '../settings.svelte';
 import type { NotifyConfig, NotifyRule } from '../api/types-settings';
 import {
   DEFAULT_RULES,
@@ -19,6 +20,9 @@ import {
   updateRule,
   webhookUrlError,
 } from './notify';
+
+// The messages checked below are the English ones: pin the UI language (the machine's may differ).
+settings.update({ language: 'en' });
 
 function config(): NotifyConfig {
   return {

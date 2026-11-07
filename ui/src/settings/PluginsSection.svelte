@@ -2,6 +2,7 @@
   import type { BrowserApi } from '../lib/api';
   import type { PluginInfo, PluginLogLine, UserscriptInfo } from '../lib/api/types-settings';
   import Icon from '../lib/components/Icon.svelte';
+  import { locale, t, tp } from '../lib/i18n/index.svelte';
   import Dialog from '../library/Dialog.svelte';
   import Toggle from './Toggle.svelte';
 
@@ -88,14 +89,14 @@ await browser.userscripts.inject({
     act(name ? `p:${name}` : 'reload', async () => {
       const r = await api.call('plugins.reload', name ? { name } : {});
       plugins = r.plugins;
-      notify(name ? `Restarted ${name}` : 'Rescanned data/plugins');
+      notify(name ? t('settings.plugins.restarted', { name }) : t('settings.plugins.rescanned'));
     });
 
   const install = () =>
     act('install', async () => {
       const p = await api.call('plugins.install', { path: installPath.trim() });
       installPath = '';
-      notify(`Installed ${p.name}`);
+      notify(t('settings.plugins.installed', { name: p.name }));
       await load();
     });
 
@@ -122,18 +123,18 @@ await browser.userscripts.inject({
     if (!editing) return;
     const name = editing.name.trim();
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
-      editError = 'Name: 1-64 characters of A-Z a-z 0-9 _ - (without .ts)';
+      editError = t('settings.plugins.err.name');
       return;
     }
     if (editing.isNew && scripts.some((s) => s.source === 'user' && s.name === name)) {
-      editError = `A userscript called ${name} exists; pick another name or edit that one`;
+      editError = t('settings.plugins.err.exists', { name });
       return;
     }
     busy = 'save';
     try {
       const saved = await api.call('userscripts.save', { name, code: editing.code });
       scripts = [...scripts.filter((s) => !(s.source === 'user' && s.name === name)), saved].sort((a, b) => a.name.localeCompare(b.name));
-      notify(`Saved ${name}: runs on the next matching page load`);
+      notify(t('settings.plugins.scriptSaved', { name }));
       editing = null;
       void load();
     } catch (err) {
@@ -150,7 +151,7 @@ await browser.userscripts.inject({
     await act(`u:${u.name}`, async () => {
       await api.call('userscripts.delete', { name: u.name });
       scripts = scripts.filter((s) => s !== u);
-      notify(`Deleted ${u.name}`);
+      notify(t('settings.plugins.deleted', { name: u.name }));
     });
   }
 
@@ -163,33 +164,32 @@ await browser.userscripts.inject({
     crashed: 'bad',
     error: 'bad',
   };
-  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const timeFmt = $derived(new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   const ago = (ms: number) => {
     const s = Math.round((Date.now() - ms) / 1000);
-    return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+    if (s < 60) return t('settings.plugins.agoSecs', { n: s });
+    return s < 3600 ? t('settings.plugins.agoMin', { n: Math.round(s / 60) }) : t('settings.plugins.agoH', { n: Math.round(s / 3600) });
   };
 </script>
 
 <div class="set-page">
   <header>
-    <h2>Plugins &amp; userscripts</h2>
+    <h2>{t('settings.plugins.title')}</h2>
     <p>
-      Plugins are folders in <span class="set-mono">data/plugins</span> with a <span class="set-mono">plugin.json</span>: a script
-      that reacts to browser events, may add Ctrl+K entries and userscripts, and can only call the commands its manifest names.
-      Userscripts run on matching page loads.
+      {t('settings.plugins.intro1')} <span class="set-mono">data/plugins</span> {t('settings.plugins.intro2')} <span class="set-mono">plugin.json</span>{t('settings.plugins.intro3')}
     </p>
   </header>
 
   {#if loadError}
-    <p class="lib-error" role="alert">Could not read plugins: {loadError}</p>
-    <button class="btn" onclick={load}>Retry</button>
+    <p class="lib-error" role="alert">{t('settings.plugins.loadError', { error: loadError })}</p>
+    <button class="btn" onclick={load}>{t('settings.hints.retry')}</button>
   {:else if !loaded}
-    <p class="set-muted">Loading…</p>
+    <p class="set-muted">{t('common.loading')}</p>
   {:else}
     <section class="set-card" aria-labelledby="pl-h">
       <h3 id="pl-h">
-        <span class="grow">Plugins</span>
-        <button class="btn" disabled={busy !== null} onclick={() => restart()} title="Rescan data/plugins and restart every plugin"><Icon name="reload" size={13} /> Rescan</button>
+        <span class="grow">{t('settings.plugins.plugins')}</span>
+        <button class="btn" disabled={busy !== null} onclick={() => restart()} title={t('settings.plugins.rescanHint')}><Icon name="reload" size={13} /> {t('settings.plugins.rescan')}</button>
       </h3>
       {#each plugins as p (p.name)}
         <div class="set-row plug">
@@ -197,94 +197,94 @@ await browser.userscripts.inject({
             <span class="label">
               {p.manifest?.name ?? p.name}
               {#if p.manifest?.version}<span class="set-muted ver">v{p.manifest.version}</span>{/if}
-              <span class="lib-chip {STATUS_CLASS[p.status]}">{p.status}{p.restarts ? ` · ${p.restarts} restarts` : ''}</span>
+              <span class="lib-chip {STATUS_CLASS[p.status]}">{t(`settings.plugins.status.${p.status}`)}{p.restarts ? ` · ${tp('settings.plugins.restarts', p.restarts)}` : ''}</span>
             </span>
             {#if p.manifest?.description}<span class="help">{p.manifest.description}</span>{/if}
             {#if p.error}<span class="set-err">{p.error}</span>{/if}
             {#each p.warnings ?? [] as w (w)}<span class="warnline"><Icon name="alert" size={12} /> {w}</span>{/each}
             {#if p.manifest}
               <span class="meta">
-                {#if p.manifest.permissions.length}<span>Can call: <span class="set-mono">{p.manifest.permissions.join(', ')}</span></span>{/if}
-                {#if p.manifest.events.length}<span>Listens to: <span class="set-mono">{p.manifest.events.join(', ')}</span></span>{/if}
+                {#if p.manifest.permissions.length}<span>{t('settings.plugins.canCall')} <span class="set-mono">{p.manifest.permissions.join(', ')}</span></span>{/if}
+                {#if p.manifest.events.length}<span>{t('settings.plugins.listensTo')} <span class="set-mono">{p.manifest.events.join(', ')}</span></span>{/if}
                 {#if p.manifest.ui.palette.length}<span>Ctrl+K: {p.manifest.ui.palette.map((e) => e.title).join(', ')}</span>{/if}
               </span>
             {/if}
           </div>
           <div class="ctl">
-            <button class="btn" aria-expanded={logsFor === p.name} onclick={() => (logsFor = logsFor === p.name ? null : p.name)}>Logs</button>
-            {#if p.enabled}<button class="btn" disabled={busy !== null} onclick={() => restart(p.name)}>Restart</button>{/if}
-            <Toggle label="Plugin {p.name}" checked={p.enabled} disabled={busy !== null} onchange={(on) => setPlugin(p, on)} />
+            <button class="btn" aria-expanded={logsFor === p.name} onclick={() => (logsFor = logsFor === p.name ? null : p.name)}>{t('settings.plugins.logs')}</button>
+            {#if p.enabled}<button class="btn" disabled={busy !== null} onclick={() => restart(p.name)}>{t('settings.plugins.restart')}</button>{/if}
+            <Toggle label={t('settings.plugins.pluginToggle', { name: p.name })} checked={p.enabled} disabled={busy !== null} onchange={(on) => setPlugin(p, on)} />
           </div>
         </div>
         {#if logsFor === p.name}
-          <div class="logs" role="log" aria-label="Logs of {p.name}">
+          <div class="logs" role="log" aria-label={t('settings.plugins.logsOf', { name: p.name })}>
             {#each logs as l, i (i)}
               <div class="ll {l.stream}"><span class="ts">{timeFmt.format(l.ts_ms)}</span><span class="st">{l.stream}</span><span class="tx">{l.line}</span></div>
             {:else}
-              <div class="ll system"><span class="tx">No output yet.</span></div>
+              <div class="ll system"><span class="tx">{t('settings.plugins.noOutput')}</span></div>
             {/each}
           </div>
         {/if}
       {:else}
-        <p class="lead">No plugins installed. Copy a plugin folder into <span class="set-mono">data/plugins</span> and press Rescan, or install one below.</p>
+        <p class="lead">{t('settings.plugins.none1')} <span class="set-mono">data/plugins</span> {t('settings.plugins.none2')}</p>
       {/each}
       <form class="set-actions" onsubmit={(e) => (e.preventDefault(), void install())}>
-        <input class="lib-input wide mono" bind:value={installPath} placeholder="C:\path\to\plugin-folder" spellcheck="false" aria-label="Plugin folder to install" />
-        <button class="btn" type="submit" disabled={busy !== null || !installPath.trim()}>Install from folder</button>
+        <input class="lib-input wide mono" bind:value={installPath} placeholder="C:\path\to\plugin-folder" spellcheck="false" aria-label={t('settings.plugins.installLabel')} />
+        <button class="btn" type="submit" disabled={busy !== null || !installPath.trim()}>{t('settings.plugins.install')}</button>
       </form>
     </section>
 
     <section class="set-card" aria-labelledby="us-h">
       <h3 id="us-h">
-        <span class="grow">Userscripts</span>
-        <button class="btn" onclick={create}><Icon name="plus" size={13} /> New userscript</button>
+        <span class="grow">{t('settings.plugins.userscripts')}</span>
+        <button class="btn" onclick={create}><Icon name="plus" size={13} /> {t('settings.plugins.newScript')}</button>
       </h3>
       {#each scripts as u (u.source + u.name)}
         <div class="set-row">
           <div class="text">
             <span class="label">
               {u.header?.name ?? u.name}
-              {#if u.source !== 'user'}<span class="lib-chip">{u.source.replace('plugin:', 'from ')}</span>{/if}
+              {#if u.source !== 'user'}<span class="lib-chip">{t('settings.plugins.fromPlugin', { name: u.source.replace('plugin:', '') })}</span>{/if}
               {#if u.last_run}
                 <span class="lib-chip" class:ok={u.last_run.ok} class:bad={!u.last_run.ok} title={u.last_run.url}>
-                  {u.last_run.ok ? 'ran' : 'failed'} {ago(u.last_run.at_ms)}
+                  {u.last_run.ok ? t('settings.plugins.ran') : t('settings.plugins.failed')} {ago(u.last_run.at_ms)}
                 </span>
               {/if}
             </span>
             {#if u.header}
-              <span class="help set-mono">{[...u.header.matches, ...u.header.includes].join('  ')}{u.header.exclude_matches.length || u.header.excludes.length ? `  (not ${[...u.header.exclude_matches, ...u.header.excludes].join(', ')})` : ''} · {u.header.run_at}</span>
+              <span class="help set-mono">{[...u.header.matches, ...u.header.includes].join('  ')}{u.header.exclude_matches.length || u.header.excludes.length ? `  (${t('settings.plugins.not')} ${[...u.header.exclude_matches, ...u.header.excludes].join(', ')})` : ''} · {u.header.run_at}</span>
             {/if}
             {#if u.error}<span class="set-err">{u.error}</span>{/if}
-            {#if u.last_run?.error}<span class="set-err">{u.last_run.error.code}: {u.last_run.error.message}{u.last_run.error.line ? ` (line ${u.last_run.error.line})` : ''}</span>{/if}
+            {#if u.last_run?.error}<span class="set-err">{u.last_run.error.code}: {u.last_run.error.message}{u.last_run.error.line ? ` (${t('settings.plugins.line', { n: u.last_run.error.line })})` : ''}</span>{/if}
           </div>
           <div class="ctl">
             {#if u.source === 'user'}
-              <button class="icon-btn" aria-label="Edit {u.name}" title="Edit" disabled={busy !== null} onclick={() => edit(u)}><Icon name="pencil" size={14} /></button>
-              <button class="icon-btn" aria-label="Delete {u.name}" title="Delete" disabled={busy !== null} onclick={() => ((toDelete = u), (deleteOpen = true))}><Icon name="trash" size={14} /></button>
-              <Toggle label="Userscript {u.name}" checked={u.enabled} disabled={busy !== null} onchange={(on) => setScript(u, on)} />
+              <button class="icon-btn" aria-label={t('settings.plugins.editScript', { name: u.name })} title={t('common.edit')} disabled={busy !== null} onclick={() => edit(u)}><Icon name="pencil" size={14} /></button>
+              <button class="icon-btn" aria-label={t('settings.plugins.deleteScript', { name: u.name })} title={t('common.delete')} disabled={busy !== null} onclick={() => ((toDelete = u), (deleteOpen = true))}><Icon name="trash" size={14} /></button>
+              <Toggle label={t('settings.plugins.scriptToggle', { name: u.name })} checked={u.enabled} disabled={busy !== null} onchange={(on) => setScript(u, on)} />
             {:else}
-              <span class="set-muted">part of the plugin</span>
+              <span class="set-muted">{t('settings.plugins.partOfPlugin')}</span>
             {/if}
           </div>
         </div>
       {:else}
-        <p class="lead">No userscripts yet. They live in <span class="set-mono">data/userscripts/*.ts</span>.</p>
+        <p class="lead">{t('settings.plugins.noScripts')} <span class="set-mono">data/userscripts/*.ts</span>.</p>
       {/each}
 
       {#if editing}
-        <div class="editor" role="region" aria-label="Userscript editor">
+        <div class="editor" role="region" aria-label={t('settings.plugins.editor')}>
           <label class="lib-field">
-            Name
+            {t('settings.plugins.name')}
             <input class="lib-input mono" bind:value={editing.name} readonly={!editing.isNew} placeholder="my-userscript" spellcheck="false" />
           </label>
           <label class="lib-field">
-            Code <span class="set-muted">header lines: <span class="set-mono">// @match</span>, <span class="set-mono">// @exclude-match</span>, <span class="set-mono">// @run-at document-start | document-end | document-idle</span></span>
+            {t('settings.plugins.code')} <span class="set-muted">{t('settings.plugins.headerLines')} <span class="set-mono">// @match</span>, <span class="set-mono">// @exclude-match</span>, <span class="set-mono">// @run-at document-start | document-end | document-idle</span></span>
             <textarea class="set-code" bind:value={editing.code} spellcheck="false" wrap="off"></textarea>
           </label>
           {#if editError}<p class="set-err" role="alert">{editError}</p>{/if}
           <div class="row">
-            <button class="btn primary" disabled={busy !== null} onclick={saveScript}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
-            <button class="btn" disabled={busy !== null} onclick={() => (editing = null)}>Cancel</button>
+            <button class="btn primary" disabled={busy !== null} onclick={saveScript}>{busy === 'save' ? t('settings.general.saving') : t('common.save')}</button>
+            <button class="btn" disabled={busy !== null} onclick={() => (editing = null)}>{t('common.cancel')}</button>
           </div>
         </div>
       {/if}
@@ -292,11 +292,11 @@ await browser.userscripts.inject({
   {/if}
 </div>
 
-<Dialog bind:open={deleteOpen} title="Delete userscript?" onsubmit={remove}>
-  <p>The file <strong>{toDelete?.name}.ts</strong> will be deleted from data/userscripts.</p>
+<Dialog bind:open={deleteOpen} title={t('settings.plugins.deleteTitle')} onsubmit={remove}>
+  <p>{t('settings.plugins.deleteFile1')} <strong>{toDelete?.name}.ts</strong> {t('settings.plugins.deleteFile2')}</p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (deleteOpen = false)}>Cancel</button>
-    <button type="submit" class="btn danger primary">Delete</button>
+    <button type="button" class="btn" onclick={() => (deleteOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn danger primary">{t('common.delete')}</button>
   {/snippet}
 </Dialog>
 

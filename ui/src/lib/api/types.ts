@@ -542,3 +542,4 @@ export type * from './types-record-runs';
 // Scripts panel debugger (script.debug_* methods and events are merged into RpcMethods / ApiEvents there).
 export type * from './types-scripts';
 export type * from './types-settings'; // settings page + heal UI (notify, governor, hints, adblock, plugins, run.heal_*)
+export type * from './types-languages'; // browser.languages_* (Settings → General → Language)
