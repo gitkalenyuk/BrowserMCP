@@ -73,9 +73,10 @@ ui/
       ├─ keymap.ts       every shortcut: DEFAULT_KEYMAP + parser + keymap.json override merge
       ├─ commands.ts     palette entries (later: from the core's Command Registry)
       ├─ fuzzy.ts        palette matcher
-      ├─ settings.svelte.ts  theme / accent / tab layout / panel / widgets (localStorage, try/catch)
+      ├─ settings.svelte.ts  palette / light-dark / accent / tab layout / panel / widgets (localStorage)
+      ├─ theme/          colour themes: palettes.ts (every colour token, light + dark), color.ts (WCAG)
       ├─ urls.ts         omnibox input -> URL or search
-      └─ styles/app.css  design tokens (CSS custom properties on :root), light + dark
+      └─ styles/app.css  design tokens (CSS custom properties on :root); colours are set by applyTheme
 ```
 
 ## How it fits the browser
@@ -263,7 +264,8 @@ URL; `crates/cef/src/scheme.rs` allow-list). Opened by Ctrl+, (`settings.open`),
 ("Settings") or *All settings…* in the menu; a section request travels through localStorage
 (`bmcp.settings.request`, `lib/settings/open.ts`). Sections (`src/settings/`):
 
-* **General**: theme, accent, density (compact = shorter strip / toolbar / tabs, `data-density` on
+* **General**: colour theme gallery (`AppearanceCard.svelte`, 9 palettes in `lib/theme/palettes.ts`,
+  contrast-tested by `palettes.test.ts`), light / dark, accent, text size, density (compact = shorter strip / toolbar / tabs, `data-density` on
   `:root`), vertical tabs, bookmarks bar, new tab widgets (all `settings.svelte.ts`, localStorage).
 * **AI**: `AiSettings.svelte` from the AI panel with its own `AiStore` (built-in and the user's own
   providers: keys / base URLs / models / headers / CLI path, add / rename / delete, Test, *Use for new chats*, *Make default for background AI* = `ai.provider_set

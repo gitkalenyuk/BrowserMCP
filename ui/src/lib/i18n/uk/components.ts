@@ -79,7 +79,7 @@ export default {
   'components.resize': 'Змінити розмір',
   'components.menu.label': 'Вигляд і налаштування',
   'components.menu.appearance': 'Вигляд',
-  'components.menu.theme': 'Тема',
+  'components.menu.theme': 'Світла чи темна',
   'components.menu.theme.system': 'Системна',
   'components.menu.theme.light': 'Світла',
   'components.menu.theme.dark': 'Темна',

@@ -1,9 +1,13 @@
-/* BrowserMCP design tokens. Light is the base; dark follows prefers-color-scheme
-   unless the user pinned a theme (data-theme on :root). --accent is set from settings. */
+/* BrowserMCP design tokens.
+   Colours come from the chosen palette (lib/theme/palettes.ts): applyTheme() in
+   lib/settings.svelte.ts writes them onto :root together with data-theme="light|dark",
+   data-palette, data-density and data-text-size. The values below are the Graphite palette,
+   used until the script runs (palettes.test.ts keeps them equal to palettes.ts). Tokens that
+   only depend on light / dark (veils, scrim, shadows) live here. */
 
 :root {
   color-scheme: light;
-  --accent: #3b82f6;
+  --accent: #2563eb;
   --on-accent: #ffffff;
 
   --frame: #e6e8ec;
@@ -12,30 +16,41 @@
   --sunken: #eceef2;
   --field: #eceef2;
   --field-focus: #ffffff;
-  --hover: rgb(20 24 32 / 0.06);
-  --press: rgb(20 24 32 / 0.11);
   --fg: #16191f;
   --fg-muted: #4f5664;
-  --fg-subtle: #646b78;
+  --fg-subtle: #5f6673;
   --border: #d8dbe1;
   --border-strong: #c1c6cf;
+  --focus: #2563eb;
+  --selection: #c6dafc;
+  --danger: #c4314b;
+  --on-danger: #ffffff;
+  --ok: #17754a;
+  --warn: #8f5d00;
+  --code-bg: #ffffff;
+  --code-fg: #1f2328;
+  --scrollbar: #c1c6cf;
+
+  --g-grey: #575e6a;
+  --g-blue: #1a5fd0;
+  --g-red: #b81f2a;
+  --g-yellow: #7f5500;
+  --g-green: #166b2e;
+  --g-pink: #a82f78;
+  --g-purple: #7140c8;
+  --g-cyan: #0b6a77;
+  --g-orange: #a8461a;
+  --on-group: #ffffff;
+
+  /* Veils over any surface, derived from the text colour so every palette gets its own. */
+  --hover: color-mix(in oklab, var(--fg) 6%, transparent);
+  --press: color-mix(in oklab, var(--fg) 10%, transparent);
   --scrim: rgb(14 17 22 / 0.28);
   --shadow-pop: 0 12px 32px -8px rgb(14 17 22 / 0.28), 0 2px 6px rgb(14 17 22 / 0.08);
   --shadow-tab: 0 1px 2px rgb(14 17 22 / 0.1);
-  --danger: #c4314b;
-  --ok: #1a7f4b;
-  --warn: #9a6400;
-
-  --g-grey: #5f6672;
-  --g-blue: #1f6feb;
-  --g-red: #d1242f;
-  --g-yellow: #9a6700;
-  --g-green: #1a7f37;
-  --g-pink: #bf3989;
-  --g-purple: #8250df;
-  --g-cyan: #0f7d8c;
-  --g-orange: #c4561d;
-  --on-group: #ffffff;
+  --shadow-sm: 0 1px 3px rgb(14 17 22 / 0.12);
+  /* Knob of switches: always light, on any track colour. */
+  --knob: #ffffff;
 
   --accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
   --accent-line: color-mix(in oklab, var(--accent) 55%, transparent);
@@ -63,72 +78,86 @@
   --tab-h: 24px;
 }
 
+/* Text size (settings: General → Appearance). */
+:root[data-text-size='small'] {
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs: 12px;
+  --fs-lg: 14px;
+}
+:root[data-text-size='large'] {
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs: 14px;
+  --fs-lg: 17px;
+}
+
+/* Graphite dark before the script runs (prefers-color-scheme), and the dark-only veils. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
+    --accent: #5e9bff;
+    --on-accent: #0d1016;
     --frame: #131519;
     --toolbar: #1e2126;
     --surface: #24272d;
     --sunken: #191b1f;
     --field: #131519;
     --field-focus: #17191d;
-    --hover: rgb(255 255 255 / 0.06);
-    --press: rgb(255 255 255 / 0.1);
     --fg: #e7e9ed;
     --fg-muted: #aab0bb;
-    --fg-subtle: #8d939e;
+    --fg-subtle: #959ba6;
     --border: #2f333a;
     --border-strong: #3d424a;
+    --focus: #5e9bff;
+    --selection: #264f78;
+    --danger: #ff7b8a;
+    --on-danger: #16080b;
+    --ok: #4ccb7f;
+    --warn: #e3b341;
+    --code-bg: #0d0f12;
+    --code-fg: #c9d1d9;
+    --scrollbar: #3d424a;
+    --g-grey: #a3a9b4;
+    --g-blue: #74adff;
+    --g-red: #ff8279;
+    --g-yellow: #e5b84a;
+    --g-green: #5fd46c;
+    --g-pink: #f882bf;
+    --g-purple: #c197ff;
+    --g-cyan: #55d3df;
+    --g-orange: #ff9f66;
+    --on-group: #111318;
     --scrim: rgb(0 0 0 / 0.5);
     --shadow-pop: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.3);
     --shadow-tab: 0 1px 2px rgb(0 0 0 / 0.4);
-    --danger: #ff7b8a;
-    --ok: #4ccb7f;
-    --warn: #e3b341;
-    --g-grey: #9aa1ad;
-    --g-blue: #6aa7ff;
-    --g-red: #ff7b72;
-    --g-yellow: #e3b341;
-    --g-green: #56d364;
-    --g-pink: #f778ba;
-    --g-purple: #bc8cff;
-    --g-cyan: #4fd1de;
-    --g-orange: #ff9a5c;
-    --on-group: #131519;
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.35);
+    --knob: #f4f5f7;
   }
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --frame: #131519;
-  --toolbar: #1e2126;
-  --surface: #24272d;
-  --sunken: #191b1f;
-  --field: #131519;
-  --field-focus: #17191d;
-  --hover: rgb(255 255 255 / 0.06);
-  --press: rgb(255 255 255 / 0.1);
-  --fg: #e7e9ed;
-  --fg-muted: #aab0bb;
-  --fg-subtle: #8d939e;
-  --border: #2f333a;
-  --border-strong: #3d424a;
   --scrim: rgb(0 0 0 / 0.5);
   --shadow-pop: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.3);
   --shadow-tab: 0 1px 2px rgb(0 0 0 / 0.4);
-  --danger: #ff7b8a;
-  --ok: #4ccb7f;
-  --warn: #e3b341;
-  --g-grey: #9aa1ad;
-  --g-blue: #6aa7ff;
-  --g-red: #ff7b72;
-  --g-yellow: #e3b341;
-  --g-green: #56d364;
-  --g-pink: #f778ba;
-  --g-purple: #bc8cff;
-  --g-cyan: #4fd1de;
-  --g-orange: #ff9a5c;
-  --on-group: #131519;
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.35);
+  --knob: #f4f5f7;
+}
+
+/* High contrast: stronger hover / press veils and accent tints; a dark knob on its white switch track. */
+:root[data-palette='contrast'] {
+  --hover: color-mix(in oklab, var(--fg) 14%, transparent);
+  --press: color-mix(in oklab, var(--fg) 22%, transparent);
+  --accent-soft: color-mix(in oklab, var(--accent) 24%, transparent);
+  --accent-line: var(--accent);
+}
+:root[data-palette='contrast'][data-theme='dark'] {
+  --knob: #000000;
+}
+
+html {
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 *,
@@ -165,12 +194,13 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 35%, transparent);
+  background: var(--selection);
+  color: var(--fg);
 }
 
 .sr-only {

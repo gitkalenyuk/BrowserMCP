@@ -80,7 +80,7 @@
     height: 44px;
     border-radius: 50%;
     background: var(--surface);
-    box-shadow: 0 1px 3px rgb(14 17 22 / 0.12);
+    box-shadow: var(--shadow-sm);
   }
   .title {
     max-width: 100%;

@@ -51,5 +51,7 @@ export default defineConfig({
     environment: 'node',
     // Pins the UI language to English (the default follows the OS language).
     setupFiles: ['src/test-setup.ts'],
+    // theme.test.ts reads app.css as text (?raw) to compare its defaults with the palettes.
+    css: { include: [/styles\/app\.css/] },
   },
 });

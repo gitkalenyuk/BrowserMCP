@@ -409,7 +409,7 @@ export const library = chapter(
 export const newtab = chapter(
   'newtab',
   'New tab and appearance',
-  'The new tab page with its widgets, and how the browser looks: theme, accent color, density, tab layout.',
+  'The new tab page with its widgets, and how the browser looks: color theme, light / dark, accent color, density, text size, tab layout.',
   section(
     'what',
     'What it is',
@@ -432,16 +432,47 @@ export const newtab = chapter(
     'look',
     'Appearance',
     list(
-      '**Theme**: System (follows Windows light / dark), Light or Dark. The palette has “Toggle light / dark theme”.',
-      '**Accent color**: buttons, the selected tab and focus rings; pick a swatch or any custom color.',
+      '**Color theme**: the colors of the whole interface; see “Color themes” below.',
+      '**Light or dark**: System (follows Windows light / dark), Light or Dark. The palette has “Toggle light / dark theme”.',
+      '**Accent color**: buttons, the selected tab and focus rings; the theme’s own accent, a swatch or any custom color.',
       '**Density**: Compact makes the tab strip, toolbar and tabs shorter.',
+      '**Text size**: Small, Default or Large interface text.',
       '**Vertical tabs** ([[cmd:ui.toggleVerticalTabs]]) and the **bookmarks bar** ([[cmd:ui.toggleBookmarksBar]]).',
     ),
     p('These settings are saved on this computer and apply to every window at once.'),
   ),
   section(
+    'themes',
+    'Color themes',
+    p(
+      'A color theme repaints the whole interface of the browser: the tab strip, toolbar and address bar, the side panels (AI chat, traffic, terminal, scripts), the command palette, dialogs, the new tab page, the library and these settings. Web pages keep their own colors.',
+    ),
+    list(
+      '**Graphite**: neutral greys with a blue accent, the original look.',
+      '**Midnight** (deep navy), **Forest** (moss and pine greens), **Ember** (warm browns with an amber accent), **Rosewood** (dusty rose and plum), **Lagoon** (blue-green with teal) and **Dusk** (twilight violet).',
+      '**Paper**: warm paper and ink with softer contrast, comfortable for long reading.',
+      '**High contrast**: black and white with strong borders; every text meets WCAG AAA (at least 7:1). Pick it when text is hard to read in the other themes.',
+    ),
+    steps(
+      'Open **Settings → General → Appearance** ([[cmd:settings.open]]).',
+      'Click a theme card. It applies at once to every window and page; the small picture on the card shows how it looks.',
+      'Choose **Light or dark**: System follows Windows, or pin Light or Dark. Every theme has both variants.',
+      'Leave **Accent color** on **Theme default** to use the theme’s own accent, or pick a swatch or any custom color. Text on accent buttons switches between dark and white by itself so it stays readable.',
+      'If you like, set **Density** and **Text size** (interface text only; web pages zoom with [[cmd:zoom.in]] and [[cmd:zoom.out]]).',
+    ),
+    tip('The toolbar menu (the ☰ button) has the same theme, light / dark and accent pickers for a quick switch.'),
+    p('Every theme is checked automatically, in both variants, for readable contrast: at least 4.5:1 for text (WCAG AA) and 7:1 in High contrast.'),
+    settings('general', 'Color theme, light / dark, accent, density, text size.'),
+  ),
+  section(
     'limits',
     'Limits and known issues',
-    list('Widgets are fixed to the four above; there is no widget API for plugins yet.'),
+    list(
+      'Widgets are fixed to the four above; there is no widget API for plugins yet.',
+      'Themes recolor the browser’s own interface only, not web pages (sites decide their colors themselves, some follow Light or dark).',
+      'A custom accent color is not contrast-checked: a very light accent on a light theme can be hard to see. Theme default is always checked.',
+      'There is no theme editor yet: you cannot change single colors of a theme, only the accent.',
+      'Colors and text size are not available as a command for AI agents or scripts: the appearance lives in the interface, not in the browser core.',
+    ),
   ),
 );

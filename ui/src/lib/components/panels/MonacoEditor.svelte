@@ -2,6 +2,7 @@
   // Monaco, loaded on first mount with a dynamic import (its own chunks; see scripts/monaco.ts).
   import { untrack } from 'svelte';
   import { t } from '../../i18n/index.svelte';
+  import { settings } from '../../settings.svelte';
   import type { EditorKey, ScriptEditor } from '../../scripts/monaco';
 
   let {
@@ -64,7 +65,15 @@
 
   // Another script (or its reloaded text) -> swap the model; typing round-trips as a no-op.
   $effect(() => editor?.open(path, value));
-  $effect(() => editor?.setTheme(theme));
+  $effect(() => {
+    // Also after a palette change: the themes read the CSS tokens, which :root gets in the same
+    // tick, so redefine them on the next frame.
+    void settings.tokens;
+    const ed = editor;
+    const th = theme;
+    const raf = requestAnimationFrame(() => ed?.setTheme(th));
+    return () => cancelAnimationFrame(raf);
+  });
   // The hover text is read here, so the effect also re-runs when the language changes.
   $effect(() => editor?.setBreakpoints(breakpoints, verified, t('scripts.breakpointHover')));
   $effect(() => editor?.setMarkedLine(markedLine, markKind));
@@ -109,14 +118,14 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #e5484d;
+    background: var(--danger);
   }
   .monaco :global(.bmcp-bp-unverified::before) {
     background: transparent;
-    box-shadow: inset 0 0 0 2px #e5484d;
+    box-shadow: inset 0 0 0 2px var(--danger);
   }
   .monaco :global(.bmcp-current-line) {
-    background: color-mix(in oklab, #f5d90a 26%, transparent);
+    background: color-mix(in oklab, var(--warn) 26%, transparent);
   }
   .monaco :global(.bmcp-current-arrow::after) {
     content: '';
@@ -126,12 +135,12 @@
     width: 0;
     height: 0;
     margin-top: -5px;
-    border-left: 8px solid #d4a72c;
+    border-left: 8px solid var(--warn);
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
   }
   .monaco :global(.bmcp-error-line) {
-    background: color-mix(in oklab, #e5484d 18%, transparent);
+    background: color-mix(in oklab, var(--danger) 18%, transparent);
   }
   .monaco :global(.margin-view-overlays .line-numbers) {
     cursor: pointer;

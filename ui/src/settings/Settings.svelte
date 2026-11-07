@@ -345,7 +345,7 @@
   }
   .toast.error {
     background: var(--danger);
-    color: #fff;
+    color: var(--on-danger);
   }
   .toast .icon-btn {
     color: inherit;

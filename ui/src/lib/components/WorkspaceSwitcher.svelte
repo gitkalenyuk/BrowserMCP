@@ -314,7 +314,7 @@
     flex: none;
   }
   .act.danger:hover {
-    color: var(--danger, #d33);
+    color: var(--danger);
   }
   .text {
     display: grid;
@@ -407,15 +407,15 @@
   .primary {
     background: var(--accent) !important;
     border-color: transparent !important;
-    color: white !important;
+    color: var(--on-accent) !important;
   }
   .primary:disabled {
     opacity: 0.5;
   }
   .danger-btn {
-    background: var(--danger, #d33) !important;
+    background: var(--danger) !important;
     border-color: transparent !important;
-    color: white !important;
+    color: var(--on-danger) !important;
   }
   .foot {
     margin-top: 4px;
