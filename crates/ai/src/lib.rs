@@ -1,6 +1,7 @@
 //! BrowserMCP built-in AI (plan: "Вбудований ШІ", "Кілька ШІ", Phase 5).
 //!
-//! * [`config`] — provider presets + `data/config/ai.json` (plain JSON, keys included);
+//! * [`config`] — built-in presets, the user's own providers and `data/config/ai.json` (plain
+//!   JSON, keys included);
 //! * [`model`] — HTTP adapters: Anthropic Messages, OpenAI-compatible chat.completions, Gemini;
 //! * [`agent`] — the agent loop for API providers; tools are the registry's commands;
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
@@ -124,25 +125,30 @@ impl AiService {
 
     /// Change the config with `f` and save it.
     pub fn update_config(&self, f: impl FnOnce(&mut AiConfig)) -> Result<(), CmdError> {
-        let mut config = lock(&self.config);
-        f(&mut config);
-        config
-            .save(&self.config_path())
-            .map_err(|e| CmdError::internal(format!("cannot save ai.json: {e}")))
+        self.try_update_config(|config| {
+            f(config);
+            Ok(())
+        })
     }
 
-    /// A provider preset merged with its settings.
+    /// Change the config with `f` and save it; when `f` (or saving) fails nothing changes.
+    pub fn try_update_config<T>(
+        &self,
+        f: impl FnOnce(&mut AiConfig) -> Result<T, CmdError>,
+    ) -> Result<T, CmdError> {
+        let mut config = lock(&self.config);
+        let mut next = config.clone();
+        let out = f(&mut next)?;
+        next.save(&self.config_path())
+            .map_err(|e| CmdError::internal(format!("cannot save ai.json: {e}")))?;
+        *config = next;
+        Ok(out)
+    }
+
+    /// A built-in or user provider merged with its settings.
     pub fn resolve(&self, id: &str) -> Result<Resolved, CmdError> {
-        let preset = config::preset(id).ok_or_else(|| {
-            let ids = config::PRESETS
-                .iter()
-                .map(|p| serde_json::json!(p.id))
-                .collect();
-            CmdError::new(ErrorCode::NotFound, format!("unknown AI provider '{id}'"))
-                .with_hint("Call ai_providers to list the providers.")
-                .with_candidates(ids)
-        })?;
-        Ok(Resolved::new(preset, lock(&self.config).settings(id)))
+        // Resolving may search PATH for a CLI: do it on a copy, not under the lock.
+        self.config().resolve(id)
     }
 
     pub fn session(&self, id: &str) -> Result<Arc<Session>, CmdError> {
@@ -159,21 +165,7 @@ impl AiService {
     /// Start an agent and queue `prompt` as its first message. Needs a tokio runtime.
     pub fn start_session(&self, ctx: &Ctx, opts: StartOptions) -> Result<SessionInfo, CmdError> {
         let resolved = self.resolve(&opts.provider)?;
-        if !resolved.configured() {
-            return Err(CmdError::invalid_params(format!(
-                "AI provider '{}' is not configured",
-                opts.provider
-            ))
-            .with_hint(match resolved.preset.kind {
-                Kind::Api(_) => "Set its API key (and base_url for custom) with ai_provider_set.",
-                Kind::ClaudeCode => {
-                    "Install Claude Code (`claude` on PATH) or set its path with ai_provider_set."
-                }
-                Kind::Codex => {
-                    "Install Codex (`codex` on PATH) or set its path with ai_provider_set."
-                }
-            }));
-        }
+        resolved.ensure_configured()?;
         let model = opts
             .model
             .clone()
@@ -186,7 +178,7 @@ impl AiService {
         // match; its named colors map onto `COLORS` in the same order.
         let color = match ctx.extensions.get::<bmcp_core::Agents>() {
             Some(agents) => {
-                let name = format!("{} {n}", resolved.preset.name);
+                let name = format!("{} {n}", resolved.name);
                 let named = agents.ensure(&ctx.events, &id, Some(&name)).color;
                 let index = bmcp_core::agents::COLORS
                     .iter()
@@ -210,8 +202,8 @@ impl AiService {
         );
         let session = Arc::new(session);
 
-        match resolved.preset.kind {
-            Kind::Api(api) => {
+        match resolved.kind {
+            Kind::Api(_) => {
                 let model = model.ok_or_else(|| {
                     CmdError::invalid_params(format!("no model set for '{}'", opts.provider)).with_hint(
                         "Pass `model`, or set one with ai_provider_set (ai_provider_test lists the models).",
@@ -224,11 +216,7 @@ impl AiService {
                     .unwrap_or_default();
                 let agent = agent::ApiAgent {
                     session: session.clone(),
-                    client: model::Client::new(
-                        api,
-                        resolved.base_url.clone(),
-                        resolved.api_key.clone(),
-                    ),
+                    client: resolved.client().expect("an API provider"),
                     model,
                     tools,
                     runner: agent::ToolRunner {
@@ -253,7 +241,7 @@ impl AiService {
                     toolsets.join(",")
                 );
                 let binary = resolved.binary.clone().unwrap_or_default();
-                if resolved.preset.kind == Kind::ClaudeCode {
+                if resolved.kind == Kind::ClaudeCode {
                     let agent = cli::claude::ClaudeCode {
                         session: session.clone(),
                         binary,

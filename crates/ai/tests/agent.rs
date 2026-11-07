@@ -387,10 +387,11 @@ async fn providers_listing_and_validation() {
         "groq",
         "ollama",
         "lmstudio",
-        "custom",
     ] {
         assert!(ids.contains(&id), "{id} missing");
     }
+    // Custom endpoints are user providers now (tests/providers.rs).
+    assert!(!ids.contains(&"custom"));
     let anthropic = providers.iter().find(|p| p["id"] == "anthropic").unwrap();
     assert_eq!(
         (

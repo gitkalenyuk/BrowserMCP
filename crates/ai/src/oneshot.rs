@@ -8,7 +8,7 @@
 //!
 //! The provider is the caller's choice, else [`AiService::default_provider`]: `default_provider`
 //! from `ai.json` (`ai.provider_set {id, default: true}`), else the first configured provider in
-//! the order of `ai.providers`.
+//! the order of `ai.providers` (built-ins first, then the user's own).
 
 use std::time::Duration;
 
@@ -18,8 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::AiService;
 use crate::cli::{command, kill_tree, spawn};
-use crate::config::{Kind, PRESETS, Resolved};
-use crate::model::{Client, Message, Request};
+use crate::config::{Kind, Resolved};
+use crate::model::{Message, Request};
 use crate::session::AgentEvent;
 
 /// Default time limit of one completion.
@@ -56,15 +56,16 @@ impl AiService {
     /// The provider background features use when none is named: `default_provider` from
     /// `ai.json` if it is a known provider, else the first configured one.
     pub fn default_provider(&self) -> Option<String> {
-        if let Some(id) = self.config().default_provider
-            && crate::config::preset(&id).is_some()
+        let config = self.config();
+        if let Some(id) = &config.default_provider
+            && config.resolve(id).is_ok()
         {
-            return Some(id);
+            return Some(id.clone());
         }
-        PRESETS
-            .iter()
-            .find(|p| self.resolve(p.id).is_ok_and(|r| r.configured()))
-            .map(|p| p.id.to_string())
+        config
+            .ids()
+            .into_iter()
+            .find(|id| config.resolve(id).is_ok_and(|r| r.configured()))
     }
 
     /// Run one completion (see the [module docs](self)).
@@ -79,12 +80,7 @@ impl AiService {
             })?,
         };
         let resolved = self.resolve(&provider)?;
-        if !resolved.configured() {
-            return Err(CmdError::invalid_params(format!(
-                "AI provider '{provider}' is not configured"
-            ))
-            .with_hint("Set it up with ai_provider_set, or pass another `provider`."));
-        }
+        resolved.ensure_configured()?;
         let model = req
             .model
             .clone()
@@ -92,7 +88,7 @@ impl AiService {
             .or(resolved.model.clone());
         let timeout = req.timeout.unwrap_or(DEFAULT_TIMEOUT);
         let work = async {
-            match resolved.preset.kind {
+            match resolved.kind {
                 Kind::Api(_) => api_completion(&resolved, model.as_deref(), &req).await,
                 Kind::ClaudeCode => {
                     self.claude_completion(&resolved, model.as_deref(), &req)
@@ -253,14 +249,13 @@ async fn api_completion(
     model: Option<&str>,
     req: &TextRequest,
 ) -> Result<String, CmdError> {
-    let Kind::Api(api) = resolved.preset.kind else {
-        return Err(CmdError::internal("not an API provider"));
-    };
+    let client = resolved
+        .client()
+        .ok_or_else(|| CmdError::internal("not an API provider"))?;
     let model = model.ok_or_else(|| {
-        CmdError::invalid_params(format!("no model set for '{}'", resolved.preset.id))
+        CmdError::invalid_params(format!("no model set for '{}'", resolved.id))
             .with_hint("Pass `model`, or set one with ai_provider_set.")
     })?;
-    let client = Client::new(api, resolved.base_url.clone(), resolved.api_key.clone());
     let messages = [Message::User {
         text: req.prompt.clone(),
     }];
@@ -273,7 +268,7 @@ async fn api_completion(
     let reply = client
         .complete(request, &mut |_: &str| {})
         .await
-        .map_err(|e| CmdError::internal(format!("AI provider '{}': {e}", resolved.preset.id)))?;
+        .map_err(|e| CmdError::internal(format!("AI provider '{}': {e}", resolved.id)))?;
     Ok(reply.text)
 }
 
@@ -324,13 +319,17 @@ mod tests {
     fn default_provider_follows_the_config() {
         let dir = tempfile::tempdir().unwrap();
         let ai = AiService::new(dir.path(), "http://127.0.0.1:9/mcp");
-        ai.update_config(|c| {
-            c.providers.entry("custom".into()).or_default().base_url =
-                Some("http://127.0.0.1:9/v1".into());
-            c.default_provider = Some("custom".into());
+        ai.try_update_config(|c| {
+            let id = c.add_provider(crate::config::NewProvider {
+                name: "Box".into(),
+                base_url: Some("http://127.0.0.1:9/v1".into()),
+                ..Default::default()
+            })?;
+            c.default_provider = Some(id);
+            Ok(())
         })
         .unwrap();
-        assert_eq!(ai.default_provider().as_deref(), Some("custom"));
+        assert_eq!(ai.default_provider().as_deref(), Some("box"));
         // An unknown id falls back to the first configured provider.
         ai.update_config(|c| c.default_provider = Some("nope".into()))
             .unwrap();
