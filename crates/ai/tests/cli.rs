@@ -191,16 +191,27 @@ async fn claude_code_asks_before_tools_and_relays_the_answers() {
     let listed = h.call("ai.sessions_list", json!({})).await.unwrap();
     assert_eq!(listed["sessions"][0]["pending_permissions"], 1);
 
-    // The agent itself may not approve its own request.
-    let err = h
-        .call_as(
-            Caller::Agent { id: id.clone() },
-            "ai.permission_answer",
-            json!({ "id": pid, "decision": "allow" }),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(err.code, ErrorCode::NeedsApproval);
+    // No agent of the browser may approve it: not the agent itself (over its MCP connection),
+    // not an API agent of another chat.
+    for caller in [
+        Caller::Mcp {
+            session: "m1".into(),
+            agent: Some(id.clone()),
+        },
+        Caller::Agent {
+            id: "anthropic-7".into(),
+        },
+    ] {
+        let err = h
+            .call_as(
+                caller,
+                "ai.permission_answer",
+                json!({ "id": pid, "decision": "allow" }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NeedsApproval);
+    }
 
     // Deny with a reason: the agent gets it, and the chat shows it on the failed tool call.
     h.call(
@@ -353,6 +364,35 @@ async fn stopping_cancels_pending_approvals() {
     assert_eq!(err.code, ErrorCode::NotFound);
 }
 
+/// Claude Code withdraws a request right after asking (`control_cancel_request` read in the
+/// same batch): the card goes away and the CLI gets its answer, instead of a card that waits
+/// until the chat stops.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_withdrawn_request_is_cancelled_at_once() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "withdraw" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    let events = until_done(&mut rx, &id).await;
+    let statuses: Vec<&str> = of(&events, "ai.permission")
+        .into_iter()
+        .filter_map(|e| e.data["status"].as_str())
+        .collect();
+    assert_eq!(statuses, ["pending", "cancelled"]);
+    let list = h.call("ai.permissions_list", json!({})).await.unwrap();
+    assert!(list["permissions"].as_array().unwrap().is_empty());
+    h.stop_all().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_chat_continues_its_conversation_also_after_a_restart() {
     let data = tempfile::tempdir().unwrap();
@@ -444,6 +484,53 @@ async fn a_stopped_chat_continues_its_conversation_also_after_a_restart() {
     h.stop_all().await;
 }
 
+/// Messages sent while a chat is being stopped (the panel and an MCP client at once) continue
+/// it with ONE new Claude Code process: none is lost to a second backend, and the chat ends
+/// idle, not stopped.
+#[tokio::test(flavor = "multi_thread")]
+async fn sends_racing_a_stop_continue_the_chat_once() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "hello" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    until_done(&mut rx, &id).await;
+
+    // The stop is still killing the first process when both messages arrive.
+    let (stopped, a, b) = tokio::join!(
+        h.call("ai.session_stop", json!({ "id": id })),
+        h.call("ai.session_send", json!({ "id": id, "text": "one" })),
+        h.call("ai.session_send", json!({ "id": id, "text": "two" })),
+    );
+    stopped.unwrap();
+    a.unwrap();
+    b.unwrap();
+    let mut answers = Vec::new();
+    for _ in 0..2 {
+        let events = until_done(&mut rx, &id).await;
+        answers.extend(
+            of(&events, "ai.message")
+                .into_iter()
+                .filter_map(|e| e.data["text"].as_str().map(str::to_string))
+                .filter(|t| t.starts_with("echo: ")),
+        );
+    }
+    answers.sort();
+    assert_eq!(answers, ["echo: one", "echo: two"]);
+    assert_eq!(runs(fake.path()).len(), 2, "one restart, not two");
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"][0]["status"], "idle");
+    h.stop_all().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lost_conversation_goes_on_in_a_new_one_and_says_so() {
     let data = tempfile::tempdir().unwrap();
@@ -473,13 +560,17 @@ async fn a_lost_conversation_goes_on_in_a_new_one_and_says_so() {
         .await
         .unwrap();
     let events = until_done(&mut rx, &id).await;
-    let notices: Vec<&str> = of(&events, "ai.message")
+    let notices: Vec<&Event> = of(&events, "ai.message")
         .into_iter()
         .filter(|e| e.data["role"] == "system")
-        .filter_map(|e| e.data["text"].as_str())
         .collect();
+    // A code the UI translates, and English text for other clients.
     assert!(
-        notices.iter().any(|n| n.contains("could not continue")),
+        notices.iter().any(|n| n.data["code"] == "resume_lost"
+            && n.data["params"]["agent"] == "Claude Code"
+            && n.data["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("could not continue"))),
         "{notices:?}"
     );
     let last = of(&events, "ai.message")

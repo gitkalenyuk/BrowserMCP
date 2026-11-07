@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { AiPermissionDecision, AiPermissionMode, AiSession, AiCodexSandbox } from '../../api';
+  import type { AiCodexApproval, AiCodexSandbox, AiPermissionDecision, AiPermissionMode, AiSession } from '../../api';
   import { closeNeedsConfirm, finishedIds } from '../../ai/sessions';
-  import { argsPreview, doneLabel, failureReason, toolLabel } from '../../ai/thread';
+  import { argsPreview, doneLabel, failureReason, noticeText, summaryText, toolLabel } from '../../ai/thread';
   import { t, tp } from '../../i18n/index.svelte';
   import { PROVIDERS, providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
@@ -15,6 +15,7 @@
 
   const MODES: AiPermissionMode[] = ['ask', 'accept_edits', 'plan', 'full_access', 'browser_only'];
   const SANDBOXES: AiCodexSandbox[] = ['read_only', 'workspace_write', 'full_access'];
+  const APPROVALS: AiCodexApproval[] = ['untrusted', 'on_request', 'never'];
 
   let view = $state<'chat' | 'settings'>('chat');
   // The draft lives in the store: the page context menu ("Ask AI about this") fills it.
@@ -147,12 +148,14 @@
     return parts.join(' · ');
   }
 
+  function isCodex(s: AiSession): boolean {
+    return s.provider === 'codex' || ai.providers.find((p) => p.id === s.provider)?.protocol === 'codex';
+  }
+
   /** The access in effect for a CLI chat, as a short chip label. */
   function accessLabel(s: AiSession): string | null {
     if (!s.access) return null;
-    if (s.provider === 'codex' || ai.providers.find((p) => p.id === s.provider)?.protocol === 'codex') {
-      return t(`aiChat.sandbox.${s.access.sandbox}`);
-    }
+    if (isCodex(s)) return t(`aiChat.sandbox.${s.access.sandbox}`);
     return t(`aiChat.mode.${s.access.permission_mode}`);
   }
 
@@ -230,7 +233,7 @@
             </button>
           </div>
         {/each}
-        {#if finished.length > 1}
+        {#if finished.length > 0}
           <button class="sess sweep" onclick={closeFinished} title={t('aiChat.closeFinishedTitle')}>
             <Icon name="trash" size={12} />
             {t('aiChat.closeFinished')}
@@ -271,6 +274,17 @@
                     </select>
                   </label>
                   <p class="hint" class:warn={chosenMode === 'full_access'}>{t(`aiChat.modeHint.${chosenMode}`)}</p>
+                  <label>
+                    <span>{t('aiChat.newChat.addDirs')}</span>
+                    <textarea
+                      rows="2"
+                      spellcheck="false"
+                      value={ai.newChat.add_dirs ?? defaults?.add_dirs.join('\n') ?? ''}
+                      oninput={(e) => (ai.newChat.add_dirs = e.currentTarget.value)}
+                      placeholder={t('aiChat.accessSettings.addDirsPlaceholder')}
+                    ></textarea>
+                  </label>
+                  <p class="hint">{t('aiChat.newChat.addDirsHint')}</p>
                 {:else}
                   <label>
                     <span>{t('aiChat.newChat.sandbox')}</span>
@@ -280,6 +294,16 @@
                     >
                       <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.sandbox.${defaults?.sandbox ?? 'workspace_write'}`) })}</option>
                       {#each SANDBOXES as m (m)}<option value={m}>{t(`aiChat.sandbox.${m}`)}</option>{/each}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{t('aiChat.newChat.approvals')}</span>
+                    <select
+                      value={ai.newChat.approval_policy ?? ''}
+                      onchange={(e) => (ai.newChat.approval_policy = (e.currentTarget.value || null) as AiCodexApproval | null)}
+                    >
+                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.approval.${defaults?.approval_policy ?? 'on_request'}`) })}</option>
+                      {#each APPROVALS as a (a)}<option value={a}>{t(`aiChat.approval.${a}`)}</option>{/each}
                     </select>
                   </label>
                 {/if}
@@ -307,9 +331,14 @@
           {:else if item.kind === 'assistant'}
             <div class="msg assistant" class:streaming={item.streaming}>{item.text}</div>
           {:else if item.kind === 'system'}
-            <div class="notice"><Icon name="info" size={13} />{item.text}</div>
+            <div class="notice"><Icon name="info" size={13} />{noticeText(item)}</div>
           {:else if item.kind === 'permission'}
-            <AiPermissionCard request={item.request} agent={sessionName ?? ''} onanswer={(d, r) => answer(item.request.id, d, r)} />
+            <AiPermissionCard
+              request={item.request}
+              agent={sessionName ?? ''}
+              reasonReachesAgent={!isCodex(session)}
+              onanswer={(d, r) => answer(item.request.id, d, r)}
+            />
           {:else if item.kind === 'tool'}
             {@const why = failureReason(item)}
             <details class="tool" class:failed={item.ok === false}>
@@ -345,7 +374,7 @@
                 {/if}
                 {#if item.summary !== null}
                   <div class="k">{item.ok ? t('aiChat.tool.result') : t('aiChat.tool.error')}</div>
-                  <pre>{item.summary}</pre>
+                  <pre>{summaryText(item.summary)}</pre>
                 {:else if item.pending}
                   <div class="k">{t('aiChat.tool.waiting')}</div>
                 {/if}
@@ -656,6 +685,22 @@
   }
   .access select {
     appearance: auto;
+  }
+  .access textarea {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r);
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: 400;
+    resize: vertical;
+  }
+  .access label:has(textarea) {
+    align-items: flex-start;
   }
   .hint {
     max-width: none;

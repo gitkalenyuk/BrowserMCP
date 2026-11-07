@@ -11,13 +11,21 @@
   let {
     request,
     agent,
+    reasonReachesAgent = true,
     onanswer,
   }: {
     request: AiPermission;
     /** Display name of the agent ("Claude Code #2"). */
     agent: string;
+    /**
+     * Whether a deny reason is passed on to the agent. Claude Code gets it; Codex's approval
+     * answer has no room for one, so there it is only a note in this chat.
+     */
+    reasonReachesAgent?: boolean;
     onanswer: (decision: AiPermissionDecision, reason?: string) => Promise<void>;
   } = $props();
+
+  const reasonLabel = $derived(reasonReachesAgent ? t('aiChat.perm.denyReason') : t('aiChat.perm.denyNote'));
 
   let denying = $state(false);
   let reason = $state('');
@@ -98,7 +106,7 @@
         }}
       >
         <!-- svelte-ignore a11y_autofocus -->
-        <input bind:value={reason} placeholder={t('aiChat.perm.denyReason')} aria-label={t('aiChat.perm.denyReason')} autofocus />
+        <input bind:value={reason} placeholder={reasonLabel} aria-label={reasonLabel} autofocus />
         <div class="actions">
           <button class="btn danger" type="submit" disabled={busy}>{t('aiChat.perm.denySend')}</button>
           <button class="btn" type="button" disabled={busy} onclick={() => (denying = false)}>{t('common.cancel')}</button>

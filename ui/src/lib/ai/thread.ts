@@ -15,7 +15,8 @@ import { t } from '../i18n/index.svelte';
 export type ChatItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
-  | { kind: 'system'; text: string }
+  /** `code`: a note the UI knows, shown in the user's language (see `noticeText`). */
+  | { kind: 'system'; text: string; code?: string; params?: Record<string, string> }
   | { kind: 'tool'; name: string; args: unknown; pending: boolean; ok: boolean | null; summary: string | null }
   | { kind: 'permission'; request: AiPermission }
   | { kind: 'done'; reason: string };
@@ -36,9 +37,13 @@ function closeStreaming(items: ChatItem[]): ChatItem[] {
 export function applyAiEvent(items: ChatItem[], event: AiEvent): ChatItem[] {
   switch (event.type) {
     case 'ai.message': {
-      const { role, text, text_delta } = event.payload;
+      const { role, text, text_delta, code, params } = event.payload;
       if (role === 'user') return [...closeStreaming(items), { kind: 'user', text: text ?? '' }];
-      if (role === 'system') return [...items, { kind: 'system', text: text ?? text_delta ?? '' }];
+      if (role === 'system') {
+        const note: ChatItem = { kind: 'system', text: text ?? text_delta ?? '' };
+        if (code) Object.assign(note, { code, params: params ?? {} });
+        return [...items, note];
+      }
       const last = items[items.length - 1];
       const open = last?.kind === 'assistant' && last.streaming ? last : null;
       if (text_delta !== undefined) {
@@ -97,7 +102,10 @@ export function threadFromTranscript(entries: AiTranscriptEntry[]): ChatItem[] {
         items = applyAiEvent(items, { type: 'ai.message', payload: { session: '', role: 'assistant', text: e.text } });
         break;
       case 'notice':
-        items = applyAiEvent(items, { type: 'ai.message', payload: { session: '', role: 'system', text: e.text } });
+        items = applyAiEvent(items, {
+          type: 'ai.message',
+          payload: { session: '', role: 'system', text: e.text, code: e.code, params: e.params },
+        });
         break;
       case 'tool_call':
         items = applyAiEvent(items, { type: 'ai.tool_call', payload: { session: '', name: e.name, args: e.args } });
@@ -141,6 +149,42 @@ export function doneLabel(reason: string): string | null {
   return reason;
 }
 
+/** Notes the core sends with a code (crates/ai/src/session.rs `AgentEvent::KnownNotice`). */
+const NOTICE_CODES = new Set(['resume_lost', 'mcp_not_connected']);
+
+/** A system note in the user's language when the core sent a known code, else as sent. */
+export function noticeText(item: Extract<ChatItem, { kind: 'system' }>): string {
+  if (item.code && NOTICE_CODES.has(item.code)) return t(`aiChat.notice.${item.code}`, item.params ?? {});
+  return item.text;
+}
+
+/**
+ * Tool results the core words itself (crates/ai/src/cli/codex.rs) in the user's language;
+ * anything else (output, the agent's own errors) as it came.
+ */
+export function summaryText(summary: string): string {
+  const text = summary.trim();
+  const exit = /^Exited with code (-?\d+)$/.exec(text);
+  if (exit) return t('aiChat.summary.exitCode', { code: exit[1] });
+  switch (text) {
+    case 'Declined: the command was not approved':
+      return t('aiChat.summary.commandDeclined');
+    case 'Declined: the change was not approved':
+      return t('aiChat.summary.changeDeclined');
+    case 'Files changed':
+      return t('aiChat.summary.filesChanged');
+    case 'The command failed':
+      return t('aiChat.summary.commandFailed');
+    case 'The user denied this action.':
+      return t('aiChat.summary.userDenied');
+    case 'The request was cancelled before the user answered.':
+      return t('aiChat.summary.requestCancelled');
+  }
+  const denied = /^The user denied this action: ([\s\S]+)$/.exec(text);
+  if (denied) return t('aiChat.summary.userDeniedWhy', { reason: denied[1] });
+  return summary;
+}
+
 /**
  * Why a tool call failed, for the line under its row: the error text, or a note when there is
  * none. `null` for calls that did not fail.
@@ -148,7 +192,7 @@ export function doneLabel(reason: string): string | null {
 export function failureReason(item: Extract<ChatItem, { kind: 'tool' }>): string | null {
   if (item.ok !== false) return null;
   const text = item.summary?.trim();
-  return text ? text : t('aiChat.tool.noReason');
+  return text ? summaryText(text) : t('aiChat.tool.noReason');
 }
 
 /** Short one-line preview of tool arguments: `{url: "https://…", tab: 3}`. */

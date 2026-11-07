@@ -48,7 +48,21 @@ impl AiService {
     /// same conversation): it never turns into a new session.
     pub async fn send(&self, ctx: &Ctx, id: &str, text: String) -> Result<SessionInfo, CmdError> {
         let session = self.session(id)?;
-        if session.status().ended() || session.is_cancelled() {
+        // Continuing is serialized: a second send that waited here finds the session already
+        // continued and only queues its message. The guard is held until the message is queued,
+        // so a close cannot slip in between.
+        let _turn = match session.needs_restart() {
+            true => Some(session.lifecycle().await),
+            false => None,
+        };
+        if session.is_closed() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("AI session '{id}' was closed"),
+            )
+            .with_hint("Start a new session with ai_session_start."));
+        }
+        if session.needs_restart() {
             self.continue_session(ctx, &session).await?;
         }
         session.send(text).map_err(|m| {
@@ -58,7 +72,10 @@ impl AiService {
         Ok(session.info())
     }
 
-    /// Start a new backend for an ended session, after the previous one has finished.
+    /// Start a new backend for an ended session, after the previous one has finished. The
+    /// caller holds [`Session::lifecycle`], so only one call at a time gets here per session:
+    /// the old backend is over before the new one starts, and its last status / approval
+    /// updates cannot land on the new run.
     async fn continue_session(&self, ctx: &Ctx, session: &Arc<Session>) -> Result<(), CmdError> {
         // Make sure the old run is over (it may still be reporting `stopped`).
         session.cancel();
@@ -86,12 +103,14 @@ impl AiService {
     /// Stop a session's backend (the session stays and can be continued).
     pub async fn stop(&self, id: &str) -> Result<SessionInfo, CmdError> {
         let session = self.session(id)?;
+        let generation = session.generation();
         session.cancel();
         session.cancel_permissions();
         // Give the task a moment to report `stopped` (returns as soon as it has; a CLI agent
-        // may need a few seconds to be killed on a busy machine).
+        // may need a few seconds to be killed on a busy machine), or until a message sent
+        // meanwhile has continued the chat with a new run.
         for _ in 0..250 {
-            if session.status().ended() {
+            if session.status().ended() || session.generation() != generation {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -108,6 +127,9 @@ impl AiService {
         delete_transcript: bool,
     ) -> Result<(), CmdError> {
         let session = self.session(id)?;
+        // Not while a send is continuing it (that send would start a backend for a closed chat).
+        let _turn = session.lifecycle().await;
+        session.mark_closed();
         session.cancel();
         session.cancel_permissions();
         if let Some(mut task) = session.take_task()
@@ -138,13 +160,63 @@ impl AiService {
         Ok(list)
     }
 
-    /// Answer approval request `id`. An agent may not answer its own requests.
+    /// One of this browser's own AI chats: an API agent (`Caller::Agent`), or a CLI agent
+    /// calling the browser's MCP server with `?agent=<its session id>`. Other MCP clients
+    /// (whose agent name is not a session) are not: they are clients the user connected.
+    pub fn is_own_agent(&self, caller: &Caller) -> bool {
+        match caller {
+            Caller::Agent { .. } => true,
+            _ => caller
+                .agent_id()
+                .is_some_and(|id| lock(&self.sessions).contains_key(id)),
+        }
+    }
+
+    /// Approvals and access settings are the user's call: refused for the browser's own agents,
+    /// which could otherwise approve each other's requests or raise their own access.
+    pub fn refuse_own_agent(&self, caller: &Caller, what: &str) -> Result<(), CmdError> {
+        if !self.is_own_agent(caller) {
+            return Ok(());
+        }
+        Err(CmdError::new(
+            ErrorCode::NeedsApproval,
+            format!("an AI agent cannot {what}"),
+        )
+        .with_hint("Ask the user to do it in the browser's AI panel (ai_handoff)."))
+    }
+
+    /// An agent may start a chat of its own with the provider's defaults or less, never with
+    /// more access (see [`AccessSettings::widened_by`]).
+    pub(crate) fn refuse_agent_widening(
+        &self,
+        caller: &Caller,
+        defaults: &AccessSettings,
+        over: &AccessSettings,
+    ) -> Result<(), CmdError> {
+        match defaults.widened_by(over) {
+            Some(field) if self.is_own_agent(caller) => Err(CmdError::new(
+                ErrorCode::NeedsApproval,
+                format!(
+                    "an AI agent cannot start a chat with more access than the defaults ({field})"
+                ),
+            )
+            .with_hint(
+                "Omit permission_mode / sandbox / approval_policy / cwd / add_dirs, or ask the \
+                 user to start that chat in the AI panel.",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Answer approval request `id`. Only people and the clients they connected may: never
+    /// one of the browser's own agents (not even for another chat).
     pub fn answer_permission(
         &self,
         caller: &Caller,
         id: &str,
         decision: Decision,
     ) -> Result<Vec<PermissionRequest>, CmdError> {
+        self.refuse_own_agent(caller, "answer approval requests")?;
         let session = lock(&self.sessions)
             .values()
             .find(|s| s.has_permission(id))
@@ -158,6 +230,7 @@ impl AiService {
                     "It may have been answered or cancelled already; call ai_permissions_list.",
                 )
             })?;
+        // An MCP client named like the chat that asks (not one of ours once it is closed).
         if caller.agent_id() == Some(session.id.as_str()) {
             return Err(CmdError::new(
                 ErrorCode::NeedsApproval,

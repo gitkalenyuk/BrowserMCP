@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AiAgentAccess, AiCodexApproval, AiCodexSandbox, AiPermissionMode, AiProvider } from '../../api';
-  import type { AiStore } from '../../ai/store.svelte';
+  import { folderLines, type AiStore } from '../../ai/store.svelte';
   import { t } from '../../i18n/index.svelte';
 
   /**
@@ -37,12 +37,16 @@
     };
   }
 
+  /** Read a provider's defaults into its form (on failure `store.accessErrors` says why). */
+  function load(id: string) {
+    void store.loadAccess(id).then((a) => {
+      if (a && !forms[id]) forms[id] = toForm(a);
+    });
+  }
+
   $effect(() => {
     for (const p of clis) {
-      if (forms[p.id]) continue;
-      void store.loadAccess(p.id).then((a) => {
-        if (a && !forms[p.id]) forms[p.id] = toForm(a);
-      });
+      if (!forms[p.id]) load(p.id);
     }
   });
 
@@ -60,10 +64,7 @@
           ? { sandbox: form.sandbox, approval_policy: form.approval_policy }
           : {
               permission_mode: form.permission_mode,
-              add_dirs: form.add_dirs
-                .split('\n')
-                .map((d) => d.trim())
-                .filter(Boolean),
+              add_dirs: folderLines(form.add_dirs),
             }),
       });
       forms[p.id] = toForm(saved);
@@ -91,7 +92,12 @@
         }}
       >
         <h5>{p.name}</h5>
-        {#if !form}
+        {#if !form && store.accessErrors[p.id]}
+          <p class="result bad" role="alert">{t('aiChat.accessSettings.loadFailed', { message: store.accessErrors[p.id] })}</p>
+          <div class="actions">
+            <button class="btn" type="button" onclick={() => load(p.id)}>{t('aiChat.accessSettings.retry')}</button>
+          </div>
+        {:else if !form}
           <p class="note">{t('common.loading')}</p>
         {:else}
           {#if p.protocol === 'codex'}

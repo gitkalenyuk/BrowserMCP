@@ -416,10 +416,14 @@ export interface AiMessageEvent {
   role: 'user' | 'assistant' | 'system';
   text?: string;
   text_delta?: string;
+  /** System notes the UI knows (`resume_lost`, `mcp_not_connected`): shown translated. */
+  code?: string;
+  params?: Record<string, string>;
 }
 
 export type AiTranscriptEntry = { ts_ms?: number } & (
-  | { type: 'user' | 'assistant' | 'notice'; text: string }
+  | { type: 'user' | 'assistant'; text: string }
+  | { type: 'notice'; text: string; code?: string; params?: Record<string, string> }
   | { type: 'tool_call'; name: string; args: unknown }
   | { type: 'tool_result'; name: string; ok: boolean; summary: string }
   | { type: 'done'; reason: string }

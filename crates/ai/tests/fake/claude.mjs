@@ -9,8 +9,9 @@
 //   `--resume=<id>` fail like a conversation Claude Code no longer has.
 //
 // Replies: a message containing "bash" asks to run the Bash tool (through `can_use_tool` when
-// --permission-prompt-tool stdio is given, else refused like dontAsk mode); anything else is
-// echoed back as "echo: <text>".
+// --permission-prompt-tool stdio is given, else refused like dontAsk mode); "withdraw" asks and
+// cancels the request right away (`control_cancel_request`); everything is then echoed back as
+// "echo: <text>".
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,7 +54,17 @@ async function answer(text) {
     inited = true;
     out({ type: 'system', subtype: 'init', session_id: sessionId, cwd: process.cwd(), mcp_servers: [{ name: 'browsermcp', status: 'connected' }] });
   }
-  if (text.includes('bash')) {
+  if (text.includes('withdraw')) {
+    // Asks, then gives up at once (the cancel right behind the request, as one write).
+    const request_id = `req-${++requests}`;
+    process.stdout.write(
+      JSON.stringify({ type: 'control_request', request_id, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'sleep 1' } } }) +
+        '\n' +
+        JSON.stringify({ type: 'control_cancel_request', request_id }) +
+        '\n',
+    );
+    await new Promise((resolve) => waiting.set(request_id, resolve));
+  } else if (text.includes('bash')) {
     const id = `toolu_${++tools}`;
     const input = { command: 'echo hi' };
     out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input }] }, session_id: sessionId });

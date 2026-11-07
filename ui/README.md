@@ -200,13 +200,15 @@ starts the mock empty (wizard).
   `ai.provider_set`, free check via `ai.provider_test`), sessions as colored chips, one thread per
   session folded from `ai.*` events (`text_delta` streams, `text` replaces and closes the row; tool
   calls are collapsible rows, failed ones show their reason), stop button. New chat =
-  `ai.session_start` (only from "+ New"; CLI agents get a permission mode / sandbox and folder for
-  that chat), reply = `ai.session_send`, also in a stopped or failed chat: the core continues it
+  `ai.session_start` (only from "+ New"; CLI agents get a permission mode and extra folders
+  (Claude Code) or a sandbox and approval policy (Codex), and a folder for that chat), reply = `ai.session_send`, also in a stopped or failed chat: the core continues it
   (`ai/sessions.ts` decides). Chat tabs close with × or a middle click (`ai.session_close`, asks
   first while the chat works), "Close finished" closes the idle ones. Approval requests of CLI
   agents (`ai.permission` events, `ai.permissions_list` after a reload) are cards in the thread
   (`AiPermissionCard.svelte`): allow once / always allow the tool in this chat / deny with a
-  reason (`ai.permission_answer`). Defaults per CLI provider: `AgentAccess.svelte` in the
+  reason (`ai.permission_answer`; Codex cannot pass the reason on, so there it is a note in the
+  chat). Notes and tool results the core words itself arrive with a code or in fixed English and
+  are shown translated (`noticeText` / `summaryText` in `ai/thread.ts`). Defaults per CLI provider: `AgentAccess.svelte` in the
   settings sub-view (`ai.agent_access_set`).
 * **Terminal** (`TerminalPanel.svelte`, `XTermView.svelte`, `term/store.svelte.ts`): xterm.js +
   fit addon per terminal tab, shell picker (pwsh / cmd / bash), resize follows the panel

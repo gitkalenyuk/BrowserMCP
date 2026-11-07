@@ -107,6 +107,19 @@ pub fn output_text(value: &Value) -> String {
     truncate(&value.to_string(), MAX_TOOL_OUTPUT)
 }
 
+/// Add the next user message. A history that already ends with one (a chat stopped before
+/// the model answered, or restored from a transcript) gets it appended, so the conversation
+/// keeps alternating roles, as the providers expect.
+pub fn push_user(messages: &mut Vec<Message>, text: String) {
+    match messages.last_mut() {
+        Some(Message::User { text: last }) => {
+            last.push_str("\n\n");
+            last.push_str(&text);
+        }
+        _ => messages.push(Message::User { text }),
+    }
+}
+
 /// Everything one API session needs.
 pub struct ApiAgent {
     pub session: Arc<Session>,
@@ -133,7 +146,7 @@ impl ApiAgent {
                     None => break,
                 },
             };
-            messages.push(Message::User { text });
+            push_user(&mut messages, text);
             session.set_status(Status::Running);
             let reason = tokio::select! {
                 _ = cancel.cancelled() => "stopped".to_string(),
@@ -215,5 +228,30 @@ impl ApiAgent {
             tools: &self.tools,
         };
         self.client.complete(request, &mut on_text).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_messages_never_follow_each_other() {
+        let mut messages = Vec::new();
+        push_user(&mut messages, "a".into());
+        push_user(&mut messages, "b".into());
+        assert_eq!(
+            messages,
+            vec![Message::User {
+                text: "a\n\nb".into()
+            }]
+        );
+        messages.push(Message::Assistant {
+            text: "ok".into(),
+            calls: vec![],
+            raw: None,
+        });
+        push_user(&mut messages, "c".into());
+        assert_eq!(messages.len(), 3);
     }
 }

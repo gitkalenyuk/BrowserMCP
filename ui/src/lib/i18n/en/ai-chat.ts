@@ -105,7 +105,7 @@ export default {
   'aiChat.accessSettings.title': 'What CLI agents may do',
   'aiChat.accessSettings.intro':
     'Defaults for new Claude Code and Codex chats on this computer. The browser’s own tools are always allowed. A new chat can pick other permissions and another folder in the AI panel.',
-  'aiChat.accessSettings.approvals': 'Approvals',
+  'aiChat.accessSettings.approvals': 'Approval requests',
   'aiChat.accessSettings.fullWarn': 'No sandbox: commands can change anything on this computer.',
   'aiChat.accessSettings.cwd': 'Working folder',
   'aiChat.accessSettings.cwdHint': 'The agent starts here. Empty = {path}',
@@ -113,4 +113,22 @@ export default {
   'aiChat.accessSettings.addDirsPlaceholder': 'One folder per line',
   'aiChat.accessSettings.saving': 'Saving…',
   'aiChat.accessSettings.saved': 'Saved. New chats use these settings.',
+  'aiChat.newChat.approvals': 'Approval requests',
+  'aiChat.newChat.addDirs': 'Extra folders',
+  'aiChat.newChat.addDirsHint': 'One folder per line. Empty = no extra folders in this chat.',
+  'aiChat.perm.denyNote': 'Note for this chat (Codex does not pass it on to the agent)',
+  'aiChat.notice.resume_lost':
+    '{agent} could not continue its earlier conversation, so this chat goes on in a new one: the agent does not see the messages above.',
+  'aiChat.notice.mcp_not_connected':
+    '{agent} could not connect to the browser’s MCP server (status: {status}), so it has no browser tools.',
+  'aiChat.summary.exitCode': 'Exited with code {code}',
+  'aiChat.summary.commandDeclined': 'Declined: the command was not approved',
+  'aiChat.summary.changeDeclined': 'Declined: the change was not approved',
+  'aiChat.summary.filesChanged': 'Files changed',
+  'aiChat.summary.commandFailed': 'The command failed',
+  'aiChat.summary.userDenied': 'You denied this action.',
+  'aiChat.summary.userDeniedWhy': 'You denied this action: {reason}',
+  'aiChat.summary.requestCancelled': 'The request was cancelled before you answered.',
+  'aiChat.accessSettings.loadFailed': 'Could not load these settings: {message}',
+  'aiChat.accessSettings.retry': 'Try again',
 };

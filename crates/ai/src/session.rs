@@ -25,6 +25,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bmcp_core::EventBus;
@@ -99,9 +100,43 @@ pub enum AgentEvent {
     Done(String),
     /// A note for the user (warnings, CLI stderr…), shown as role `system`.
     Notice(String),
+    /// A note the UI knows and shows in the user's language: `code` names it, `params` fill
+    /// it in, `text` is the English text for other clients (`ai.message {role: system, text,
+    /// code, params}`).
+    KnownNotice {
+        code: &'static str,
+        params: Value,
+        text: String,
+    },
     /// The CLI's own id of this conversation (Claude Code session id, Codex thread id): kept
     /// (and saved) so a later message can resume it.
     ConversationId(String),
+}
+
+impl AgentEvent {
+    /// The CLI could not continue its earlier conversation, so the chat goes on in a new one
+    /// (`agent`: "Claude Code", "Codex").
+    pub fn resume_lost(agent: &str) -> Self {
+        AgentEvent::KnownNotice {
+            code: "resume_lost",
+            params: json!({ "agent": agent }),
+            text: format!(
+                "{agent} could not continue its earlier conversation, so this chat goes on in a \
+                 new one: the agent does not see the messages above."
+            ),
+        }
+    }
+
+    /// The CLI agent did not connect to the browser's MCP server: it has no browser tools.
+    pub fn mcp_not_connected(agent: &str, status: &str) -> Self {
+        AgentEvent::KnownNotice {
+            code: "mcp_not_connected",
+            params: json!({ "agent": agent, "status": status }),
+            text: format!(
+                "{agent} could not connect to the BrowserMCP MCP server (status: {status})"
+            ),
+        }
+    }
 }
 
 /// How the session was started; reused when it is continued.
@@ -172,6 +207,8 @@ struct Run {
     input: mpsc::UnboundedSender<String>,
     cancel: CancellationToken,
     task: Option<JoinHandle<()>>,
+    /// Counts restarts: lets the end of a run tell whether a newer run took over.
+    generation: u64,
 }
 
 pub struct Session {
@@ -185,6 +222,11 @@ pub struct Session {
     events: Mutex<EventBus>,
     state: Mutex<State>,
     run: Mutex<Run>,
+    /// Held while the session is continued (or closed): two messages sent at once to an ended
+    /// chat (UI + MCP, two windows) must start ONE backend, not two fighting over it.
+    lifecycle: tokio::sync::Mutex<()>,
+    /// Set by `ai.session_close`: a send that raced with it must not bring it back.
+    closed: AtomicBool,
     /// Approval requests of CLI agents.
     approvals: Approvals,
     /// API agents: the model conversation, kept across restarts of the agent loop.
@@ -222,7 +264,10 @@ impl Session {
                 input,
                 cancel: CancellationToken::new(),
                 task: None,
+                generation: 0,
             }),
+            lifecycle: tokio::sync::Mutex::new(()),
+            closed: AtomicBool::new(false),
             approvals: Approvals::default(),
             api_history: Mutex::new(Vec::new()),
             log_path,
@@ -254,11 +299,15 @@ impl Session {
         state.conversation = saved.conversation;
         state.transcript = read_transcript(&log_path);
         // Tabs are not restored: tab ids do not survive a browser restart.
-        let history = read_json::<Vec<Message>>(&with_suffix(&log_path, "history.json"));
+        // Without a saved model conversation (an older session), the transcript's text messages
+        // are the history. Done here, once, and never from the live transcript: by the time an
+        // agent loop reads its history, the message it is about to send is already recorded.
+        let history = read_json::<Vec<Message>>(&with_suffix(&log_path, "history.json"))
+            .unwrap_or_else(|| history_from_transcript(&state.transcript));
         *session
             .api_history
             .get_mut()
-            .unwrap_or_else(|e| e.into_inner()) = history.unwrap_or_default();
+            .unwrap_or_else(|e| e.into_inner()) = history;
         session
     }
 
@@ -314,6 +363,29 @@ impl Session {
         self.run().cancel.is_cancelled()
     }
 
+    /// The backend has ended (or was stopped): the next message must restart it first.
+    pub fn needs_restart(&self) -> bool {
+        self.status().ended() || self.is_cancelled()
+    }
+
+    /// Which run is current (see [`Session::restart`]).
+    pub fn generation(&self) -> u64 {
+        self.run().generation
+    }
+
+    /// Taken around continuing or closing the session (see `lifecycle`).
+    pub async fn lifecycle(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.lifecycle.lock().await
+    }
+
+    pub fn mark_closed(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
     /// Remember the task running the backend (awaited before a restart).
     pub fn set_task(&self, task: JoinHandle<()>) {
         self.run().task = Some(task);
@@ -334,6 +406,7 @@ impl Session {
             let mut run = self.run();
             run.input = input;
             run.cancel = CancellationToken::new();
+            run.generation += 1;
         }
         self.set_status(Status::Idle);
         rx
@@ -342,7 +415,7 @@ impl Session {
     /// Queue a user message; records and announces it. Fails when the session has ended
     /// (`AiService::send` restarts it first).
     pub fn send(&self, text: String) -> Result<(), String> {
-        if self.status().ended() || self.is_cancelled() {
+        if self.needs_restart() {
             return Err(format!("session {} has ended", self.id));
         }
         self.record(json!({ "type": "user", "text": text }));
@@ -387,6 +460,15 @@ impl Session {
             AgentEvent::Notice(text) => {
                 self.record(json!({ "type": "notice", "text": text }));
                 self.emit(topics::MESSAGE, json!({ "role": "system", "text": text }));
+            }
+            AgentEvent::KnownNotice { code, params, text } => {
+                self.record(
+                    json!({ "type": "notice", "text": text, "code": code, "params": params }),
+                );
+                self.emit(
+                    topics::MESSAGE,
+                    json!({ "role": "system", "text": text, "code": code, "params": params }),
+                );
             }
             AgentEvent::ToolCall { name, args } => {
                 self.touch_tabs(&args);
@@ -490,19 +572,13 @@ impl Session {
 
     // ------------------------------------------------------------ API history
 
-    /// API agents: the model conversation so far. After a browser restart without a saved
-    /// history, it is rebuilt from the transcript's text messages.
+    /// API agents: the model conversation so far (empty for a new chat; see
+    /// [`Session::restore`] for a chat saved without one).
     pub fn api_history(&self) -> Vec<Message> {
-        let history = self
-            .api_history
+        self.api_history
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if history.is_empty() {
-            history_from_transcript(&self.transcript())
-        } else {
-            history
-        }
+            .clone()
     }
 
     /// Keep (and save) the API conversation, made consistent for the next request.

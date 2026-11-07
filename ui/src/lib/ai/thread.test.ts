@@ -6,6 +6,8 @@ import {
   argsPreview,
   doneLabel,
   failureReason,
+  noticeText,
+  summaryText,
   threadFromTranscript,
   toolLabel,
   withPending,
@@ -140,6 +142,35 @@ describe('labels', () => {
   });
 });
 
+describe('notes and results the core words itself', () => {
+  it('a notice with a known code is shown translated, live and from the transcript', () => {
+    const live = fold([
+      { type: 'ai.message', payload: { session: S, role: 'system', text: 'English', code: 'resume_lost', params: { agent: 'Codex' } } },
+    ]);
+    const saved = threadFromTranscript([{ type: 'notice', text: 'English', code: 'resume_lost', params: { agent: 'Codex' } }]);
+    expect(saved).toEqual(live);
+    const note = live[0] as Extract<ChatItem, { kind: 'system' }>;
+    expect(noticeText(note)).toMatch(/^Codex could not continue/);
+    settings.value = { ...settings.value, language: 'uk' };
+    expect(noticeText(note)).toMatch(/^Codex не вдалося продовжити/);
+    settings.value = { ...settings.value, language: 'en' };
+    // Unknown codes and plain notices: the text as sent.
+    expect(noticeText({ kind: 'system', text: 'stderr line', code: 'other' })).toBe('stderr line');
+    expect(noticeText({ kind: 'system', text: 'stderr line' })).toBe('stderr line');
+  });
+
+  it('known tool summaries are translated, everything else is kept', () => {
+    expect(summaryText('Exited with code 2')).toBe('Exited with code 2');
+    expect(summaryText('Files changed')).toBe('Files changed');
+    settings.value = { ...settings.value, language: 'uk' };
+    expect(summaryText('Exited with code 2')).toBe('Завершилася з кодом 2');
+    expect(summaryText('Declined: the command was not approved')).toBe('Відхилено: команду не дозволили');
+    expect(summaryText('The user denied this action: not now')).toBe('Ви відхилили цю дію: not now');
+    expect(summaryText('{"tab":2}')).toBe('{"tab":2}');
+    settings.value = { ...settings.value, language: 'en' };
+  });
+});
+
 describe('approval requests', () => {
   const request = (status: AiPermission['status'], extra: Partial<AiPermission> = {}): AiPermission => ({
     id: 'claude-code-1.p1',
@@ -167,9 +198,9 @@ describe('approval requests', () => {
     expect(items.map((i) => i.kind)).toEqual(['tool', 'permission']);
     const card = items[1] as Extract<ChatItem, { kind: 'permission' }>;
     expect(card.request.status).toBe('denied');
-    // The refusal reason is shown on the failed call.
+    // The refusal reason is shown on the failed call (worded for the person who refused).
     const tool = items[0] as Extract<ChatItem, { kind: 'tool' }>;
-    expect(failureReason(tool)).toBe('The user denied this action: not here');
+    expect(failureReason(tool)).toBe('You denied this action: not here');
   });
 
   it('transcript entries and still-pending requests rebuild the cards', () => {

@@ -328,9 +328,10 @@ pub struct SessionStartArgs {
     /// data/ai/workspace.
     #[serde(default)]
     pub cwd: Option<String>,
-    /// Claude Code: more folders the agent may use (must exist).
+    /// Claude Code: more folders the agent may use (must exist). Default: the provider's;
+    /// [] = none.
     #[serde(default)]
-    pub add_dirs: Vec<String>,
+    pub add_dirs: Option<Vec<String>>,
     /// Codex: shell sandbox "read_only", "workspace_write" or "full_access".
     #[serde(default)]
     pub sandbox: Option<CodexSandbox>,
@@ -350,7 +351,8 @@ impl Command for SessionStart {
             "Start an AI agent session that drives the browser through BrowserMCP's tools. Progress \
              arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents \
              may ask for approval (ai.permission events, answer with ai.permission_answer). \
-             Returns the session (id = agent id, color, status).",
+             The browser's own agents may not start a chat with more access than the \
+             provider's defaults. Returns the session (id = agent id, color, status).",
             Toolset::Ai,
         )
         .act()
@@ -627,7 +629,8 @@ impl Command for PermissionAnswer {
     fn meta() -> Meta {
         Meta::new(
             "Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest \
-             of the chat) or deny with an optional reason. An agent cannot answer its own.",
+             of the chat) or deny with an optional reason. For people and the clients they \
+             connected: the browser's own AI agents get NEEDS_APPROVAL.",
             Toolset::Ai,
         )
         .act()
@@ -673,7 +676,7 @@ fn access_info(ai: &AiService, provider: &str, a: AccessSettings) -> AgentAccess
         permission_mode: a.permission_mode.unwrap_or_default(),
         cwd: a.cwd,
         default_cwd: ai.default_cwd().to_string_lossy().into_owned(),
-        add_dirs: a.add_dirs,
+        add_dirs: a.add_dirs.unwrap_or_default(),
         sandbox: a.sandbox.unwrap_or_default(),
         approval_policy: a.approval_policy.unwrap_or_default(),
     }
@@ -732,7 +735,8 @@ impl Command for AgentAccessSet {
     fn meta() -> Meta {
         Meta::new(
             "Change the default permissions of a CLI agent provider for new chats (saved to \
-             data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs.",
+             data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. \
+             Not for the browser's own AI agents (NEEDS_APPROVAL).",
             Toolset::Ai,
         )
         .act()
@@ -740,6 +744,7 @@ impl Command for AgentAccessSet {
 
     async fn run(ctx: Ctx, args: AgentAccessSetArgs) -> Result<AgentAccessInfo, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
+        ai.refuse_own_agent(&ctx.caller, "change what AI agents may do")?;
         let access = ai.set_access_settings(&args.id, |a| {
             if args.permission_mode.is_some() {
                 a.permission_mode = args.permission_mode;
@@ -748,11 +753,13 @@ impl Command for AgentAccessSet {
                 a.cwd = Some(cwd.trim().to_string()).filter(|c| !c.is_empty());
             }
             if let Some(dirs) = args.add_dirs {
-                a.add_dirs = dirs
+                let dirs: Vec<String> = dirs
                     .into_iter()
                     .map(|d| d.trim().to_string())
                     .filter(|d| !d.is_empty())
                     .collect();
+                // The provider's own setting: none is simply unset.
+                a.add_dirs = Some(dirs).filter(|d| !d.is_empty());
             }
             if args.sandbox.is_some() {
                 a.sandbox = args.sandbox;

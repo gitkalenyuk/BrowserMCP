@@ -610,9 +610,7 @@ impl Codex {
                     Err(err) => tracing::warn!(%err, "codex thread/resume failed"),
                 }
                 // Same chat, new Codex thread: say so, the agent lost its context.
-                session.apply(AgentEvent::Notice(
-                    "Codex could not continue its earlier conversation, so this chat goes on in a new one: the agent does not see the messages above.".into(),
-                ));
+                session.apply(AgentEvent::resume_lost("Codex"));
             }
             let params = thread_start_params(model, &instructions, &self.access);
             let result = rpc.request("thread/start", params).await?;

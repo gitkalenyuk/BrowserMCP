@@ -111,7 +111,65 @@ describe('AiStore', () => {
     await ai.send('hello');
     expect(api.calls.at(-1)?.params).toEqual({ provider: 'claude-code', prompt: 'hello', permission_mode: 'plan', cwd: 'D:\\work' });
     expect(ai.activeId).toBe('claude-code-2');
-    expect(ai.newChat).toEqual({ permission_mode: null, sandbox: null, cwd: '' });
+    expect(ai.newChat).toEqual({ permission_mode: null, sandbox: null, approval_policy: null, cwd: '', add_dirs: null });
+  });
+
+  it('extra folders are sent once edited (empty = none); Codex gets its approval policy', async () => {
+    const cli = (id: string, protocol: string) => ({
+      id,
+      name: id,
+      kind: 'cli',
+      protocol,
+      configured: true,
+      needs_key: false,
+      has_key: false,
+      base_url: '',
+      model: null,
+      models: [],
+      path: `${id}.exe`,
+    });
+    const api = new FakeApi({
+      'ai.providers': () => ({ providers: [cli('claude-code', 'claude-code'), cli('codex', 'codex')] }),
+      'ai.session_start': (p: { provider: string }) => session(`${p.provider}-9`, 'running'),
+    });
+    const ai = new AiStore(api);
+    await ai.refreshProviders();
+    ai.setProvider('claude-code');
+    ai.newChat.add_dirs = ' \n ';
+    ai.newChat.approval_policy = 'never'; // not a Claude Code setting
+    await ai.send('one');
+    expect(api.calls.at(-1)?.params).toEqual({ provider: 'claude-code', prompt: 'one', add_dirs: [] });
+
+    await ai.open(null); // "+ New"
+    ai.setProvider('codex');
+    ai.newChat.approval_policy = 'untrusted';
+    ai.newChat.sandbox = 'read_only';
+    await ai.send('two');
+    expect(api.calls.at(-1)?.params).toEqual({ provider: 'codex', prompt: 'two', sandbox: 'read_only', approval_policy: 'untrusted' });
+  });
+
+  it('a failed access load is remembered, a later one clears it', async () => {
+    let fail = true;
+    const api = new FakeApi({
+      'ai.agent_access': () => {
+        if (fail) throw new Error('core is busy');
+        return {
+          provider: 'claude-code',
+          permission_mode: 'ask',
+          cwd: null,
+          default_cwd: 'C:/data/ai/workspace',
+          add_dirs: [],
+          sandbox: 'workspace_write',
+          approval_policy: 'on_request',
+        };
+      },
+    });
+    const ai = new AiStore(api);
+    expect(await ai.loadAccess('claude-code')).toBeNull();
+    expect(ai.accessErrors['claude-code']).toBe('core is busy');
+    fail = false;
+    expect(await ai.loadAccess('claude-code')).not.toBeNull();
+    expect(ai.accessErrors['claude-code']).toBeUndefined();
   });
 
   it('approval events fill the card list and the thread; answering resolves them', async () => {

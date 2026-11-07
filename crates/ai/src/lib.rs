@@ -166,6 +166,12 @@ impl AiService {
     /// Start an agent and queue `prompt` as its first message. Needs a tokio runtime.
     pub fn start_session(&self, ctx: &Ctx, opts: StartOptions) -> Result<SessionInfo, CmdError> {
         let resolved = self.resolve(&opts.provider)?;
+        // CLI agents: the provider's access settings, overridden by this chat's (never wider
+        // when an agent starts the chat).
+        let defaults = lock(&self.config).settings(&opts.provider).access;
+        if !matches!(resolved.preset.kind, Kind::Api(_)) {
+            self.refuse_agent_widening(&ctx.caller, &defaults, &opts.access)?;
+        }
         if !resolved.configured() {
             return Err(CmdError::invalid_params(format!(
                 "AI provider '{}' is not configured",
@@ -194,14 +200,11 @@ impl AiService {
                 ),
             );
         }
-        // CLI agents: the provider's access settings, overridden by this chat's; folders checked
-        // before anything starts.
+        // Folders are checked before anything starts.
         let access = match resolved.preset.kind {
             Kind::Api(_) => None,
             Kind::ClaudeCode | Kind::Codex => Some(
-                lock(&self.config)
-                    .settings(&opts.provider)
-                    .access
+                defaults
                     .overridden_by(&opts.access)
                     .resolve(&self.workspace_dir())
                     .map_err(|e| {
@@ -350,10 +353,14 @@ impl AiService {
                 }
             };
         let owner = session.clone();
+        let generation = session.generation();
         session.set_task(tokio::spawn(async move {
             task.await;
-            // Whatever ended the backend, its approval requests can no longer be answered.
-            owner.cancel_permissions();
+            // Whatever ended the backend, its approval requests can no longer be answered
+            // (unless a newer run already took over: those requests are its own).
+            if owner.generation() == generation {
+                owner.cancel_permissions();
+            }
         }));
         Ok(())
     }

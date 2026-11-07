@@ -2,6 +2,7 @@ import type { BrowserApi } from '../api/client';
 import type {
   AiAgentAccess,
   AiAgentAccessSet,
+  AiCodexApproval,
   AiCodexSandbox,
   AiPermission,
   AiPermissionDecision,
@@ -21,10 +22,21 @@ import { applyAiEvent, threadFromTranscript, withPending, type AiEvent, type Cha
 export interface NewChatAccess {
   permission_mode: AiPermissionMode | null;
   sandbox: AiCodexSandbox | null;
+  approval_policy: AiCodexApproval | null;
   cwd: string;
+  /** Claude Code's extra folders, one per line; null = the provider's (untouched), "" = none. */
+  add_dirs: string | null;
 }
 
-const NO_OVERRIDES: NewChatAccess = { permission_mode: null, sandbox: null, cwd: '' };
+/** A textarea of folders, one per line, as a list (blank lines dropped). */
+export function folderLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((d) => d.trim())
+    .filter(Boolean);
+}
+
+const NO_OVERRIDES: NewChatAccess = { permission_mode: null, sandbox: null, approval_policy: null, cwd: '', add_dirs: null };
 
 /**
  * AI sessions as the chrome sees them: providers, sessions (agents), one chat thread per
@@ -42,6 +54,8 @@ export class AiStore {
   pending = $state<AiPermission[]>([]);
   /** CLI providers' defaults for new chats (`ai.agent_access`), by provider id. */
   access = $state<Record<string, AiAgentAccess>>({});
+  /** Why `ai.agent_access` failed, by provider id (cleared by a successful load). */
+  accessErrors = $state<Record<string, string>>({});
   /** Session shown in the panel; null = a new chat. */
   activeId = $state<string | null>(null);
   /** Text in the panel's input (kept here so "Ask AI about this" can fill it). */
@@ -188,12 +202,15 @@ export class AiStore {
     return this.pending.filter((p) => p.session === session);
   }
 
+  /** A provider's defaults; null when they could not be read (`accessErrors` says why). */
   async loadAccess(provider: string): Promise<AiAgentAccess | null> {
     try {
       const access = await this.api.call('ai.agent_access', { id: provider });
       this.access[provider] = access;
+      delete this.accessErrors[provider];
       return access;
-    } catch {
+    } catch (err) {
+      this.accessErrors[provider] = (err as Error).message;
       return null;
     }
   }
@@ -226,9 +243,16 @@ export class AiStore {
     const kind = this.currentProvider?.protocol;
     const args: Partial<AiSessionStart> = {};
     if (kind !== 'claude-code' && kind !== 'codex') return args;
-    if (kind === 'claude-code' && this.newChat.permission_mode) args.permission_mode = this.newChat.permission_mode;
-    if (kind === 'codex' && this.newChat.sandbox) args.sandbox = this.newChat.sandbox;
-    if (this.newChat.cwd.trim()) args.cwd = this.newChat.cwd.trim();
+    const pick = this.newChat;
+    if (kind === 'claude-code') {
+      if (pick.permission_mode) args.permission_mode = pick.permission_mode;
+      // Sent once edited, even empty: [] drops the provider's extra folders for this chat.
+      if (pick.add_dirs !== null) args.add_dirs = folderLines(pick.add_dirs);
+    } else {
+      if (pick.sandbox) args.sandbox = pick.sandbox;
+      if (pick.approval_policy) args.approval_policy = pick.approval_policy;
+    }
+    if (pick.cwd.trim()) args.cwd = pick.cwd.trim();
     return args;
   }
 

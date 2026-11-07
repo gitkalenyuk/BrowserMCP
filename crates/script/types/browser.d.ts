@@ -936,10 +936,11 @@ declare namespace BrowserMCP {
      */
     cwd?: string | null;
     /**
-     * Claude Code: more folders the agent may use (must exist).
-     * @default []
+     * Claude Code: more folders the agent may use (must exist). Default: the provider's;
+     * [] = none.
+     * @default null
      */
-    add_dirs?: string[];
+    add_dirs?: string[] | null;
     /**
      * Codex: shell sandbox "read_only", "workspace_write" or "full_access".
      *
@@ -8308,11 +8309,11 @@ declare namespace BrowserMCP {
     "agents.list": { args: AgentsListArgs; output: AgentsListOutput };
     /** Default permissions of a CLI agent provider (claude-code, codex) for new chats: permission mode, working folder, extra folders, Codex sandbox and approval policy. */
     "ai.agent_access": { args: AiAgentAccessArgs; output: AiAgentAccessOutput };
-    /** Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. */
+    /** Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. Not for the browser's own AI agents (NEEDS_APPROVAL). */
     "ai.agent_access_set": { args: AiAgentAccessSetArgs; output: AiAgentAccessSetOutput };
     /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
     "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
-    /** Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. An agent cannot answer its own. */
+    /** Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL. */
     "ai.permission_answer": { args: AiPermissionAnswerArgs; output: AiPermissionAnswerOutput };
     /** Approval requests of CLI agents waiting for an answer (tool, input, reason). New ones arrive as ai.permission {status: pending} events. */
     "ai.permissions_list": { args: AiPermissionsListArgs; output: AiPermissionsListOutput };
@@ -8326,7 +8327,7 @@ declare namespace BrowserMCP {
     "ai.session_close": { args: AiSessionCloseArgs; output: AiSessionCloseOutput };
     /** Send the next user message to an AI session (queued if it is still working). A stopped or failed session continues the same conversation. Returns the session. */
     "ai.session_send": { args: AiSessionSendArgs; output: AiSessionSendOutput };
-    /** Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). Returns the session (id = agent id, color, status). */
+    /** Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status). */
     "ai.session_start": { args: AiSessionStartArgs; output: AiSessionStartOutput };
     /** Stop an AI session: cancels the running model call / kills the CLI agent and its pending approval requests. The session stays (ai.session_send continues it). Returns the session. */
     "ai.session_stop": { args: AiSessionStopArgs; output: AiSessionStopOutput };
@@ -8771,7 +8772,7 @@ declare namespace BrowserMCP {
        */
       agent_access(args: AiAgentAccessArgs): Promise<AiAgentAccessOutput>;
       /**
-       * Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs.
+       * Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. Not for the browser's own AI agents (NEEDS_APPROVAL).
        *
        * `ai.agent_access_set` (MCP: `ai_agent_access_set`): toolset `ai`, act.
        */
@@ -8783,7 +8784,7 @@ declare namespace BrowserMCP {
        */
       handoff(args: AiHandoffArgs): Promise<AiHandoffOutput>;
       /**
-       * Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. An agent cannot answer its own.
+       * Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL.
        *
        * `ai.permission_answer` (MCP: `ai_permission_answer`): toolset `ai`, act.
        */
@@ -8825,7 +8826,7 @@ declare namespace BrowserMCP {
        */
       session_send(args: AiSessionSendArgs): Promise<AiSessionSendOutput>;
       /**
-       * Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). Returns the session (id = agent id, color, status).
+       * Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status).
        *
        * `ai.session_start` (MCP: `ai_session_start`): toolset `ai`, act.
        */

@@ -742,7 +742,7 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       providers = providers.map((x) => (x.id === id ? { ...x, models } : x));
       return { id, ok: true, models, version: null, error: null };
     },
-    'ai.session_start': ({ provider: pid, prompt, model, permission_mode, cwd, sandbox, add_dirs }) => {
+    'ai.session_start': ({ provider: pid, prompt, model, permission_mode, cwd, sandbox, approval_policy, add_dirs }) => {
       const p = getProvider(pid);
       if (!prompt.trim()) throw new RpcError('INVALID_PARAMS', 'prompt is empty');
       if (!p.configured) throw new RpcError('INVALID_PARAMS', `AI provider '${pid}' is not configured`);
@@ -762,9 +762,10 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
             ? {
                 permission_mode: permission_mode ?? defaults.permission_mode,
                 cwd: cwd || defaults.cwd || defaults.default_cwd,
-                add_dirs: add_dirs?.length ? add_dirs : defaults.add_dirs,
+                // Unset = the provider's; [] = none (as the core does).
+                add_dirs: add_dirs ?? defaults.add_dirs,
                 sandbox: sandbox ?? defaults.sandbox,
-                approval_policy: defaults.approval_policy,
+                approval_policy: approval_policy ?? defaults.approval_policy,
               }
             : null,
         pending_permissions: 0,

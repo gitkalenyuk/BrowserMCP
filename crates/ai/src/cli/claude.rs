@@ -376,10 +376,7 @@ fn init_notices(v: &Value) -> Vec<AgentEvent> {
         .flatten()
         .filter(|s| s["name"] == SERVER && s["status"] != "connected")
         .map(|s| {
-            AgentEvent::Notice(format!(
-                "Claude Code could not connect to the BrowserMCP MCP server (status: {})",
-                s["status"].as_str().unwrap_or("unknown")
-            ))
+            AgentEvent::mcp_not_connected("Claude Code", s["status"].as_str().unwrap_or("unknown"))
         })
         .collect()
 }
@@ -481,9 +478,7 @@ impl ClaudeCode {
                     ..
                 } if resume.is_some() && lost_conversation(&stderr) => {
                     tracing::warn!(%stderr, "claude --resume failed; starting a new conversation");
-                    session.apply(AgentEvent::Notice(
-                        "Claude Code could not continue its earlier conversation, so this chat goes on in a new one: the agent does not see the messages above.".into(),
-                    ));
+                    session.apply(AgentEvent::resume_lost("Claude Code"));
                     resume = None;
                     replay = unanswered;
                 }
@@ -654,12 +649,16 @@ fn handle_control(
             permission,
         } => {
             let ask = session.ask_permission(*permission);
+            // Known before the next line is read: a `control_cancel_request` right behind this
+            // request must find it.
+            if let Ask::Pending { request, .. } = &ask {
+                lock(waiting).insert(request_id.clone(), request.id.clone());
+            }
             let (stdin, waiting) = (stdin.clone(), waiting.clone());
             tokio::spawn(async move {
                 let decision = match ask {
                     Ask::Answered(decision) => decision,
-                    Ask::Pending { request, answer } => {
-                        lock(&waiting).insert(request_id.clone(), request.id);
+                    Ask::Pending { answer, .. } => {
                         let decision = answer.await.unwrap_or(Decision::Cancelled);
                         lock(&waiting).remove(&request_id);
                         decision
@@ -782,7 +781,11 @@ mod tests {
         let events = parser.line(
             r#"{"type":"system","subtype":"init","mcp_servers":[{"name":"browsermcp","status":"failed"}]}"#,
         );
-        assert!(matches!(&events[..], [AgentEvent::Notice(n)] if n.contains("failed")));
+        assert!(matches!(
+            &events[..],
+            [AgentEvent::KnownNotice { code: "mcp_not_connected", params, text }]
+                if params["status"] == "failed" && text.contains("failed")
+        ));
         let events =
             parser.line(r#"{"type":"result","subtype":"error_max_turns","is_error":true}"#);
         assert_eq!(

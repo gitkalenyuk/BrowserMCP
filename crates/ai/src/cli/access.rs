@@ -48,6 +48,17 @@ impl PermissionMode {
     pub fn prompts(self) -> bool {
         self != PermissionMode::BrowserOnly
     }
+
+    /// How much the agent may do without a person saying yes (higher = more).
+    fn latitude(self) -> u8 {
+        match self {
+            PermissionMode::BrowserOnly => 0,
+            PermissionMode::Plan => 1,
+            PermissionMode::Ask => 2,
+            PermissionMode::AcceptEdits => 3,
+            PermissionMode::FullAccess => 4,
+        }
+    }
 }
 
 /// Codex: the shell sandbox of a thread.
@@ -70,6 +81,14 @@ impl CodexSandbox {
             CodexSandbox::ReadOnly => "read-only",
             CodexSandbox::WorkspaceWrite => "workspace-write",
             CodexSandbox::FullAccess => "danger-full-access",
+        }
+    }
+
+    fn latitude(self) -> u8 {
+        match self {
+            CodexSandbox::ReadOnly => 0,
+            CodexSandbox::WorkspaceWrite => 1,
+            CodexSandbox::FullAccess => 2,
         }
     }
 }
@@ -96,6 +115,15 @@ impl CodexApproval {
             CodexApproval::Never => "never",
         }
     }
+
+    /// Fewer questions = more latitude.
+    fn latitude(self) -> u8 {
+        match self {
+            CodexApproval::Untrusted => 0,
+            CodexApproval::OnRequest => 1,
+            CodexApproval::Never => 2,
+        }
+    }
 }
 
 /// Saved per provider (`providers.<id>.access`) or passed to `ai.session_start`. Unset fields
@@ -108,9 +136,10 @@ pub struct AccessSettings {
     /// Working folder; unset = `data/ai/workspace`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Claude Code: more folders the agent may use (`--add-dir`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub add_dirs: Vec<String>,
+    /// Claude Code: more folders the agent may use (`--add-dir`). Unset = the provider's;
+    /// `[]` = none (a chat can drop the provider's extra folders).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_dirs: Option<Vec<String>>,
     /// Codex shell sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<CodexSandbox>,
@@ -124,7 +153,7 @@ impl AccessSettings {
         *self == AccessSettings::default()
     }
 
-    /// `over` wins where it sets something (an empty `add_dirs` keeps ours).
+    /// `over` wins where it sets something.
     pub fn overridden_by(&self, over: &AccessSettings) -> AccessSettings {
         AccessSettings {
             permission_mode: over.permission_mode.or(self.permission_mode),
@@ -133,11 +162,7 @@ impl AccessSettings {
                 .clone()
                 .filter(|c| !c.trim().is_empty())
                 .or_else(|| self.cwd.clone()),
-            add_dirs: if over.add_dirs.is_empty() {
-                self.add_dirs.clone()
-            } else {
-                over.add_dirs.clone()
-            },
+            add_dirs: over.add_dirs.clone().or_else(|| self.add_dirs.clone()),
             sandbox: over.sandbox.or(self.sandbox),
             approval_policy: over.approval_policy.or(self.approval_policy),
         }
@@ -157,6 +182,7 @@ impl AccessSettings {
         let add_dirs = self
             .add_dirs
             .iter()
+            .flatten()
             .map(|d| d.trim())
             .filter(|d| !d.is_empty())
             .map(existing_dir)
@@ -168,6 +194,40 @@ impl AccessSettings {
             sandbox: self.sandbox.unwrap_or_default(),
             approval_policy: self.approval_policy.unwrap_or_default(),
         })
+    }
+}
+
+impl AccessSettings {
+    /// What in `over` gives an agent more than these settings (the provider's defaults) do, if
+    /// anything: a more permissive mode, sandbox or approval policy, another working folder,
+    /// or more folders. An agent starting a chat of its own may narrow its access, never widen
+    /// it, or it could get around the approval cards it is shown under.
+    pub fn widened_by(&self, over: &AccessSettings) -> Option<&'static str> {
+        let mode = |a: &AccessSettings| a.permission_mode.unwrap_or_default().latitude();
+        let sandbox = |a: &AccessSettings| a.sandbox.unwrap_or_default().latitude();
+        let approval = |a: &AccessSettings| a.approval_policy.unwrap_or_default().latitude();
+        let merged = self.overridden_by(over);
+        let dirs = |a: &AccessSettings| -> Vec<String> {
+            a.add_dirs
+                .iter()
+                .flatten()
+                .map(|d| d.trim().to_string())
+                .collect()
+        };
+        let cwd = |a: &AccessSettings| a.cwd.as_deref().map(str::trim).unwrap_or("").to_string();
+        if mode(&merged) > mode(self) {
+            Some("permission_mode")
+        } else if sandbox(&merged) > sandbox(self) {
+            Some("sandbox")
+        } else if approval(&merged) > approval(self) {
+            Some("approval_policy")
+        } else if cwd(&merged) != cwd(self) {
+            Some("cwd")
+        } else if dirs(&merged).iter().any(|d| !dirs(self).contains(d)) {
+            Some("add_dirs")
+        } else {
+            None
+        }
     }
 }
 
@@ -199,7 +259,7 @@ mod tests {
     fn overrides_and_defaults() {
         let saved = AccessSettings {
             permission_mode: Some(PermissionMode::AcceptEdits),
-            add_dirs: vec!["a".into()],
+            add_dirs: Some(vec!["a".into()]),
             sandbox: Some(CodexSandbox::ReadOnly),
             ..Default::default()
         };
@@ -211,9 +271,62 @@ mod tests {
         let merged = saved.overridden_by(&chat);
         assert_eq!(merged.permission_mode, Some(PermissionMode::Plan));
         assert_eq!(merged.cwd, None);
-        assert_eq!(merged.add_dirs, vec!["a".to_string()]);
+        assert_eq!(merged.add_dirs, Some(vec!["a".to_string()]));
         assert_eq!(merged.sandbox, Some(CodexSandbox::ReadOnly));
         assert!(AccessSettings::default().is_default());
+        // [] drops the provider's extra folders.
+        let none = AccessSettings {
+            add_dirs: Some(vec![]),
+            ..Default::default()
+        };
+        assert_eq!(saved.overridden_by(&none).add_dirs, Some(vec![]));
+    }
+
+    #[test]
+    fn what_widens_access() {
+        let saved = AccessSettings {
+            add_dirs: Some(vec!["D:\\docs".into()]),
+            ..Default::default()
+        };
+        let chat = |f: fn(&mut AccessSettings)| {
+            let mut a = AccessSettings::default();
+            f(&mut a);
+            saved.widened_by(&a)
+        };
+        assert_eq!(chat(|_| {}), None);
+        // Narrower is fine.
+        assert_eq!(
+            chat(|a| a.permission_mode = Some(PermissionMode::Plan)),
+            None
+        );
+        assert_eq!(chat(|a| a.sandbox = Some(CodexSandbox::ReadOnly)), None);
+        assert_eq!(chat(|a| a.add_dirs = Some(vec![])), None);
+        assert_eq!(
+            chat(|a| a.permission_mode = Some(PermissionMode::Ask)),
+            None
+        );
+        // Wider is not.
+        assert_eq!(
+            chat(|a| a.permission_mode = Some(PermissionMode::FullAccess)),
+            Some("permission_mode")
+        );
+        assert_eq!(
+            chat(|a| a.permission_mode = Some(PermissionMode::AcceptEdits)),
+            Some("permission_mode")
+        );
+        assert_eq!(
+            chat(|a| a.sandbox = Some(CodexSandbox::FullAccess)),
+            Some("sandbox")
+        );
+        assert_eq!(
+            chat(|a| a.approval_policy = Some(CodexApproval::Never)),
+            Some("approval_policy")
+        );
+        assert_eq!(chat(|a| a.cwd = Some("C:\\".into())), Some("cwd"));
+        assert_eq!(
+            chat(|a| a.add_dirs = Some(vec!["C:\\".into()])),
+            Some("add_dirs")
+        );
     }
 
     #[test]
@@ -236,7 +349,7 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("nope"), "{err}");
         let err = AccessSettings {
-            add_dirs: vec![missing],
+            add_dirs: Some(vec![missing]),
             ..Default::default()
         }
         .resolve(&workspace)
@@ -246,7 +359,7 @@ mod tests {
         let own = dir.path().to_string_lossy().into_owned();
         let access = AccessSettings {
             cwd: Some(own.clone()),
-            add_dirs: vec![own.clone()],
+            add_dirs: Some(vec![own.clone()]),
             ..Default::default()
         }
         .resolve(&workspace)
