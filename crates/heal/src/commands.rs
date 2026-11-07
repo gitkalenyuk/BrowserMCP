@@ -157,14 +157,16 @@ impl Command for HealProposals {
     fn meta() -> Meta {
         Meta::new(
             "List heal proposals of this browser session (pending, accepted, rejected, \
-             superseded), newest first, with diff and the whole patched script.",
+             superseded), newest first, with diff and the whole patched script. A proposal \
+             stays pending only while its run still waits for that fix.",
             Toolset::Run,
         )
     }
 
     async fn run(ctx: Ctx, args: ProposalsArgs) -> Result<ProposalsOutput, CmdError> {
         let proposals = HealService::from_ctx(&ctx)?
-            .proposals(args.id.as_deref())
+            .current_proposals(args.id.as_deref())
+            .await
             .into_iter()
             .map(|p| ProposalWithCode {
                 patched_code: p.patched_code.clone(),

@@ -3,7 +3,8 @@ import { MockApi } from './mock';
 import { DEFAULT_WS_URL, WsApi } from './ws';
 
 export type { BrowserApi } from './client';
-export { RpcError } from './client';
+export { RpcError, isTimeout } from './client';
+export * from './timeouts';
 export * from './types';
 
 /**

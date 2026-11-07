@@ -652,6 +652,8 @@ export function createRecordRunsMocks(emit: Emit, activeTab: () => TabId | null)
     'run.heal_apply': ({ id, patched_code }) => {
       const r = getRun(id);
       if (r.info.status !== 'paused' && r.info.status !== 'running') throw new RpcError('INVALID_PARAMS', `run '${id}' is ${r.info.status}`);
+      // Like the core: only an open heal request takes a patch (an outdated one is refused).
+      if (!r.info.heal) throw new RpcError('INVALID_PARAMS', `run '${id}' is not waiting for a fix (it is ${r.info.status} without an open heal request)`);
       const base = r.info.script.replace(/\.v\d+$/, '');
       let v = 2;
       while (scripts.has(`${base}.v${v}`)) v++;

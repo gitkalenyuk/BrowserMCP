@@ -1,6 +1,6 @@
 import type {
   ApiEvents,
-  CallArgs,
+  CallArgsWithOptions,
   ConnectionStatus,
   EventName,
   Method,
@@ -17,7 +17,8 @@ export interface BrowserApi {
   /** Resolves once the transport is usable (mock: immediately). */
   connect(): Promise<void>;
   close(): void;
-  call<M extends Method>(method: M, ...args: CallArgs<M>): Promise<Result<M>>;
+  /** `call(method, params?, options?)`: see `CallArgsWithOptions` (e.g. a longer `timeout`). */
+  call<M extends Method>(method: M, ...args: CallArgsWithOptions<M>): Promise<Result<M>>;
   on<E extends EventName>(event: E, handler: (payload: ApiEvents[E]) => void): () => void;
   onStatus(handler: (status: ConnectionStatus) => void): () => void;
 }
@@ -31,6 +32,16 @@ export class RpcError extends Error {
     super(message);
     this.name = 'RpcError';
   }
+}
+
+/** The core did not answer in time (`CallOptions.timeout`): the command may still be running. */
+export const isTimeout = (err: unknown): boolean => err instanceof RpcError && err.code === 'TIMEOUT';
+
+/** A usable per-call timeout (positive, finite), else `fallback`. */
+export function timeoutOf(options: { timeout?: number } | undefined, fallback: number): number {
+  const t = options?.timeout;
+  // setTimeout fires at once for delays above 2^31 - 1 ms.
+  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? Math.min(t, 2_147_483_647) : fallback;
 }
 
 type AnyHandler = (payload: never) => void;

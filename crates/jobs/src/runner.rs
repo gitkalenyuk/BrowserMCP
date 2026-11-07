@@ -388,6 +388,10 @@ impl Inner {
 
     /// Save `patched_code` as the next version of the run's script and continue the run with
     /// it, re-queueing the rows that waited for a patch. Returns `(new script, re-queued)`.
+    ///
+    /// Only a run that waits for a fix (an open heal request, see `run.heal_needed`) takes a
+    /// patch: a run that was resumed or already patched would otherwise get an outdated patch
+    /// (e.g. a stale AI proposal approved later) saved as its next script version.
     pub fn heal_apply(
         self: &Arc<Self>,
         id: &str,
@@ -396,6 +400,16 @@ impl Inner {
         let run = self.store.run(id)?;
         if run.status.is_final() {
             return Err(not_active(id, run.status));
+        }
+        if run.heal.is_none() {
+            return Err(CmdError::invalid_params(format!(
+                "run '{id}' is not waiting for a fix (it is {} without an open heal request)",
+                run.status.as_str()
+            ))
+            .with_hint(
+                "run_heal_apply answers a run.heal_needed pause (run_status shows it as `heal`); \
+                 the patch may be outdated: the run was resumed or already fixed.",
+            ));
         }
         let script = self.scripts.next_version(&run.script)?;
         self.scripts.save(&script, patched_code)?;

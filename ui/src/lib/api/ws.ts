@@ -1,5 +1,5 @@
-import { Emitter, RpcError, type BrowserApi } from './client';
-import type { ApiEvents, CallArgs, ConnectionStatus, EventName, Method, Result } from './types';
+import { Emitter, RpcError, timeoutOf, type BrowserApi } from './client';
+import type { ApiEvents, CallArgsWithOptions, ConnectionStatus, EventName, Method, Result } from './types';
 
 export const DEFAULT_WS_URL = 'ws://127.0.0.1:47800/v1/ws';
 
@@ -29,7 +29,7 @@ interface RpcResponse {
 
 export interface WsApiOptions {
   url?: string;
-  /** Per-call timeout in ms. */
+  /** Default per-call timeout in ms (a call's own `CallOptions.timeout` wins). */
   timeout?: number;
   /** Reconnect backoff bounds in ms. */
   minBackoff?: number;
@@ -43,7 +43,8 @@ export interface WsApiOptions {
  * - Requests: {jsonrpc, id, method, params}
  * - Responses: {jsonrpc, id, result} | {jsonrpc, id, error:{code,message,data}}
  * - Events: notifications without id, {jsonrpc, method: "tab.updated", params: {...}}
- * Calls made while disconnected wait for the next successful connection (up to `timeout`).
+ * Calls made while disconnected wait for the next successful connection (up to the call's
+ * timeout: `CallOptions.timeout`, else the `timeout` option).
  * Reconnects forever with exponential backoff; in-flight calls are rejected on disconnect.
  */
 export class WsApi implements BrowserApi {
@@ -95,25 +96,32 @@ export class WsApi implements BrowserApi {
     this.#failPending(new RpcError('DISCONNECTED', 'Connection closed'));
   }
 
-  async call<M extends Method>(method: M, ...args: CallArgs<M>): Promise<Result<M>> {
+  async call<M extends Method>(method: M, ...args: CallArgsWithOptions<M>): Promise<Result<M>> {
+    const [params, options] = args;
+    const timeout = timeoutOf(options, this.#timeout);
     if (this.#status !== 'open') {
-      await Promise.race([
-        this.connect(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new RpcError('TIMEOUT', `Not connected: ${method}`)), this.#timeout),
-        ),
-      ]);
+      let wait: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          this.connect(),
+          new Promise<never>((_, reject) => {
+            wait = setTimeout(() => reject(new RpcError('TIMEOUT', `Not connected: ${method}`)), timeout);
+          }),
+        ]);
+      } finally {
+        clearTimeout(wait);
+      }
     }
     const ws = this.#ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) throw new RpcError('DISCONNECTED', 'Not connected');
     const id = this.#nextId++;
     const msg: Record<string, unknown> = { jsonrpc: '2.0', id, method };
-    if (args.length > 0) msg.params = args[0];
+    if (params !== undefined) msg.params = params;
     return new Promise<Result<M>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
-        reject(new RpcError('TIMEOUT', `${method} timed out after ${this.#timeout} ms`));
-      }, this.#timeout);
+        reject(new RpcError('TIMEOUT', `${method} timed out after ${timeout} ms`));
+      }, timeout);
       this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
       ws.send(JSON.stringify(msg));
     });

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { t } from '../../lib/i18n/index.svelte';
-  import type { Agent, BrowserApi, HealProposal, RunInfo } from '../../lib/api';
+  import { HEAL_AI_TIMEOUT_MS, type Agent, type BrowserApi, type HealProposal, type RunInfo } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
   import { confidencePct } from '../../lib/runs/heal';
+  import { openProposals, stillRewriting } from '../agents';
 
   let { api }: { api: BrowserApi } = $props();
 
@@ -17,6 +18,8 @@
   /** Proposal ids being accepted / rejected (buttons disabled meanwhile). */
   let busy = $state<Record<string, boolean>>({});
   let actionError = $state<string | null>(null);
+  /** Runs whose rejected patch the AI is rewriting: run id → script name. */
+  let rewriting = $state<Record<string, string>>({});
 
   const ACTIVE = new Set(['running', 'paused']);
   const shown = $derived(
@@ -24,7 +27,9 @@
       .sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)) || b.created_ms - a.created_ms)
       .slice(0, MAX_RUNS),
   );
-  const pending = $derived(proposals.filter((p) => p.status === 'pending'));
+  // Only proposals whose run still waits for that fix (not cancelled, finished or fixed by hand).
+  const pending = $derived(openProposals(proposals, runs));
+  const rewritingRuns = $derived(Object.entries(rewriting).filter(([id]) => !pending.some((p) => p.id === id)));
 
   async function loadRuns(): Promise<void> {
     // Runs and heal proposals are optional: a core without the jobs / heal service still shows agents.
@@ -43,16 +48,34 @@
     }, 500);
   }
 
+  function doneRewriting(run: string): void {
+    if (!(run in rewriting)) return;
+    const rest = { ...rewriting };
+    delete rest[run];
+    rewriting = rest;
+  }
+
   $effect(() => {
     const offs = [
       api.on('agents.updated', (p) => (agents = p.agents)),
       api.on('run.started', refreshSoon),
       api.on('run.progress', refreshSoon),
-      api.on('run.finished', refreshSoon),
+      api.on('run.finished', (e) => {
+        doneRewriting(e.id);
+        refreshSoon();
+      }),
       api.on('run.heal_needed', refreshSoon),
-      api.on('run.heal_proposed', refreshSoon),
+      // The answer to a rejection that outlived its call: the next patch, or no patch at all.
+      api.on('run.heal_proposed', (e) => {
+        doneRewriting(e.id);
+        refreshSoon();
+      }),
       api.on('run.heal_applied', refreshSoon),
-      api.on('run.heal_failed', refreshSoon),
+      api.on('run.heal_failed', (e) => {
+        if (e.id in rewriting) actionError = e.error;
+        doneRewriting(e.id);
+        refreshSoon();
+      }),
     ];
     Promise.all([api.call('agents.list'), loadRuns()])
       .then(([a]) => {
@@ -70,15 +93,28 @@
     busy = { ...busy, [p.proposal_id]: true };
     actionError = null;
     try {
-      if (accept) await api.call('run.heal_accept', { proposal_id: p.proposal_id });
-      else await api.call('run.heal_reject', { proposal_id: p.proposal_id });
-      await loadRuns();
+      if (accept) {
+        await api.call('run.heal_accept', { proposal_id: p.proposal_id });
+      } else {
+        // The core rejects at once, then the AI writes the next patch before it answers (maybe
+        // minutes later): the card goes now, a note stands in until the next one arrives.
+        rewriting = { ...rewriting, [p.id]: p.script };
+        proposals = proposals.map((x) => (x.proposal_id === p.proposal_id ? { ...x, status: 'rejected' } : x));
+        await api.call('run.heal_reject', { proposal_id: p.proposal_id }, { timeout: HEAL_AI_TIMEOUT_MS });
+        doneRewriting(p.id);
+      }
     } catch (err) {
-      actionError = (err as Error).message;
+      // A timeout only means the AI is still writing: run.heal_proposed / run.heal_failed follow.
+      if (accept || !stillRewriting(err)) {
+        doneRewriting(p.id);
+        actionError = (err as Error).message;
+      }
     } finally {
       const rest = { ...busy };
       delete rest[p.proposal_id];
       busy = rest;
+      // Either way the card's status changed (or it turned out outdated): show what is true now.
+      await loadRuns();
     }
   }
   // Status labels: `newtab.run.<status>` and `newtab.agent.<status>`.
@@ -107,6 +143,12 @@
           <button class="btn" disabled={busy[p.proposal_id]} onclick={() => void decide(p, false)}>{t('newtab.patch.reject')}</button>
         </div>
       </div>
+    {/each}
+    {#each rewritingRuns as [run, script] (run)}
+      <p class="patch rewriting muted small" role="status">
+        <Icon name="patch" size={15} />
+        {t('newtab.patch.rewriting', { script })}
+      </p>
     {/each}
     {#if actionError}<p class="fail small" role="alert">{actionError}</p>{/if}
 
@@ -294,6 +336,11 @@
     border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--border));
     border-radius: var(--r-lg);
     background: color-mix(in oklab, var(--warn) 7%, var(--surface));
+  }
+  .patch.rewriting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .patch-head {
     display: flex;

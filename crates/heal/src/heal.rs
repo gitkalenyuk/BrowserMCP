@@ -61,6 +61,9 @@ pub struct Proposal {
     /// The whole patched script (not sent in events; `run.heal_proposals` returns it).
     #[serde(skip)]
     pub patched_code: String,
+    /// Creation order in this browser session (see [`HealService::reconcile`]).
+    #[serde(skip)]
+    seq: u64,
 }
 
 /// One heal request (see the [module docs](self)).
@@ -276,6 +279,7 @@ impl HealService {
                         model: completion.model,
                         created_ms: now_ms(),
                         patched_code: valid.patched_code,
+                        seq: state.next,
                     };
                     for old in state.proposals.values_mut() {
                         if old.id == run_id && old.status == ProposalStatus::Pending {
@@ -348,15 +352,126 @@ impl HealService {
         list
     }
 
-    fn pending(&self, proposal_id: &str) -> Result<Proposal, CmdError> {
+    /// A pending proposal that still answers its run's open heal request. A stale one (the run
+    /// was cancelled, finished, resumed or fixed by hand since) is marked superseded and refused.
+    async fn pending(&self, proposal_id: &str) -> Result<Proposal, CmdError> {
         let proposal = self.proposal(proposal_id)?;
-        if proposal.status != ProposalStatus::Pending {
+        if proposal.status == ProposalStatus::Pending {
+            self.reconcile(&proposal.id).await?;
+        }
+        let status = self.proposal(proposal_id)?.status;
+        if status == ProposalStatus::Superseded && proposal.status == ProposalStatus::Pending {
             return Err(CmdError::invalid_params(format!(
-                "proposal '{proposal_id}' is {:?}, not pending",
-                proposal.status
+                "proposal '{proposal_id}' is outdated: run '{}' is no longer waiting for this fix",
+                proposal.id
+            ))
+            .with_hint(
+                "The run was cancelled, finished, resumed or fixed by hand. See run_status; \
+                 a new break gets a new proposal.",
+            ));
+        }
+        if status != ProposalStatus::Pending {
+            return Err(CmdError::invalid_params(format!(
+                "proposal '{proposal_id}' is {status:?}, not pending"
             )));
         }
         Ok(proposal)
+    }
+
+    /// The open heal request of a run as `(row, script)`; `None` when the run is not waiting
+    /// for a fix (finished, cancelled, resumed, patched, or gone).
+    async fn open_request(&self, run_id: &str) -> Result<Option<(u64, String)>, CmdError> {
+        let run = match self.call("run.status", json!({ "id": run_id })).await {
+            Ok(run) => run,
+            Err(err) if err.code == ErrorCode::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        if matches!(
+            run["status"].as_str(),
+            Some("finished" | "failed" | "cancelled")
+        ) {
+            return Ok(None);
+        }
+        Ok(run.get("heal").filter(|h| h.is_object()).map(|heal| {
+            (
+                heal["row"].as_u64().unwrap_or_default(),
+                heal["script"].as_str().unwrap_or_default().to_string(),
+            )
+        }))
+    }
+
+    /// Mark the pending proposals of `run_id` superseded unless they answer `open` (the run's
+    /// open heal request as `(row, script)`). Only proposals up to sequence number `upto` are
+    /// touched when it is given (those that existed when the run was read). Returns how many
+    /// proposals changed.
+    pub(crate) fn supersede_stale(
+        &self,
+        run_id: &str,
+        open: Option<(u64, &str)>,
+        upto: Option<u64>,
+    ) -> usize {
+        let mut state = self.state();
+        let mut changed = 0;
+        for p in state.proposals.values_mut() {
+            if p.id == run_id
+                && p.status == ProposalStatus::Pending
+                && upto.is_none_or(|upto| p.seq <= upto)
+                && open != Some((p.row, p.script.as_str()))
+            {
+                p.status = ProposalStatus::Superseded;
+                changed += 1;
+            }
+        }
+        changed
+    }
+
+    /// The run ended (finished, failed, cancelled): its pending proposals are outdated and its
+    /// AI session is over.
+    pub(crate) fn run_ended(&self, run_id: &str) {
+        self.supersede_stale(run_id, None, None);
+        self.state().sessions.remove(run_id);
+    }
+
+    /// Whether `run_id` has a pending proposal.
+    pub(crate) fn has_pending(&self, run_id: &str) -> bool {
+        self.state()
+            .proposals
+            .values()
+            .any(|p| p.id == run_id && p.status == ProposalStatus::Pending)
+    }
+
+    /// Check the pending proposals of `run_id` against the run: those that do not answer its
+    /// open heal request any more (cancelled, finished, resumed, fixed by hand with
+    /// `run.heal_apply`) become superseded. Returns how many changed.
+    pub async fn reconcile(&self, run_id: &str) -> Result<usize, CmdError> {
+        // Proposals made while the run is read answer the state after it: leave them alone.
+        let upto = self.state().next;
+        let open = self.open_request(run_id).await?;
+        Ok(self.supersede_stale(
+            run_id,
+            open.as_ref().map(|(row, s)| (*row, s.as_str())),
+            Some(upto),
+        ))
+    }
+
+    /// [`Self::proposals`] after checking every run with pending proposals against its state,
+    /// so outdated ones show as superseded. A run that cannot be read keeps its proposals.
+    pub async fn current_proposals(&self, id: Option<&str>) -> Vec<Proposal> {
+        let mut runs: Vec<String> = self
+            .state()
+            .proposals
+            .values()
+            .filter(|p| p.status == ProposalStatus::Pending && id.is_none_or(|id| p.id == id))
+            .map(|p| p.id.clone())
+            .collect();
+        runs.sort();
+        runs.dedup();
+        for run in runs {
+            if let Err(err) = self.reconcile(&run).await {
+                tracing::debug!(run, %err, "cannot check heal proposals against the run");
+            }
+        }
+        self.proposals(id)
     }
 
     fn set_status(&self, proposal_id: &str, status: ProposalStatus) {
@@ -368,7 +483,7 @@ impl HealService {
     /// Apply a pending proposal with `run.heal_apply` (saves `<name>.vN`, re-queues the broken
     /// rows, resumes the run). Emits `run.heal_applied`.
     pub async fn accept(&self, proposal_id: &str, auto: bool) -> Result<Applied, CmdError> {
-        let proposal = self.pending(proposal_id)?;
+        let proposal = self.pending(proposal_id).await?;
         let out = self
             .call(
                 "run.heal_apply",
@@ -398,7 +513,7 @@ impl HealService {
         proposal_id: &str,
         feedback: Option<String>,
     ) -> Result<Proposal, CmdError> {
-        let proposal = self.pending(proposal_id)?;
+        let proposal = self.pending(proposal_id).await?;
         self.set_status(proposal_id, ProposalStatus::Rejected);
         let reason = feedback
             .filter(|f| !f.trim().is_empty())

@@ -597,6 +597,27 @@ export type CallArgs<M extends Method> = Params<M> extends void
     ? [params?: Exclude<Params<M>, void>]
     : [params: Params<M>];
 
+/** Per-call options of `BrowserApi.call`. */
+export interface CallOptions {
+  /**
+   * Milliseconds to wait for the answer before rejecting with `RpcError('TIMEOUT')` (WsApi
+   * default: 15 s). Commands that wait for an AI answer, a script or a transcription need
+   * more (see `./timeouts`). The command itself keeps running on the core after a timeout.
+   */
+  timeout?: number;
+}
+
+/**
+ * `CallArgs` plus optional `CallOptions` after the params:
+ * `call('script.run', { name }, { timeout: 310_000 })`; methods without params take
+ * `undefined` first: `call('tabs.list', undefined, { timeout })`.
+ */
+export type CallArgsWithOptions<M extends Method> = Params<M> extends void
+  ? [params?: undefined, options?: CallOptions]
+  : void extends Params<M>
+    ? [params?: Exclude<Params<M>, void>, options?: CallOptions]
+    : [params: Params<M>, options?: CallOptions];
+
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 export type * from './types-record-runs';

@@ -1,4 +1,4 @@
-import { Emitter, RpcError, type BrowserApi } from './client';
+import { Emitter, RpcError, timeoutOf, type BrowserApi } from './client';
 import { createDataMocks } from './mock-data';
 import { createLanguageMocks } from './mock-languages';
 import { createVoiceMocks } from './mock-voice';
@@ -10,7 +10,7 @@ import { createE1Mocks } from './mock-e1';
 import type {
   Agent,
   ApiEvents,
-  CallArgs,
+  CallArgsWithOptions,
   ConnectionStatus,
   EventName,
   Method,
@@ -179,12 +179,30 @@ export class MockApi implements BrowserApi {
     return () => {};
   }
 
-  async call<M extends Method>(method: M, ...args: CallArgs<M>): Promise<Result<M>> {
+  async call<M extends Method>(method: M, ...args: CallArgsWithOptions<M>): Promise<Result<M>> {
+    const [params, options] = args;
+    // No default limit (the mock answers); a call's own timeout behaves like WsApi's.
+    if (options?.timeout === undefined) return this.#answer(method, params);
+    const timeout = timeoutOf(options, Infinity);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.#answer(method, params),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new RpcError('TIMEOUT', `${method} timed out after ${timeout} ms`)), timeout);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async #answer<M extends Method>(method: M, params: unknown): Promise<Result<M>> {
     if (this.#latency) await new Promise((r) => setTimeout(r, this.#latency));
     const handler = this.#handlers[method] as (p: unknown) => Result<M> | Promise<Result<M>>;
     if (!handler) throw new RpcError('NOT_FOUND', `Unknown method ${method}`);
     // structuredClone: callers must never share objects with the "backend".
-    return structuredClone(await handler(args[0]));
+    return structuredClone(await handler(params));
   }
 
   // ---- handlers -------------------------------------------------------------

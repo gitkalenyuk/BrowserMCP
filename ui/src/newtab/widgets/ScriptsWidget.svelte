@@ -1,8 +1,9 @@
 <script lang="ts">
   import { t } from '../../lib/i18n/index.svelte';
   import { relativeTime } from '../../lib/i18n/intl';
-  import type { BrowserApi, ScriptEntry } from '../../lib/api';
+  import { scriptRunTimeoutMs, type BrowserApi, type ScriptEntry } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
+  import { outcomeOfError, type ScriptOutcome } from '../agents';
 
   let { api }: { api: BrowserApi } = $props();
 
@@ -11,7 +12,16 @@
 
   let scripts = $state<ScriptEntry[] | null>(null);
   /** Last outcome per script name (`script.run` waits until the script ends). */
-  let outcome = $state<Record<string, { state: 'running' } | { state: 'ok' } | { state: 'failed'; error: string }>>({});
+  let outcome = $state<Record<string, ScriptOutcome>>({});
+
+  /** How long the core lets a script run (script.settings); unknown: the highest allowed. */
+  async function scriptTimeoutSecs(): Promise<number | null> {
+    try {
+      return (await api.call('script.settings', {})).settings.script_timeout_secs;
+    } catch {
+      return null;
+    }
+  }
 
   $effect(() => {
     api
@@ -24,13 +34,16 @@
     if (outcome[s.name]?.state === 'running') return;
     outcome = { ...outcome, [s.name]: { state: 'running' } };
     try {
-      const r = await api.call('script.run', { name: s.name });
+      // The call waits as long as the script may run (the 15 s default would report a longer
+      // script as failed and let a second click start it again).
+      const timeout = scriptRunTimeoutMs(await scriptTimeoutSecs());
+      const r = await api.call('script.run', { name: s.name }, { timeout });
       outcome = {
         ...outcome,
         [s.name]: r.ok ? { state: 'ok' } : { state: 'failed', error: r.error?.message ?? t('newtab.scripts.exitCode', { code: String(r.exit_code ?? '—') }) },
       };
     } catch (err) {
-      outcome = { ...outcome, [s.name]: { state: 'failed', error: (err as Error).message } };
+      outcome = { ...outcome, [s.name]: outcomeOfError(err) };
     }
   }
 
@@ -39,6 +52,7 @@
     if (o?.state === 'running') return t('newtab.scripts.running');
     if (o?.state === 'ok') return t('newtab.scripts.ok');
     if (o?.state === 'failed') return t('newtab.scripts.failed', { error: o.error });
+    if (o?.state === 'unknown') return t('newtab.scripts.noAnswer');
     return t('newtab.scripts.changed', { when: relativeTime(s.modified_ms) });
   }
 </script>
