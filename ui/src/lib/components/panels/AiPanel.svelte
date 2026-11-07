@@ -1,14 +1,20 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import type { AiCodexApproval, AiCodexSandbox, AiPermissionDecision, AiPermissionMode, AiSession } from '../../api';
+  import { copyText } from '../../ai/clipboard';
   import { closeNeedsConfirm, finishedIds } from '../../ai/sessions';
-  import { argsPreview, doneLabel, failureReason, noticeText, summaryText, toolLabel } from '../../ai/thread';
+  import { doneLabel, groupTools, lastUserIndex, noticeText, queuedCount, userOrdinal } from '../../ai/thread';
   import { t, tp } from '../../i18n/index.svelte';
   import { PROVIDERS, providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
+  import AiComposer from './AiComposer.svelte';
+  import AiHistory from './AiHistory.svelte';
+  import AiMessage from './AiMessage.svelte';
+  import AiModelPicker from './AiModelPicker.svelte';
   import AiPermissionCard from './AiPermissionCard.svelte';
   import AiSettings from './AiSettings.svelte';
+  import AiToolRow from './AiToolRow.svelte';
 
   const chrome = useChrome();
   const ai = chrome.ai;
@@ -18,15 +24,26 @@
   const APPROVALS: AiCodexApproval[] = ['untrusted', 'on_request', 'never'];
 
   let view = $state<'chat' | 'settings'>('chat');
-  // The draft lives in the store: the page context menu ("Ask AI about this") fills it.
-  const draft = $derived(ai.draft);
   let sending = $state(false);
   let error = $state<string | null>(null);
   let info = $state<string | null>(null);
-  /** A chat whose × was clicked while it still works: asks before closing. */
-  let confirmClose = $state<AiSession | null>(null);
+  /** Close of a working chat, or Delete: asks first. */
+  let confirm = $state<{ kind: 'close' | 'delete'; session: AiSession } | null>(null);
+  let historyOpen = $state(false);
+  /** The tab being renamed in place, and its text. */
+  let renaming = $state<string | null>(null);
+  let renameText = $state('');
+  /** The tab context menu (right-click, the context-menu key, Shift+F10). */
+  let menu = $state<{ session: AiSession; x: number; y: number } | null>(null);
+  let menuEl = $state<HTMLDivElement>();
+  /** Row index of the user message in the inline editor. */
+  let editing = $state<number | null>(null);
+  /** Tool groups the user expanded, by `<chat>:<first row>`. */
+  let openGroups = $state<Record<string, boolean>>({});
+  let root = $state<HTMLDivElement>();
   let log = $state<HTMLDivElement>();
   let stick = true;
+  let atBottom = $state(true);
 
   const providerList = $derived(
     ai.providers.length
@@ -35,12 +52,17 @@
   );
   const session = $derived(ai.active);
   const items = $derived(session ? (ai.threads[session.id] ?? []) : []);
-  const sessionName = $derived(session ? label(session) : null);
+  const rows = $derived(groupTools(items));
+  const sessionName = $derived(session ? ai.title(session) : null);
   const current = $derived(providerList.find((p) => p.id === ai.provider) ?? providerList[0]);
   const ended = $derived(session?.status === 'stopped' || session?.status === 'failed');
   const running = $derived(session?.status === 'running');
-  const canSend = $derived(draft.trim() !== '' && !sending && (session ? true : current?.configured !== false));
+  const canSend = $derived(ai.draft.trim() !== '' && !sending && (session ? true : current?.configured !== false));
   const finished = $derived(finishedIds(ai.sessions, ai.pending));
+  const waitingCount = $derived(session ? (session.queued ?? queuedCount(items)) : 0);
+  const lastUser = $derived(lastUserIndex(items));
+  /** The last row of the conversation itself (queued messages wait below it). */
+  const lastRow = $derived(items[items.length - 1 - queuedCount(items)]);
   /** The new chat's provider is a CLI agent: permissions and folder can be picked. */
   const cliKind = $derived(current?.protocol === 'claude-code' || current?.protocol === 'codex' ? current.protocol : null);
   const defaults = $derived(current ? ai.access[current.id] : undefined);
@@ -66,12 +88,62 @@
     void tick().then(() => log && (log.scrollTop = log.scrollHeight));
   });
 
+  // Another chat shown: no editor, at the bottom.
+  $effect(() => {
+    void ai.activeId;
+    editing = null;
+    stick = true;
+    atBottom = true;
+  });
+
+  // Esc while the shown chat works interrupts the answer (inner editors and menus stop it first).
+  $effect(() => {
+    const el = root;
+    if (!el) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (menu) {
+        menu = null;
+        return;
+      }
+      if (renaming || confirm) return;
+      if (running) {
+        e.preventDefault();
+        void interrupt();
+      }
+    };
+    el.addEventListener('keydown', onKey);
+    return () => el.removeEventListener('keydown', onKey);
+  });
+
+  // The tab menu: focus its first item; arrows move, Esc / a click elsewhere closes it.
+  $effect(() => {
+    if (menu && menuEl) menuEl.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  });
+
   function onScroll() {
     if (!log) return;
     stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    atBottom = stick;
   }
 
-  async function send(text = draft) {
+  function scrollDown() {
+    stick = true;
+    atBottom = true;
+    log?.scrollTo({ top: log.scrollHeight, behavior: 'smooth' });
+  }
+
+  function fail(err: unknown) {
+    error = (err as Error).message ?? String(err);
+    info = null;
+  }
+
+  function note(text: string) {
+    info = text;
+    error = null;
+  }
+
+  async function send(text = ai.draft) {
     if (!text.trim() || sending) return;
     sending = true;
     error = null;
@@ -80,50 +152,147 @@
       ai.draft = '';
       stick = true;
     } catch (err) {
-      error = (err as Error).message;
+      fail(err);
     } finally {
       sending = false;
     }
   }
 
-  async function stop() {
+  async function interrupt() {
+    if (!session) return;
+    try {
+      await ai.interrupt(session.id);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function stopAgent() {
     if (!session) return;
     try {
       await ai.stopSession(session.id);
     } catch (err) {
-      error = (err as Error).message;
+      fail(err);
     }
   }
 
   function newChat() {
     void ai.open(null);
     error = null;
-    confirmClose = null;
+    confirm = null;
   }
 
-  /** × / middle click: close at once, or ask first while the chat still works. */
+  /** × / middle click / menu: close (archive) at once, or ask first while the chat still works. */
   function requestClose(s: AiSession) {
-    if (closeNeedsConfirm(s, ai.pending)) confirmClose = s;
+    menu = null;
+    if (closeNeedsConfirm(s, ai.pending)) confirm = { kind: 'close', session: s };
     else void close(s);
   }
 
   async function close(s: AiSession) {
-    confirmClose = null;
+    confirm = null;
     try {
       await ai.closeSession(s.id);
       if (ai.activeId) void ai.open(ai.activeId);
     } catch (err) {
-      error = (err as Error).message;
+      fail(err);
+    }
+  }
+
+  async function remove(s: AiSession) {
+    confirm = null;
+    const name = ai.title(s);
+    try {
+      await ai.deleteSession(s.id);
+      if (ai.activeId) void ai.open(ai.activeId);
+      note(t('aiChat.deleted', { name }));
+    } catch (err) {
+      fail(err);
     }
   }
 
   async function closeFinished() {
     try {
       const n = await ai.closeFinished();
-      info = tp('aiChat.closedCount', n);
+      note(tp('aiChat.closedCount', n));
       if (ai.activeId) void ai.open(ai.activeId);
     } catch (err) {
-      error = (err as Error).message;
+      fail(err);
+    }
+  }
+
+  async function reopen(s: AiSession) {
+    try {
+      await ai.reopen(s.id);
+      historyOpen = false;
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function deleteAllClosed() {
+    try {
+      note(tp('aiChat.history.deletedCount', await ai.deleteAllClosed()));
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function copyChat(s: AiSession) {
+    menu = null;
+    try {
+      if (await copyText(await ai.markdownOf(s.id))) note(t('aiChat.copiedChat'));
+      else fail(new Error(t('aiChat.msg.copyFailed')));
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  function startRename(s: AiSession) {
+    menu = null;
+    renaming = s.id;
+    renameText = s.title_set ? (s.title ?? '') : ai.title(s);
+  }
+
+  async function finishRename(save: boolean) {
+    const id = renaming;
+    renaming = null;
+    if (!save || !id) return;
+    const s = ai.sessions.find((x) => x.id === id);
+    if (!s || renameText.trim() === ai.title(s)) return;
+    try {
+      await ai.rename(id, renameText);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  function focusOnMount(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
+
+  function openMenu(s: AiSession, x: number, y: number) {
+    const width = 210;
+    const height = 150;
+    menu = {
+      session: s,
+      x: Math.max(4, Math.min(x, window.innerWidth - width - 4)),
+      y: Math.max(4, Math.min(y, window.innerHeight - height - 4)),
+    };
+  }
+
+  function menuKeys(e: KeyboardEvent) {
+    const list = [...(menuEl?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      list[(at + step + list.length) % list.length]?.focus();
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      menu = null;
     }
   }
 
@@ -131,10 +300,27 @@
     await ai.answerPermission(id, decision, reason);
   }
 
-  function label(s: AiSession): string {
-    const n = s.id.split('-').pop();
-    const name = ai.providerName(s.provider);
-    return n && /^\d+$/.test(n) ? t('aiChat.tabLabel', { provider: name, n }) : name;
+  async function saveEdit(index: number, text: string) {
+    if (!session) return;
+    const ordinal = userOrdinal(items, index);
+    editing = null;
+    stick = true;
+    try {
+      await ai.edit(session.id, ordinal, text);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  /** ↑ in an empty composer: the last message opens in the editor. */
+  function editLast(): boolean {
+    if (!session || running || lastUser < 0) return false;
+    editing = lastUser;
+    return true;
+  }
+
+  function openLink(href: string) {
+    chrome.newTab(href);
   }
 
   function statusLabel(s: AiSession): string {
@@ -142,7 +328,8 @@
   }
 
   function tabTitle(s: AiSession): string {
-    const parts = [s.id, statusLabel(s)];
+    const parts = [ai.title(s), ai.providerName(s.provider), statusLabel(s)];
+    if (s.model) parts.push(s.model);
     if (s.tabs.length) parts.push(t('aiChat.tabTabs', { tabs: s.tabs.join(', ') }));
     if (s.access?.cwd) parts.push(t('aiChat.access.folder', { cwd: s.access.cwd }));
     return parts.join(' · ');
@@ -159,23 +346,31 @@
     return t(`aiChat.mode.${s.access.permission_mode}`);
   }
 
-  function pretty(v: unknown): string {
+  async function pickModel(s: AiSession, model: string) {
     try {
-      return JSON.stringify(v, null, 2);
-    } catch {
-      return String(v);
+      await ai.setModel(s.id, model);
+      note(t('aiChat.model.changed', { name: ai.title(s), model }));
+    } catch (err) {
+      fail(err);
     }
   }
 </script>
 
+<svelte:window
+  onpointerdown={(e) => {
+    if (menu && !menuEl?.contains(e.target as Node)) menu = null;
+  }}
+  onblur={() => (menu = null)}
+/>
+
 {#if view === 'settings'}
   <AiSettings onback={() => (view = 'chat')} />
 {:else}
-  <div class="ai">
+  <div class="ai" bind:this={root}>
     <div class="bar">
       {#if session}
         <span class="dot" style:background={session.color} aria-hidden="true"></span>
-        <span class="title">{sessionName}</span>
+        <span class="title" title={tabTitle(session)}>{sessionName}</span>
         <span class="status {session.status}">{statusLabel(session)}</span>
         {#if accessLabel(session)}
           <span class="mode-chip" class:warn={session.access?.permission_mode === 'full_access'} title={tabTitle(session)}>
@@ -183,7 +378,13 @@
             {accessLabel(session)}
           </span>
         {/if}
-        {#if session.model}<span class="via">{session.model}</span>{/if}
+        <AiModelPicker
+          provider={session.provider}
+          value={session.model ?? ''}
+          allowDefault={false}
+          title={t('aiChat.model.chatTitle')}
+          onpick={(m) => pickModel(session, m)}
+        />
       {:else}
         <label class="select">
           <span class="sr-only">{t('aiChat.provider')}</span>
@@ -194,9 +395,33 @@
           </select>
           <Icon name="chevron-down" size={12} stroke={2.25} />
         </label>
-        <span class="via">{providerHint(ai.provider)}</span>
+        {#if current?.configured !== false}
+          <AiModelPicker
+            provider={ai.provider}
+            value={ai.newModelFor(ai.provider)}
+            title={t('aiChat.model.newTitle')}
+            onpick={(m) => ai.setNewChatModel(ai.provider, m)}
+          />
+        {:else}
+          <span class="via">{providerHint(ai.provider)}</span>
+        {/if}
       {/if}
       <span class="spacer"></span>
+      {#if session}
+        <button class="icon-btn" title={t('aiChat.copyChatTitle')} aria-label={t('aiChat.copyChat')} onclick={() => copyChat(session)}>
+          <Icon name="copy" size={14} />
+        </button>
+      {/if}
+      <button
+        class="icon-btn"
+        class:on={historyOpen}
+        title={t('aiChat.history.openTitle')}
+        aria-label={t('aiChat.history.open')}
+        aria-expanded={historyOpen}
+        onclick={() => (historyOpen = !historyOpen)}
+      >
+        <Icon name="clock" size={15} />
+      </button>
       <button class="icon-btn" title={t('aiChat.settingsTitle')} aria-label={t('aiChat.settings')} onclick={() => (view = 'settings')}>
         <Icon name="settings" size={15} />
       </button>
@@ -210,188 +435,268 @@
         </button>
         {#each ai.sessions as s (s.id)}
           {@const waiting = ai.pendingFor(s.id).length}
-          <div class="sess" class:selected={session?.id === s.id}>
-            <button
-              class="pick"
-              role="tab"
-              aria-selected={session?.id === s.id}
-              title={tabTitle(s)}
-              onclick={() => ai.open(s.id)}
-              onauxclick={(e) => {
-                if (e.button === 1) {
+          {@const name = ai.title(s)}
+          <div class="sess" class:selected={session?.id === s.id} class:editing={renaming === s.id}>
+            {#if renaming === s.id}
+              <span class="dot" style:background={s.color} aria-hidden="true"></span>
+              <input
+                class="rename"
+                aria-label={t('aiChat.tab.renameLabel')}
+                title={t('aiChat.tab.renameHint')}
+                bind:value={renameText}
+                use:focusOnMount
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void finishRename(true);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void finishRename(false);
+                  }
+                }}
+                onblur={() => finishRename(true)}
+              />
+            {:else}
+              <button
+                class="pick"
+                role="tab"
+                aria-selected={session?.id === s.id}
+                aria-haspopup="menu"
+                title={tabTitle(s)}
+                onclick={() => ai.open(s.id)}
+                ondblclick={() => startRename(s)}
+                oncontextmenu={(e) => {
                   e.preventDefault();
-                  requestClose(s);
-                }
-              }}
-            >
-              <span class="dot" class:pulse={s.status === 'running'} style:background={s.color}></span>
-              {label(s)}
-              {#if waiting > 0}<span class="badge" title={tp('aiChat.waitingCount', waiting)}>{waiting}</span>{/if}
-            </button>
-            <button class="x" aria-label={t('aiChat.closeNamed', { name: label(s) })} title={t('aiChat.closeTitle')} onclick={() => requestClose(s)}>
+                  openMenu(s, e.clientX, e.clientY);
+                }}
+                onkeydown={(e) => {
+                  if (e.key === 'F2') {
+                    e.preventDefault();
+                    startRename(s);
+                  } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+                    e.preventDefault();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openMenu(s, r.left, r.bottom + 2);
+                  } else if (e.key === 'Delete') {
+                    e.preventDefault();
+                    requestClose(s);
+                  }
+                }}
+                onauxclick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    requestClose(s);
+                  }
+                }}
+              >
+                <span class="dot" class:pulse={s.status === 'running'} style:background={s.color}></span>
+                <span class="label">{name}</span>
+                {#if waiting > 0}<span class="badge" title={tp('aiChat.waitingCount', waiting)}>{waiting}</span>{/if}
+              </button>
+            {/if}
+            <button class="x" aria-label={t('aiChat.closeNamed', { name })} title={t('aiChat.closeTitleArchive')} onclick={() => requestClose(s)}>
               <Icon name="x" size={11} stroke={2.25} />
             </button>
           </div>
         {/each}
         {#if finished.length > 0}
           <button class="sess sweep" onclick={closeFinished} title={t('aiChat.closeFinishedTitle')}>
-            <Icon name="trash" size={12} />
+            <Icon name="x" size={12} />
             {t('aiChat.closeFinished')}
           </button>
         {/if}
       </div>
     {/if}
 
-    {#if confirmClose}
-      {@const target = confirmClose}
-      <div class="confirm" role="alertdialog" aria-label={t('aiChat.closeConfirm', { name: label(target) })}>
-        <span>{t('aiChat.closeConfirm', { name: label(target) })}</span>
-        <button class="btn danger" onclick={() => close(target)}>{t('aiChat.closeConfirmYes')}</button>
-        <button class="btn" onclick={() => (confirmClose = null)}>{t('common.cancel')}</button>
+    {#if menu}
+      {@const target = menu.session}
+      <div
+        class="ctx"
+        role="menu"
+        tabindex="-1"
+        aria-label={t('aiChat.tab.menu')}
+        bind:this={menuEl}
+        style:left="{menu.x}px"
+        style:top="{menu.y}px"
+        onkeydown={menuKeys}
+      >
+        <button role="menuitem" title={t('aiChat.tab.renameTitle')} onclick={() => startRename(target)}>
+          <Icon name="pencil" size={13} />{t('aiChat.tab.rename')}<kbd>F2</kbd>
+        </button>
+        <button role="menuitem" onclick={() => copyChat(target)}><Icon name="copy" size={13} />{t('aiChat.tab.copyMarkdown')}</button>
+        <div class="sep" role="separator"></div>
+        <button role="menuitem" title={t('aiChat.closeTitleArchive')} onclick={() => requestClose(target)}>
+          <Icon name="x" size={13} />{t('aiChat.tab.close')}
+        </button>
+        <button
+          role="menuitem"
+          class="danger"
+          onclick={() => {
+            menu = null;
+            confirm = { kind: 'delete', session: target };
+          }}
+        >
+          <Icon name="trash" size={13} />{t('aiChat.tab.delete')}
+        </button>
       </div>
     {/if}
 
-    <div class="log" bind:this={log} onscroll={onScroll} aria-live="polite">
-      {#if !session}
-        <div class="intro">
-          <span class="glyph"><Icon name="sparkles" size={20} /></span>
-          <h3>{t('aiChat.intro.title', { name: current?.name ?? t('aiChat.intro.anAgent') })}</h3>
-          <p>{t('aiChat.intro.body')}</p>
-          {#if current && !current.configured}
-            <button class="btn" onclick={() => (view = 'settings')}>{t('aiChat.intro.setUp', { name: current.name })}</button>
-          {:else}
-            {#if cliKind}
-              <div class="access" aria-label={t('aiChat.newChat.title')}>
-                {#if cliKind === 'claude-code'}
+    {#if confirm}
+      {@const target = confirm.session}
+      {@const text = confirm.kind === 'close' ? t('aiChat.closeConfirm', { name: ai.title(target) }) : t('aiChat.deleteConfirm', { name: ai.title(target) })}
+      <div class="confirm" role="alertdialog" aria-label={text}>
+        <span>{text}</span>
+        {#if confirm.kind === 'close'}
+          <button class="btn danger" onclick={() => close(target)}>{t('aiChat.closeConfirmYes')}</button>
+        {:else}
+          <button class="btn danger" onclick={() => remove(target)}>{t('aiChat.deleteConfirmYes')}</button>
+        {/if}
+        <button class="btn" onclick={() => (confirm = null)}>{t('common.cancel')}</button>
+      </div>
+    {/if}
+
+    <div class="log-wrap">
+      <div class="log" bind:this={log} onscroll={onScroll} aria-live="polite">
+        {#if !session}
+          <div class="intro">
+            <span class="glyph"><Icon name="sparkles" size={20} /></span>
+            <h3>{t('aiChat.intro.title', { name: current?.name ?? t('aiChat.intro.anAgent') })}</h3>
+            <p>{t('aiChat.intro.body')}</p>
+            {#if current && !current.configured}
+              <button class="btn" onclick={() => (view = 'settings')}>{t('aiChat.intro.setUp', { name: current.name })}</button>
+            {:else}
+              {#if cliKind}
+                <div class="access" aria-label={t('aiChat.newChat.title')}>
+                  {#if cliKind === 'claude-code'}
+                    <label>
+                      <span>{t('aiChat.newChat.permissions')}</span>
+                      <select
+                        value={ai.newChat.permission_mode ?? ''}
+                        onchange={(e) => (ai.newChat.permission_mode = (e.currentTarget.value || null) as AiPermissionMode | null)}
+                      >
+                        <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.mode.${defaults?.permission_mode ?? 'ask'}`) })}</option>
+                        {#each MODES as m (m)}<option value={m}>{t(`aiChat.mode.${m}`)}</option>{/each}
+                      </select>
+                    </label>
+                    <p class="hint" class:warn={chosenMode === 'full_access'}>{t(`aiChat.modeHint.${chosenMode}`)}</p>
+                    <label>
+                      <span>{t('aiChat.newChat.addDirs')}</span>
+                      <textarea
+                        rows="2"
+                        spellcheck="false"
+                        value={ai.newChat.add_dirs ?? defaults?.add_dirs.join('\n') ?? ''}
+                        oninput={(e) => (ai.newChat.add_dirs = e.currentTarget.value)}
+                        placeholder={t('aiChat.accessSettings.addDirsPlaceholder')}
+                      ></textarea>
+                    </label>
+                    <p class="hint">{t('aiChat.newChat.addDirsHint')}</p>
+                  {:else}
+                    <label>
+                      <span>{t('aiChat.newChat.sandbox')}</span>
+                      <select
+                        value={ai.newChat.sandbox ?? ''}
+                        onchange={(e) => (ai.newChat.sandbox = (e.currentTarget.value || null) as AiCodexSandbox | null)}
+                      >
+                        <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.sandbox.${defaults?.sandbox ?? 'workspace_write'}`) })}</option>
+                        {#each SANDBOXES as m (m)}<option value={m}>{t(`aiChat.sandbox.${m}`)}</option>{/each}
+                      </select>
+                    </label>
+                    <label>
+                      <span>{t('aiChat.newChat.approvals')}</span>
+                      <select
+                        value={ai.newChat.approval_policy ?? ''}
+                        onchange={(e) => (ai.newChat.approval_policy = (e.currentTarget.value || null) as AiCodexApproval | null)}
+                      >
+                        <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.approval.${defaults?.approval_policy ?? 'on_request'}`) })}</option>
+                        {#each APPROVALS as a (a)}<option value={a}>{t(`aiChat.approval.${a}`)}</option>{/each}
+                      </select>
+                    </label>
+                  {/if}
                   <label>
-                    <span>{t('aiChat.newChat.permissions')}</span>
-                    <select
-                      value={ai.newChat.permission_mode ?? ''}
-                      onchange={(e) => (ai.newChat.permission_mode = (e.currentTarget.value || null) as AiPermissionMode | null)}
-                    >
-                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.mode.${defaults?.permission_mode ?? 'ask'}`) })}</option>
-                      {#each MODES as m (m)}<option value={m}>{t(`aiChat.mode.${m}`)}</option>{/each}
-                    </select>
-                  </label>
-                  <p class="hint" class:warn={chosenMode === 'full_access'}>{t(`aiChat.modeHint.${chosenMode}`)}</p>
-                  <label>
-                    <span>{t('aiChat.newChat.addDirs')}</span>
-                    <textarea
-                      rows="2"
+                    <span>{t('aiChat.newChat.folder')}</span>
+                    <input
                       spellcheck="false"
-                      value={ai.newChat.add_dirs ?? defaults?.add_dirs.join('\n') ?? ''}
-                      oninput={(e) => (ai.newChat.add_dirs = e.currentTarget.value)}
-                      placeholder={t('aiChat.accessSettings.addDirsPlaceholder')}
-                    ></textarea>
+                      bind:value={ai.newChat.cwd}
+                      placeholder={defaults ? (defaults.cwd ?? defaults.default_cwd) : t('aiChat.newChat.folderDefault')}
+                    />
                   </label>
-                  <p class="hint">{t('aiChat.newChat.addDirsHint')}</p>
-                {:else}
-                  <label>
-                    <span>{t('aiChat.newChat.sandbox')}</span>
-                    <select
-                      value={ai.newChat.sandbox ?? ''}
-                      onchange={(e) => (ai.newChat.sandbox = (e.currentTarget.value || null) as AiCodexSandbox | null)}
-                    >
-                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.sandbox.${defaults?.sandbox ?? 'workspace_write'}`) })}</option>
-                      {#each SANDBOXES as m (m)}<option value={m}>{t(`aiChat.sandbox.${m}`)}</option>{/each}
-                    </select>
-                  </label>
-                  <label>
-                    <span>{t('aiChat.newChat.approvals')}</span>
-                    <select
-                      value={ai.newChat.approval_policy ?? ''}
-                      onchange={(e) => (ai.newChat.approval_policy = (e.currentTarget.value || null) as AiCodexApproval | null)}
-                    >
-                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.approval.${defaults?.approval_policy ?? 'on_request'}`) })}</option>
-                      {#each APPROVALS as a (a)}<option value={a}>{t(`aiChat.approval.${a}`)}</option>{/each}
-                    </select>
-                  </label>
-                {/if}
-                <label>
-                  <span>{t('aiChat.newChat.folder')}</span>
-                  <input
-                    spellcheck="false"
-                    bind:value={ai.newChat.cwd}
-                    placeholder={defaults ? (defaults.cwd ?? defaults.default_cwd) : t('aiChat.newChat.folderDefault')}
-                  />
-                </label>
+                </div>
+              {/if}
+              <div class="chips">
+                {#each suggestions as s (s)}
+                  <button class="chip" onclick={() => send(s)}>{s}</button>
+                {/each}
               </div>
             {/if}
-            <div class="chips">
-              {#each suggestions as s (s)}
-                <button class="chip" onclick={() => send(s)}>{s}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        {#each items as item, i (i)}
-          {#if item.kind === 'user'}
-            <div class="msg user">{item.text}</div>
-          {:else if item.kind === 'assistant'}
-            <div class="msg assistant" class:streaming={item.streaming}>{item.text}</div>
-          {:else if item.kind === 'system'}
-            <div class="notice"><Icon name="info" size={13} />{noticeText(item)}</div>
-          {:else if item.kind === 'permission'}
-            <AiPermissionCard
-              request={item.request}
-              agent={sessionName ?? ''}
-              reasonReachesAgent={!isCodex(session)}
-              onanswer={(d, r) => answer(item.request.id, d, r)}
-            />
-          {:else if item.kind === 'tool'}
-            {@const why = failureReason(item)}
-            <details class="tool" class:failed={item.ok === false}>
-              <summary>
-                <span
-                  class="state"
-                  aria-label={item.pending
-                    ? t('aiChat.tool.running')
-                    : item.ok
-                      ? t('aiChat.tool.ok')
-                      : item.ok === false
-                        ? t('aiChat.tool.failed')
-                        : t('aiChat.tool.noResult')}
-                >
-                  {#if item.pending}
-                    <span class="spinner"></span>
-                  {:else if item.ok}
-                    <Icon name="check" size={13} stroke={2.25} />
-                  {:else if item.ok === false}
-                    <Icon name="x" size={13} stroke={2.25} />
-                  {:else}
-                    <span class="dash">–</span>
-                  {/if}
-                </span>
-                <span class="name">{toolLabel(item.name)}</span>
-                <span class="args">{argsPreview(item.args, 60)}</span>
-                <Icon name="chevron-right" size={12} class="chev" />
-              </summary>
-              <div class="tool-body">
-                {#if item.args !== null && argsPreview(item.args)}
-                  <div class="k">{t('aiChat.tool.args')}</div>
-                  <pre>{pretty(item.args)}</pre>
-                {/if}
-                {#if item.summary !== null}
-                  <div class="k">{item.ok ? t('aiChat.tool.result') : t('aiChat.tool.error')}</div>
-                  <pre>{summaryText(item.summary)}</pre>
-                {:else if item.pending}
-                  <div class="k">{t('aiChat.tool.waiting')}</div>
+          </div>
+        {:else}
+          {#each rows as row (row.kind === 'tools' ? `g${row.start}` : row.index)}
+            {#if row.kind === 'tools'}
+              {@const key = `${session.id}:${row.start}`}
+              {@const failed = row.items.filter((r) => r.item.ok === false).length}
+              {@const busy = row.items.some((r) => r.item.pending)}
+              <div class="group" class:open={openGroups[key]}>
+                <button class="group-head" aria-expanded={!!openGroups[key]} onclick={() => (openGroups[key] = !openGroups[key])}>
+                  <Icon name="chevron-right" size={12} class="chev" />
+                  <span>{tp('aiChat.tools.group', row.items.length)}</span>
+                  {#if failed > 0}<span class="failed">{t('aiChat.tools.failedCount', { n: failed })}</span>{/if}
+                  {#if busy}<span class="spinner" aria-label={t('aiChat.tool.running')}></span>{/if}
+                  <span class="names">{[...new Set(row.items.map((r) => r.item.name.split('__').pop()))].join(', ')}</span>
+                </button>
+                {#if openGroups[key]}
+                  <div class="group-body">
+                    {#each row.items as r (r.index)}
+                      <AiToolRow item={r.item} oncopyfail={(m) => fail(new Error(m))} />
+                    {/each}
+                  </div>
                 {/if}
               </div>
-            </details>
-            {#if why}<div class="why" title={why}>{why}</div>{/if}
-          {:else if item.kind === 'done'}
-            {@const text = doneLabel(item.reason)}
-            {#if text}<div class="done" class:err={item.reason.startsWith('error')}>{text}</div>{/if}
+            {:else}
+              {@const item = row.item}
+              {#if item.kind === 'user' || item.kind === 'assistant'}
+                <AiMessage
+                  {item}
+                  editable={item.kind === 'user' && !item.queued}
+                  editBlocked={running ? t('aiChat.msg.editBusy') : null}
+                  retry={row.index === lastUser}
+                  editing={editing === row.index}
+                  onstartedit={() => (editing = row.index)}
+                  oncanceledit={() => (editing = null)}
+                  onsave={(text) => saveEdit(row.index, text)}
+                  onretry={() => item.kind === 'user' && saveEdit(row.index, item.text)}
+                  onlink={openLink}
+                  oncopyfail={(m) => fail(new Error(m))}
+                />
+              {:else if item.kind === 'system'}
+                <div class="notice"><Icon name="info" size={13} />{noticeText(item)}</div>
+              {:else if item.kind === 'permission'}
+                <AiPermissionCard
+                  request={item.request}
+                  agent={ai.providerName(session.provider)}
+                  reasonReachesAgent={!isCodex(session)}
+                  onanswer={(d, r) => answer(item.request.id, d, r)}
+                />
+              {:else if item.kind === 'tool'}
+                <AiToolRow {item} oncopyfail={(m) => fail(new Error(m))} />
+              {:else if item.kind === 'done'}
+                {@const text = doneLabel(item.reason)}
+                {#if text}<div class="done" class:err={item.reason.startsWith('error')}>{text}</div>{/if}
+              {/if}
+            {/if}
+          {/each}
+          {#if running && !(lastRow?.kind === 'assistant' && lastRow.streaming) && ai.pendingFor(session.id).length === 0}
+            <div class="thinking" role="status" aria-label={t('aiChat.working')}><span></span><span></span><span></span></div>
           {/if}
-        {/each}
-        {#if running && items[items.length - 1]?.kind !== 'assistant' && ai.pendingFor(session.id).length === 0}
-          <div class="thinking" aria-label={t('aiChat.working')}><span></span><span></span><span></span></div>
+          {#if ended}
+            <div class="ended">{t(session.status === 'failed' ? 'aiChat.ended.failed' : 'aiChat.ended.stopped')}</div>
+          {/if}
         {/if}
-        {#if ended}
-          <div class="ended">{t(session.status === 'failed' ? 'aiChat.ended.failed' : 'aiChat.ended.stopped')}</div>
-        {/if}
+      </div>
+      {#if session && !atBottom}
+        <button class="down" aria-label={t('aiChat.scrollDown')} title={t('aiChat.scrollDown')} onclick={scrollDown}>
+          <Icon name="chevron-down" size={16} stroke={2.25} />
+        </button>
       {/if}
     </div>
 
@@ -409,44 +714,32 @@
       </div>
     {/if}
 
-    <form
-      class="composer"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void send();
-      }}
-    >
-      <textarea
-        bind:value={ai.draft}
-        rows="2"
-        placeholder={ended
+    <AiComposer
+      placeholder={running
+        ? t('aiChat.placeholder.busy')
+        : ended
           ? t('aiChat.placeholder.ended')
           : session
-            ? t('aiChat.placeholder.reply', { name: sessionName ?? '' })
+            ? t('aiChat.placeholder.reply', { name: ai.providerName(session.provider) })
             : t('aiChat.placeholder.new', { name: current?.name ?? t('aiChat.placeholder.theAgent') })}
-        aria-label={t('aiChat.message')}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-      ></textarea>
-      {#if running}
-        <button class="icon-btn stop" type="button" aria-label={t('aiChat.stop')} title={t('aiChat.stopTitle')} onclick={stop}>
-          <Icon name="stop" size={14} stroke={2.25} />
-        </button>
-      {:else}
-        <button class="icon-btn send" type="submit" aria-label={t('aiChat.send')} disabled={!canSend}>
-          <Icon name="send" size={16} stroke={2} />
-        </button>
-      {/if}
-    </form>
+      {running}
+      {canSend}
+      queued={waitingCount}
+      onsend={() => send()}
+      oninterrupt={interrupt}
+      onstop={stopAgent}
+      oneditlast={editLast}
+    />
+
+    {#if historyOpen}
+      <AiHistory onclose={() => (historyOpen = false)} onreopen={reopen} ondelete={remove} ondeleteall={deleteAllClosed} />
+    {/if}
   </div>
 {/if}
 
 <style>
   .ai {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -455,17 +748,31 @@
   .bar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-height: 44px;
     padding: 6px 6px 6px 10px;
     border-bottom: 1px solid var(--border);
   }
+  .bar > * {
+    flex: none;
+  }
   .title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
     font-weight: 650;
     white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .bar :global(.model) {
+    flex: 0 1 auto;
   }
   .spacer {
-    flex: 1;
+    flex: 1 1 0;
+  }
+  .icon-btn.on {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   .dot {
     display: inline-block;
@@ -489,6 +796,7 @@
     color: var(--fg-muted);
     font-size: var(--fs-xs);
     font-weight: 600;
+    white-space: nowrap;
   }
   .status.running {
     background: var(--accent-soft);
@@ -511,7 +819,7 @@
   }
   select {
     appearance: none;
-    max-width: 210px;
+    max-width: 170px;
     height: 28px;
     padding: 0 26px 0 10px;
     border: 1px solid var(--border-strong);
@@ -576,6 +884,10 @@
     gap: 0;
     padding: 0 3px 0 0;
   }
+  div.sess.editing {
+    gap: 6px;
+    padding-left: 9px;
+  }
   .pick {
     display: inline-flex;
     align-items: center;
@@ -586,6 +898,23 @@
     background: transparent;
     color: inherit;
     font: inherit;
+  }
+  .label {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rename {
+    width: 150px;
+    height: 18px;
+    padding: 0 4px;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    user-select: text;
+    outline: none;
   }
   .x {
     display: grid;
@@ -611,10 +940,61 @@
     line-height: 15px;
     text-align: center;
   }
+  .ctx {
+    position: fixed;
+    z-index: 50;
+    min-width: 200px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--surface);
+    box-shadow: var(--shadow-pop);
+    outline: none;
+  }
+  .ctx button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--fg);
+    font-size: var(--fs-sm);
+    text-align: left;
+  }
+  .ctx button:hover,
+  .ctx button:focus-visible {
+    background: var(--hover);
+    outline: none;
+  }
+  .ctx button.danger {
+    color: var(--danger);
+  }
+  .ctx :global(svg) {
+    flex: none;
+    color: var(--fg-subtle);
+  }
+  .ctx .danger :global(svg) {
+    color: inherit;
+  }
+  .ctx kbd {
+    margin-left: auto;
+    color: var(--fg-subtle);
+    font: 10px var(--font-mono);
+  }
+  .sep {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--border);
+  }
   .mode-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
     padding: 1px 7px;
     border-radius: 9px;
     background: var(--sunken);
@@ -622,6 +1002,11 @@
     font-size: var(--fs-xs);
     font-weight: 600;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bar .mode-chip {
+    flex: 0 2 auto;
   }
   .mode-chip.warn {
     background: color-mix(in oklab, var(--danger) 12%, transparent);
@@ -712,18 +1097,6 @@
   .hint.warn {
     color: var(--danger);
   }
-  .why {
-    margin: -5px 0 0 26px;
-    color: var(--danger);
-    font-size: var(--fs-xs);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
   .ended {
     align-self: center;
     max-width: 36ch;
@@ -735,6 +1108,12 @@
     background: color-mix(in oklab, var(--ok) 12%, transparent);
     color: var(--ok);
   }
+  .log-wrap {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
   .log {
     display: flex;
     flex-direction: column;
@@ -744,6 +1123,23 @@
     padding: 12px;
     overflow-y: auto;
     user-select: text;
+  }
+  .down {
+    position: absolute;
+    right: 14px;
+    bottom: 10px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--fg-muted);
+    box-shadow: var(--shadow-pop);
+  }
+  .down:hover {
+    color: var(--fg);
   }
   .intro {
     display: flex;
@@ -796,41 +1192,6 @@
     border-color: var(--border-strong);
     background: var(--hover);
   }
-  .msg {
-    max-width: 92%;
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .msg.user {
-    align-self: flex-end;
-    padding: 7px 10px;
-    border-radius: var(--r-lg) var(--r-lg) 3px var(--r-lg);
-    background: var(--accent);
-    color: var(--on-accent);
-  }
-  .msg.assistant {
-    align-self: flex-start;
-    max-width: 100%;
-    padding: 1px 2px;
-    color: var(--fg);
-  }
-  .msg.streaming::after {
-    content: '';
-    display: inline-block;
-    width: 7px;
-    height: 13px;
-    margin-left: 2px;
-    vertical-align: -2px;
-    background: var(--accent);
-    animation: blink 1s steps(1) infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
-  }
   .notice {
     display: flex;
     gap: 6px;
@@ -848,48 +1209,57 @@
     flex: none;
     margin-top: 1px;
   }
-  .tool {
+  .group {
     border: 1px solid var(--border);
     border-radius: var(--r);
     background: var(--surface);
     font-size: var(--fs-xs);
   }
-  .tool summary {
+  .group-head {
     display: flex;
     align-items: center;
     gap: 7px;
+    width: 100%;
     height: 28px;
     padding: 0 8px;
-    list-style: none;
-    cursor: default;
+    border: 0;
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--fg);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    text-align: left;
   }
-  .tool summary::-webkit-details-marker {
-    display: none;
-  }
-  .tool summary:hover {
+  .group-head:hover {
     background: var(--hover);
   }
-  .tool :global(.chev) {
+  .group-head :global(.chev) {
     flex: none;
     color: var(--fg-subtle);
     transition: transform 120ms;
   }
-  .tool[open] :global(.chev) {
+  .group.open .group-head :global(.chev) {
     transform: rotate(90deg);
   }
-  .state {
-    display: grid;
-    place-items: center;
-    width: 16px;
-    height: 16px;
-    flex: none;
-    color: var(--ok);
-  }
-  .tool.failed .state {
+  .group-head .failed {
     color: var(--danger);
   }
-  .dash {
+  .group-head .names {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
     color: var(--fg-subtle);
+    font-family: var(--font-mono);
+    font-weight: 400;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border-top: 1px solid var(--border);
   }
   .spinner {
     width: 11px;
@@ -898,41 +1268,7 @@
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-  }
-  .name {
     flex: none;
-    font-family: var(--font-mono);
-    font-weight: 600;
-    color: var(--fg);
-  }
-  .args {
-    flex: 1;
-    min-width: 0;
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tool-body {
-    padding: 4px 9px 9px;
-    border-top: 1px solid var(--border);
-  }
-  .k {
-    margin: 6px 0 3px;
-    color: var(--fg-subtle);
-    font-weight: 600;
-  }
-  pre {
-    margin: 0;
-    max-height: 220px;
-    padding: 6px 8px;
-    overflow: auto;
-    border-radius: var(--r-sm);
-    background: var(--sunken);
-    font: var(--fs-xs) / 1.45 var(--font-mono);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
   .done {
     align-self: center;
@@ -978,52 +1314,5 @@
     width: 22px;
     height: 22px;
     color: inherit;
-  }
-  .composer {
-    position: relative;
-    margin: 0 10px 10px;
-  }
-  textarea {
-    display: block;
-    width: 100%;
-    min-height: 60px;
-    max-height: 200px;
-    padding: 9px 44px 9px 11px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-lg);
-    background: var(--surface);
-    resize: vertical;
-    font-size: var(--fs);
-    user-select: text;
-  }
-  textarea:focus {
-    outline: none;
-    border-color: var(--accent-line);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  .send,
-  .stop {
-    position: absolute;
-    right: 6px;
-    bottom: 6px;
-    background: var(--accent);
-    color: var(--on-accent);
-  }
-  .stop {
-    background: var(--fg);
-    color: var(--surface);
-  }
-  .send:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--accent) 88%, var(--fg));
-    color: var(--on-accent);
-  }
-  .stop:hover {
-    background: color-mix(in oklab, var(--fg) 85%, var(--surface));
-    color: var(--surface);
-  }
-  .send:disabled {
-    background: var(--sunken);
-    color: var(--fg-subtle);
-    opacity: 1;
   }
 </style>

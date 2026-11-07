@@ -74,7 +74,7 @@ export const aiPanel = chapter(
     'approvals',
     'Approval cards',
     p(
-      'When an agent asks, the chat shows a card: “Claude Code #1 wants to use Bash”, “… wants to run a command” or “… wants to change files”, with what would run (the command and its folder, the files, the address or the arguments) and the agent’s reason when it gives one. The agent waits until you answer:',
+      'When an agent asks, the chat shows a card: “Claude Code wants to use Bash”, “… wants to run a command” or “… wants to change files”, with what would run (the command and its folder, the files, the address or the arguments) and the agent’s reason when it gives one. The agent waits until you answer:',
     ),
     list(
       '**Allow once**: just this request.',
@@ -87,14 +87,50 @@ export const aiPanel = chapter(
   ),
   section(
     'chats',
-    'Chats: continuing and closing',
+    'Chats: names, closing, history and deleting',
     list(
-      'Every chat is a tab at the top of the panel, named after its agent (“Claude Code #2”) and colored like its tab group; click one to switch. Hover it for its status, tabs and folder.',
-      'Your next message **continues the chat that is shown**, a stopped or failed one too: the agent picks up the conversation with everything above (if it cannot, the chat says so and goes on in a new conversation). **New** opens the new-chat page, where you pick the provider and, for Claude Code and Codex, the permissions and folder.',
-      'Close a chat with the × on its tab or with a middle click. A chat that is still working or waits for an approval asks first (**Stop and close**). **Close finished** closes every chat that is not working and waits for no approval.',
-      'Chats stay until you close them, also across restarts (they come back stopped). Closing a chat keeps its transcript file in `data\\ai\\sessions\\`.',
-      'The stop button ends the current answer; the chat stays and your next message continues it.',
-      'Tool calls are collapsible rows under the answer: click one to see what was sent and what came back.',
+      'Every chat is a tab at the top of the panel, colored like its tab group; click one to switch. Hover it for its provider, status, model, tabs and folder.',
+      'A chat is named after your first message (cut to about 48 characters); until then it shows the provider’s name. To rename it, double-click its tab, press [[F2]] on it, or right-click it → **Rename**; [[Enter]] saves, [[Esc]] cancels, an empty name goes back to the automatic one.',
+      'Right-clicking a tab (or [[Shift+F10]] on it) opens its menu: **Rename**, **Copy chat as Markdown**, **Close** and **Delete…**.',
+      'Your next message **continues the chat that is shown**, a stopped or failed one too: the agent picks up the conversation with everything above (if it cannot, the chat says so and goes on in a new conversation). **New** opens the new-chat page, where you pick the provider, the model and, for Claude Code and Codex, the permissions and folder.',
+      '**Closing a chat loses nothing.** The × on its tab, a middle click or **Close** in its menu moves it to **History** with all its messages and files. Only a chat that still works or waits for an approval asks first (**Stop and close**). **Close finished** closes every chat that is not working and waits for no approval.',
+      '**History** (the clock button in the panel’s top bar) lists closed chats, newest first, with their provider, model and date, and a search box. **Open** brings a chat back to the tab strip; your next message continues it.',
+      '**Delete** (in History, or **Delete…** in a tab’s menu) removes a chat for good, with its transcript and files, after you confirm. **Delete all closed** at the bottom of History empties it (it says how many chats go).',
+      'Chats stay until you close them, also across restarts (they come back stopped).',
+    ),
+  ),
+  section(
+    'models',
+    'Choosing the model',
+    p(
+      'The panel’s top bar shows the model of the chat on screen. Pick another one there: it takes effect from the **next answer** (the one running now finishes with the old model). On the new-chat page the same picker sets the model of the chat you are about to start; **Default** means the provider’s default model from Settings → AI. The panel remembers your last choice per provider.',
+    ),
+    p(
+      'Claude Code offers its aliases (**Default**, **Fable**, **Opus**, **Sonnet**, **Haiku**: always the newest model of that family) and full model ids; Codex and API providers list the models they report.',
+    ),
+  ),
+  section(
+    'queue',
+    'Sending while the agent works',
+    p(
+      'The message box stays usable while the agent works. Type more instructions and press [[Enter]]: the message waits at the bottom of the chat with a **queued** mark (and “1 queued” by the box) until the agent takes it. Claude Code reads it during the current task; Codex and API models take it as soon as they can, at the latest when the current answer ends.',
+    ),
+    list(
+      'The stop button sits next to send. A click on it, or [[Esc]] in the panel, **interrupts** the answer: the agent stops this turn and waits for your next message.',
+      'The small arrow next to it opens **Stop the agent**: it ends the agent’s process (the chat stays, and the next message starts it again with the conversation).',
+      '[[Shift+Enter]] starts a new line; the box grows with its text. You can paste text or drop it on the box.',
+    ),
+  ),
+  section(
+    'edit-copy',
+    'Editing, retrying and copying',
+    list(
+      'Hover your message and click the pencil to edit it. [[Enter]] saves and sends it again, [[Esc]] cancels. The conversation goes back to that point: **everything after the message is replaced** by the new answer, as in the official apps. [[Up]] in an empty message box edits your last message.',
+      '**Retry** (the circular arrow on your last message) sends it again unchanged and replaces its answer.',
+      'Editing and retrying wait until the agent is not working (press [[Esc]] to interrupt it first).',
+      'Every message can be selected and copied as usual. Hover a message for **Copy** and the time it was sent; tool calls have **Copy** for their arguments and result; code blocks have their own **Copy code**. The copy button in the top bar (or **Copy chat as Markdown** in a tab’s menu) puts the whole chat on the clipboard as Markdown.',
+      'Answers are shown as Markdown: headings, lists, tables, quotes, code with its language. Links open in a new browser tab. Nothing the model writes can run as code in the panel: HTML in an answer shows as plain text, and images become links.',
+      'Long series of tool calls fold into one row (“12 tool calls”); click it to see them. When you scroll up, a round arrow button brings you back to the newest message.',
     ),
   ),
   section(
@@ -122,6 +158,7 @@ export const aiPanel = chapter(
       'Permission modes, the sandbox and folders apply to Claude Code and Codex only; API models get the browser’s tools and nothing else.',
       'Ollama and LM Studio count as configured even when their local server is not running: use **Test**.',
       'An agent gets the `core` toolset by default; pass more toolsets when it needs traffic, recording and so on.',
+      'Editing an earlier message of a Claude Code or Codex chat relies on the agent rewinding its own conversation; when it cannot, the chat says what happened in a note.',
     ),
   ),
 );

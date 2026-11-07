@@ -256,7 +256,22 @@ export interface RpcMethods {
   'ai.session_start': { params: AiSessionStart; result: AiSession };
   'ai.session_send': { params: { id: string; text: string }; result: AiSession };
   'ai.session_stop': { params: { id: string }; result: AiSession };
-  'ai.sessions_list': { params: void; result: { sessions: AiSession[] } };
+  /** Open chats by default; `archived: true` lists the closed ones, newest first. */
+  'ai.sessions_list': { params: { archived?: boolean }; result: { sessions: AiSession[] } };
+  /** Empty title = back to the automatic one. */
+  'ai.session_rename': { params: { id: string; title: string }; result: AiSession };
+  /** Unarchive a closed chat: its history comes back and writing in it continues it. */
+  'ai.session_reopen': { params: { id: string }; result: AiSession };
+  /** Permanent: stops it if running and removes every file of the chat. */
+  'ai.session_delete': { params: { id: string }; result: { deleted: true } };
+  /** Models a provider offers for the model picker. */
+  'ai.models': { params: { provider: string }; result: AiModels };
+  /** Takes effect from the next turn; persisted with the chat. */
+  'ai.session_set_model': { params: { id: string; model: string }; result: AiSession };
+  /** Stop the current turn, keep the chat (ai.session_stop ends the agent's process). */
+  'ai.session_interrupt': { params: { id: string }; result: AiSession };
+  /** Rewind to just before the user message number `index` (0-based) and send `text` instead. */
+  'ai.session_edit': { params: { id: string; index: number; text: string }; result: AiSession };
   'ai.session_transcript': { params: { id: string }; result: { id: string; entries: AiTranscriptEntry[] } };
   // ---- terminals (crates/ai/src/term.rs) ---------------------------------------------------
   'term.open': { params: TermOpen; result: TermInfo };
@@ -331,7 +346,8 @@ export interface ApiEvents {
   'ai.tool_result': { session: string; name: string; ok: boolean; summary: string };
   /** The agent finished answering one user message (`end_turn`, `max_steps`, `stopped`, `error: …`). */
   'ai.done': { session: string; reason: string };
-  'ai.session': { session: string; status: AiSessionStatus };
+  /** Status change; newer cores send the changed SessionInfo fields too (title, model, archived, queued…). */
+  'ai.session': { session: string; status: AiSessionStatus } & Partial<Omit<AiSession, 'id' | 'status'>>;
   'term.output': { id: string; data: string };
   'term.exit': { id: string; code: number | null };
   'net.paused': NetPaused;
@@ -412,6 +428,28 @@ export interface AiSession {
   status: AiSessionStatus;
   tabs: number[];
   created_ms: number;
+  /** Shown name: automatic (the first user message, ~48 chars) until the user renames it;
+   *  the provider name before the first message. Older cores: absent. Never show `id`. */
+  title?: string;
+  /** The user renamed it: the automatic title no longer overwrites it. */
+  title_set?: boolean;
+  /** Closed: listed by `ai.sessions_list {archived: true}` (History), not in the tab strip. */
+  archived?: boolean;
+  updated_ms?: number;
+  /** User messages sent while the agent was busy and not yet taken by it. */
+  queued?: number;
+}
+
+/** One entry of the model picker (`ai.models`). */
+export interface AiModel {
+  id: string;
+  name: string;
+  hint?: string;
+}
+
+export interface AiModels {
+  models: AiModel[];
+  default?: string;
 }
 
 export interface AiSessionStart {
@@ -431,6 +469,10 @@ export interface AiMessageEvent {
   /** System notes the UI knows (`resume_lost`, `mcp_not_connected`): shown translated. */
   code?: string;
   params?: Record<string, string>;
+  /** User messages: sent while the agent was busy, waiting until it takes them. */
+  queued?: boolean;
+  /** User messages: the follow-up of a queued one: the agent took it now (no new message). */
+  taken?: boolean;
 }
 
 export type AiTranscriptEntry = { ts_ms?: number } & (

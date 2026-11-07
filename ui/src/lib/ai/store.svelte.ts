@@ -9,15 +9,29 @@ import type {
   AiPermissionMode,
   AiProvider,
   AiProviderSet,
+  AiModels,
   AiProviderTest,
   AiSession,
   AiSessionStart,
-  AiSessionStatus,
+  ApiEvents,
 } from '../api/types';
 import { useLiveProviders } from '../providers';
 import { load, save } from '../storage';
-import { afterClose, applyPermission, finishedIds, sendTarget } from './sessions';
-import { applyAiEvent, threadFromTranscript, withPending, type AiEvent, type ChatItem } from './thread';
+import { afterClose, applyPermission, chatTitle, finishedIds, pickModel, sendTarget } from './sessions';
+import {
+  applyAiEvent,
+  queuedCount,
+  settleQueued,
+  threadFromTranscript,
+  threadMarkdown,
+  truncateAtUser,
+  withPending,
+  type AiEvent,
+  type ChatItem,
+} from './thread';
+
+/** SessionInfo fields an `ai.session` event may carry besides the status. */
+const SESSION_FIELDS = ['title', 'title_set', 'archived', 'updated_ms', 'queued', 'model', 'tabs', 'access', 'color'] as const;
 
 /** Overrides for the next new chat of a CLI provider (null / "" = the provider's default). */
 export interface NewChatAccess {
@@ -65,7 +79,17 @@ export class AiStore {
   provider = $state(load('ai.provider', 'claude-code'));
   /** Per-chat overrides of the next new chat (reset once it starts). */
   newChat = $state<NewChatAccess>({ ...NO_OVERRIDES });
+  /** Closed (archived) chats, newest first; loaded when the History drawer opens. */
+  history = $state<AiSession[]>([]);
+  historyLoaded = $state(false);
+  historyError = $state<string | null>(null);
+  /** `ai.models` answers by provider id (the model pickers). */
+  models = $state<Record<string, AiModels>>({});
+  modelErrors = $state<Record<string, string>>({});
+  /** The model picked for new chats, by provider (remembered across restarts). */
+  newChatModel = $state<Record<string, string>>(load('ai.newChatModel', {}));
   #unsubs: Array<() => void> = [];
+  #models = new Map<string, Promise<AiModels | null>>();
   #loaded = new Set<string>();
   #refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -80,7 +104,7 @@ export class AiStore {
 
   start(): void {
     const fold = (session: string, event: AiEvent) => {
-      this.threads[session] = applyAiEvent(this.threads[session] ?? [], event);
+      this.threads[session] = applyAiEvent(this.threads[session] ?? [], event, Date.now());
       if (!this.sessions.some((s) => s.id === session)) this.#refreshSoon();
     };
     this.#unsubs.push(
@@ -93,8 +117,11 @@ export class AiStore {
         this.#countPending(p.session);
         fold(p.session, { type: 'ai.permission', payload: p });
       }),
-      this.api.on('ai.session', (p) => this.#setStatus(p.session, p.status)),
-      this.api.on('ai.session_closed', (p) => this.#forget(p.session)),
+      this.api.on('ai.session', (p) => this.#applySession(p)),
+      this.api.on('ai.session_closed', (p) => {
+        this.#forget(p.session);
+        if (this.historyLoaded) void this.loadHistory();
+      }),
       this.api.onStatus((s) => {
         if (s === 'open') void this.refreshSessions();
       }),
@@ -126,8 +153,8 @@ export class AiStore {
   /** Sessions and the approval requests still waiting (a reloaded UI shows their cards again). */
   async refreshSessions(): Promise<void> {
     try {
-      const { sessions } = await this.api.call('ai.sessions_list');
-      this.sessions = sessions.sort((a, b) => b.created_ms - a.created_ms);
+      const { sessions } = await this.api.call('ai.sessions_list', {});
+      this.sessions = sessions.filter((s) => !s.archived).sort((a, b) => b.created_ms - a.created_ms);
     } catch {
       // No AI service in this core: the panel still works for providers.
       return;
@@ -141,10 +168,27 @@ export class AiStore {
     }
   }
 
-  /** Load a session's transcript once if no events were seen for it (e.g. after a reload). */
+  /** Show a chat (null = the new-chat page), loading its transcript if needed. */
   async open(id: string | null): Promise<void> {
     this.activeId = id;
-    if (!id || this.#loaded.has(id) || (this.threads[id]?.length ?? 0) > 0) return;
+    if (id) await this.ensureThread(id);
+  }
+
+  /** What a chat is called (its title, else its provider's name). */
+  title(s: AiSession): string {
+    return chatTitle(s, this.providerName(s.provider));
+  }
+
+  /** A chat (open or closed) as Markdown, loading its transcript if needed. */
+  async markdownOf(id: string): Promise<string> {
+    await this.ensureThread(id);
+    const s = this.sessions.find((x) => x.id === id) ?? this.history.find((x) => x.id === id);
+    return threadMarkdown(this.threads[id] ?? [], s ? this.title(s) : '');
+  }
+
+  /** Load a session's transcript once if no events were seen for it (e.g. after a reload). */
+  async ensureThread(id: string): Promise<void> {
+    if (this.#loaded.has(id) || (this.threads[id]?.length ?? 0) > 0) return;
     this.#loaded.add(id);
     try {
       const { entries } = await this.api.call('ai.session_transcript', { id });
@@ -167,21 +211,140 @@ export class AiStore {
       this.#upsert(await this.api.call('ai.session_send', { id: target.id, text: prompt }));
       return;
     }
-    const session = await this.api.call('ai.session_start', { provider: this.provider, prompt, ...this.#newChatArgs() });
+    const model = this.newModelFor(this.provider);
+    const session = await this.api.call('ai.session_start', {
+      provider: this.provider,
+      prompt,
+      ...(model ? { model } : {}),
+      ...this.#newChatArgs(),
+    });
     this.#loaded.add(session.id);
     this.#upsert(session);
     this.activeId = session.id;
     this.newChat = { ...NO_OVERRIDES };
   }
 
+  /** Ends the agent's process; the chat stays and the next message continues it. */
   async stopSession(id: string): Promise<void> {
     this.#upsert(await this.api.call('ai.session_stop', { id }));
   }
 
-  /** Close a chat (stops it if needed); the neighbour, or the new-chat page, is shown next. */
+  /** Stops the current turn only (Esc): the agent stays ready for the next message. */
+  async interrupt(id: string): Promise<void> {
+    this.#upsert(await this.api.call('ai.session_interrupt', { id }));
+  }
+
+  /** Messages of a chat waiting for the agent to take them. */
+  queuedFor(id: string): number {
+    return this.sessions.find((s) => s.id === id)?.queued ?? queuedCount(this.threads[id] ?? []);
+  }
+
+  /**
+   * Replace user message number `ordinal` (0-based) with `text` and resend it: the thread is
+   * cut to just before it at once; the new message and answer arrive as events.
+   */
+  async edit(id: string, ordinal: number, text: string): Promise<void> {
+    const prompt = text.trim();
+    if (!prompt) return;
+    const before = this.threads[id] ?? [];
+    this.threads[id] = truncateAtUser(before, ordinal);
+    try {
+      this.#upsert(await this.api.call('ai.session_edit', { id, index: ordinal, text: prompt }));
+    } catch (err) {
+      this.threads[id] = before;
+      throw err;
+    }
+  }
+
+  /** "" = back to the automatic title. */
+  async rename(id: string, title: string): Promise<void> {
+    this.#upsert(await this.api.call('ai.session_rename', { id, title: title.trim() }));
+  }
+
+  /** Close = archive: the chat leaves the tab strip and waits in History; nothing is deleted. */
   async closeSession(id: string, deleteTranscript = false): Promise<void> {
-    await this.api.call('ai.session_close', { id, delete_transcript: deleteTranscript });
+    await this.api.call('ai.session_close', deleteTranscript ? { id, delete_transcript: true } : { id });
+    const closed = this.sessions.find((s) => s.id === id);
     this.#forget(id);
+    if (closed && this.historyLoaded) {
+      this.history = [{ ...closed, archived: true, status: closed.status === 'running' ? 'stopped' : closed.status }, ...this.history.filter((s) => s.id !== id)];
+    }
+  }
+
+  /** Closed chats, newest first (`ai.sessions_list {archived: true}`). */
+  async loadHistory(): Promise<void> {
+    try {
+      const { sessions } = await this.api.call('ai.sessions_list', { archived: true });
+      this.history = sessions;
+      this.historyError = null;
+    } catch (err) {
+      this.historyError = (err as Error).message;
+    }
+    this.historyLoaded = true;
+  }
+
+  /** Bring a closed chat back to the tab strip with its history, and show it. */
+  async reopen(id: string): Promise<void> {
+    const session = await this.api.call('ai.session_reopen', { id });
+    this.history = this.history.filter((s) => s.id !== id);
+    delete this.threads[id];
+    this.#loaded.delete(id);
+    this.#upsert({ ...session, archived: false });
+    await this.open(id);
+  }
+
+  /** Permanently delete a chat, open or closed, with every file of it. */
+  async deleteSession(id: string): Promise<void> {
+    await this.api.call('ai.session_delete', { id });
+    this.history = this.history.filter((s) => s.id !== id);
+    this.#forget(id);
+  }
+
+  /** Permanently delete every closed chat. Returns how many were deleted. */
+  async deleteAllClosed(): Promise<number> {
+    let n = 0;
+    for (const s of [...this.history]) {
+      await this.deleteSession(s.id);
+      n++;
+    }
+    return n;
+  }
+
+  /** A provider's models for the pickers (loaded once; `modelErrors` says why one failed). */
+  loadModels(provider: string, force = false): Promise<AiModels | null> {
+    const cached = this.#models.get(provider);
+    if (cached && !force) return cached;
+    const job = this.api.call('ai.models', { provider }).then(
+      (models) => {
+        this.models[provider] = models;
+        delete this.modelErrors[provider];
+        return models;
+      },
+      (err: Error) => {
+        this.modelErrors[provider] = err.message;
+        this.#models.delete(provider);
+        return null;
+      },
+    );
+    this.#models.set(provider, job);
+    return job;
+  }
+
+  /** The model a new chat with `provider` starts with ("" = the provider's default). */
+  newModelFor(provider: string): string {
+    return pickModel(this.models[provider]?.models, this.newChatModel[provider]);
+  }
+
+  /** The model of new chats with `provider` ("" = the provider's default); remembered. */
+  setNewChatModel(provider: string, model: string): void {
+    if (model) this.newChatModel[provider] = model;
+    else delete this.newChatModel[provider];
+    save('ai.newChatModel', $state.snapshot(this.newChatModel));
+  }
+
+  /** Change a chat's model; it takes effect from the next turn. */
+  async setModel(id: string, model: string): Promise<void> {
+    this.#upsert(await this.api.call('ai.session_set_model', { id, model }));
   }
 
   /** Close every chat that is not working (see `finishedIds`). Returns how many closed. */
@@ -279,15 +442,33 @@ export class AiStore {
   }
 
   #upsert(session: AiSession): void {
+    if (session.archived) {
+      // A closed chat (renamed in History, say) stays in History.
+      this.history = this.history.map((s) => (s.id === session.id ? session : s));
+      if (this.sessions.some((s) => s.id === session.id)) this.#forget(session.id);
+      return;
+    }
     const i = this.sessions.findIndex((s) => s.id === session.id);
     if (i < 0) this.sessions = [session, ...this.sessions];
     else this.sessions[i] = session;
   }
 
-  #setStatus(id: string, status: AiSessionStatus): void {
-    const s = this.sessions.find((x) => x.id === id);
-    if (s) s.status = status;
-    else this.#refreshSoon();
+  /** An `ai.session` event: the status, plus whatever SessionInfo fields a newer core sends. */
+  #applySession(p: ApiEvents['ai.session']): void {
+    const s = this.sessions.find((x) => x.id === p.session);
+    if (!s) {
+      if (!p.archived) this.#refreshSoon();
+      return;
+    }
+    if (p.archived) {
+      this.#forget(p.session);
+      if (this.historyLoaded) void this.loadHistory();
+      return;
+    }
+    s.status = p.status;
+    const fields = s as unknown as Record<string, unknown>;
+    for (const key of SESSION_FIELDS) if (p[key] !== undefined) fields[key] = p[key];
+    if (p.queued !== undefined && this.threads[p.session]) this.threads[p.session] = settleQueued(this.threads[p.session], p.queued);
   }
 
   #refreshSoon(): void {
