@@ -8,6 +8,7 @@
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
   import ProviderForm from './ProviderForm.svelte';
+  import AgentAccess from './AgentAccess.svelte';
 
   /**
    * Provider settings: CLI agents, built-in API providers and the user's own ("My providers"),
@@ -199,6 +200,7 @@
     {:else if !ai.providersError}
       <p class="muted">{t('aiProviders.loading')}</p>
     {/if}
+    <AgentAccess store={ai} />
   </div>
 </div>
 

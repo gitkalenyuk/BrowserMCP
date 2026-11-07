@@ -145,7 +145,8 @@ Methods: `tabs.list | open | close | activate | unlock | split | unsplit | resto
 `history.search | delete`, `downloads.list`, `passwords.list | get | save | delete`,
 `import.chrome_detect | chrome` (`types-data.ts`, mocked statefully in `mock-data.ts`), `ui.layout`, and for the side panels
 `ai.providers | provider_set | provider_test | session_start | session_send | session_stop |
-sessions_list | session_transcript`, `term.open | write | resize | close | list`,
+session_close | sessions_list | session_transcript | permissions_list | permission_answer |
+agent_access | agent_access_set`, `term.open | write | resize | close | list`,
 `net.capture | list | get | search | ws_frames | har_export | rule_add | rule_list | rule_remove |
 breakpoint | paused_list | resume`. Events: `tab.*`, `tabs.reset`, `agents.updated`, …, `ai.message
 | tool_call | tool_result | done | session`, `term.output | exit`, `net.paused | pause_timeout |
@@ -203,7 +204,17 @@ starts the mock empty (wizard).
   value), unsaved-changes guard (drafts survive a remount: `ai/provider-draft.ts`), free check via
   `ai.provider_test` (its `problem` code is translated); form logic in `ai/provider-form.ts`), sessions as colored chips, one thread per
   session folded from `ai.*` events (`text_delta` streams, `text` replaces and closes the row; tool
-  calls are collapsible rows), stop button. New chat = `ai.session_start`, reply = `ai.session_send`.
+  calls are collapsible rows, failed ones show their reason), stop button. New chat =
+  `ai.session_start` (only from "+ New"; CLI agents get a permission mode and extra folders
+  (Claude Code) or a sandbox and approval policy (Codex), and a folder for that chat), reply = `ai.session_send`, also in a stopped or failed chat: the core continues it
+  (`ai/sessions.ts` decides). Chat tabs close with × or a middle click (`ai.session_close`, asks
+  first while the chat works), "Close finished" closes the idle ones. Approval requests of CLI
+  agents (`ai.permission` events, `ai.permissions_list` after a reload) are cards in the thread
+  (`AiPermissionCard.svelte`): allow once / always allow the tool in this chat / deny with a
+  reason (`ai.permission_answer`; Codex cannot pass the reason on, so there it is a note in the
+  chat). Notes and tool results the core words itself arrive with a code or in fixed English and
+  are shown translated (`noticeText` / `summaryText` in `ai/thread.ts`). Defaults per CLI provider: `AgentAccess.svelte` in the
+  settings sub-view (`ai.agent_access_set`).
 * **Terminal** (`TerminalPanel.svelte`, `XTermView.svelte`, `term/store.svelte.ts`): xterm.js +
   fit addon per terminal tab, shell picker (pwsh / cmd / bash), resize follows the panel
   (`term.resize`, debounced). Output is buffered from chrome start, also for terminals opened over

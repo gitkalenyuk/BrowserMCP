@@ -1,39 +1,61 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { AiSession } from '../../api';
-  import { argsPreview, doneLabel, toolLabel } from '../../ai/thread';
+  import type { AiCodexApproval, AiCodexSandbox, AiPermissionDecision, AiPermissionMode, AiSession } from '../../api';
+  import { closeNeedsConfirm, finishedIds } from '../../ai/sessions';
+  import { argsPreview, doneLabel, failureReason, noticeText, summaryText, toolLabel } from '../../ai/thread';
+  import { t, tp } from '../../i18n/index.svelte';
   import { PROVIDERS, providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
+  import AiPermissionCard from './AiPermissionCard.svelte';
   import AiSettings from './AiSettings.svelte';
 
   const chrome = useChrome();
   const ai = chrome.ai;
+
+  const MODES: AiPermissionMode[] = ['ask', 'accept_edits', 'plan', 'full_access', 'browser_only'];
+  const SANDBOXES: AiCodexSandbox[] = ['read_only', 'workspace_write', 'full_access'];
+  const APPROVALS: AiCodexApproval[] = ['untrusted', 'on_request', 'never'];
 
   let view = $state<'chat' | 'settings'>('chat');
   // The draft lives in the store: the page context menu ("Ask AI about this") fills it.
   const draft = $derived(ai.draft);
   let sending = $state(false);
   let error = $state<string | null>(null);
+  let info = $state<string | null>(null);
+  /** A chat whose × was clicked while it still works: asks before closing. */
+  let confirmClose = $state<AiSession | null>(null);
   let log = $state<HTMLDivElement>();
   let stick = true;
 
   const providerList = $derived(
-    ai.providers.length ? ai.providers.map((p) => ({ id: p.id, name: p.name, configured: p.configured })) : PROVIDERS.map((p) => ({ ...p, configured: true })),
+    ai.providers.length
+      ? ai.providers.map((p) => ({ id: p.id, name: p.name, configured: p.configured, protocol: p.protocol }))
+      : PROVIDERS.map((p) => ({ ...p, configured: true, protocol: p.id })),
   );
   const session = $derived(ai.active);
   const items = $derived(session ? (ai.threads[session.id] ?? []) : []);
-  const sessionProvider = $derived(session ? ai.providerName(session.provider) : null);
+  const sessionName = $derived(session ? label(session) : null);
   const current = $derived(providerList.find((p) => p.id === ai.provider) ?? providerList[0]);
   const ended = $derived(session?.status === 'stopped' || session?.status === 'failed');
   const running = $derived(session?.status === 'running');
-  const canSend = $derived(draft.trim() !== '' && !sending && (session && !ended ? true : current?.configured !== false));
+  const canSend = $derived(draft.trim() !== '' && !sending && (session ? true : current?.configured !== false));
+  const finished = $derived(finishedIds(ai.sessions, ai.pending));
+  /** The new chat's provider is a CLI agent: permissions and folder can be picked. */
+  const cliKind = $derived(current?.protocol === 'claude-code' || current?.protocol === 'codex' ? current.protocol : null);
+  const defaults = $derived(current ? ai.access[current.id] : undefined);
+  const chosenMode = $derived(ai.newChat.permission_mode ?? defaults?.permission_mode ?? 'ask');
 
-  const suggestions = ['Summarize this page', 'Find the pricing table and extract it as CSV', 'Compare prices for this product in 3 stores'];
+  const suggestions = $derived([t('aiChat.suggest.summarize'), t('aiChat.suggest.pricing'), t('aiChat.suggest.compare')]);
 
   $effect(() => {
     void ai.refreshProviders();
     void ai.refreshSessions();
+  });
+
+  // The defaults shown on the new-chat page.
+  $effect(() => {
+    if (cliKind && current && !ai.access[current.id]) void ai.loadAccess(current.id);
   });
 
   // Keep the newest message in view while the user is at the bottom.
@@ -76,11 +98,65 @@
   function newChat() {
     void ai.open(null);
     error = null;
+    confirmClose = null;
+  }
+
+  /** × / middle click: close at once, or ask first while the chat still works. */
+  function requestClose(s: AiSession) {
+    if (closeNeedsConfirm(s, ai.pending)) confirmClose = s;
+    else void close(s);
+  }
+
+  async function close(s: AiSession) {
+    confirmClose = null;
+    try {
+      await ai.closeSession(s.id);
+      if (ai.activeId) void ai.open(ai.activeId);
+    } catch (err) {
+      error = (err as Error).message;
+    }
+  }
+
+  async function closeFinished() {
+    try {
+      const n = await ai.closeFinished();
+      info = tp('aiChat.closedCount', n);
+      if (ai.activeId) void ai.open(ai.activeId);
+    } catch (err) {
+      error = (err as Error).message;
+    }
+  }
+
+  async function answer(id: string, decision: AiPermissionDecision, reason?: string) {
+    await ai.answerPermission(id, decision, reason);
   }
 
   function label(s: AiSession): string {
     const n = s.id.split('-').pop();
-    return `${ai.providerName(s.provider)} ${n && /^\d+$/.test(n) ? `#${n}` : ''}`.trim();
+    const name = ai.providerName(s.provider);
+    return n && /^\d+$/.test(n) ? t('aiChat.tabLabel', { provider: name, n }) : name;
+  }
+
+  function statusLabel(s: AiSession): string {
+    return t(`aiChat.status.${s.status}`);
+  }
+
+  function tabTitle(s: AiSession): string {
+    const parts = [s.id, statusLabel(s)];
+    if (s.tabs.length) parts.push(t('aiChat.tabTabs', { tabs: s.tabs.join(', ') }));
+    if (s.access?.cwd) parts.push(t('aiChat.access.folder', { cwd: s.access.cwd }));
+    return parts.join(' · ');
+  }
+
+  function isCodex(s: AiSession): boolean {
+    return s.provider === 'codex' || ai.providers.find((p) => p.id === s.provider)?.protocol === 'codex';
+  }
+
+  /** The access in effect for a CLI chat, as a short chip label. */
+  function accessLabel(s: AiSession): string | null {
+    if (!s.access) return null;
+    if (isCodex(s)) return t(`aiChat.sandbox.${s.access.sandbox}`);
+    return t(`aiChat.mode.${s.access.permission_mode}`);
   }
 
   function pretty(v: unknown): string {
@@ -99,15 +175,21 @@
     <div class="bar">
       {#if session}
         <span class="dot" style:background={session.color} aria-hidden="true"></span>
-        <span class="title">{sessionProvider}</span>
-        <span class="status {session.status}">{session.status}</span>
+        <span class="title">{sessionName}</span>
+        <span class="status {session.status}">{statusLabel(session)}</span>
+        {#if accessLabel(session)}
+          <span class="mode-chip" class:warn={session.access?.permission_mode === 'full_access'} title={tabTitle(session)}>
+            <Icon name={session.access?.permission_mode === 'full_access' ? 'lock-open' : 'lock'} size={11} />
+            {accessLabel(session)}
+          </span>
+        {/if}
         {#if session.model}<span class="via">{session.model}</span>{/if}
       {:else}
         <label class="select">
-          <span class="sr-only">Provider</span>
+          <span class="sr-only">{t('aiChat.provider')}</span>
           <select value={ai.provider} onchange={(e) => ai.setProvider(e.currentTarget.value)}>
             {#each providerList as p (p.id)}
-              <option value={p.id}>{p.name}{p.configured ? '' : ' — not set up'}</option>
+              <option value={p.id}>{p.configured ? p.name : t('aiChat.providerNotSetUp', { name: p.name })}</option>
             {/each}
           </select>
           <Icon name="chevron-down" size={12} stroke={2.25} />
@@ -115,28 +197,57 @@
         <span class="via">{providerHint(ai.provider)}</span>
       {/if}
       <span class="spacer"></span>
-      <button class="icon-btn" title="Providers and keys" aria-label="AI provider settings" onclick={() => (view = 'settings')}>
+      <button class="icon-btn" title={t('aiChat.settingsTitle')} aria-label={t('aiChat.settings')} onclick={() => (view = 'settings')}>
         <Icon name="settings" size={15} />
       </button>
     </div>
 
     {#if ai.sessions.length > 0}
-      <div class="sessions" role="tablist" aria-label="AI sessions">
-        <button class="sess new" role="tab" aria-selected={!session} onclick={newChat} title="New chat">
-          <Icon name="plus" size={13} stroke={2} /> New
+      <div class="sessions" role="tablist" aria-label={t('aiChat.sessions')}>
+        <button class="sess new" role="tab" aria-selected={!session} onclick={newChat} title={t('aiChat.newTitle')}>
+          <Icon name="plus" size={13} stroke={2} />
+          {t('aiChat.new')}
         </button>
         {#each ai.sessions as s (s.id)}
-          <button
-            class="sess"
-            role="tab"
-            aria-selected={session?.id === s.id}
-            title="{s.id} · {s.status}{s.tabs.length ? ` · tabs ${s.tabs.join(', ')}` : ''}"
-            onclick={() => ai.open(s.id)}
-          >
-            <span class="dot" class:pulse={s.status === 'running'} style:background={s.color}></span>
-            {label(s)}
-          </button>
+          {@const waiting = ai.pendingFor(s.id).length}
+          <div class="sess" class:selected={session?.id === s.id}>
+            <button
+              class="pick"
+              role="tab"
+              aria-selected={session?.id === s.id}
+              title={tabTitle(s)}
+              onclick={() => ai.open(s.id)}
+              onauxclick={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  requestClose(s);
+                }
+              }}
+            >
+              <span class="dot" class:pulse={s.status === 'running'} style:background={s.color}></span>
+              {label(s)}
+              {#if waiting > 0}<span class="badge" title={tp('aiChat.waitingCount', waiting)}>{waiting}</span>{/if}
+            </button>
+            <button class="x" aria-label={t('aiChat.closeNamed', { name: label(s) })} title={t('aiChat.closeTitle')} onclick={() => requestClose(s)}>
+              <Icon name="x" size={11} stroke={2.25} />
+            </button>
+          </div>
         {/each}
+        {#if finished.length > 0}
+          <button class="sess sweep" onclick={closeFinished} title={t('aiChat.closeFinishedTitle')}>
+            <Icon name="trash" size={12} />
+            {t('aiChat.closeFinished')}
+          </button>
+        {/if}
+      </div>
+    {/if}
+
+    {#if confirmClose}
+      {@const target = confirmClose}
+      <div class="confirm" role="alertdialog" aria-label={t('aiChat.closeConfirm', { name: label(target) })}>
+        <span>{t('aiChat.closeConfirm', { name: label(target) })}</span>
+        <button class="btn danger" onclick={() => close(target)}>{t('aiChat.closeConfirmYes')}</button>
+        <button class="btn" onclick={() => (confirmClose = null)}>{t('common.cancel')}</button>
       </div>
     {/if}
 
@@ -144,11 +255,68 @@
       {#if !session}
         <div class="intro">
           <span class="glyph"><Icon name="sparkles" size={20} /></span>
-          <h3>Ask {current?.name ?? 'an agent'} to do something</h3>
-          <p>It drives the browser through the same API you do. Tabs it opens join its own colored group, locked until you take over.</p>
+          <h3>{t('aiChat.intro.title', { name: current?.name ?? t('aiChat.intro.anAgent') })}</h3>
+          <p>{t('aiChat.intro.body')}</p>
           {#if current && !current.configured}
-            <button class="btn" onclick={() => (view = 'settings')}>Set up {current.name}</button>
+            <button class="btn" onclick={() => (view = 'settings')}>{t('aiChat.intro.setUp', { name: current.name })}</button>
           {:else}
+            {#if cliKind}
+              <div class="access" aria-label={t('aiChat.newChat.title')}>
+                {#if cliKind === 'claude-code'}
+                  <label>
+                    <span>{t('aiChat.newChat.permissions')}</span>
+                    <select
+                      value={ai.newChat.permission_mode ?? ''}
+                      onchange={(e) => (ai.newChat.permission_mode = (e.currentTarget.value || null) as AiPermissionMode | null)}
+                    >
+                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.mode.${defaults?.permission_mode ?? 'ask'}`) })}</option>
+                      {#each MODES as m (m)}<option value={m}>{t(`aiChat.mode.${m}`)}</option>{/each}
+                    </select>
+                  </label>
+                  <p class="hint" class:warn={chosenMode === 'full_access'}>{t(`aiChat.modeHint.${chosenMode}`)}</p>
+                  <label>
+                    <span>{t('aiChat.newChat.addDirs')}</span>
+                    <textarea
+                      rows="2"
+                      spellcheck="false"
+                      value={ai.newChat.add_dirs ?? defaults?.add_dirs.join('\n') ?? ''}
+                      oninput={(e) => (ai.newChat.add_dirs = e.currentTarget.value)}
+                      placeholder={t('aiChat.accessSettings.addDirsPlaceholder')}
+                    ></textarea>
+                  </label>
+                  <p class="hint">{t('aiChat.newChat.addDirsHint')}</p>
+                {:else}
+                  <label>
+                    <span>{t('aiChat.newChat.sandbox')}</span>
+                    <select
+                      value={ai.newChat.sandbox ?? ''}
+                      onchange={(e) => (ai.newChat.sandbox = (e.currentTarget.value || null) as AiCodexSandbox | null)}
+                    >
+                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.sandbox.${defaults?.sandbox ?? 'workspace_write'}`) })}</option>
+                      {#each SANDBOXES as m (m)}<option value={m}>{t(`aiChat.sandbox.${m}`)}</option>{/each}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{t('aiChat.newChat.approvals')}</span>
+                    <select
+                      value={ai.newChat.approval_policy ?? ''}
+                      onchange={(e) => (ai.newChat.approval_policy = (e.currentTarget.value || null) as AiCodexApproval | null)}
+                    >
+                      <option value="">{t('aiChat.newChat.default', { value: t(`aiChat.approval.${defaults?.approval_policy ?? 'on_request'}`) })}</option>
+                      {#each APPROVALS as a (a)}<option value={a}>{t(`aiChat.approval.${a}`)}</option>{/each}
+                    </select>
+                  </label>
+                {/if}
+                <label>
+                  <span>{t('aiChat.newChat.folder')}</span>
+                  <input
+                    spellcheck="false"
+                    bind:value={ai.newChat.cwd}
+                    placeholder={defaults ? (defaults.cwd ?? defaults.default_cwd) : t('aiChat.newChat.folderDefault')}
+                  />
+                </label>
+              </div>
+            {/if}
             <div class="chips">
               {#each suggestions as s (s)}
                 <button class="chip" onclick={() => send(s)}>{s}</button>
@@ -163,11 +331,28 @@
           {:else if item.kind === 'assistant'}
             <div class="msg assistant" class:streaming={item.streaming}>{item.text}</div>
           {:else if item.kind === 'system'}
-            <div class="notice"><Icon name="info" size={13} />{item.text}</div>
+            <div class="notice"><Icon name="info" size={13} />{noticeText(item)}</div>
+          {:else if item.kind === 'permission'}
+            <AiPermissionCard
+              request={item.request}
+              agent={sessionName ?? ''}
+              reasonReachesAgent={!isCodex(session)}
+              onanswer={(d, r) => answer(item.request.id, d, r)}
+            />
           {:else if item.kind === 'tool'}
+            {@const why = failureReason(item)}
             <details class="tool" class:failed={item.ok === false}>
               <summary>
-                <span class="state" aria-label={item.pending ? 'running' : item.ok ? 'ok' : item.ok === false ? 'failed' : 'no result'}>
+                <span
+                  class="state"
+                  aria-label={item.pending
+                    ? t('aiChat.tool.running')
+                    : item.ok
+                      ? t('aiChat.tool.ok')
+                      : item.ok === false
+                        ? t('aiChat.tool.failed')
+                        : t('aiChat.tool.noResult')}
+                >
                   {#if item.pending}
                     <span class="spinner"></span>
                   {:else if item.ok}
@@ -184,24 +369,28 @@
               </summary>
               <div class="tool-body">
                 {#if item.args !== null && argsPreview(item.args)}
-                  <div class="k">Arguments</div>
+                  <div class="k">{t('aiChat.tool.args')}</div>
                   <pre>{pretty(item.args)}</pre>
                 {/if}
                 {#if item.summary !== null}
-                  <div class="k">{item.ok ? 'Result' : 'Error'}</div>
-                  <pre>{item.summary}</pre>
+                  <div class="k">{item.ok ? t('aiChat.tool.result') : t('aiChat.tool.error')}</div>
+                  <pre>{summaryText(item.summary)}</pre>
                 {:else if item.pending}
-                  <div class="k">Waiting for the result…</div>
+                  <div class="k">{t('aiChat.tool.waiting')}</div>
                 {/if}
               </div>
             </details>
+            {#if why}<div class="why" title={why}>{why}</div>{/if}
           {:else if item.kind === 'done'}
             {@const text = doneLabel(item.reason)}
             {#if text}<div class="done" class:err={item.reason.startsWith('error')}>{text}</div>{/if}
           {/if}
         {/each}
-        {#if running && items[items.length - 1]?.kind !== 'assistant'}
-          <div class="thinking" aria-label="Working"><span></span><span></span><span></span></div>
+        {#if running && items[items.length - 1]?.kind !== 'assistant' && ai.pendingFor(session.id).length === 0}
+          <div class="thinking" aria-label={t('aiChat.working')}><span></span><span></span><span></span></div>
+        {/if}
+        {#if ended}
+          <div class="ended">{t(session.status === 'failed' ? 'aiChat.ended.failed' : 'aiChat.ended.stopped')}</div>
         {/if}
       {/if}
     </div>
@@ -210,7 +399,13 @@
       <div class="error" role="alert">
         <Icon name="alert" size={14} />
         <span>{error}</span>
-        <button class="icon-btn" aria-label="Dismiss" onclick={() => (error = null)}><Icon name="x" size={13} /></button>
+        <button class="icon-btn" aria-label={t('aiChat.dismiss')} onclick={() => (error = null)}><Icon name="x" size={13} /></button>
+      </div>
+    {:else if info}
+      <div class="error ok" role="status">
+        <Icon name="check" size={14} />
+        <span>{info}</span>
+        <button class="icon-btn" aria-label={t('aiChat.dismiss')} onclick={() => (info = null)}><Icon name="x" size={13} /></button>
       </div>
     {/if}
 
@@ -225,33 +420,24 @@
         bind:value={ai.draft}
         rows="2"
         placeholder={ended
-          ? 'This session has ended. Write to start a new chat…'
+          ? t('aiChat.placeholder.ended')
           : session
-            ? `Reply to ${sessionProvider}…`
-            : `Message ${current?.name ?? 'the agent'}…`}
-        aria-label="Message"
+            ? t('aiChat.placeholder.reply', { name: sessionName ?? '' })
+            : t('aiChat.placeholder.new', { name: current?.name ?? t('aiChat.placeholder.theAgent') })}
+        aria-label={t('aiChat.message')}
         onkeydown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            if (ended) newChat();
             void send();
           }
         }}
       ></textarea>
       {#if running}
-        <button class="icon-btn stop" type="button" aria-label="Stop" title="Stop the agent" onclick={stop}>
+        <button class="icon-btn stop" type="button" aria-label={t('aiChat.stop')} title={t('aiChat.stopTitle')} onclick={stop}>
           <Icon name="stop" size={14} stroke={2.25} />
         </button>
       {:else}
-        <button
-          class="icon-btn send"
-          type="submit"
-          aria-label="Send"
-          disabled={!canSend}
-          onclick={() => {
-            if (ended) newChat();
-          }}
-        >
+        <button class="icon-btn send" type="submit" aria-label={t('aiChat.send')} disabled={!canSend}>
           <Icon name="send" size={16} stroke={2} />
         </button>
       {/if}
@@ -372,13 +558,182 @@
     border-color: var(--border-strong);
     color: var(--fg);
   }
-  .sess[aria-selected='true'] {
+  .sess[aria-selected='true'],
+  .sess.selected {
     border-color: var(--accent-line);
     background: var(--accent-soft);
     color: var(--fg);
   }
-  .sess.new {
+  .sess.new,
+  .sess.sweep {
     gap: 3px;
+  }
+  .sess.sweep {
+    border-style: dashed;
+  }
+  /* A chat tab: the label picks it, the × closes it. */
+  div.sess {
+    gap: 0;
+    padding: 0 3px 0 0;
+  }
+  .pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
+    padding: 0 4px 0 9px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+  .x {
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--fg-subtle);
+  }
+  .x:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .badge {
+    min-width: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 10px;
+    line-height: 15px;
+    text-align: center;
+  }
+  .mode-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: var(--sunken);
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .mode-chip.warn {
+    background: color-mix(in oklab, var(--danger) 12%, transparent);
+    color: var(--danger);
+  }
+  .confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in oklab, var(--danger) 8%, transparent);
+    font-size: var(--fs-xs);
+  }
+  .confirm span {
+    flex: 1 1 160px;
+  }
+  .btn.danger {
+    border-color: color-mix(in oklab, var(--danger) 40%, transparent);
+    color: var(--danger);
+  }
+  .access {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--surface);
+    text-align: left;
+  }
+  .access label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-muted);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+  .access label > span {
+    flex: none;
+    width: 82px;
+  }
+  .access select,
+  .access input {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: var(--fs-xs);
+    font-weight: 400;
+    user-select: text;
+  }
+  .access select {
+    appearance: auto;
+  }
+  .access textarea {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r);
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: 400;
+    resize: vertical;
+  }
+  .access label:has(textarea) {
+    align-items: flex-start;
+  }
+  .hint {
+    max-width: none;
+    margin: 0;
+    color: var(--fg-subtle);
+    font-size: var(--fs-xs);
+    line-height: 1.4;
+  }
+  .hint.warn {
+    color: var(--danger);
+  }
+  .why {
+    margin: -5px 0 0 26px;
+    color: var(--danger);
+    font-size: var(--fs-xs);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ended {
+    align-self: center;
+    max-width: 36ch;
+    color: var(--fg-subtle);
+    font-size: var(--fs-xs);
+    text-align: center;
+  }
+  .error.ok {
+    background: color-mix(in oklab, var(--ok) 12%, transparent);
+    color: var(--ok);
   }
   .log {
     display: flex;

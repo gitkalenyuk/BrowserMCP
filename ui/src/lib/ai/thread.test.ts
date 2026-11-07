@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest';
-import { applyAiEvent, argsPreview, doneLabel, threadFromTranscript, toolLabel, type AiEvent, type ChatItem } from './thread';
+import { beforeAll, describe, expect, it } from 'vitest';
+import type { AiPermission } from '../api/types';
+import { settings } from '../settings.svelte';
+import {
+  applyAiEvent,
+  argsPreview,
+  doneLabel,
+  failureReason,
+  noticeText,
+  summaryText,
+  threadFromTranscript,
+  toolLabel,
+  withPending,
+  type AiEvent,
+  type ChatItem,
+} from './thread';
 
 const S = 'anthropic-1';
 const msg = (role: 'user' | 'assistant' | 'system', p: { text?: string; text_delta?: string }): AiEvent => ({
@@ -7,6 +21,11 @@ const msg = (role: 'user' | 'assistant' | 'system', p: { text?: string; text_del
   payload: { session: S, role, ...p },
 });
 const fold = (events: AiEvent[], start: ChatItem[] = []) => events.reduce(applyAiEvent, start);
+
+// Labels are checked in English, whatever the machine's language.
+beforeAll(() => {
+  settings.value = { ...settings.value, language: 'en' };
+});
 
 describe('applyAiEvent: streaming', () => {
   it('accumulates text_delta chunks into one streaming row', () => {
@@ -120,5 +139,82 @@ describe('labels', () => {
   it('toolLabel strips MCP prefixes', () => {
     expect(toolLabel('mcp__browsermcp__nav_goto')).toBe('nav_goto');
     expect(toolLabel('shell')).toBe('shell');
+  });
+});
+
+describe('notes and results the core words itself', () => {
+  it('a notice with a known code is shown translated, live and from the transcript', () => {
+    const live = fold([
+      { type: 'ai.message', payload: { session: S, role: 'system', text: 'English', code: 'resume_lost', params: { agent: 'Codex' } } },
+    ]);
+    const saved = threadFromTranscript([{ type: 'notice', text: 'English', code: 'resume_lost', params: { agent: 'Codex' } }]);
+    expect(saved).toEqual(live);
+    const note = live[0] as Extract<ChatItem, { kind: 'system' }>;
+    expect(noticeText(note)).toMatch(/^Codex could not continue/);
+    settings.value = { ...settings.value, language: 'uk' };
+    expect(noticeText(note)).toMatch(/^Codex не вдалося продовжити/);
+    settings.value = { ...settings.value, language: 'en' };
+    // Unknown codes and plain notices: the text as sent.
+    expect(noticeText({ kind: 'system', text: 'stderr line', code: 'other' })).toBe('stderr line');
+    expect(noticeText({ kind: 'system', text: 'stderr line' })).toBe('stderr line');
+  });
+
+  it('known tool summaries are translated, everything else is kept', () => {
+    expect(summaryText('Exited with code 2')).toBe('Exited with code 2');
+    expect(summaryText('Files changed')).toBe('Files changed');
+    settings.value = { ...settings.value, language: 'uk' };
+    expect(summaryText('Exited with code 2')).toBe('Завершилася з кодом 2');
+    expect(summaryText('Declined: the command was not approved')).toBe('Відхилено: команду не дозволили');
+    expect(summaryText('The user denied this action: not now')).toBe('Ви відхилили цю дію: not now');
+    expect(summaryText('{"tab":2}')).toBe('{"tab":2}');
+    settings.value = { ...settings.value, language: 'en' };
+  });
+});
+
+describe('approval requests', () => {
+  const request = (status: AiPermission['status'], extra: Partial<AiPermission> = {}): AiPermission => ({
+    id: 'claude-code-1.p1',
+    session: 'claude-code-1',
+    tool: 'Bash',
+    kind: 'tool',
+    title: null,
+    reason: null,
+    input: { command: 'ls' },
+    status,
+    always: false,
+    answer: null,
+    created_ms: 1,
+    ...extra,
+  });
+  const ask = (r: AiPermission): AiEvent => ({ type: 'ai.permission', payload: r });
+
+  it('a pending request is a card; its answer replaces it in place', () => {
+    const items = fold([
+      { type: 'ai.tool_call', payload: { session: S, name: 'Bash', args: { command: 'ls' } } },
+      ask(request('pending')),
+      ask(request('denied', { answer: 'not here' })),
+      { type: 'ai.tool_result', payload: { session: S, name: 'Bash', ok: false, summary: 'The user denied this action: not here' } },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(['tool', 'permission']);
+    const card = items[1] as Extract<ChatItem, { kind: 'permission' }>;
+    expect(card.request.status).toBe('denied');
+    // The refusal reason is shown on the failed call (worded for the person who refused).
+    const tool = items[0] as Extract<ChatItem, { kind: 'tool' }>;
+    expect(failureReason(tool)).toBe('You denied this action: not here');
+  });
+
+  it('transcript entries and still-pending requests rebuild the cards', () => {
+    const items = threadFromTranscript([{ type: 'user', text: 'go' }, { type: 'permission', ...request('allowed', { always: true }) }]);
+    expect(items.map((i) => i.kind)).toEqual(['user', 'permission']);
+    const more = withPending(items, [request('pending', { id: 'claude-code-1.p2' }), request('pending')]);
+    // p1 is already there (answered): only p2 is added, once.
+    expect(more.filter((i) => i.kind === 'permission')).toHaveLength(2);
+    expect(withPending(more, [request('pending', { id: 'claude-code-1.p2' })])).toEqual(more);
+  });
+
+  it('a failed call without text still says it failed', () => {
+    const tool: Extract<ChatItem, { kind: 'tool' }> = { kind: 'tool', name: 'x', args: null, pending: false, ok: false, summary: '' };
+    expect(failureReason(tool)).toBe('Failed without saying why');
+    expect(failureReason({ ...tool, ok: true })).toBeNull();
   });
 });

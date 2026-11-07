@@ -175,6 +175,15 @@ async fn openai_compatible_agent_runs_registry_tools() {
     // Tool definitions came from the registry (core toolset).
     let first = &server.received_requests().await.unwrap()[0];
     let body: Value = serde_json::from_slice(&first.body).unwrap();
+    // The prompt goes out once (it is recorded in the transcript before the loop starts).
+    let users: Vec<&Value> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .collect();
+    assert_eq!(users.len(), 1, "{}", body["messages"]);
+    assert_eq!(users[0]["content"], "open b.test", "{}", body["messages"]);
     let names: Vec<&str> = body["tools"]
         .as_array()
         .unwrap()
@@ -355,14 +364,200 @@ async fn stop_cancels_a_running_model_call() {
     assert_eq!(info["status"], "stopped");
     let events = until_done(&mut rx, "ollama-1").await;
     assert_eq!(events.last().unwrap().data["reason"], "stopped");
-    let err = h
+    // The stopped chat takes the next message itself (it is continued, not replaced).
+    let info = h
         .call(
             "ai.session_send",
             json!({ "id": "ollama-1", "text": "more" }),
         )
         .await
-        .unwrap_err();
-    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+        .unwrap();
+    assert_eq!(
+        (info["id"].as_str(), info["status"].as_str()),
+        (Some("ollama-1"), Some("running"))
+    );
+    let info = h
+        .call("ai.session_stop", json!({ "id": "ollama-1" }))
+        .await
+        .unwrap();
+    assert_eq!(info["status"], "stopped");
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+}
+
+/// Continuing a stopped API chat sends the model the whole conversation so far, including
+/// tool calls that were cut off by the stop (answered with an error, so the request is valid).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_api_chat_continues_with_its_history() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_responder)
+        .mount(&server)
+        .await;
+    h.call(
+        "ai.provider_set",
+        json!({ "id": "custom", "base_url": format!("{}/v1", server.uri()), "model": "m" }),
+    )
+    .await
+    .unwrap();
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "open b.test" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    h.call("ai.session_stop", json!({ "id": "custom-1" }))
+        .await
+        .unwrap();
+
+    h.call(
+        "ai.session_send",
+        json!({ "id": "custom-1", "text": "and now?" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    let requests = server.received_requests().await.unwrap();
+    let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let body = last["messages"].to_string();
+    assert!(body.contains("open b.test"), "{body}");
+    assert!(body.contains("Opened tab 2."), "{body}");
+    assert!(body.contains("and now?"), "{body}");
+    // Saved next to the transcript for a browser restart.
+    assert!(
+        h._dir
+            .path()
+            .join("ai/sessions/custom-1.history.json")
+            .exists()
+    );
+}
+
+/// Two messages sent at once to a stopped chat (the panel and an MCP client, or two windows)
+/// continue it ONCE: one backend answers both, and the chat ends idle, not stopped.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_sends_to_a_stopped_chat_start_one_backend() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_responder)
+        .mount(&server)
+        .await;
+    h.call(
+        "ai.provider_set",
+        json!({ "id": "custom", "base_url": format!("{}/v1", server.uri()), "model": "m" }),
+    )
+    .await
+    .unwrap();
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "open b.test" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    h.call("ai.session_stop", json!({ "id": "custom-1" }))
+        .await
+        .unwrap();
+
+    let (a, b) = tokio::join!(
+        h.call(
+            "ai.session_send",
+            json!({ "id": "custom-1", "text": "first" })
+        ),
+        h.call(
+            "ai.session_send",
+            json!({ "id": "custom-1", "text": "second" })
+        ),
+    );
+    a.unwrap();
+    b.unwrap();
+    until_done(&mut rx, "custom-1").await;
+    until_done(&mut rx, "custom-1").await;
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"][0]["status"], "idle");
+    // The last request saw both messages: neither was lost with a second backend.
+    let requests = server.received_requests().await.unwrap();
+    let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let body = last["messages"].to_string();
+    assert!(body.contains("first") && body.contains("second"), "{body}");
+}
+
+/// The browser's own agents cannot answer approvals, change what agents may do, or start a
+/// chat with more access than the defaults; clients the user connected still can answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_cannot_approve_or_raise_access() {
+    let h = Harness::new();
+    let call_as = |caller: Caller, name: &'static str, args: Value| {
+        let ctx = Ctx::new(caller, h.fake.clone(), h.bus.clone());
+        h.registry.call(ctx, name, args)
+    };
+    let agent = || Caller::Agent {
+        id: "anthropic-3".into(),
+    };
+    let code = |r: Result<Value, bmcp_core::CmdError>| r.unwrap_err().code;
+    let needs = bmcp_core::ErrorCode::NeedsApproval;
+
+    let answer = json!({ "id": "p-1", "decision": "allow" });
+    assert_eq!(
+        code(call_as(agent(), "ai.permission_answer", answer.clone()).await),
+        needs
+    );
+    assert_eq!(
+        code(
+            call_as(
+                agent(),
+                "ai.agent_access_set",
+                json!({ "id": "claude-code", "permission_mode": "full_access" })
+            )
+            .await
+        ),
+        needs
+    );
+    for wider in [
+        json!({ "permission_mode": "full_access" }),
+        json!({ "permission_mode": "accept_edits" }),
+        json!({ "cwd": "C:/" }),
+    ] {
+        let mut args = json!({ "provider": "claude-code", "prompt": "hi" });
+        args.as_object_mut()
+            .unwrap()
+            .extend(wider.as_object().unwrap().clone());
+        assert_eq!(
+            code(call_as(agent(), "ai.session_start", args).await),
+            needs
+        );
+    }
+    assert_eq!(
+        code(
+            call_as(
+                agent(),
+                "ai.session_start",
+                json!({ "provider": "codex", "prompt": "hi", "sandbox": "full_access" })
+            )
+            .await
+        ),
+        needs
+    );
+    // An MCP client that is not one of the browser's chats gets past the check (to NOT_FOUND:
+    // there is no such request).
+    let client = Caller::Mcp {
+        session: "m1".into(),
+        agent: Some("my-desktop-client".into()),
+    };
+    assert_eq!(
+        code(call_as(client, "ai.permission_answer", answer).await),
+        bmcp_core::ErrorCode::NotFound
+    );
+    // The defaults were not changed by the refused call.
+    let access = h
+        .call("ai.agent_access", json!({ "id": "claude-code" }))
+        .await
+        .unwrap();
+    assert_eq!(access["permission_mode"], "ask");
 }
 
 #[tokio::test(flavor = "multi_thread")]

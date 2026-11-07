@@ -416,13 +416,19 @@ export interface AiMessageEvent {
   role: 'user' | 'assistant' | 'system';
   text?: string;
   text_delta?: string;
+  /** System notes the UI knows (`resume_lost`, `mcp_not_connected`): shown translated. */
+  code?: string;
+  params?: Record<string, string>;
 }
 
 export type AiTranscriptEntry = { ts_ms?: number } & (
-  | { type: 'user' | 'assistant' | 'notice'; text: string }
+  | { type: 'user' | 'assistant'; text: string }
+  | { type: 'notice'; text: string; code?: string; params?: Record<string, string> }
   | { type: 'tool_call'; name: string; args: unknown }
   | { type: 'tool_result'; name: string; ok: boolean; summary: string }
   | { type: 'done'; reason: string }
+  /** An answered (or cancelled) approval request. */
+  | ({ type: 'permission' } & import('./types-ai-chat').AiPermission)
 );
 
 // ---- terminals --------------------------------------------------------------------------
@@ -542,3 +548,4 @@ export type * from './types-record-runs';
 // Scripts panel debugger (script.debug_* methods and events are merged into RpcMethods / ApiEvents there).
 export type * from './types-scripts';
 export type * from './types-settings'; // settings page + heal UI (notify, governor, hints, adblock, plugins, run.heal_*)
+export type * from './types-ai-chat'; // AI chat: approvals, closing chats, agent access (merged into RpcMethods / ApiEvents)

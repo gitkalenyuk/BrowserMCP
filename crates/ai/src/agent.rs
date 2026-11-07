@@ -107,6 +107,19 @@ pub fn output_text(value: &Value) -> String {
     truncate(&value.to_string(), MAX_TOOL_OUTPUT)
 }
 
+/// Add the next user message. A history that already ends with one (a chat stopped before
+/// the model answered, or restored from a transcript) gets it appended, so the conversation
+/// keeps alternating roles, as the providers expect.
+pub fn push_user(messages: &mut Vec<Message>, text: String) {
+    match messages.last_mut() {
+        Some(Message::User { text: last }) => {
+            last.push_str("\n\n");
+            last.push_str(&text);
+        }
+        _ => messages.push(Message::User { text }),
+    }
+}
+
 /// Everything one API session needs.
 pub struct ApiAgent {
     pub session: Arc<Session>,
@@ -118,27 +131,33 @@ pub struct ApiAgent {
 }
 
 impl ApiAgent {
-    /// The session task: handle user messages until stopped.
+    /// The session task: handle user messages until stopped. The conversation starts from the
+    /// session's kept history, so a stopped chat continues where it was.
     pub async fn run(self, mut input: mpsc::UnboundedReceiver<String>) {
         let session = self.session.clone();
+        let cancel = session.cancel_token();
         let system = system_prompt(&session.id);
-        let mut messages: Vec<Message> = Vec::new();
+        let mut messages: Vec<Message> = session.api_history();
         loop {
             let text = tokio::select! {
-                _ = session.cancel.cancelled() => break,
+                _ = cancel.cancelled() => break,
                 text = input.recv() => match text {
                     Some(text) => text,
                     None => break,
                 },
             };
-            messages.push(Message::User { text });
+            push_user(&mut messages, text);
             session.set_status(Status::Running);
             let reason = tokio::select! {
-                _ = session.cancel.cancelled() => "stopped".to_string(),
+                _ = cancel.cancelled() => "stopped".to_string(),
                 reason = self.answer(&system, &mut messages) => reason,
             };
+            // Kept (and repaired: a stop mid-step leaves tool calls without results) for the
+            // next message, and for continuing after a stop or a browser restart.
+            session.set_api_history(messages.clone());
+            messages = session.api_history();
             session.apply(AgentEvent::Done(reason));
-            if session.cancel.is_cancelled() {
+            if cancel.is_cancelled() {
                 session.set_status(Status::Stopped);
                 return;
             }
@@ -209,5 +228,30 @@ impl ApiAgent {
             tools: &self.tools,
         };
         self.client.complete(request, &mut on_text).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_messages_never_follow_each_other() {
+        let mut messages = Vec::new();
+        push_user(&mut messages, "a".into());
+        push_user(&mut messages, "b".into());
+        assert_eq!(
+            messages,
+            vec![Message::User {
+                text: "a\n\nb".into()
+            }]
+        );
+        messages.push(Message::Assistant {
+            text: "ok".into(),
+            calls: vec![],
+            raw: None,
+        });
+        push_user(&mut messages, "c".into());
+        assert_eq!(messages.len(), 3);
     }
 }

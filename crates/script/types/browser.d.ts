@@ -404,6 +404,135 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- ai.agent_access ----
+
+  /** Arguments of `ai.agent_access`. */
+  export interface AiAgentAccessArgs {
+    /** Provider id from ai.providers. */
+    id: string;
+  }
+
+  /**
+   * Result of `ai.agent_access`.
+   * What CLI agents of a provider may do by default, as `ai.agent_access` returns it.
+   */
+  export interface AiAgentAccessOutput {
+    provider: string;
+    /**
+     * Claude Code permission mode of new chats.
+     *
+     * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+     * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+     * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+     * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+     * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+     */
+    permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+    /** Working folder of new chats; null = `default_cwd`. */
+    cwd: string | null;
+    /** The folder used when none is set (data/ai/workspace). */
+    default_cwd: string;
+    /** Claude Code: more folders the agent may use. */
+    add_dirs: string[];
+    /**
+     * Codex shell sandbox of new chats.
+     *
+     * - `"read_only"`: Commands may read files but not change them.
+     * - `"workspace_write"`: Commands may change files in the working folder.
+     * - `"full_access"`: No sandbox at all.
+     */
+    sandbox: "read_only" | "workspace_write" | "full_access";
+    /**
+     * Codex approval policy of new chats.
+     *
+     * - `"untrusted"`: Ask for anything that is not a known-safe read.
+     * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+     * - `"never"`: Never ask; whatever the sandbox refuses fails.
+     */
+    approval_policy: "untrusted" | "on_request" | "never";
+  }
+
+  // ---- ai.agent_access_set ----
+
+  /** Arguments of `ai.agent_access_set`. */
+  export interface AiAgentAccessSetArgs {
+    /** Provider id (claude-code, codex). */
+    id: string;
+    /**
+     * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+     * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+     * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+     * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+     * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+     * @default null
+     */
+    permission_mode?: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only" | null;
+    /**
+     * Working folder (must exist); "" = the default (data/ai/workspace).
+     * @default null
+     */
+    cwd?: string | null;
+    /**
+     * Replaces the extra folders (each must exist); [] clears them.
+     * @default null
+     */
+    add_dirs?: string[] | null;
+    /**
+     * - `"read_only"`: Commands may read files but not change them.
+     * - `"workspace_write"`: Commands may change files in the working folder.
+     * - `"full_access"`: No sandbox at all.
+     * @default null
+     */
+    sandbox?: "read_only" | "workspace_write" | "full_access" | null;
+    /**
+     * - `"untrusted"`: Ask for anything that is not a known-safe read.
+     * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+     * - `"never"`: Never ask; whatever the sandbox refuses fails.
+     * @default null
+     */
+    approval_policy?: "untrusted" | "on_request" | "never" | null;
+  }
+
+  /**
+   * Result of `ai.agent_access_set`.
+   * What CLI agents of a provider may do by default, as `ai.agent_access` returns it.
+   */
+  export interface AiAgentAccessSetOutput {
+    provider: string;
+    /**
+     * Claude Code permission mode of new chats.
+     *
+     * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+     * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+     * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+     * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+     * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+     */
+    permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+    /** Working folder of new chats; null = `default_cwd`. */
+    cwd: string | null;
+    /** The folder used when none is set (data/ai/workspace). */
+    default_cwd: string;
+    /** Claude Code: more folders the agent may use. */
+    add_dirs: string[];
+    /**
+     * Codex shell sandbox of new chats.
+     *
+     * - `"read_only"`: Commands may read files but not change them.
+     * - `"workspace_write"`: Commands may change files in the working folder.
+     * - `"full_access"`: No sandbox at all.
+     */
+    sandbox: "read_only" | "workspace_write" | "full_access";
+    /**
+     * Codex approval policy of new chats.
+     *
+     * - `"untrusted"`: Ask for anything that is not a known-safe read.
+     * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+     * - `"never"`: Never ask; whatever the sandbox refuses fails.
+     */
+    approval_policy: "untrusted" | "on_request" | "never";
+  }
+
   // ---- ai.handoff ----
 
   /** Arguments of `ai.handoff`. */
@@ -445,6 +574,119 @@ declare namespace BrowserMCP {
       /** When the state last changed, ms since the Unix epoch. */
       sinceMs: number;
     } | null;
+  }
+
+  // ---- ai.permission_answer ----
+
+  /** Arguments of `ai.permission_answer`. */
+  export interface AiPermissionAnswerArgs {
+    /** Request id from ai.permissions_list / the ai.permission event. */
+    id: string;
+    /**
+     * The answer to an approval request.
+     *
+     * - `"allow"`: Run it this once.
+     * - `"allow_always"`: Run it, and allow this tool for the rest of the chat.
+     * - `"deny"`: Do not run it (give a reason to tell the agent why).
+     */
+    decision: "allow" | "allow_always" | "deny";
+    /**
+     * Deny: why, passed on to the agent.
+     * @default null
+     */
+    reason?: string | null;
+  }
+
+  /** Result of `ai.permission_answer`. */
+  export interface AiPermissionAnswerOutput {
+    /**
+     * The answered request, plus others resolved with it (allow_always answers every waiting
+     * request for the same tool).
+     */
+    resolved: {
+      /** Answer it with ai.permission_answer {id}. */
+      id: string;
+      /** The AI session that asks. */
+      session: string;
+      tool: string;
+      /**
+       * What kind of action is waiting for approval.
+       *
+       * - `"tool"`: A Claude Code tool call (Bash, Edit, WebFetch…).
+       * - `"command"`: A Codex shell command.
+       * - `"file_change"`: A Codex file change.
+       */
+      kind: "tool" | "command" | "file_change";
+      title?: string | null;
+      /** Why the agent asks, if it said. */
+      reason?: string | null;
+      input: unknown;
+      /**
+       * Status of a request in `ai.permission` events and transcript entries.
+       *
+       * - `"cancelled"`: Withdrawn by the agent or ended with the session.
+       */
+      status: "pending" | "allowed" | "denied" | "cancelled";
+      /**
+       * Allowed for the rest of the chat ("always allow this tool").
+       * @default false
+       */
+      always: boolean;
+      /** Denied: the reason the user gave. */
+      answer?: string | null;
+      /** ms since the Unix epoch. */
+      created_ms: number;
+    }[];
+  }
+
+  // ---- ai.permissions_list ----
+
+  /** Arguments of `ai.permissions_list`. */
+  export interface AiPermissionsListArgs {
+    /**
+     * Only this session's requests; default all sessions.
+     * @default null
+     */
+    session?: string | null;
+  }
+
+  /** Result of `ai.permissions_list`. */
+  export interface AiPermissionsListOutput {
+    /** Oldest first. */
+    permissions: {
+      /** Answer it with ai.permission_answer {id}. */
+      id: string;
+      /** The AI session that asks. */
+      session: string;
+      tool: string;
+      /**
+       * What kind of action is waiting for approval.
+       *
+       * - `"tool"`: A Claude Code tool call (Bash, Edit, WebFetch…).
+       * - `"command"`: A Codex shell command.
+       * - `"file_change"`: A Codex file change.
+       */
+      kind: "tool" | "command" | "file_change";
+      title?: string | null;
+      /** Why the agent asks, if it said. */
+      reason?: string | null;
+      input: unknown;
+      /**
+       * Status of a request in `ai.permission` events and transcript entries.
+       *
+       * - `"cancelled"`: Withdrawn by the agent or ended with the session.
+       */
+      status: "pending" | "allowed" | "denied" | "cancelled";
+      /**
+       * Allowed for the rest of the chat ("always allow this tool").
+       * @default false
+       */
+      always: boolean;
+      /** Denied: the reason the user gave. */
+      answer?: string | null;
+      /** ms since the Unix epoch. */
+      created_ms: number;
+    }[];
   }
 
   // ---- ai.provider_add ----
@@ -756,6 +998,25 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- ai.session_close ----
+
+  /** Arguments of `ai.session_close`. */
+  export interface AiSessionCloseArgs {
+    /** Session id. */
+    id: string;
+    /**
+     * Also delete its transcript file (data/ai/sessions/<id>.jsonl). Default false.
+     * @default false
+     */
+    delete_transcript?: boolean;
+  }
+
+  /** Result of `ai.session_close`. */
+  export interface AiSessionCloseOutput {
+    /** The closed session. */
+    closed: string;
+  }
+
   // ---- ai.session_send ----
 
   /** Arguments of `ai.session_send`. */
@@ -781,14 +1042,48 @@ declare namespace BrowserMCP {
     /**
      * - `"running"`: Working on a user message.
      * - `"idle"`: Waiting for the next message (`ai.session_send`).
-     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally).
-     * - `"failed"`: Could not start or crashed.
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
      */
     status: "running" | "idle" | "stopped" | "failed";
     /** Tabs this agent opened or acted on. */
     tabs: number[];
     /** Creation time, ms since the Unix epoch. */
     created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
   }
 
   // ---- ai.session_start ----
@@ -814,6 +1109,50 @@ declare namespace BrowserMCP {
      * @default null
      */
     max_steps?: number | null;
+    /**
+     * Claude Code: who approves tool calls outside the browser's tools: "ask" (an approval
+     * card per call), "accept_edits", "full_access", "plan", "browser_only". Default: the
+     * provider's setting (ai.agent_access).
+     *
+     * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+     * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+     * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+     * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+     * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+     * @default null
+     */
+    permission_mode?: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only" | null;
+    /**
+     * CLI agents: working folder (must exist). Default: the provider's setting, else
+     * data/ai/workspace.
+     * @default null
+     */
+    cwd?: string | null;
+    /**
+     * Claude Code: more folders the agent may use (must exist). Default: the provider's;
+     * [] = none.
+     * @default null
+     */
+    add_dirs?: string[] | null;
+    /**
+     * Codex: shell sandbox "read_only", "workspace_write" or "full_access".
+     *
+     * - `"read_only"`: Commands may read files but not change them.
+     * - `"workspace_write"`: Commands may change files in the working folder.
+     * - `"full_access"`: No sandbox at all.
+     * @default null
+     */
+    sandbox?: "read_only" | "workspace_write" | "full_access" | null;
+    /**
+     * Codex: "untrusted" (ask for most commands), "on_request" (the agent asks when it
+     * needs to leave the sandbox) or "never".
+     *
+     * - `"untrusted"`: Ask for anything that is not a known-safe read.
+     * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+     * - `"never"`: Never ask; whatever the sandbox refuses fails.
+     * @default null
+     */
+    approval_policy?: "untrusted" | "on_request" | "never" | null;
   }
 
   /**
@@ -831,14 +1170,48 @@ declare namespace BrowserMCP {
     /**
      * - `"running"`: Working on a user message.
      * - `"idle"`: Waiting for the next message (`ai.session_send`).
-     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally).
-     * - `"failed"`: Could not start or crashed.
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
      */
     status: "running" | "idle" | "stopped" | "failed";
     /** Tabs this agent opened or acted on. */
     tabs: number[];
     /** Creation time, ms since the Unix epoch. */
     created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
   }
 
   // ---- ai.session_stop ----
@@ -864,14 +1237,48 @@ declare namespace BrowserMCP {
     /**
      * - `"running"`: Working on a user message.
      * - `"idle"`: Waiting for the next message (`ai.session_send`).
-     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally).
-     * - `"failed"`: Could not start or crashed.
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
      */
     status: "running" | "idle" | "stopped" | "failed";
     /** Tabs this agent opened or acted on. */
     tabs: number[];
     /** Creation time, ms since the Unix epoch. */
     created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
   }
 
   // ---- ai.session_transcript ----
@@ -885,7 +1292,7 @@ declare namespace BrowserMCP {
   /** Result of `ai.session_transcript`. */
   export interface AiSessionTranscriptOutput {
     id: string;
-    /** Entries `{type: user|assistant|tool_call|tool_result|notice|done, ts_ms, …}`. */
+    /** Entries `{type: user|assistant|tool_call|tool_result|notice|done|permission, ts_ms, …}`. */
     entries: unknown[];
   }
 
@@ -910,14 +1317,48 @@ declare namespace BrowserMCP {
       /**
        * - `"running"`: Working on a user message.
        * - `"idle"`: Waiting for the next message (`ai.session_send`).
-       * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally).
-       * - `"failed"`: Could not start or crashed.
+       * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+       * - `"failed"`: Could not start or crashed. The next message tries to continue it.
        */
       status: "running" | "idle" | "stopped" | "failed";
       /** Tabs this agent opened or acted on. */
       tabs: number[];
       /** Creation time, ms since the Unix epoch. */
       created_ms: number;
+      /** CLI agents: permission mode, sandbox and working folder in effect. */
+      access: {
+        /**
+         * Claude Code: who decides about tool calls outside the browser's MCP tools.
+         *
+         * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+         * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+         * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+         * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+         * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+         */
+        permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+        /** Working folder of the agent. */
+        cwd: string;
+        add_dirs: string[];
+        /**
+         * Codex: the shell sandbox of a thread.
+         *
+         * - `"read_only"`: Commands may read files but not change them.
+         * - `"workspace_write"`: Commands may change files in the working folder.
+         * - `"full_access"`: No sandbox at all.
+         */
+        sandbox: "read_only" | "workspace_write" | "full_access";
+        /**
+         * Codex: when it asks before running a command or changing files.
+         *
+         * - `"untrusted"`: Ask for anything that is not a known-safe read.
+         * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+         * - `"never"`: Never ask; whatever the sandbox refuses fails.
+         */
+        approval_policy: "untrusted" | "on_request" | "never";
+      } | null;
+      /** Approval requests waiting for an answer (see ai.permissions_list). */
+      pending_permissions: number;
     }[];
   }
 
@@ -8059,8 +8500,16 @@ declare namespace BrowserMCP {
     "agents.forget": { args: AgentsForgetArgs; output: AgentsForgetOutput };
     /** List AI agents that used the browser: id, name, color, status (idle|running|waiting), current task, their tab group and tabs. */
     "agents.list": { args: AgentsListArgs; output: AgentsListOutput };
+    /** Default permissions of a CLI agent provider (claude-code, codex) for new chats: permission mode, working folder, extra folders, Codex sandbox and approval policy. */
+    "ai.agent_access": { args: AiAgentAccessArgs; output: AiAgentAccessOutput };
+    /** Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. Not for the browser's own AI agents (NEEDS_APPROVAL). */
+    "ai.agent_access_set": { args: AiAgentAccessSetArgs; output: AiAgentAccessSetOutput };
     /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
     "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
+    /** Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL. */
+    "ai.permission_answer": { args: AiPermissionAnswerArgs; output: AiPermissionAnswerOutput };
+    /** Approval requests of CLI agents waiting for an answer (tool, input, reason). New ones arrive as ai.permission {status: pending} events. */
+    "ai.permissions_list": { args: AiPermissionsListArgs; output: AiPermissionsListOutput };
     /** Add your own AI provider (any number: two OpenAI accounts, several local servers…), starting from a template preset or a blank OpenAI-compatible endpoint. Saved in data/config/ai.json. Returns the provider; its id works everywhere a built-in id does. */
     "ai.provider_add": { args: AiProviderAddArgs; output: AiProviderAddOutput };
     /** Remove a provider added with ai.provider_add (its key and settings are deleted from data/config/ai.json). Built-in providers cannot be removed. */
@@ -8071,15 +8520,17 @@ declare namespace BrowserMCP {
     "ai.provider_test": { args: AiProviderTestArgs; output: AiProviderTestOutput };
     /** List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with configured/default flags, base URL, default model and known models. */
     "ai.providers": { args: AiProvidersArgs; output: AiProvidersOutput };
-    /** Send the next user message to an AI session (queued if it is still working). Returns the session. */
+    /** Close an AI session: stops it if running and removes it from ai.sessions_list (also after a restart). The transcript file is kept unless delete_transcript. Emits ai.session_closed. */
+    "ai.session_close": { args: AiSessionCloseArgs; output: AiSessionCloseOutput };
+    /** Send the next user message to an AI session (queued if it is still working). A stopped or failed session continues the same conversation. Returns the session. */
     "ai.session_send": { args: AiSessionSendArgs; output: AiSessionSendOutput };
-    /** Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events. Returns the session (id = agent id, color, status). */
+    /** Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status). */
     "ai.session_start": { args: AiSessionStartArgs; output: AiSessionStartOutput };
-    /** Stop an AI session: cancels the running model call / kills the CLI agent. Returns the session. */
+    /** Stop an AI session: cancels the running model call / kills the CLI agent and its pending approval requests. The session stays (ai.session_send continues it). Returns the session. */
     "ai.session_stop": { args: AiSessionStopArgs; output: AiSessionStopOutput };
-    /** The transcript of an AI session: user and assistant messages, tool calls and results. */
+    /** The transcript of an AI session: user and assistant messages, tool calls and results, answered approval requests. */
     "ai.session_transcript": { args: AiSessionTranscriptArgs; output: AiSessionTranscriptOutput };
-    /** List AI sessions (agents) with id, provider, color, status and the tabs each touched. */
+    /** List AI sessions (agents) with id, provider, color, status, the tabs each touched, access settings and the number of pending approval requests. */
     "ai.sessions_list": { args: AiSessionsListArgs; output: AiSessionsListOutput };
     /** Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark. */
     "bookmarks.add": { args: BookmarksAddArgs; output: BookmarksAddOutput };
@@ -8512,11 +8963,35 @@ declare namespace BrowserMCP {
     /** Commands `ai.*`. */
     ai: {
       /**
+       * Default permissions of a CLI agent provider (claude-code, codex) for new chats: permission mode, working folder, extra folders, Codex sandbox and approval policy.
+       *
+       * `ai.agent_access` (MCP: `ai_agent_access`): toolset `ai`, read.
+       */
+      agent_access(args: AiAgentAccessArgs): Promise<AiAgentAccessOutput>;
+      /**
+       * Change the default permissions of a CLI agent provider for new chats (saved to data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. Not for the browser's own AI agents (NEEDS_APPROVAL).
+       *
+       * `ai.agent_access_set` (MCP: `ai_agent_access_set`): toolset `ai`, act.
+       */
+      agent_access_set(args: AiAgentAccessSetArgs): Promise<AiAgentAccessSetOutput>;
+      /**
        * Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that.
        *
        * `ai.handoff` (MCP: `ai_handoff`): toolset `core`, act.
        */
       handoff(args: AiHandoffArgs): Promise<AiHandoffOutput>;
+      /**
+       * Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL.
+       *
+       * `ai.permission_answer` (MCP: `ai_permission_answer`): toolset `ai`, act.
+       */
+      permission_answer(args: AiPermissionAnswerArgs): Promise<AiPermissionAnswerOutput>;
+      /**
+       * Approval requests of CLI agents waiting for an answer (tool, input, reason). New ones arrive as ai.permission {status: pending} events.
+       *
+       * `ai.permissions_list` (MCP: `ai_permissions_list`): toolset `ai`, read.
+       */
+      permissions_list(args?: AiPermissionsListArgs): Promise<AiPermissionsListOutput>;
       /**
        * Add your own AI provider (any number: two OpenAI accounts, several local servers…), starting from a template preset or a blank OpenAI-compatible endpoint. Saved in data/config/ai.json. Returns the provider; its id works everywhere a built-in id does.
        *
@@ -8548,31 +9023,37 @@ declare namespace BrowserMCP {
        */
       providers(args?: AiProvidersArgs): Promise<AiProvidersOutput>;
       /**
-       * Send the next user message to an AI session (queued if it is still working). Returns the session.
+       * Close an AI session: stops it if running and removes it from ai.sessions_list (also after a restart). The transcript file is kept unless delete_transcript. Emits ai.session_closed.
+       *
+       * `ai.session_close` (MCP: `ai_session_close`): toolset `ai`, act.
+       */
+      session_close(args: AiSessionCloseArgs): Promise<AiSessionCloseOutput>;
+      /**
+       * Send the next user message to an AI session (queued if it is still working). A stopped or failed session continues the same conversation. Returns the session.
        *
        * `ai.session_send` (MCP: `ai_session_send`): toolset `ai`, act.
        */
       session_send(args: AiSessionSendArgs): Promise<AiSessionSendOutput>;
       /**
-       * Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events. Returns the session (id = agent id, color, status).
+       * Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status).
        *
        * `ai.session_start` (MCP: `ai_session_start`): toolset `ai`, act.
        */
       session_start(args: AiSessionStartArgs): Promise<AiSessionStartOutput>;
       /**
-       * Stop an AI session: cancels the running model call / kills the CLI agent. Returns the session.
+       * Stop an AI session: cancels the running model call / kills the CLI agent and its pending approval requests. The session stays (ai.session_send continues it). Returns the session.
        *
        * `ai.session_stop` (MCP: `ai_session_stop`): toolset `ai`, act.
        */
       session_stop(args: AiSessionStopArgs): Promise<AiSessionStopOutput>;
       /**
-       * The transcript of an AI session: user and assistant messages, tool calls and results.
+       * The transcript of an AI session: user and assistant messages, tool calls and results, answered approval requests.
        *
        * `ai.session_transcript` (MCP: `ai_session_transcript`): toolset `ai`, read.
        */
       session_transcript(args: AiSessionTranscriptArgs): Promise<AiSessionTranscriptOutput>;
       /**
-       * List AI sessions (agents) with id, provider, color, status and the tabs each touched.
+       * List AI sessions (agents) with id, provider, color, status, the tabs each touched, access settings and the number of pending approval requests.
        *
        * `ai.sessions_list` (MCP: `ai_sessions_list`): toolset `ai`, read.
        */

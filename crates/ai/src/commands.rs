@@ -10,6 +10,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::cli::access::{AccessSettings, CodexApproval, CodexSandbox, PermissionMode};
+use crate::cli::permission::{Decision, PermissionRequest};
 use crate::config::{Kind, NewProvider, Problem, ProviderChanges, Resolved};
 use crate::model::Api;
 use crate::session::SessionInfo;
@@ -28,8 +30,13 @@ pub fn register(registry: &mut Registry) {
         .add::<SessionStart>()
         .add::<SessionSend>()
         .add::<SessionStop>()
+        .add::<SessionClose>()
         .add::<SessionsList>()
         .add::<SessionTranscript>()
+        .add::<PermissionsList>()
+        .add::<PermissionAnswer>()
+        .add::<AgentAccessGet>()
+        .add::<AgentAccessSet>()
         .add::<TermOpen>()
         .add::<TermWrite>()
         .add::<TermResize>()
@@ -462,6 +469,26 @@ pub struct SessionStartArgs {
     #[serde(default)]
     #[schemars(range(min = 1, max = 200))]
     pub max_steps: Option<u32>,
+    /// Claude Code: who approves tool calls outside the browser's tools: "ask" (an approval
+    /// card per call), "accept_edits", "full_access", "plan", "browser_only". Default: the
+    /// provider's setting (ai.agent_access).
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
+    /// CLI agents: working folder (must exist). Default: the provider's setting, else
+    /// data/ai/workspace.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Claude Code: more folders the agent may use (must exist). Default: the provider's;
+    /// [] = none.
+    #[serde(default)]
+    pub add_dirs: Option<Vec<String>>,
+    /// Codex: shell sandbox "read_only", "workspace_write" or "full_access".
+    #[serde(default)]
+    pub sandbox: Option<CodexSandbox>,
+    /// Codex: "untrusted" (ask for most commands), "on_request" (the agent asks when it
+    /// needs to leave the sandbox) or "never".
+    #[serde(default)]
+    pub approval_policy: Option<CodexApproval>,
 }
 
 impl Command for SessionStart {
@@ -472,8 +499,10 @@ impl Command for SessionStart {
     fn meta() -> Meta {
         Meta::new(
             "Start an AI agent session that drives the browser through BrowserMCP's tools. Progress \
-             arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events. Returns the \
-             session (id = agent id, color, status).",
+             arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents \
+             may ask for approval (ai.permission events, answer with ai.permission_answer). \
+             The browser's own agents may not start a chat with more access than the \
+             provider's defaults. Returns the session (id = agent id, color, status).",
             Toolset::Ai,
         )
         .act()
@@ -490,6 +519,13 @@ impl Command for SessionStart {
             prompt: args.prompt,
             toolsets: parse_toolsets(&args.toolsets)?,
             max_steps: args.max_steps.unwrap_or(30).clamp(1, 200),
+            access: AccessSettings {
+                permission_mode: args.permission_mode,
+                cwd: args.cwd,
+                add_dirs: args.add_dirs,
+                sandbox: args.sandbox,
+                approval_policy: args.approval_policy,
+            },
         };
         ai.start_session(&ctx, opts)
     }
@@ -514,18 +550,20 @@ impl Command for SessionSend {
 
     fn meta() -> Meta {
         Meta::new(
-            "Send the next user message to an AI session (queued if it is still working). Returns the session.",
+            "Send the next user message to an AI session (queued if it is still working). A \
+             stopped or failed session continues the same conversation. Returns the session.",
             Toolset::Ai,
         )
         .act()
     }
 
     async fn run(ctx: Ctx, args: SessionSendArgs) -> Result<SessionInfo, CmdError> {
-        let session = AiService::from_ctx(&ctx)?.session(&args.id)?;
-        session.send(args.text).map_err(|m| {
-            CmdError::invalid_params(m).with_hint("Start a new session with ai_session_start.")
-        })?;
-        Ok(session.info())
+        if args.text.trim().is_empty() {
+            return Err(CmdError::invalid_params("text is empty"));
+        }
+        AiService::from_ctx(&ctx)?
+            .send(&ctx, &args.id, args.text)
+            .await
     }
 }
 
@@ -546,26 +584,58 @@ impl Command for SessionStop {
 
     fn meta() -> Meta {
         Meta::new(
-            "Stop an AI session: cancels the running model call / kills the CLI agent. Returns the session.",
+            "Stop an AI session: cancels the running model call / kills the CLI agent and its \
+             pending approval requests. The session stays (ai.session_send continues it). \
+             Returns the session.",
             Toolset::Ai,
         )
         .act()
     }
 
     async fn run(ctx: Ctx, args: SessionIdArgs) -> Result<SessionInfo, CmdError> {
-        let session = AiService::from_ctx(&ctx)?.session(&args.id)?;
-        session.cancel.cancel();
-        // Give the task a moment to report `stopped`.
-        for _ in 0..50 {
-            if matches!(
-                session.status(),
-                crate::session::Status::Stopped | crate::session::Status::Failed
-            ) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        Ok(session.info())
+        AiService::from_ctx(&ctx)?.stop(&args.id).await
+    }
+}
+
+/// `ai.session_close`
+pub struct SessionClose;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCloseArgs {
+    /// Session id.
+    pub id: String,
+    /// Also delete its transcript file (data/ai/sessions/<id>.jsonl). Default false.
+    #[serde(default)]
+    pub delete_transcript: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionCloseOutput {
+    /// The closed session.
+    pub closed: String,
+}
+
+impl Command for SessionClose {
+    const NAME: &'static str = "ai.session_close";
+    type Args = SessionCloseArgs;
+    type Output = SessionCloseOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Close an AI session: stops it if running and removes it from ai.sessions_list (also \
+             after a restart). The transcript file is kept unless delete_transcript. Emits \
+             ai.session_closed.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionCloseArgs) -> Result<SessionCloseOutput, CmdError> {
+        AiService::from_ctx(&ctx)?
+            .close(&ctx, &args.id, args.delete_transcript)
+            .await?;
+        Ok(SessionCloseOutput { closed: args.id })
     }
 }
 
@@ -584,7 +654,8 @@ impl Command for SessionsList {
 
     fn meta() -> Meta {
         Meta::new(
-            "List AI sessions (agents) with id, provider, color, status and the tabs each touched.",
+            "List AI sessions (agents) with id, provider, color, status, the tabs each touched, \
+             access settings and the number of pending approval requests.",
             Toolset::Ai,
         )
     }
@@ -602,7 +673,7 @@ pub struct SessionTranscript;
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct TranscriptOutput {
     pub id: String,
-    /// Entries `{type: user|assistant|tool_call|tool_result|notice|done, ts_ms, …}`.
+    /// Entries `{type: user|assistant|tool_call|tool_result|notice|done|permission, ts_ms, …}`.
     pub entries: Vec<Value>,
 }
 
@@ -613,7 +684,8 @@ impl Command for SessionTranscript {
 
     fn meta() -> Meta {
         Meta::new(
-            "The transcript of an AI session: user and assistant messages, tool calls and results.",
+            "The transcript of an AI session: user and assistant messages, tool calls and \
+             results, answered approval requests.",
             Toolset::Ai,
         )
     }
@@ -624,6 +696,229 @@ impl Command for SessionTranscript {
             id: args.id,
             entries: session.transcript(),
         })
+    }
+}
+
+// ---------------------------------------------------------------- approvals
+
+/// `ai.permissions_list`
+pub struct PermissionsList;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionsListArgs {
+    /// Only this session's requests; default all sessions.
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PermissionsListOutput {
+    /// Oldest first.
+    pub permissions: Vec<PermissionRequest>,
+}
+
+impl Command for PermissionsList {
+    const NAME: &'static str = "ai.permissions_list";
+    type Args = PermissionsListArgs;
+    type Output = PermissionsListOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Approval requests of CLI agents waiting for an answer (tool, input, reason). New ones \
+             arrive as ai.permission {status: pending} events.",
+            Toolset::Ai,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: PermissionsListArgs) -> Result<PermissionsListOutput, CmdError> {
+        Ok(PermissionsListOutput {
+            permissions: AiService::from_ctx(&ctx)?.permissions(args.session.as_deref())?,
+        })
+    }
+}
+
+/// `ai.permission_answer`
+pub struct PermissionAnswer;
+
+/// The answer to an approval request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionChoice {
+    /// Run it this once.
+    Allow,
+    /// Run it, and allow this tool for the rest of the chat.
+    AllowAlways,
+    /// Do not run it (give a reason to tell the agent why).
+    Deny,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionAnswerArgs {
+    /// Request id from ai.permissions_list / the ai.permission event.
+    pub id: String,
+    pub decision: PermissionChoice,
+    /// Deny: why, passed on to the agent.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PermissionAnswerOutput {
+    /// The answered request, plus others resolved with it (allow_always answers every waiting
+    /// request for the same tool).
+    pub resolved: Vec<PermissionRequest>,
+}
+
+impl Command for PermissionAnswer {
+    const NAME: &'static str = "ai.permission_answer";
+    type Args = PermissionAnswerArgs;
+    type Output = PermissionAnswerOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest \
+             of the chat) or deny with an optional reason. For people and the clients they \
+             connected: the browser's own AI agents get NEEDS_APPROVAL.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: PermissionAnswerArgs) -> Result<PermissionAnswerOutput, CmdError> {
+        let decision = match args.decision {
+            PermissionChoice::Allow => Decision::Allow,
+            PermissionChoice::AllowAlways => Decision::AllowAlways,
+            PermissionChoice::Deny => Decision::Deny {
+                reason: args.reason.filter(|r| !r.trim().is_empty()),
+            },
+        };
+        let resolved =
+            AiService::from_ctx(&ctx)?.answer_permission(&ctx.caller, &args.id, decision)?;
+        Ok(PermissionAnswerOutput { resolved })
+    }
+}
+
+// ---------------------------------------------------------------- agent access
+
+/// What CLI agents of a provider may do by default, as `ai.agent_access` returns it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AgentAccessInfo {
+    pub provider: String,
+    /// Claude Code permission mode of new chats.
+    pub permission_mode: PermissionMode,
+    /// Working folder of new chats; null = `default_cwd`.
+    pub cwd: Option<String>,
+    /// The folder used when none is set (data/ai/workspace).
+    pub default_cwd: String,
+    /// Claude Code: more folders the agent may use.
+    pub add_dirs: Vec<String>,
+    /// Codex shell sandbox of new chats.
+    pub sandbox: CodexSandbox,
+    /// Codex approval policy of new chats.
+    pub approval_policy: CodexApproval,
+}
+
+fn access_info(ai: &AiService, provider: &str, a: AccessSettings) -> AgentAccessInfo {
+    AgentAccessInfo {
+        provider: provider.to_string(),
+        permission_mode: a.permission_mode.unwrap_or_default(),
+        cwd: a.cwd,
+        default_cwd: ai.default_cwd().to_string_lossy().into_owned(),
+        add_dirs: a.add_dirs.unwrap_or_default(),
+        sandbox: a.sandbox.unwrap_or_default(),
+        approval_policy: a.approval_policy.unwrap_or_default(),
+    }
+}
+
+/// `ai.agent_access`
+pub struct AgentAccessGet;
+
+impl Command for AgentAccessGet {
+    const NAME: &'static str = "ai.agent_access";
+    type Args = ProviderIdArgs;
+    type Output = AgentAccessInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Default permissions of a CLI agent provider (claude-code, codex) for new chats: \
+             permission mode, working folder, extra folders, Codex sandbox and approval policy.",
+            Toolset::Ai,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: ProviderIdArgs) -> Result<AgentAccessInfo, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        let access = ai.access_settings(&args.id)?;
+        Ok(access_info(&ai, &args.id, access))
+    }
+}
+
+/// `ai.agent_access_set`
+pub struct AgentAccessSet;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAccessSetArgs {
+    /// Provider id (claude-code, codex).
+    pub id: String,
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
+    /// Working folder (must exist); "" = the default (data/ai/workspace).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Replaces the extra folders (each must exist); [] clears them.
+    #[serde(default)]
+    pub add_dirs: Option<Vec<String>>,
+    #[serde(default)]
+    pub sandbox: Option<CodexSandbox>,
+    #[serde(default)]
+    pub approval_policy: Option<CodexApproval>,
+}
+
+impl Command for AgentAccessSet {
+    const NAME: &'static str = "ai.agent_access_set";
+    type Args = AgentAccessSetArgs;
+    type Output = AgentAccessInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Change the default permissions of a CLI agent provider for new chats (saved to \
+             data/config/ai.json). Omitted fields stay unchanged. Running chats keep theirs. \
+             Not for the browser's own AI agents (NEEDS_APPROVAL).",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: AgentAccessSetArgs) -> Result<AgentAccessInfo, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        ai.refuse_own_agent(&ctx.caller, "change what AI agents may do")?;
+        let access = ai.set_access_settings(&args.id, |a| {
+            if args.permission_mode.is_some() {
+                a.permission_mode = args.permission_mode;
+            }
+            if let Some(cwd) = args.cwd {
+                a.cwd = Some(cwd.trim().to_string()).filter(|c| !c.is_empty());
+            }
+            if let Some(dirs) = args.add_dirs {
+                let dirs: Vec<String> = dirs
+                    .into_iter()
+                    .map(|d| d.trim().to_string())
+                    .filter(|d| !d.is_empty())
+                    .collect();
+                // The provider's own setting: none is simply unset.
+                a.add_dirs = Some(dirs).filter(|d| !d.is_empty());
+            }
+            if args.sandbox.is_some() {
+                a.sandbox = args.sandbox;
+            }
+            if args.approval_policy.is_some() {
+                a.approval_policy = args.approval_policy;
+            }
+        })?;
+        Ok(access_info(&ai, &args.id, access))
     }
 }
 

@@ -243,6 +243,13 @@ pub struct ProviderSettings {
     /// lists the names only, because a header may carry a credential.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// CLI providers: default permission mode, sandbox and folders of new chats
+    /// (`ai.agent_access_set`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::cli::access::AccessSettings::is_default"
+    )]
+    pub access: crate::cli::access::AccessSettings,
 }
 
 /// One provider the user added (`ai.provider_add`).

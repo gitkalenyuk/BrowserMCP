@@ -5,6 +5,9 @@
 import { RpcError } from './client';
 import { createProviderMocks } from './mock-ai-providers';
 import type {
+  AiAgentAccess,
+  AiPermission,
+  AiPermissionDecision,
   AiSession,
   AiTranscriptEntry,
   ApiEvents,
@@ -277,11 +280,109 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
     });
   };
 
+  // Approval requests (like crates/ai/src/cli/permission.rs): pending ones, and the tools a
+  // session always allows.
+  const approvals = new Map<string, { request: AiPermission; decide: (decision: AiPermissionDecision, reason?: string) => void }>();
+  const alwaysAllowed = new Map<string, Set<string>>();
+  let approvalCount = 0;
+  const access = new Map<string, AiAgentAccess>();
+  const accessOf = (id: string): AiAgentAccess =>
+    access.get(id) ?? {
+      provider: id,
+      permission_mode: 'ask',
+      cwd: null,
+      default_cwd: 'C:\\BrowserMCP\\data\\ai\\workspace',
+      add_dirs: [],
+      sandbox: 'workspace_write',
+      approval_policy: 'on_request',
+    };
+
+  /**
+   * A CLI chat in "ask" mode asked to run something: a Bash call (Claude Code) or a shell
+   * command (Codex) waits for the approval card, then runs or reports the refusal.
+   */
+  const answerWithApproval = (s: AiSession, prompt: string) => {
+    const log = transcripts.get(s.id)!;
+    const codex = s.provider === 'codex';
+    const tool = codex ? 'shell' : 'Bash';
+    const command = codex ? 'Remove-Item -Recurse build' : 'dir /s *.csv';
+    const finish = (text: string) => {
+      log.push({ type: 'assistant', text });
+      emit('ai.message', { session: s.id, role: 'assistant', text });
+      log.push({ type: 'done', reason: 'end_turn' });
+      setStatus(s, 'idle');
+      emit('ai.done', { session: s.id, reason: 'end_turn' });
+    };
+    const run = (ok: boolean, summary: string) => {
+      log.push({ type: 'tool_result', name: tool, ok, summary });
+      emit('ai.tool_result', { session: s.id, name: tool, ok, summary });
+      setTimeout(() => finish(ok ? `Done: "${prompt}".` : 'Understood, I will not run it. Anything else?'), 400);
+    };
+    const timer = setTimeout(() => {
+      const args = { command };
+      log.push({ type: 'tool_call', name: tool, args });
+      emit('ai.tool_call', { session: s.id, name: tool, args });
+      if (alwaysAllowed.get(s.id)?.has(tool)) return void setTimeout(() => run(true, 'ok'), 500);
+      const request: AiPermission = {
+        id: `${s.id}.p${++approvalCount}`,
+        session: s.id,
+        tool,
+        kind: codex ? 'command' : 'tool',
+        title: codex ? null : `Claude wants to run ${command}`,
+        reason: codex ? 'Needs to clean the build folder' : null,
+        input: codex ? { command, cwd: accessOf(s.provider).default_cwd } : { command },
+        status: 'pending',
+        always: false,
+        answer: null,
+        created_ms: Date.now(),
+      };
+      s.pending_permissions = (s.pending_permissions ?? 0) + 1;
+      emit('ai.permission', request);
+      approvals.set(request.id, {
+        request,
+        decide: (decision, reason) => {
+          approvals.delete(request.id);
+          s.pending_permissions = Math.max(0, (s.pending_permissions ?? 1) - 1);
+          if (decision === 'allow_always') {
+            if (!alwaysAllowed.has(s.id)) alwaysAllowed.set(s.id, new Set());
+            alwaysAllowed.get(s.id)!.add(tool);
+          }
+          const resolved: AiPermission = {
+            ...request,
+            status: decision === 'deny' ? 'denied' : 'allowed',
+            always: decision === 'allow_always',
+            answer: decision === 'deny' ? (reason ?? null) : null,
+          };
+          log.push({ type: 'permission', ...resolved });
+          emit('ai.permission', resolved);
+          if (decision === 'deny') run(false, reason ? `The user denied this action: ${reason}` : 'The user denied this action.');
+          else setTimeout(() => run(true, codex ? 'removed 14 files' : '3 files found'), 500);
+        },
+      });
+    }, 500);
+    runs.set(s.id, [timer]);
+  };
+
+  /** Cancel the approval requests of a session that stops or closes. */
+  const cancelApprovals = (id: string) => {
+    for (const [key, { request }] of approvals) {
+      if (request.session !== id) continue;
+      approvals.delete(key);
+      const cancelled: AiPermission = { ...request, status: 'cancelled' };
+      transcripts.get(id)?.push({ type: 'permission', ...cancelled });
+      emit('ai.permission', cancelled);
+    }
+    const s = sessions.get(id);
+    if (s) s.pending_permissions = 0;
+  };
+
   const sendUser = (s: AiSession, text: string) => {
     transcripts.get(s.id)!.push({ type: 'user', text });
     emit('ai.message', { session: s.id, role: 'user', text });
     setStatus(s, 'running');
-    answer(s, text);
+    const asks = s.access && (s.provider === 'codex' || s.access.permission_mode === 'ask');
+    if (asks && /\b(run|bash|command|files?)\b/i.test(text)) answerWithApproval(s, text);
+    else answer(s, text);
   };
 
   // ---- terminals ---------------------------------------------------------------------------
@@ -557,11 +658,13 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
   return {
     // ---- ai ----
     ...providerMocks.handlers,
-    'ai.session_start': ({ provider: pid, prompt, model }) => {
+    'ai.session_start': ({ provider: pid, prompt, model, permission_mode, cwd, sandbox, approval_policy, add_dirs }) => {
       const p = getProvider(pid);
       if (!prompt.trim()) throw new RpcError('INVALID_PARAMS', 'prompt is empty');
       if (!p.configured) throw new RpcError('INVALID_PARAMS', `AI provider '${pid}' is not configured`);
+      if (cwd && /missing|nope/i.test(cwd)) throw new RpcError('INVALID_PARAMS', `folder not found: ${cwd}`);
       sessionCount++;
+      const defaults = accessOf(pid);
       const s: AiSession = {
         id: `${pid}-${sessionCount}`,
         provider: pid,
@@ -570,17 +673,30 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
         status: 'idle',
         tabs: [],
         created_ms: Date.now(),
+        access:
+          p.kind === 'cli'
+            ? {
+                permission_mode: permission_mode ?? defaults.permission_mode,
+                cwd: cwd || defaults.cwd || defaults.default_cwd,
+                // Unset = the provider's; [] = none (as the core does).
+                add_dirs: add_dirs ?? defaults.add_dirs,
+                sandbox: sandbox ?? defaults.sandbox,
+                approval_policy: approval_policy ?? defaults.approval_policy,
+              }
+            : null,
+        pending_permissions: 0,
       };
       sessions.set(s.id, s);
       transcripts.set(s.id, []);
       sendUser(s, prompt);
       return { ...s };
     },
+    // Like the core: a stopped or failed chat is continued, never replaced.
     'ai.session_send': ({ id, text }) => {
       const s = sessions.get(id);
       if (!s) throw new RpcError('NOT_FOUND', `no AI session '${id}'`);
-      if (s.status === 'stopped' || s.status === 'failed') throw new RpcError('INVALID_PARAMS', `session ${id} has ended`);
       runs.get(id)?.forEach(clearTimeout);
+      if (s.status === 'stopped' || s.status === 'failed') setStatus(s, 'idle');
       sendUser(s, text);
       return { ...s };
     },
@@ -589,10 +705,52 @@ export function createPanelMocks(emit: Emit, activeTab: () => TabId | null): Pan
       if (!s) throw new RpcError('NOT_FOUND', `no AI session '${id}'`);
       runs.get(id)?.forEach(clearTimeout);
       runs.delete(id);
-      transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
-      setStatus(s, 'stopped');
-      emit('ai.done', { session: id, reason: 'stopped' });
+      cancelApprovals(id);
+      if (s.status === 'running') {
+        transcripts.get(id)!.push({ type: 'done', reason: 'stopped' });
+        setStatus(s, 'stopped');
+        emit('ai.done', { session: id, reason: 'stopped' });
+      } else setStatus(s, 'stopped');
       return { ...s };
+    },
+    'ai.session_close': ({ id }) => {
+      if (!sessions.has(id)) throw new RpcError('NOT_FOUND', `no AI session '${id}'`);
+      runs.get(id)?.forEach(clearTimeout);
+      runs.delete(id);
+      cancelApprovals(id);
+      sessions.delete(id);
+      transcripts.delete(id);
+      emit('ai.session_closed', { session: id });
+      return { closed: id };
+    },
+    'ai.permissions_list': ({ session } = {}) => ({
+      permissions: [...approvals.values()].map((a) => a.request).filter((r) => !session || r.session === session),
+    }),
+    'ai.permission_answer': ({ id, decision, reason }) => {
+      const pending = approvals.get(id);
+      if (!pending) throw new RpcError('NOT_FOUND', `no pending approval request '${id}'`);
+      pending.decide(decision, reason ?? undefined);
+      const resolved: AiPermission = {
+        ...pending.request,
+        status: decision === 'deny' ? 'denied' : 'allowed',
+        always: decision === 'allow_always',
+        answer: decision === 'deny' ? (reason ?? null) : null,
+      };
+      return { resolved: [resolved] };
+    },
+    'ai.agent_access': ({ id }) => ({ ...accessOf(getProvider(id).id) }),
+    'ai.agent_access_set': ({ id, permission_mode, cwd, add_dirs, sandbox, approval_policy }) => {
+      const next = { ...accessOf(getProvider(id).id) };
+      if (cwd !== undefined && cwd !== null) {
+        if (/missing|nope/i.test(cwd)) throw new RpcError('INVALID_PARAMS', `folder not found: ${cwd}`);
+        next.cwd = cwd.trim() || null;
+      }
+      if (permission_mode) next.permission_mode = permission_mode;
+      if (add_dirs) next.add_dirs = add_dirs.filter((d) => d.trim());
+      if (sandbox) next.sandbox = sandbox;
+      if (approval_policy) next.approval_policy = approval_policy;
+      access.set(id, next);
+      return { ...next };
     },
     'ai.sessions_list': () => ({ sessions: [...sessions.values()] }),
     'ai.session_transcript': ({ id }) => {
