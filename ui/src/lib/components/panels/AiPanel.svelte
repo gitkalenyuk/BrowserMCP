@@ -3,7 +3,7 @@
   import type { AiCodexApproval, AiCodexSandbox, AiPermissionDecision, AiPermissionMode, AiSession } from '../../api';
   import { copyText } from '../../ai/clipboard';
   import { closeNeedsConfirm, finishedIds } from '../../ai/sessions';
-  import { doneLabel, groupTools, lastUserIndex, noticeText, queuedCount, userOrdinal } from '../../ai/thread';
+  import { doneLabel, groupTools, lastUserIndex, noticeText, queuedCount } from '../../ai/thread';
   import { t, tp } from '../../i18n/index.svelte';
   import { PROVIDERS, providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
@@ -306,13 +306,16 @@
     await ai.answerPermission(id, decision, reason);
   }
 
-  async function saveEdit(index: number, text: string) {
+  async function saveEdit(row: number, text: string) {
     if (!session) return;
-    const ordinal = userOrdinal(items, index);
+    const id = session.id;
     editing = null;
     stick = true;
     try {
-      await ai.edit(session.id, ordinal, text);
+      // The core's own number of that message, never its place in what this window shows.
+      const index = await ai.userIndex(id, row);
+      if (index === null) throw new Error(t('aiChat.msg.editLost'));
+      await ai.edit(id, index, text);
     } catch (err) {
       fail(err);
     }
@@ -672,6 +675,7 @@
                 <AiMessage
                   {item}
                   editable={item.kind === 'user' && !item.queued}
+                  held={ended}
                   editBlocked={running ? t('aiChat.msg.editBusy') : null}
                   retry={row.index === lastUser}
                   editing={editing === row.index}

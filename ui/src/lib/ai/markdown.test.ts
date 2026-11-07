@@ -33,6 +33,25 @@ describe('markdown blocks', () => {
     ]);
   });
 
+  it('headings drop a closing run of #s (after a space) and trailing spaces', () => {
+    const h = (src: string) => parseMarkdown(src)[0];
+    expect(h('## Title ##  ')).toEqual({ t: 'h', level: 2, c: [text('Title')] });
+    expect(h('# C#')).toEqual({ t: 'h', level: 1, c: [text('C#')] });
+    expect(h('### ###')).toEqual({ t: 'h', level: 3, c: [] });
+    expect(h('#')).toEqual({ t: 'h', level: 1, c: [] });
+    expect(h('#hashtag')).toEqual({ t: 'p', c: [text('#hashtag')] });
+    expect(h('####### seven')).toEqual({ t: 'p', c: [text('####### seven')] });
+  });
+
+  it('a heading line with long runs of spaces parses at once (no backtracking blow-up)', () => {
+    const line = `# a${' '.repeat(5000)}#x${' '.repeat(5000)}`;
+    const started = performance.now();
+    const [block] = parseMarkdown(line);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(block.t).toBe('h');
+    expect(inlineText((block as Extract<Block, { t: 'h' }>).c)).toBe(`a${' '.repeat(5000)}#x`);
+  });
+
   it('fenced code keeps its text verbatim, with the language; an unclosed fence is still code', () => {
     expect(parseMarkdown('```ts\nconst a = 1 < 2;\n**not bold**\n```\nafter')).toEqual([
       { t: 'code', lang: 'ts', text: 'const a = 1 < 2;\n**not bold**' },

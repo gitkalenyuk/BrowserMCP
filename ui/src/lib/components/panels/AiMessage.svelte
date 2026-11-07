@@ -12,6 +12,7 @@
   let {
     item,
     editable = false,
+    held = false,
     editBlocked = null,
     retry = false,
     editing = false,
@@ -25,6 +26,8 @@
     item: Extract<ChatItem, { kind: 'user' | 'assistant' }>;
     /** A user message of the conversation (not a queued one). */
     editable?: boolean;
+    /** A queued message of a chat that stopped: it goes along with the next message. */
+    held?: boolean;
     /** Why editing is not possible now (the agent works), shown on the pencil. */
     editBlocked?: string | null;
     /** The last user message: offers Retry. */
@@ -96,7 +99,9 @@
     {:else}
       <div class="bubble">{item.text}</div>
       <div class="actions" role="toolbar" aria-label={t('aiChat.msg.actions')}>
-        {#if item.queued}
+        {#if item.queued && held}
+          <span class="pill" title={t('aiChat.heldTitle')}><Icon name="clock" size={10} />{t('aiChat.held')}</span>
+        {:else if item.queued}
           <span class="pill" title={t('aiChat.queuedTitle')}><Icon name="clock" size={10} />{t('aiChat.queued')}</span>
         {/if}
         {#if time}<time class="time" title={t('aiChat.msg.sentAt', { time })}>{time}</time>{/if}

@@ -52,6 +52,17 @@ function unqueue(row: ChatItem): ChatItem {
 }
 
 /**
+ * Taken messages join the conversation at its end. If the agent is in the middle of an answer
+ * (Codex takes a message mid-turn), they go just before the open answer, which keeps
+ * streaming: its whole `text` then replaces all of it instead of repeating the start.
+ */
+function joinConversation(head: ChatItem[], rows: ChatItem[]): ChatItem[] {
+  const last = head[head.length - 1];
+  if (last?.kind === 'assistant' && last.streaming) return [...head.slice(0, -1), ...rows, last];
+  return [...closeStreaming(head), ...rows];
+}
+
+/**
  * Fold one event. Returns a new array (the input is never mutated). `ts` (ms) is when it
  * happened, shown on hover.
  *
@@ -69,12 +80,17 @@ export function applyAiEvent(items: ChatItem[], event: AiEvent, ts?: number): Ch
       // The core names the message by its number (ai.message_taken); older forms by its text.
       const byIndex = index === undefined ? -1 : tail.findIndex((i) => i.kind === 'user' && i.index === index);
       const same = byIndex >= 0 ? byIndex : tail.findIndex((i) => i.kind === 'user' && i.text === text && (!taken || index === undefined));
-      const pick = same >= 0 ? same : taken ? 0 : -1;
+      // Unnamed: the oldest one waiting. A number no queued row has was taken already (or
+      // sent from another window): nothing moves.
+      const unnamed = index === undefined || (tail[0]?.kind === 'user' && tail[0].index === undefined);
+      const pick = same >= 0 ? same : taken && unnamed ? 0 : -1;
       if (pick >= 0 && pick < tail.length) {
-        return [...closeStreaming(head), unqueue(tail[pick]), ...tail.filter((_, k) => k !== pick)];
+        return [...joinConversation(head, [unqueue(tail[pick])]), ...tail.filter((_, k) => k !== pick)];
       }
-      if (taken) return items; // nothing of it is queued here (sent from another window)
+      if (taken) return items;
     }
+    // The same message again (live events replayed over a freshly loaded transcript).
+    if (index !== undefined && items.some((i) => i.kind === 'user' && i.index === index)) return items;
     const row = index === undefined ? { kind: 'user' as const, text } : { kind: 'user' as const, text, index };
     if (queued) return [...items, stamp({ ...row, queued: true }, ts)];
     return [...closeStreaming(head), stamp(row, ts), ...tail];
@@ -143,9 +159,14 @@ export function threadFromTranscript(entries: AiTranscriptEntry[]): ChatItem[] {
   let items: ChatItem[] = [];
   for (const e of entries) {
     switch (e.type) {
-      case 'user':
-        items = applyAiEvent(items, { type: 'ai.message', payload: { session: '', role: 'user', text: e.text } }, e.ts_ms);
+      case 'user': {
+        // The core's number of the message (what ai.session_edit takes) and whether it still waits.
+        const payload: AiMessageEvent = { session: '', role: 'user', text: e.text };
+        if (e.index !== undefined) payload.index = e.index;
+        if (e.queued) payload.queued = true;
+        items = applyAiEvent(items, { type: 'ai.message', payload }, e.ts_ms);
         break;
+      }
       case 'assistant':
         items = applyAiEvent(items, { type: 'ai.message', payload: { session: '', role: 'assistant', text: e.text } }, e.ts_ms);
         break;
@@ -274,21 +295,40 @@ export function settleQueued(items: ChatItem[], count: number): ChatItem[] {
   const tail = items.slice(cut);
   const taken = tail.length - Math.max(0, count);
   if (taken <= 0) return items;
-  return [...closeStreaming(items.slice(0, cut)), ...tail.slice(0, taken).map(unqueue), ...tail.slice(taken)];
+  return [...joinConversation(items.slice(0, cut), tail.slice(0, taken).map(unqueue)), ...tail.slice(taken)];
 }
 
 /** Messages waiting for the agent to take them. */
 export const queuedCount = (items: ChatItem[]): number => items.length - queuedStart(items);
 
+/** The answer the agent is streaming now (the last row of the conversation), or null. */
+export function openAnswer(items: ChatItem[]): Extract<ChatItem, { kind: 'assistant' }> | null {
+  const last = items[queuedStart(items) - 1];
+  return last?.kind === 'assistant' && last.streaming ? last : null;
+}
+
 /**
- * Which user message a row is: its 0-based ordinal among the conversation's user messages
- * (what `ai.session_edit` takes). -1 for other rows and for queued messages.
+ * The core's number of every user row (what `ai.session_edit` and `ai.session_rewound` name),
+ * by row position; other rows are -1. A row carries its number (`index`) when the core sent
+ * one; a row without (an older transcript) counts on from the user row before it. So the
+ * numbers are right for rows that carry one and for a thread loaded whole from its transcript.
  */
-export function userOrdinal(items: ChatItem[], index: number): number {
-  if (items[index]?.kind !== 'user' || isQueued(items[index])) return -1;
-  let n = 0;
-  for (let i = 0; i < index; i++) if (items[i].kind === 'user' && !isQueued(items[i])) n++;
-  return n;
+function userNumbers(items: ChatItem[]): number[] {
+  let prev = -1;
+  return items.map((it) => {
+    if (it.kind !== 'user') return -1;
+    prev = it.index ?? prev + 1;
+    return prev;
+  });
+}
+
+/**
+ * Which user message the row at `row` is: the core's number of it (see `userNumbers`).
+ * -1 for other rows and for queued messages.
+ */
+export function userIndexAt(items: ChatItem[], row: number): number {
+  if (items[row]?.kind !== 'user' || isQueued(items[row])) return -1;
+  return userNumbers(items)[row];
 }
 
 /** Row index of the last user message of the conversation (not a queued one), or -1. */
@@ -298,18 +338,14 @@ export function lastUserIndex(items: ChatItem[]): number {
 }
 
 /**
- * The thread as `ai.session_edit` leaves it: everything before user message number
- * `ordinal` (queued messages go too); the new text then arrives as a new user message.
- * Unchanged when there is no such message.
+ * The thread as `ai.session_edit` leaves it: everything before user message number `index`
+ * (the core's number, see `userNumbers`; later and queued messages go too); the new text then
+ * arrives as a new user message. Unchanged when no user row is that message or a later one.
  */
-export function truncateAtUser(items: ChatItem[], ordinal: number): ChatItem[] {
-  let n = 0;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].kind !== 'user' || isQueued(items[i])) continue;
-    if (n === ordinal) return items.slice(0, i);
-    n++;
-  }
-  return items;
+export function truncateAtUser(items: ChatItem[], index: number): ChatItem[] {
+  const numbers = userNumbers(items);
+  const at = numbers.findIndex((n) => n >= index);
+  return at < 0 ? items : items.slice(0, at);
 }
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;

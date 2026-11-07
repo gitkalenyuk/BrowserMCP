@@ -177,6 +177,8 @@ export default {
   // Composer: queue, interrupt
   'aiChat.queued': 'queued',
   'aiChat.queuedTitle': 'Sent while the agent works: it reads this as soon as it can',
+  'aiChat.held': 'will be sent with your next message',
+  'aiChat.heldTitle': 'The agent stopped before reading this. It goes along with the next message you send.',
   'aiChat.queuedCount.one': '{n} queued',
   'aiChat.queuedCount.few': '{n} queued',
   'aiChat.queuedCount.many': '{n} queued',
@@ -200,6 +202,7 @@ export default {
   'aiChat.msg.editTitle': 'Edit and resend. Everything after this message is replaced by the new answer.',
   'aiChat.msg.editBusy': 'Wait for the answer (or press Esc) to edit a message',
   'aiChat.msg.editLabel': 'Edited message',
+  'aiChat.msg.editLost': 'This message is no longer in the chat history. The chat was reloaded: try again.',
   'aiChat.msg.editHint': 'Enter saves and resends · Esc cancels · later messages are replaced',
   'aiChat.msg.save': 'Save and resend',
   'aiChat.msg.retry': 'Retry',
