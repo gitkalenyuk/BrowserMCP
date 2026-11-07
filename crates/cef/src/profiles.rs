@@ -11,7 +11,8 @@
 //!
 //! Settings from `profile.create` ([`ProfileSettings`]) are applied with `SetPreference`
 //! (proxy, WebRTC, Accept-Language; see `bmcp_profiles::prefs`) — right away when the context
-//! exists, otherwise in `on_request_context_initialized`. Proxy passwords never reach
+//! exists, otherwise in `on_request_context_initialized`. Profiles without an Accept-Language
+//! of their own get the global website languages (`languages.rs`). Proxy passwords never reach
 //! Chromium: an authenticated upstream is always behind the local forwarder (live finding:
 //! `GetAuthCredentials` was not called for proxy challenges, Chromium's own login prompt took
 //! over and crashed without a UI).
@@ -164,16 +165,9 @@ pub(crate) fn context_for(key: &ProfileKey) -> Option<RequestContext> {
         let _ = std::fs::create_dir_all(&dir);
         crate::native_path(&dir)
     };
-    // Accept-Language from the profile's settings already at creation (the pref is set again
-    // in `on_request_context_initialized`, and on later changes).
-    let language = with_ui(|ui| {
-        ui.profiles
-            .settings
-            .get(&name)
-            .and_then(|s| s.prefs.accept_language.clone())
-    })
-    .map(|l| bmcp_profiles::prefs::strip_q_values(&l))
-    .unwrap_or_default();
+    // The profile's own Accept-Language (stealth identity) already at creation; without one the
+    // global website languages are set as a pref in `on_request_context_initialized`.
+    let language = crate::languages::own_accept(&name);
     let settings = RequestContextSettings {
         cache_path: CefString::from(cache.as_str()),
         persist_session_cookies: i32::from(!key.incognito),
@@ -240,6 +234,9 @@ pub(crate) fn configure(settings: ProfileSettings) {
     }
     for context in contexts {
         apply_prefs(&context, &prefs);
+        // Without a language of its own (e.g. its identity was removed) the profile goes back
+        // to the global website languages.
+        crate::languages::apply(&context, &name);
     }
 }
 
@@ -309,24 +306,32 @@ pub(crate) fn forget(name: &str) -> Result<(), BackendError> {
 /// Set every preference of `prefs` on `context`. UI thread.
 pub(crate) fn apply_prefs(context: &RequestContext, prefs: &Prefs) {
     for (name, value) in prefs.to_preferences() {
-        let Some(mut value) = json_to_cef(&value) else {
-            continue;
-        };
-        let cef_name = CefString::from(name);
-        if context.can_set_preference(Some(&cef_name)) != 1 {
-            // Not registered in this CEF build (e.g. the webrtc.* booleans in Alloy).
-            tracing::debug!(name, "preference cannot be set");
-            continue;
-        }
-        // Pitfall: the error out-parameter must point at a real string. `CefString::default()`
-        // is passed as NULL, and CEF's C wrapper then returns 0 without doing anything (every
-        // SetPreference "failed" silently). A non-empty string has storage CEF can write to.
-        let mut error = CefString::from(" ");
-        if context.set_preference(Some(&cef_name), Some(&mut value), Some(&mut error)) != 1 {
-            tracing::warn!(name, error = %error, "preference rejected");
-        } else {
-            tracing::debug!(name, "preference set");
-        }
+        set_pref(context, name, &value);
+    }
+}
+
+/// Set one preference on `context`; false when this CEF build does not have it or refused
+/// the value (logged). UI thread.
+pub(crate) fn set_pref(context: &RequestContext, name: &str, value: &serde_json::Value) -> bool {
+    let Some(mut value) = json_to_cef(value) else {
+        return false;
+    };
+    let cef_name = CefString::from(name);
+    if context.can_set_preference(Some(&cef_name)) != 1 {
+        // Not registered in this CEF build (e.g. the webrtc.* booleans in Alloy).
+        tracing::debug!(name, "preference cannot be set");
+        return false;
+    }
+    // Pitfall: the error out-parameter must point at a real string. `CefString::default()`
+    // is passed as NULL, and CEF's C wrapper then returns 0 without doing anything (every
+    // SetPreference "failed" silently). A non-empty string has storage CEF can write to.
+    let mut error = CefString::from(" ");
+    if context.set_preference(Some(&cef_name), Some(&mut value), Some(&mut error)) != 1 {
+        tracing::warn!(name, error = %error, "preference rejected");
+        false
+    } else {
+        tracing::debug!(name, "preference set");
+        true
     }
 }
 
@@ -355,6 +360,8 @@ wrap_request_context_handler! {
             if let Some(prefs) = prefs {
                 apply_prefs(context, &prefs);
             }
+            // The global website languages, unless the profile has its own (identity).
+            crate::languages::apply(context, &self.profile);
             // Tabs waiting for this context can be created now.
             mark_ready(self.key.clone());
         }

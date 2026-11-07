@@ -90,6 +90,9 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
             crate::scheme::register_handler();
+            // Website languages and spellcheck on the launch profile's context before its
+            // first page loads.
+            crate::languages::apply_to_global();
             let ctx = ShellContext {
                 style: runtime_style(self.config.style),
                 layout: self.config.layout,

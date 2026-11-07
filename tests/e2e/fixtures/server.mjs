@@ -79,6 +79,10 @@ async function handle(req, res) {
     return send(res, 200, { id, name: `Item ${id}`, tags: ["new"] });
   }
   if (path === "/api/price") return send(res, 200, { price: 10 });
+  // languages.test.ts: the Accept-Language header the browser sent.
+  if (path === "/echo/accept-language") {
+    return send(res, 200, { accept_language: req.headers["accept-language"] ?? null });
+  }
   if (path.startsWith("/e2e-ads/")) {
     return send(res, 200, "window.adLoaded = true;", TYPES[".js"]);
   }

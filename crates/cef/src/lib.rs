@@ -18,6 +18,7 @@ mod cookies;
 mod devtools;
 mod downloads;
 mod hooks;
+mod languages;
 mod menu;
 mod net;
 mod osr;
@@ -168,6 +169,8 @@ impl Browser {
     pub fn run(self, opts: LaunchOptions) -> Result<(), RunError> {
         opts.data.ensure()?;
         let profile_dir = opts.data.profile(&opts.profile);
+        // Chromium's own locale and the website languages (data/config/languages.json).
+        let languages = languages::startup(&opts.data.config());
 
         let settings = Settings {
             // Windows sandbox needs a separate bootstrap executable; tracked as a known risk.
@@ -180,6 +183,9 @@ impl Browser {
             windowless_rendering_enabled: 1,
             // 0 = no remote debugging port.
             remote_debugging_port: opts.cdp_port.map_or(0, i32::from),
+            // Empty = the Windows display language (Chromium's default). The website languages
+            // are a pref set per request context (languages.rs: not accept_language_list).
+            locale: CefString::from(languages.locale.as_deref().unwrap_or("")),
             ..Default::default()
         };
 

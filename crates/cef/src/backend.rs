@@ -299,6 +299,24 @@ impl BrowserBackend for CefBackend {
     }
 }
 
+/// `browser.languages_*` (crates/languages): website languages on every request context.
+impl bmcp_languages::LanguageBackend for CefBackend {
+    fn apply_languages(
+        &self,
+        web: Vec<String>,
+        spellcheck: Option<Vec<String>>,
+    ) -> BoxFuture<'_, BackendResult<bmcp_languages::BackendLanguages>> {
+        Box::pin(run_on_ui(move || {
+            crate::languages::apply_everywhere(web, spellcheck);
+            crate::languages::report()
+        }))
+    }
+
+    fn languages(&self) -> BoxFuture<'_, BackendResult<bmcp_languages::BackendLanguages>> {
+        Box::pin(run_on_ui(crate::languages::report))
+    }
+}
+
 /// Profiles, cookies (see `profiles.rs`, `cookies.rs`), for the `profile.*` / `cookies.*`
 /// commands of bmcp-profiles.
 impl ProfileBackend for CefBackend {

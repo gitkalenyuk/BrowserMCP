@@ -881,6 +881,138 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- browser.languages_get ----
+
+  /** Arguments of `browser.languages_get`. */
+  export type BrowserLanguagesGetArgs = Record<string, never>;
+
+  /**
+   * Result of `browser.languages_get`.
+   * The browser's languages, as `browser.languages_get` and `browser.languages_set` return them.
+   */
+  export interface BrowserLanguagesGetOutput {
+    /**
+     * Website languages in effect, most preferred first (sent as `Accept-Language` and
+     * `navigator.languages` by every profile without a language of its own).
+     */
+    web: string[];
+    /**
+     * True when `web` is the automatic list (the interface language, then English) because
+     * no list was set.
+     */
+    web_automatic: boolean;
+    /** Chromium's own locale as saved; `null` = the Windows display language. */
+    browser_locale: string | null;
+    /**
+     * The locale this run of the browser started with (`null` = the Windows display
+     * language). Differs from `browser_locale` until the browser is restarted.
+     */
+    browser_locale_active: string | null;
+    /** True when `browser_locale` changes after a restart. */
+    restart_required: boolean;
+    /**
+     * Locales that can be chosen: the `locales/*.pak` files next to the executable (the
+     * portable package ships `en-US` and `uk` by default).
+     */
+    browser_locales: string[];
+    /**
+     * Spellcheck dictionaries in use (empty = spellcheck off): the saved list, else what
+     * Chromium uses by default.
+     */
+    spellcheck: string[];
+    /** True when no list was saved (`spellcheck` shows Chromium's own choice). */
+    spellcheck_default: boolean;
+    /** Can this Chromium build use them? `null` = unknown (no browser attached). */
+    spellcheck_supported: boolean | null;
+    /** The interface language the UI reported (`en`, `uk`); `null` = never reported. */
+    ui_language: string | null;
+    /**
+     * Profiles that keep their own language (their stealth identity, fitted to the proxy's
+     * country, or `profile.create {accept_language}`): the global list does not apply to them.
+     */
+    own_language: {
+      profile: string;
+      /** Its list, e.g. `de-DE,de,en-US,en`. */
+      accept_language: string;
+    }[];
+  }
+
+  // ---- browser.languages_set ----
+
+  /** Arguments of `browser.languages_set`. */
+  export interface BrowserLanguagesSetArgs {
+    /**
+     * Website languages, most preferred first, e.g. ["uk", "en"]. Applied at once to every
+     * profile without a language of its own (profiles with a stealth identity keep theirs).
+     * [] = automatic (the interface language, then English).
+     */
+    web?: string[] | null;
+    /**
+     * Chromium's own locale, e.g. "uk" or "en-US" (one of browser_locales from
+     * browser.languages_get); "system" = the Windows display language. Takes effect after
+     * the browser restarts.
+     */
+    browser_locale?: string | null;
+    /** Spellcheck dictionaries, e.g. ["uk", "en-US"]; [] = spellcheck off. */
+    spellcheck?: string[] | null;
+    /**
+     * The browser UI's interface language ("en" or "uk"), set by the UI: the first language
+     * of the automatic website list.
+     */
+    ui_language?: string | null;
+  }
+
+  /**
+   * Result of `browser.languages_set`.
+   * The browser's languages, as `browser.languages_get` and `browser.languages_set` return them.
+   */
+  export interface BrowserLanguagesSetOutput {
+    /**
+     * Website languages in effect, most preferred first (sent as `Accept-Language` and
+     * `navigator.languages` by every profile without a language of its own).
+     */
+    web: string[];
+    /**
+     * True when `web` is the automatic list (the interface language, then English) because
+     * no list was set.
+     */
+    web_automatic: boolean;
+    /** Chromium's own locale as saved; `null` = the Windows display language. */
+    browser_locale: string | null;
+    /**
+     * The locale this run of the browser started with (`null` = the Windows display
+     * language). Differs from `browser_locale` until the browser is restarted.
+     */
+    browser_locale_active: string | null;
+    /** True when `browser_locale` changes after a restart. */
+    restart_required: boolean;
+    /**
+     * Locales that can be chosen: the `locales/*.pak` files next to the executable (the
+     * portable package ships `en-US` and `uk` by default).
+     */
+    browser_locales: string[];
+    /**
+     * Spellcheck dictionaries in use (empty = spellcheck off): the saved list, else what
+     * Chromium uses by default.
+     */
+    spellcheck: string[];
+    /** True when no list was saved (`spellcheck` shows Chromium's own choice). */
+    spellcheck_default: boolean;
+    /** Can this Chromium build use them? `null` = unknown (no browser attached). */
+    spellcheck_supported: boolean | null;
+    /** The interface language the UI reported (`en`, `uk`); `null` = never reported. */
+    ui_language: string | null;
+    /**
+     * Profiles that keep their own language (their stealth identity, fitted to the proxy's
+     * country, or `profile.create {accept_language}`): the global list does not apply to them.
+     */
+    own_language: {
+      profile: string;
+      /** Its list, e.g. `de-DE,de,en-US,en`. */
+      accept_language: string;
+    }[];
+  }
+
   // ---- clipboard.write ----
 
   /** Arguments of `clipboard.write`. */
@@ -7896,6 +8028,10 @@ declare namespace BrowserMCP {
     "bookmarks.search": { args: BookmarksSearchArgs; output: BookmarksSearchOutput };
     /** Edit a bookmark's title and/or URL, or rename a folder, in place (id, folder and position stay). Returns {bookmark} or {folder} after the edit. */
     "bookmarks.update": { args: BookmarksUpdateArgs; output: BookmarksUpdateOutput };
+    /** Read the browser's languages: website languages (Accept-Language and navigator.languages, most preferred first), Chromium's own locale (menus, dialogs, error pages; changes after a restart) with the locales available, spellcheck dictionaries, and the profiles that keep their own language (stealth identities). */
+    "browser.languages_get": { args: BrowserLanguagesGetArgs; output: BrowserLanguagesGetOutput };
+    /** Change the browser's languages (fields left out stay): web = the languages websites see (Accept-Language, navigator.languages), applied at once to every profile without its own language — stealth identities keep theirs; browser_locale = Chromium's own locale, after a restart; spellcheck = dictionaries. Saved in data/config/languages.json. Returns the same as browser.languages_get. */
+    "browser.languages_set": { args: BrowserLanguagesSetArgs; output: BrowserLanguagesSetOutput };
     /** Put text on the system clipboard (done from inside a page with a user gesture; the browser window should be focused). */
     "clipboard.write": { args: ClipboardWriteArgs; output: ClipboardWriteOutput };
     /** Move cookies waiting from import_chrome (cookies JSON) into a profile's cookie jar. Runs by itself at startup and after each import. */
@@ -8407,6 +8543,21 @@ declare namespace BrowserMCP {
        * `bookmarks.update` (MCP: `bookmarks_update`): toolset `data`, act.
        */
       update(args: BookmarksUpdateArgs): Promise<BookmarksUpdateOutput>;
+    };
+    /** Commands `browser.*`. */
+    browser: {
+      /**
+       * Read the browser's languages: website languages (Accept-Language and navigator.languages, most preferred first), Chromium's own locale (menus, dialogs, error pages; changes after a restart) with the locales available, spellcheck dictionaries, and the profiles that keep their own language (stealth identities).
+       *
+       * `browser.languages_get` (MCP: `browser_languages_get`): toolset `profile`, read.
+       */
+      languages_get(args?: BrowserLanguagesGetArgs): Promise<BrowserLanguagesGetOutput>;
+      /**
+       * Change the browser's languages (fields left out stay): web = the languages websites see (Accept-Language, navigator.languages), applied at once to every profile without its own language — stealth identities keep theirs; browser_locale = Chromium's own locale, after a restart; spellcheck = dictionaries. Saved in data/config/languages.json. Returns the same as browser.languages_get.
+       *
+       * `browser.languages_set` (MCP: `browser_languages_set`): toolset `profile`, act.
+       */
+      languages_set(args?: BrowserLanguagesSetArgs): Promise<BrowserLanguagesSetOutput>;
     };
     /** Commands `clipboard.*`. */
     clipboard: {
