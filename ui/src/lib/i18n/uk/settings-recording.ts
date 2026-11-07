@@ -43,6 +43,8 @@ export default {
   'settings.recording.host.found': 'Знайдено',
   'settings.recording.host.missing': 'Не знайдено',
   'settings.recording.host.foundHelp': 'bmcp-script-host виконує збережені скрипти, масові запуски й налагоджувач:',
+  'settings.recording.host.missingHelp':
+    'Для скриптів, масових запусків і налагоджувача потрібен bmcp-script-host.exe поруч із browsermcp.exe (він постачається разом із браузером; у збірці з вихідного коду — cargo build -p bmcp-script) або повний шлях до нього в змінній BMCP_SCRIPT_HOST.',
   'settings.recording.scripts.timeout': 'Тайм-аут скрипту',
   'settings.recording.scripts.timeoutHelp': 'Окремий запуск скрипту (зокрема з тригера) зупиняється через стільки секунд. Типово 300.',
   'settings.recording.scripts.rowTimeout': 'Тайм-аут на рядок',

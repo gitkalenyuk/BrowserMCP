@@ -142,11 +142,15 @@ async fn ffmpeg_version(ffmpeg: &Path) -> Option<String> {
         .await
         .ok()?
         .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
+    version_line(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// "ffmpeg version 8.0-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+/// → "ffmpeg version 8.0-full_build-www.gyan.dev".
+fn version_line(text: &str) -> Option<String> {
+    let line = text.lines().next()?.trim();
+    let line = line.split(" Copyright").next().unwrap_or(line).trim();
+    (!line.is_empty()).then(|| line.to_string())
 }
 
 pub async fn ffmpeg_status() -> FfmpegStatus {
@@ -310,6 +314,18 @@ mod tests {
             ..Default::default()
         };
         assert!(bad.check().is_err());
+    }
+
+    #[test]
+    fn version_line_drops_the_copyright() {
+        assert_eq!(
+            version_line(
+                "ffmpeg version 8.0-full_build Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with gcc"
+            )
+            .as_deref(),
+            Some("ffmpeg version 8.0-full_build")
+        );
+        assert_eq!(version_line("").as_deref(), None);
     }
 
     #[test]

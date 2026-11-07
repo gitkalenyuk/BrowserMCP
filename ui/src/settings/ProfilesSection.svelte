@@ -294,7 +294,7 @@
         <div class="set-row prof" class:open={editing === p.id}>
           <span class="dot" style:--c={p.color ? `var(--g-${p.color})` : 'var(--fg-subtle)'} aria-hidden="true"></span>
           <div class="text">
-            <span class="label">{p.label} <span class="set-mono id">{p.id}</span></span>
+            <span class="label">{p.label}{#if p.label !== p.id}<span class="set-mono id">{p.id}</span>{/if}</span>
             <span class="chips">
               {#if p.launch}<span class="lib-chip">{t('settings.profiles.chip.launch')}</span>{/if}
               {#if p.incognito}<span class="lib-chip warn">{t('settings.profiles.chip.memory')}</span>{/if}
@@ -511,6 +511,13 @@
 <style>
   .pad {
     padding: 0 16px 10px;
+  }
+  /* Long choices (preset titles, proxy URLs) must not squeeze the label and help away. */
+  .set-row > .text {
+    min-width: min(240px, 45%);
+  }
+  .ctl select.lib-input {
+    max-width: 300px;
   }
   .ctl .btn {
     display: inline-flex;

@@ -214,8 +214,8 @@
             <span class="help">{t('settings.recording.host.foundHelp')}</span>
             <span class="help set-mono">{scr.host.path}</span>
           {:else}
-            <span class="help">{scr.host.error}</span>
-            {#if scr.host.hint}<span class="help">{scr.host.hint}</span>{/if}
+            <span class="help">{t('settings.recording.host.missingHelp')}</span>
+            <span class="help set-mono">{scr.host.error}</span>
           {/if}
         </div>
         <div class="ctl">

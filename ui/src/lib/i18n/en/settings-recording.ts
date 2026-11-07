@@ -44,6 +44,8 @@ export default {
   'settings.recording.host.found': 'Found',
   'settings.recording.host.missing': 'Not found',
   'settings.recording.host.foundHelp': 'bmcp-script-host runs saved scripts, mass runs and the debugger:',
+  'settings.recording.host.missingHelp':
+    'Scripts, mass runs and the debugger need bmcp-script-host.exe next to browsermcp.exe (it ships with the browser; in a source build: cargo build -p bmcp-script), or its full path in the BMCP_SCRIPT_HOST variable.',
   'settings.recording.scripts.timeout': 'Script timeout',
   'settings.recording.scripts.timeoutHelp': 'A single script run (also from a trigger) is stopped after this many seconds. Default 300.',
   'settings.recording.scripts.rowTimeout': 'Timeout per row',

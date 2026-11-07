@@ -526,6 +526,13 @@
   .pad {
     padding: 0 16px 10px;
   }
+  /* Long choices (preset titles, proxy URLs) must not squeeze the label and help away. */
+  .set-row > .text {
+    min-width: min(240px, 45%);
+  }
+  .ctl select.lib-input {
+    max-width: 300px;
+  }
   .ctl .btn,
   .set-actions .btn,
   .rule + div .btn,

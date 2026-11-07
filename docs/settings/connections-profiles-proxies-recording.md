@@ -65,10 +65,18 @@ identity (as before). `bmcp_core::config_file` holds the small atomic JSON load/
   key the sections use exists (`e2-i18n.test.ts`). Clicked through all four sections in
   `pnpm dev` (mock): create a profile, identity from a preset, fit to proxy, pool health check,
   proxy test, routing test, video form validation.
+* Real browser: `tests/e2e/tests/settings-api.test.ts` (`cargo xtask e2e --filter settings-api`):
+  `api.info` reports the harness's API and CDP ports, `api.config` saves without touching the
+  running port, `record.settings` / `script.settings` see ffmpeg / the script host as the harness
+  does, `proxy.rules_get` masks passwords. The dev UI (`BMCP_DEV_UI=1`, Vite on 5173,
+  `?api=ws`) against a headless browser: all four sections load real data; creating a profile,
+  an identity from a preset and a pool from a pasted list work.
 
 ## Gaps
 
-* Not checked against a running browser in this stream (only the mock and the Rust tests).
+* Not clicked through inside the browser's own settings tab (only the dev UI against the core).
+* *Fit to the proxy* and *Test* call the IP lookup service (ip-api.com) through the proxy, so
+  they were only exercised with the mock.
 * "Incognito by default" per profile does not exist in the core; in-memory profiles are listed
   while they have tabs. Device emulation per profile is an identity with a device-emulation
   preset (per tab: `device.emulate`).

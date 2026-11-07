@@ -85,7 +85,7 @@ fn every_command_is_in_the_stealth_toolset() {
     crate::register(&mut registry);
     crate::install(&registry, dir.path());
     let all = registry.list(None);
-    assert_eq!(all.len(), 25);
+    assert_eq!(all.len(), 26);
     assert!(all.iter().all(|c| c.toolset == bmcp_core::Toolset::Stealth));
 }
 
