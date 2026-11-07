@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::model::{Client, Message, Reply, Request, ToolCall, ToolDef, truncate};
-use crate::session::{AgentEvent, Session, Status, summarize};
+use crate::session::{AgentEvent, Input, Session, Status, summarize};
 
 /// Longest tool output (chars) sent back to the model.
 pub const MAX_TOOL_OUTPUT: usize = 30_000;
@@ -120,10 +120,27 @@ pub fn push_user(messages: &mut Vec<Message>, text: String) {
     }
 }
 
+/// Add the user messages waiting in `input` (model changes and interrupts are skipped: the
+/// model is read before each request, interrupts cancel the turn token). `true` if any.
+pub fn drain_messages(
+    input: &mut mpsc::UnboundedReceiver<Input>,
+    messages: &mut Vec<Message>,
+) -> bool {
+    let mut any = false;
+    while let Ok(next) = input.try_recv() {
+        if let Input::Message { text, .. } = next {
+            push_user(messages, text);
+            any = true;
+        }
+    }
+    any
+}
+
 /// Everything one API session needs.
 pub struct ApiAgent {
     pub session: Arc<Session>,
     pub client: Client,
+    /// Used when the chat has no model of its own (the provider's default).
     pub model: String,
     pub tools: Vec<ToolDef>,
     pub runner: ToolRunner,
@@ -133,24 +150,33 @@ pub struct ApiAgent {
 impl ApiAgent {
     /// The session task: handle user messages until stopped. The conversation starts from the
     /// session's kept history, so a stopped chat continues where it was.
-    pub async fn run(self, mut input: mpsc::UnboundedReceiver<String>) {
+    pub async fn run(self, mut input: mpsc::UnboundedReceiver<Input>) {
         let session = self.session.clone();
         let cancel = session.cancel_token();
         let system = system_prompt(&session.id);
         let mut messages: Vec<Message> = session.api_history();
         loop {
-            let text = tokio::select! {
+            let next = tokio::select! {
                 _ = cancel.cancelled() => break,
-                text = input.recv() => match text {
-                    Some(text) => text,
+                next = input.recv() => match next {
+                    Some(next) => next,
                     None => break,
                 },
             };
+            let Input::Message { text, .. } = next else {
+                // A model change is read before every request; nothing to interrupt now.
+                continue;
+            };
             push_user(&mut messages, text);
+            // Messages that came in meanwhile go along in the same turn.
+            drain_messages(&mut input, &mut messages);
+            session.take_all();
             session.set_status(Status::Running);
+            let turn = session.begin_turn();
             let reason = tokio::select! {
                 _ = cancel.cancelled() => "stopped".to_string(),
-                reason = self.answer(&system, &mut messages) => reason,
+                _ = turn.cancelled() => "stopped".to_string(),
+                reason = self.answer(&system, &mut messages, &mut input) => reason,
             };
             // Kept (and repaired: a stop mid-step leaves tool calls without results) for the
             // next message, and for continuing after a stop or a browser restart.
@@ -161,7 +187,7 @@ impl ApiAgent {
                 session.set_status(Status::Stopped);
                 return;
             }
-            session.set_status(Status::Idle);
+            session.settle();
         }
         // Stopped before the queued message was picked up: still end that answer.
         if session.status() == Status::Running {
@@ -171,8 +197,18 @@ impl ApiAgent {
     }
 
     /// Model ↔ tools until the model stops calling tools. Returns the `ai.done` reason.
-    async fn answer(&self, system: &str, messages: &mut Vec<Message>) -> String {
-        for _ in 0..self.max_steps {
+    async fn answer(
+        &self,
+        system: &str,
+        messages: &mut Vec<Message>,
+        input: &mut mpsc::UnboundedReceiver<Input>,
+    ) -> String {
+        for step in 0..self.max_steps {
+            // Messages sent while the agent works join the conversation before the next
+            // request (after the tool results, so the history stays valid).
+            if step > 0 && drain_messages(input, messages) {
+                self.session.take_all();
+            }
             let reply = match self.step(system, messages).await {
                 Ok(reply) => reply,
                 Err(err) => {
@@ -221,8 +257,10 @@ impl ApiAgent {
         let session = self.session.clone();
         let mut on_text =
             move |delta: &str| session.apply(AgentEvent::TextDelta(delta.to_string()));
+        // ai.session_set_model takes effect with the next request.
+        let model = self.session.model().unwrap_or_else(|| self.model.clone());
         let request = Request {
-            model: &self.model,
+            model: &model,
             system,
             messages,
             tools: &self.tools,

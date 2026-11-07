@@ -1,4 +1,5 @@
-//! The life of a session after its start: continuing a stopped chat, stopping, closing,
+//! The life of a session after its start: continuing a stopped chat, stopping, interrupting,
+//! changing the model, editing a message, closing (archiving), reopening, renaming, deleting,
 //! restoring saved sessions at startup, and answering approval requests.
 
 use std::sync::Arc;
@@ -10,11 +11,28 @@ use serde_json::json;
 
 use crate::cli::access::AccessSettings;
 use crate::cli::permission::{Decision, PermissionRequest};
-use crate::session::{Session, SessionInfo, Status, saved_sessions, topics};
+use crate::config::Kind;
+use crate::session::{
+    AgentEvent, Session, SessionInfo, Status, history_from_transcript, rewind_history,
+    saved_sessions, topics,
+};
 use crate::{AiService, lock};
 
 /// How long a finished backend may take to clean up before a restart or close gives up on it.
 const TASK_GRACE: Duration = Duration::from_secs(15);
+
+/// The chat so far as text, for an agent that starts a new conversation after an edit.
+fn earlier_context(earlier: &[(String, String)]) -> String {
+    let mut text = String::from(
+        "(Earlier in this chat — the conversation could not be rewound, so here it is for \
+         context:)\n",
+    );
+    for (role, line) in earlier {
+        let who = if role == "user" { "User" } else { "Assistant" };
+        text.push_str(&format!("\n{who}: {line}\n"));
+    }
+    text
+}
 
 /// `claude-code-12` → 12.
 fn id_number(id: &str) -> Option<u64> {
@@ -37,15 +55,34 @@ impl AiService {
             .max()
             .unwrap_or(0);
         self.counter.fetch_max(highest, Ordering::Relaxed);
-        let mut sessions = lock(&self.sessions);
+        // Provider names (the title of a chat without messages), resolved once per provider.
+        let mut names: std::collections::HashMap<String, String> = Default::default();
+        let mut restored = Vec::new();
         for (saved, log) in saved_sessions(&dir) {
             let id = saved.id.clone();
-            sessions.insert(id, Arc::new(Session::restore(saved, log)));
+            // Written before titles existed: saved again with the new fields.
+            let migrate = saved.updated_ms == 0;
+            let name = names
+                .entry(saved.provider.clone())
+                .or_insert_with(|| {
+                    self.resolve(&saved.provider)
+                        .map(|r| r.name)
+                        .unwrap_or_else(|_| saved.provider.clone())
+                })
+                .clone();
+            let mut session = Session::restore(saved, log);
+            session.provider_name = name;
+            if migrate {
+                session.save_meta();
+            }
+            restored.push((id, Arc::new(session)));
         }
+        lock(&self.sessions).extend(restored);
     }
 
     /// Send the next message. A stopped or failed session is continued first (same chat,
-    /// same conversation): it never turns into a new session.
+    /// same conversation): it never turns into a new session. A busy one takes the message
+    /// while it works (queued until the agent has it).
     pub async fn send(&self, ctx: &Ctx, id: &str, text: String) -> Result<SessionInfo, CmdError> {
         let session = self.session(id)?;
         // Continuing is serialized: a second send that waited here finds the session already
@@ -55,13 +92,7 @@ impl AiService {
             true => Some(session.lifecycle().await),
             false => None,
         };
-        if session.is_closed() {
-            return Err(CmdError::new(
-                ErrorCode::NotFound,
-                format!("AI session '{id}' was closed"),
-            )
-            .with_hint("Start a new session with ai_session_start."));
-        }
+        self.ensure_open(&session)?;
         if session.needs_restart() {
             self.continue_session(ctx, &session).await?;
         }
@@ -72,6 +103,36 @@ impl AiService {
         Ok(session.info())
     }
 
+    /// Deleted (gone) or archived (closed: reopen it first) chats take no messages.
+    fn ensure_open(&self, session: &Session) -> Result<(), CmdError> {
+        if session.is_closed() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("AI session '{}' was deleted", session.id),
+            )
+            .with_hint("Start a new session with ai_session_start."));
+        }
+        if session.is_archived() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("AI session '{}' was closed", session.id),
+            )
+            .with_hint(
+                "Reopen it with ai_session_reopen, or start a new session with ai_session_start.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Wait for the backend task of the last run to finish (after a cancel).
+    async fn finish_task(session: &Session) {
+        if let Some(mut task) = session.take_task()
+            && tokio::time::timeout(TASK_GRACE, &mut task).await.is_err()
+        {
+            task.abort();
+        }
+    }
+
     /// Start a new backend for an ended session, after the previous one has finished. The
     /// caller holds [`Session::lifecycle`], so only one call at a time gets here per session:
     /// the old backend is over before the new one starts, and its last status / approval
@@ -79,11 +140,7 @@ impl AiService {
     async fn continue_session(&self, ctx: &Ctx, session: &Arc<Session>) -> Result<(), CmdError> {
         // Make sure the old run is over (it may still be reporting `stopped`).
         session.cancel();
-        if let Some(mut task) = session.take_task()
-            && tokio::time::timeout(TASK_GRACE, &mut task).await.is_err()
-        {
-            task.abort();
-        }
+        Self::finish_task(session).await;
         let input = session.restart(ctx.events.clone());
         // A session restored after a browser restart has no tab group yet.
         let name = self
@@ -106,6 +163,7 @@ impl AiService {
         let generation = session.generation();
         session.cancel();
         session.cancel_permissions();
+        session.drop_queued();
         // Give the task a moment to report `stopped` (returns as soon as it has; a CLI agent
         // may need a few seconds to be killed on a busy machine), or until a message sent
         // meanwhile has continued the chat with a new run.
@@ -118,32 +176,189 @@ impl AiService {
         Ok(session.info())
     }
 
-    /// Stop (if running) and remove a session: it is no longer listed, now or after a
-    /// restart. The transcript file stays unless `delete_transcript`.
+    /// The session, publishing on the live bus (see [`Session::attach_events`]).
+    fn live(&self, ctx: &Ctx, id: &str) -> Result<Arc<Session>, CmdError> {
+        let session = self.session(id)?;
+        session.attach_events(&ctx.events);
+        Ok(session)
+    }
+
+    /// Stop the current turn but keep the chat alive (Claude Code / Codex keep their process,
+    /// API agents their loop). Waits a moment for the turn to end.
+    pub async fn interrupt(&self, ctx: &Ctx, id: &str) -> Result<SessionInfo, CmdError> {
+        let session = self.live(ctx, id)?;
+        if session.interrupt() {
+            for _ in 0..250 {
+                if session.status() != Status::Running {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        Ok(session.info())
+    }
+
+    /// Use `model` in this chat from the next turn on ("" / "default": the provider's).
+    pub fn set_model(&self, ctx: &Ctx, id: &str, model: &str) -> Result<SessionInfo, CmdError> {
+        let session = self.live(ctx, id)?;
+        let model = Some(model.trim().to_string()).filter(|m| !crate::models::is_default(m));
+        session.set_model(model.clone());
+        // A running CLI switches at once (its next turn); without a model of its own the chat
+        // goes back to the provider's default.
+        let effective = model.or_else(|| self.resolve(&session.provider).ok()?.model);
+        session.send_model(effective);
+        Ok(session.info())
+    }
+
+    /// Stop (if running) and archive a session: it leaves the open chats (`ai.session_closed`)
+    /// and is listed with `ai.sessions_list {archived: true}`; every file stays. With
+    /// `delete_transcript` (the older form of this command) it is deleted instead.
     pub async fn close(
         &self,
         ctx: &Ctx,
         id: &str,
         delete_transcript: bool,
     ) -> Result<(), CmdError> {
-        let session = self.session(id)?;
+        if delete_transcript {
+            return self.delete(ctx, id).await;
+        }
+        let session = self.live(ctx, id)?;
+        if session.is_archived() {
+            return Ok(());
+        }
         // Not while a send is continuing it (that send would start a backend for a closed chat).
         let _turn = session.lifecycle().await;
-        session.mark_closed();
-        session.cancel();
-        session.cancel_permissions();
-        if let Some(mut task) = session.take_task()
-            && tokio::time::timeout(TASK_GRACE, &mut task).await.is_err()
-        {
-            task.abort();
-        }
-        lock(&self.sessions).remove(id);
-        session.remove_files(delete_transcript);
-        // Normally removed by the Claude Code task itself; not when it had to be aborted.
-        let _ = std::fs::remove_file(self.sessions_dir().join(format!("{id}.mcp.json")));
+        self.end_run(&session).await;
+        session.set_archived(true);
         ctx.events
             .emit(topics::SESSION_CLOSED, json!({ "session": id }));
         Ok(())
+    }
+
+    /// Stop whatever runs in `session` and wait for it (caller holds the lifecycle guard).
+    async fn end_run(&self, session: &Session) {
+        session.cancel();
+        session.cancel_permissions();
+        Self::finish_task(session).await;
+        session.drop_queued();
+        if !session.status().ended() {
+            session.set_status(Status::Stopped);
+        }
+        // Normally removed by the Claude Code task itself; not when it had to be aborted.
+        let _ = std::fs::remove_file(self.sessions_dir().join(format!("{}.mcp.json", session.id)));
+    }
+
+    /// Bring an archived chat back to the open chats; it continues like a stopped chat.
+    pub async fn reopen(&self, ctx: &Ctx, id: &str) -> Result<SessionInfo, CmdError> {
+        let session = self.live(ctx, id)?;
+        let _turn = session.lifecycle().await;
+        if session.is_closed() {
+            return Err(CmdError::new(
+                ErrorCode::NotFound,
+                format!("AI session '{id}' was deleted"),
+            ));
+        }
+        if session.is_archived() {
+            session.set_archived(false);
+        }
+        Ok(session.info())
+    }
+
+    /// Stop (if running) and remove a session for good, with every file of it.
+    pub async fn delete(&self, ctx: &Ctx, id: &str) -> Result<(), CmdError> {
+        let session = self.live(ctx, id)?;
+        let _turn = session.lifecycle().await;
+        session.mark_closed();
+        self.end_run(&session).await;
+        lock(&self.sessions).remove(id);
+        session.remove_files();
+        ctx.events
+            .emit(topics::SESSION_CLOSED, json!({ "session": id }));
+        ctx.events
+            .emit(topics::SESSION_DELETED, json!({ "session": id }));
+        Ok(())
+    }
+
+    /// Rename a chat ("" = back to the automatic title).
+    pub fn rename(&self, ctx: &Ctx, id: &str, title: &str) -> Result<SessionInfo, CmdError> {
+        let session = self.live(ctx, id)?;
+        session.rename(Some(title.to_string()));
+        Ok(session.info())
+    }
+
+    /// Edit user message `index`: rewind the conversation to just before it and send `text`
+    /// instead (the transcript is cut there; the new text follows as a user message).
+    pub async fn edit(
+        &self,
+        ctx: &Ctx,
+        id: &str,
+        index: usize,
+        text: String,
+    ) -> Result<SessionInfo, CmdError> {
+        let session = self.live(ctx, id)?;
+        let resolved = self.resolve(&session.provider)?;
+        let _turn = session.lifecycle().await;
+        self.ensure_open(&session)?;
+        let count = session.user_count();
+        if index >= count {
+            return Err(CmdError::invalid_params(format!(
+                "chat {id} has {count} user message(s); there is no message {index}"
+            ))
+            .with_hint("index is the 0-based number of the user message in the chat."));
+        }
+        // The agent may be in the middle of it: end the run first.
+        self.end_run(&session).await;
+        let rewind = session.rewind(index).ok_or_else(|| {
+            CmdError::invalid_params(format!("no user message {index} in chat {id}"))
+        })?;
+        // What the agent gets: the messages it lost with the rewind, then the new text.
+        let mut parts = rewind.prefix.clone();
+        let mut lost = false;
+        match resolved.kind {
+            Kind::Api(_) => {
+                let history = session.api_history();
+                let kept = rewind_history(&history, &rewind.user_texts, index)
+                    .unwrap_or_else(|| history_from_transcript(&session.transcript()));
+                session.set_api_history(kept);
+                // The kept history holds the earlier messages itself.
+                parts.clear();
+            }
+            Kind::ClaudeCode => match &rewind.resume_at {
+                Some(at) if session.conversation().is_some() => {
+                    session.prepare_resume(Some(at.clone()), None);
+                }
+                _ => {
+                    // No point to resume at (a chat from before checkpoints were kept, or
+                    // nothing answered yet): a new conversation, given the chat so far.
+                    session.forget_conversation();
+                    session.prepare_resume(None, None);
+                    if rewind.turns_before {
+                        parts = vec![earlier_context(&rewind.earlier)];
+                        lost = true;
+                    }
+                }
+            },
+            Kind::Codex => {
+                if session.conversation().is_some() {
+                    session.prepare_resume(None, Some(rewind.turns_after));
+                } else {
+                    session.prepare_resume(None, None);
+                }
+            }
+        }
+        if lost {
+            session.apply(AgentEvent::resume_lost(&resolved.name));
+        }
+        ctx.events.emit(
+            topics::SESSION_REWOUND,
+            json!({ "session": id, "index": index }),
+        );
+        self.continue_session(ctx, &session).await?;
+        parts.push(text.clone());
+        session
+            .send_as(text, parts.join("\n\n"))
+            .map_err(CmdError::internal)?;
+        Ok(session.info())
     }
 
     /// Approval requests waiting for an answer, of one session or all.
@@ -183,6 +398,24 @@ impl AiService {
             format!("an AI agent cannot {what}"),
         )
         .with_hint("Ask the user to do it in the browser's AI panel (ai_handoff)."))
+    }
+
+    /// The browser's own agents may rename or delete their own chat, never another agent's
+    /// (people and the clients they connected may).
+    pub(crate) fn refuse_other_agents_chat(
+        &self,
+        caller: &Caller,
+        id: &str,
+        what: &str,
+    ) -> Result<(), CmdError> {
+        if !self.is_own_agent(caller) || caller.agent_id() == Some(id) {
+            return Ok(());
+        }
+        Err(CmdError::new(
+            ErrorCode::NeedsApproval,
+            format!("an AI agent cannot {what} another agent's chat"),
+        )
+        .with_hint("Only its own chat; ask the user to do it in the browser's AI panel."))
     }
 
     /// An agent may start a chat of its own with the provider's defaults or less, never with

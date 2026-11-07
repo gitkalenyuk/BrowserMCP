@@ -49,6 +49,11 @@ const session = (id: string, status: AiSession['status'], created_ms = 1): AiSes
   status,
   tabs: [],
   created_ms,
+  title: 'Claude Code',
+  title_set: false,
+  archived: false,
+  updated_ms: created_ms,
+  queued: 0,
 });
 
 const permission = (id: string, s: string, status: AiPermission['status'] = 'pending'): AiPermission => ({

@@ -256,7 +256,21 @@ export interface RpcMethods {
   'ai.session_start': { params: AiSessionStart; result: AiSession };
   'ai.session_send': { params: { id: string; text: string }; result: AiSession };
   'ai.session_stop': { params: { id: string }; result: AiSession };
-  'ai.sessions_list': { params: void; result: { sessions: AiSession[] } };
+  /** Default: the open chats; `archived: true`: the closed (archived) ones, newest first. */
+  'ai.sessions_list': { params: { archived?: boolean } | void; result: { sessions: AiSession[] } };
+  /** `title: ""` = back to the automatic title. */
+  'ai.session_rename': { params: { id: string; title: string }; result: AiSession };
+  /** Unarchive a closed chat; writing in it continues the conversation. */
+  'ai.session_reopen': { params: { id: string }; result: AiSession };
+  /** Permanent: stops it and removes all its files. */
+  'ai.session_delete': { params: { id: string }; result: { deleted: true } };
+  'ai.models': { params: { provider: string }; result: { models: AiModel[]; default?: string } };
+  /** From the next turn on; `""` / `"default"` = the provider's default. */
+  'ai.session_set_model': { params: { id: string; model: string }; result: AiSession };
+  /** Stop the current turn, keep the chat (and the CLI process) alive. */
+  'ai.session_interrupt': { params: { id: string }; result: AiSession };
+  /** Rewind to just before USER message `index` (0-based) and send `text` instead. */
+  'ai.session_edit': { params: { id: string; index: number; text: string }; result: AiSession };
   'ai.session_transcript': { params: { id: string }; result: { id: string; entries: AiTranscriptEntry[] } };
   // ---- terminals (crates/ai/src/term.rs) ---------------------------------------------------
   'term.open': { params: TermOpen; result: TermInfo };
@@ -331,7 +345,14 @@ export interface ApiEvents {
   'ai.tool_result': { session: string; name: string; ok: boolean; summary: string };
   /** The agent finished answering one user message (`end_turn`, `max_steps`, `stopped`, `error: …`). */
   'ai.done': { session: string; reason: string };
-  'ai.session': { session: string; status: AiSessionStatus };
+  /** The whole session whenever it changes (status, title, model, archived, queued…). */
+  'ai.session': AiSession & { session: string };
+  /** The agent took user message `index`, sent while it was busy (`queued: true`). */
+  'ai.message_taken': { session: string; index: number };
+  /** ai.session_edit cut the transcript before user message `index` (the new text follows). */
+  'ai.session_rewound': { session: string; index: number };
+  /** Removed for good with ai.session_delete (ai.session_closed comes first). */
+  'ai.session_deleted': { session: string };
   'term.output': { id: string; data: string };
   'term.exit': { id: string; code: number | null };
   'net.paused': NetPaused;
@@ -412,6 +433,24 @@ export interface AiSession {
   status: AiSessionStatus;
   tabs: number[];
   created_ms: number;
+  /** Name to show (never show `id`): the user's, else the first message (~48 chars with "…"),
+   *  else the provider's name. */
+  title: string;
+  /** The user renamed it: the automatic title no longer replaces it. */
+  title_set: boolean;
+  /** Closed (ai.session_close): not in the tab strip, listed in the history. */
+  archived: boolean;
+  updated_ms: number;
+  /** User messages sent while the agent was busy, not taken by it yet. */
+  queued: number;
+}
+
+/** One entry of `ai.models`. */
+export interface AiModel {
+  /** What ai.session_start / ai.session_set_model take; `default` = the provider's own. */
+  id: string;
+  name: string;
+  hint?: string;
 }
 
 export interface AiSessionStart {
@@ -431,14 +470,21 @@ export interface AiMessageEvent {
   /** System notes the UI knows (`resume_lost`, `mcp_not_connected`): shown translated. */
   code?: string;
   params?: Record<string, string>;
+  /** User messages: 0-based number in the chat (ai.session_edit takes it). */
+  index?: number;
+  /** User messages sent while the agent was busy; ai.message_taken follows. */
+  queued?: boolean;
 }
 
 export type AiTranscriptEntry = { ts_ms?: number } & (
-  | { type: 'user' | 'assistant'; text: string }
+  /** `index`: user messages' number in the chat; `queued`: not taken by the agent yet. */
+  | { type: 'user'; text: string; index?: number; queued?: boolean }
+  | { type: 'assistant'; text: string }
   | { type: 'notice'; text: string; code?: string; params?: Record<string, string> }
   | { type: 'tool_call'; name: string; args: unknown }
   | { type: 'tool_result'; name: string; ok: boolean; summary: string }
-  | { type: 'done'; reason: string }
+  /** `at`: Claude Code's checkpoint of that turn (used by ai.session_edit). */
+  | { type: 'done'; reason: string; at?: string }
   /** An answered (or cancelled) approval request. */
   | ({ type: 'permission' } & import('./types-ai-chat').AiPermission)
 );
@@ -552,7 +598,12 @@ export type Result<M extends Method> = RpcMethods[M]['result'];
 export type EventName = keyof ApiEvents;
 
 /** `call('tabs.list')` for void params, `call('tabs.close', { tab })` otherwise. */
-export type CallArgs<M extends Method> = Params<M> extends void ? [] : [params: Params<M>];
+/** No params, optional params (`X | void`), or required params. */
+export type CallArgs<M extends Method> = Params<M> extends void
+  ? []
+  : void extends Params<M>
+    ? [params?: Exclude<Params<M>, void>]
+    : [params: Params<M>];
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 

@@ -31,6 +31,13 @@ pub fn register(registry: &mut Registry) {
         .add::<SessionSend>()
         .add::<SessionStop>()
         .add::<SessionClose>()
+        .add::<SessionReopen>()
+        .add::<SessionDelete>()
+        .add::<SessionRename>()
+        .add::<SessionSetModel>()
+        .add::<SessionInterrupt>()
+        .add::<SessionEdit>()
+        .add::<Models>()
         .add::<SessionsList>()
         .add::<SessionTranscript>()
         .add::<PermissionsList>()
@@ -550,8 +557,12 @@ impl Command for SessionSend {
 
     fn meta() -> Meta {
         Meta::new(
-            "Send the next user message to an AI session (queued if it is still working). A \
-             stopped or failed session continues the same conversation. Returns the session.",
+            "Send the next user message to an AI session. Never refused while it works: the \
+             agent takes it during the current turn (Claude Code folds it in, Codex steers, \
+             API agents add it before the next model call) or right after; until then the \
+             ai.message event carries queued:true and SessionInfo.queued counts it \
+             (ai.message_taken follows). A stopped or failed session continues the same \
+             conversation. Returns the session.",
             Toolset::Ai,
         )
         .act()
@@ -605,7 +616,8 @@ pub struct SessionClose;
 pub struct SessionCloseArgs {
     /// Session id.
     pub id: String,
-    /// Also delete its transcript file (data/ai/sessions/<id>.jsonl). Default false.
+    /// Older form of ai.session_delete: delete the chat and all its files instead of
+    /// archiving it. Default false.
     #[serde(default)]
     pub delete_transcript: bool,
 }
@@ -623,24 +635,258 @@ impl Command for SessionClose {
 
     fn meta() -> Meta {
         Meta::new(
-            "Close an AI session: stops it if running and removes it from ai.sessions_list (also \
-             after a restart). The transcript file is kept unless delete_transcript. Emits \
-             ai.session_closed.",
+            "Close an AI chat: stops it if running and archives it — it leaves the open chats \
+             (ai.sessions_list) but keeps every file and is listed with \
+             ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits \
+             ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete).",
             Toolset::Ai,
         )
         .act()
     }
 
     async fn run(ctx: Ctx, args: SessionCloseArgs) -> Result<SessionCloseOutput, CmdError> {
-        AiService::from_ctx(&ctx)?
-            .close(&ctx, &args.id, args.delete_transcript)
-            .await?;
+        let ai = AiService::from_ctx(&ctx)?;
+        if args.delete_transcript {
+            ai.refuse_other_agents_chat(&ctx.caller, &args.id, "delete")?;
+        }
+        ai.close(&ctx, &args.id, args.delete_transcript).await?;
         Ok(SessionCloseOutput { closed: args.id })
+    }
+}
+
+/// `ai.session_reopen`
+pub struct SessionReopen;
+
+impl Command for SessionReopen {
+    const NAME: &'static str = "ai.session_reopen";
+    type Args = SessionIdArgs;
+    type Output = SessionInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Reopen an archived (closed) AI chat: it is among the open chats again with its \
+             history; the next ai.session_send continues the conversation like a stopped chat.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionIdArgs) -> Result<SessionInfo, CmdError> {
+        AiService::from_ctx(&ctx)?.reopen(&ctx, &args.id).await
+    }
+}
+
+/// `ai.session_delete`
+pub struct SessionDelete;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionDeleteOutput {
+    pub deleted: bool,
+}
+
+impl Command for SessionDelete {
+    const NAME: &'static str = "ai.session_delete";
+    type Args = SessionIdArgs;
+    type Output = SessionDeleteOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Delete an AI chat for good: stops it if running and removes all its files (meta, \
+             transcript, history). Emits ai.session_closed and ai.session_deleted. An AI agent \
+             may delete only its own chat (NEEDS_APPROVAL otherwise).",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionIdArgs) -> Result<SessionDeleteOutput, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        ai.refuse_other_agents_chat(&ctx.caller, &args.id, "delete")?;
+        ai.delete(&ctx, &args.id).await?;
+        Ok(SessionDeleteOutput { deleted: true })
+    }
+}
+
+/// `ai.session_rename`
+pub struct SessionRename;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionRenameArgs {
+    /// Session id.
+    pub id: String,
+    /// New title; "" = back to the automatic title (the first message).
+    pub title: String,
+}
+
+impl Command for SessionRename {
+    const NAME: &'static str = "ai.session_rename";
+    type Args = SessionRenameArgs;
+    type Output = SessionInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Rename an AI chat (saved); \"\" goes back to the automatic title. An AI agent may \
+             rename only its own chat (NEEDS_APPROVAL otherwise). Returns the session.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionRenameArgs) -> Result<SessionInfo, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        ai.refuse_other_agents_chat(&ctx.caller, &args.id, "rename")?;
+        ai.rename(&ctx, &args.id, &args.title)
+    }
+}
+
+/// `ai.session_set_model`
+pub struct SessionSetModel;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionSetModelArgs {
+    /// Session id.
+    pub id: String,
+    /// A model id from ai.models; "" or "default" = the provider's default.
+    pub model: String,
+}
+
+impl Command for SessionSetModel {
+    const NAME: &'static str = "ai.session_set_model";
+    type Args = SessionSetModelArgs;
+    type Output = SessionInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Change the model of an AI chat from its next turn on (saved). A running Claude \
+             Code switches at once (set_model), Codex uses it on the next turn/start, API \
+             agents on the next request. Returns the session.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionSetModelArgs) -> Result<SessionInfo, CmdError> {
+        AiService::from_ctx(&ctx)?.set_model(&ctx, &args.id, &args.model)
+    }
+}
+
+/// `ai.session_interrupt`
+pub struct SessionInterrupt;
+
+impl Command for SessionInterrupt {
+    const NAME: &'static str = "ai.session_interrupt";
+    type Args = SessionIdArgs;
+    type Output = SessionInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Interrupt the current turn of an AI chat but keep the chat (and the CLI agent) \
+             alive: the answer ends with ai.done {reason: stopped} and the next message goes \
+             on in the same conversation. ai.session_stop also ends the agent process.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionIdArgs) -> Result<SessionInfo, CmdError> {
+        AiService::from_ctx(&ctx)?.interrupt(&ctx, &args.id).await
+    }
+}
+
+/// `ai.session_edit`
+pub struct SessionEdit;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionEditArgs {
+    /// Session id.
+    pub id: String,
+    /// 0-based number of the USER message in the chat (`index` of ai.message / transcript
+    /// entries).
+    pub index: usize,
+    /// The new text of that message.
+    pub text: String,
+}
+
+impl Command for SessionEdit {
+    const NAME: &'static str = "ai.session_edit";
+    type Args = SessionEditArgs;
+    type Output = SessionInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Edit an earlier user message of an AI chat: the conversation is rewound to just \
+             before it (the transcript is cut there, ai.session_rewound) and the new text is \
+             sent instead, as the next user message. Stops the current turn first. Returns the \
+             session.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: SessionEditArgs) -> Result<SessionInfo, CmdError> {
+        if args.text.trim().is_empty() {
+            return Err(CmdError::invalid_params("text is empty"));
+        }
+        AiService::from_ctx(&ctx)?
+            .edit(&ctx, &args.id, args.index, args.text)
+            .await
+    }
+}
+
+/// `ai.models`
+pub struct Models;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelsArgs {
+    /// Provider id from ai.providers.
+    pub provider: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ModelsOutput {
+    pub models: Vec<crate::models::ModelChoice>,
+    /// The model new chats of this provider use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+impl Command for Models {
+    const NAME: &'static str = "ai.models";
+    type Args = ModelsArgs;
+    type Output = ModelsOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "The models a provider offers, for ai.session_start / ai.session_set_model: Claude \
+             Code's aliases and model ids, Codex's model/list, an API provider's live list \
+             (no tokens spent) or its configured models.",
+            Toolset::Ai,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: ModelsArgs) -> Result<ModelsOutput, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        let resolved = ai.resolve(&args.provider)?;
+        let (models, default) = crate::models::list(&resolved, &ai.default_cwd()).await;
+        Ok(ModelsOutput { models, default })
     }
 }
 
 /// `ai.sessions_list`
 pub struct SessionsList;
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionsListArgs {
+    /// true: the archived (closed) chats, most recently active first; default: the open
+    /// chats.
+    #[serde(default)]
+    pub archived: Option<bool>,
+}
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SessionsListOutput {
@@ -649,20 +895,21 @@ pub struct SessionsListOutput {
 
 impl Command for SessionsList {
     const NAME: &'static str = "ai.sessions_list";
-    type Args = Empty;
+    type Args = SessionsListArgs;
     type Output = SessionsListOutput;
 
     fn meta() -> Meta {
         Meta::new(
-            "List AI sessions (agents) with id, provider, color, status, the tabs each touched, \
-             access settings and the number of pending approval requests.",
+            "List AI chats (agents) with id, title, provider, model, color, status, the tabs \
+             each touched, access settings, pending approval requests and queued messages. \
+             Default: the open chats; archived: true lists the closed ones, newest first.",
             Toolset::Ai,
         )
     }
 
-    async fn run(ctx: Ctx, _args: Empty) -> Result<SessionsListOutput, CmdError> {
+    async fn run(ctx: Ctx, args: SessionsListArgs) -> Result<SessionsListOutput, CmdError> {
         Ok(SessionsListOutput {
-            sessions: AiService::from_ctx(&ctx)?.sessions(),
+            sessions: AiService::from_ctx(&ctx)?.sessions_filtered(args.archived.unwrap_or(false)),
         })
     }
 }

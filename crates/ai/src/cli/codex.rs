@@ -14,7 +14,18 @@
 //!    and `item/fileChange/requestApproval {itemId, reason}` (older: `execCommandApproval`,
 //!    `applyPatchApproval`); they become approval cards ([`Session::ask_permission`]) and the
 //!    answer is `{decision: accept | acceptForSession | decline | cancel}`;
-//! 5. stop: `turn/interrupt {threadId, turnId}`, then kill.
+//! 5. stop: `turn/interrupt {threadId, turnId}`, then kill; ai.session_interrupt sends only
+//!    `turn/interrupt` (the thread and process stay);
+//! 6. a message sent while a turn runs: `turn/steer {threadId, input, expectedTurnId}` adds it
+//!    to that turn; when the server does not have it (or the turn just ended) the message is
+//!    held and starts the next turn as soon as this one completes;
+//! 7. the model: `turn/start {model}` on every turn (ai.session_set_model takes effect with
+//!    the next one); `model/list` lists them (ai.models);
+//! 8. editing a message: the next run resumes the thread and sends `thread/rollback
+//!    {threadId, numTurns}` (falls back to a new thread, with a notice, when that fails).
+//!
+//! The methods of 6–8 come from the app-server protocol of newer Codex versions and were not
+//! tried against a real Codex (none is installed here); the tests use a fake app-server.
 //!
 //! The browser's MCP server is passed as a config override:
 //! `-c mcp_servers.browsermcp.url="http://127.0.0.1:47800/mcp?agent=<id>"`. Sandbox and
@@ -41,7 +52,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::access::Access;
 use super::permission::{Ask, Decision, NewPermission, PermissionKind};
 use super::{ProcessTree, StderrTail, command, join_reader, kill_tree, spawn};
-use crate::session::{AgentEvent, Session, Status, summarize};
+use crate::session::{AgentEvent, Input, Session, Status, summarize};
 
 const SERVER: &str = "browsermcp";
 /// How long a JSON-RPC request may take (thread/start loads MCP servers).
@@ -50,12 +61,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct Codex {
     pub session: Arc<Session>,
     pub binary: PathBuf,
+    /// Used when the chat has no model of its own (the provider's default).
     pub model: Option<String>,
     pub mcp_url: String,
     /// Sandbox, approval policy and working folder (`access.cwd`).
     pub access: Access,
     /// Codex thread id to continue.
     pub resume: Option<String>,
+    /// After an edit: turns to drop from the end of the resumed thread.
+    pub rollback: Option<u32>,
 }
 
 /// `-c` override that adds the browser's MCP server.
@@ -192,9 +206,99 @@ fn file_change_paths(item: &Value) -> Option<(String, Value)> {
     Some((item["id"].as_str()?.to_string(), json!(paths)))
 }
 
-/// `turn/start` parameters.
-pub fn turn_start_params(thread: &str, text: &str) -> Value {
-    json!({ "threadId": thread, "input": [{ "type": "text", "text": text, "text_elements": [] }] })
+/// `turn/start` parameters; `model` applies to this turn and the next ones.
+pub fn turn_start_params(thread: &str, text: &str, model: Option<&str>) -> Value {
+    let mut params = json!({ "threadId": thread, "input": text_input(text) });
+    if let Some(model) = model.filter(|m| !m.is_empty()) {
+        params["model"] = json!(model);
+    }
+    params
+}
+
+fn text_input(text: &str) -> Value {
+    json!([{ "type": "text", "text": text, "text_elements": [] }])
+}
+
+/// `turn/steer` parameters: add `text` to the running turn `turn`.
+pub fn turn_steer_params(thread: &str, turn: &str, text: &str) -> Value {
+    json!({ "threadId": thread, "input": text_input(text), "expectedTurnId": turn })
+}
+
+/// `thread/rollback` parameters: drop the last `turns` turns of the thread.
+pub fn rollback_params(thread: &str, turns: u32) -> Value {
+    json!({ "threadId": thread, "numTurns": turns })
+}
+
+/// JSON-RPC "method not found".
+const METHOD_NOT_FOUND: i64 = -32601;
+
+/// One model from `model/list`: `(id, name, description, is_default)`. Hidden ones are
+/// left out.
+pub fn parse_models(result: &Value) -> Vec<(String, String, Option<String>, bool)> {
+    let list = result["data"]
+        .as_array()
+        .or(result["models"].as_array())
+        .cloned()
+        .unwrap_or_default();
+    list.iter()
+        .filter(|m| m["hidden"] != true)
+        .filter_map(|m| {
+            let id = m["model"].as_str().or(m["id"].as_str())?.to_string();
+            let name = m["displayName"]
+                .as_str()
+                .or(m["display_name"].as_str())
+                .unwrap_or(&id)
+                .to_string();
+            let hint = m["description"]
+                .as_str()
+                .filter(|d| !d.is_empty())
+                .map(str::to_string);
+            Some((id, name, hint, m["isDefault"] == true))
+        })
+        .collect()
+}
+
+/// Ask a `codex app-server` for its models (`initialize`, then `model/list`); no thread is
+/// started, nothing is sent to a model.
+pub async fn list_models(binary: &std::path::Path, cwd: &std::path::Path) -> Result<Value, String> {
+    let mut cmd = command(binary, cwd);
+    cmd.arg("app-server");
+    let (mut child, tree) = spawn(&mut cmd).map_err(|e| format!("cannot start codex: {e}"))?;
+    let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        return Err("codex has no stdio".into());
+    };
+    if let Some(stderr) = child.stderr.take() {
+        StderrTail::collect(stderr, "codex model/list");
+    }
+    let talk = async {
+        let mut lines = BufReader::new(stdout).lines();
+        let mut send = async |v: Value| {
+            stdin
+                .write_all(format!("{v}\n").as_bytes())
+                .await
+                .map_err(|e| e.to_string())
+        };
+        send(json!({ "id": 1, "method": "initialize", "params": { "clientInfo": { "name": "browsermcp", "title": "BrowserMCP", "version": env!("CARGO_PKG_VERSION") } } })).await?;
+        send(json!({ "method": "initialized" })).await?;
+        send(json!({ "id": 2, "method": "model/list", "params": {} })).await?;
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if v["id"] == 2 && v["method"].is_null() {
+                return match v.get("error") {
+                    Some(err) => Err(err["message"].as_str().unwrap_or("error").to_string()),
+                    None => Ok(v["result"].clone()),
+                };
+            }
+        }
+        Err("codex exited".to_string())
+    };
+    let result = tokio::time::timeout(Duration::from_secs(20), talk)
+        .await
+        .unwrap_or_else(|_| Err("model/list: no answer from codex".into()));
+    kill_tree(&mut child, &tree).await;
+    result
 }
 
 /// app-server notification → events.
@@ -388,20 +492,26 @@ impl Rpc {
     }
 
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_value(method, params)
+            .await
+            .map_err(|error| format!("{method}: {}", error["message"].as_str().unwrap_or("error")))
+    }
+
+    /// Like [`Rpc::request`], with the JSON-RPC error object (`{code, message}`) on failure.
+    async fn request_value(&self, method: &str, params: Value) -> Result<Value, Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         lock(&self.pending).insert(id, tx);
-        self.write(&json!({ "id": id, "method": method, "params": params }))
+        if let Err(e) = self
+            .write(&json!({ "id": id, "method": method, "params": params }))
             .await
-            .map_err(|e| format!("{method}: cannot write to codex: {e}"))?;
+        {
+            return Err(json!({ "message": format!("cannot write to codex: {e}") }));
+        }
         match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
-            Err(_) => Err(format!("{method}: no answer from codex")),
-            Ok(Err(_)) => Err(format!("{method}: codex exited")),
-            Ok(Ok(Err(error))) => Err(format!(
-                "{method}: {}",
-                error["message"].as_str().unwrap_or("error")
-            )),
-            Ok(Ok(Ok(result))) => Ok(result),
+            Err(_) => Err(json!({ "message": "no answer from codex" })),
+            Ok(Err(_)) => Err(json!({ "message": "codex exited" })),
+            Ok(Ok(result)) => result,
         }
     }
 
@@ -451,14 +561,14 @@ impl Codex {
     }
 
     /// The session task.
-    pub async fn run(self, input: mpsc::UnboundedReceiver<String>) {
+    pub async fn run(self, input: mpsc::UnboundedReceiver<Input>) {
         let session = self.session.clone();
         self.run_inner(input).await;
         // Codex is gone: nobody waits for answers to its approval requests any more.
         session.cancel_permissions();
     }
 
-    async fn run_inner(&self, input: mpsc::UnboundedReceiver<String>) {
+    async fn run_inner(&self, input: mpsc::UnboundedReceiver<Input>) {
         let session = self.session.clone();
         match self.spawn_app_server() {
             Ok((child, tree)) => match self.app_server(child, tree, input).await {
@@ -492,8 +602,8 @@ impl Codex {
         &self,
         mut child: Child,
         tree: ProcessTree,
-        mut input: mpsc::UnboundedReceiver<String>,
-    ) -> Result<(), (String, Option<mpsc::UnboundedReceiver<String>>)> {
+        mut input: mpsc::UnboundedReceiver<Input>,
+    ) -> Result<(), (String, Option<mpsc::UnboundedReceiver<Input>>)> {
         let session = self.session.clone();
         let cancel = session.cancel_token();
         let (Some(stdin), Some(stdout), Some(stderr)) =
@@ -508,10 +618,15 @@ impl Codex {
             next_id: AtomicI64::new(0),
         });
         let turn: Arc<Mutex<Option<String>>> = Arc::default();
+        // The reader tells the turn loop when a turn ended (held messages start the next).
+        let (turn_end_tx, mut turn_end) = mpsc::unbounded_channel::<()>();
+        // Turns ended so far (tells a late `turn/start` answer from a running turn).
+        let ended = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         // stdout: responses → pending requests; notifications → events; server requests → answers.
         let reader = {
-            let (rpc, session, turn) = (rpc.clone(), session.clone(), turn.clone());
+            let (rpc, session, turn, ended) =
+                (rpc.clone(), session.clone(), turn.clone(), ended.clone());
             let stdout = BufReader::new(stdout);
             tokio::spawn(async move {
                 // fileChange item id → its files, for the approval card.
@@ -572,10 +687,15 @@ impl Codex {
                             }
                             for event in notification(method, &msg["params"]) {
                                 let done = matches!(event, AgentEvent::Done(_));
+                                if done {
+                                    let mut current = lock(&turn);
+                                    *current = None;
+                                    ended.fetch_add(1, Ordering::Relaxed);
+                                }
+                                // Done: idle, or running when held messages wait.
                                 session.apply(event);
                                 if done {
-                                    *lock(&turn) = None;
-                                    session.set_status(Status::Idle);
+                                    let _ = turn_end_tx.send(());
                                 }
                             }
                         }
@@ -596,15 +716,27 @@ impl Codex {
             .await?;
             rpc.notify("initialized").await.map_err(|e| e.to_string())?;
             let instructions = crate::agent::system_prompt(&session.id);
-            let model = self.model.as_deref();
+            let model = session.model().or_else(|| self.model.clone());
+            let model = model.as_deref();
             if let Some(thread) = &self.resume {
                 let params = thread_resume_params(thread, model, &instructions, &self.access);
                 match rpc.request("thread/resume", params).await {
                     Ok(result) if result["thread"]["id"].is_string() => {
-                        return Ok(result["thread"]["id"]
+                        let id = result["thread"]["id"]
                             .as_str()
                             .unwrap_or(thread)
-                            .to_string());
+                            .to_string();
+                        // After an edit: drop the turns from the edited message on.
+                        match self.rollback.filter(|n| *n > 0) {
+                            None => return Ok(id),
+                            Some(n) => match rpc
+                                .request("thread/rollback", rollback_params(&id, n))
+                                .await
+                            {
+                                Ok(_) => return Ok(id),
+                                Err(err) => tracing::warn!(%err, "codex thread/rollback failed"),
+                            },
+                        }
                     }
                     Ok(result) => tracing::warn!(%result, "thread/resume returned no thread"),
                     Err(err) => tracing::warn!(%err, "codex thread/resume failed"),
@@ -639,18 +771,92 @@ impl Codex {
         };
         session.apply(AgentEvent::ConversationId(thread.clone()));
 
-        // Turns.
+        // Turns. Messages sent while a turn runs are steered into it, or held for the next.
+        let mut held: Vec<(String, Option<usize>)> = Vec::new();
+        let mut can_steer = true;
+        let start_turn = async |texts: Vec<(String, Option<usize>)>| {
+            let indexes: Vec<usize> = texts.iter().filter_map(|(_, i)| *i).collect();
+            let text = texts
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            session.take(&indexes);
+            session.set_status(Status::Running);
+            // ai.session_set_model: the chat's model, from this turn on.
+            let model = session.model().or_else(|| self.model.clone());
+            let params = turn_start_params(&thread, &text, model.as_deref());
+            let ended_before = ended.load(Ordering::Relaxed);
+            match rpc.request("turn/start", params).await {
+                Ok(result) => {
+                    // Running from now on, unless `turn/started` came first or the turn is
+                    // already over.
+                    let mut current = lock(&turn);
+                    if current.is_none()
+                        && ended.load(Ordering::Relaxed) == ended_before
+                        && let Some(id) = result["turn"]["id"].as_str()
+                    {
+                        *current = Some(id.to_string());
+                    }
+                }
+                Err(err) => {
+                    session.apply(AgentEvent::Notice(err.clone()));
+                    session.apply(AgentEvent::Done(format!("error: {err}")));
+                }
+            }
+        };
         let exit = loop {
             tokio::select! {
                 _ = cancel.cancelled() => break None,
                 status = child.wait() => break Some(status),
-                text = input.recv() => {
-                    let Some(text) = text else { break None };
-                    session.set_status(Status::Running);
-                    if let Err(err) = rpc.request("turn/start", turn_start_params(&thread, &text)).await {
-                        session.apply(AgentEvent::Notice(err.clone()));
-                        session.apply(AgentEvent::Done(format!("error: {err}")));
-                        session.set_status(Status::Idle);
+                Some(()) = turn_end.recv() => {
+                    if !held.is_empty() && lock(&turn).is_none() {
+                        start_turn(std::mem::take(&mut held)).await;
+                    }
+                }
+                next = input.recv() => {
+                    let Some(next) = next else { break None };
+                    match next {
+                        Input::Message { text, index, .. } => {
+                            let running = lock(&turn).clone();
+                            let Some(turn_id) = running else {
+                                start_turn(vec![(text, index)]).await;
+                                continue;
+                            };
+                            if can_steer {
+                                let params = turn_steer_params(&thread, &turn_id, &text);
+                                match rpc.request_value("turn/steer", params).await {
+                                    Ok(_) => {
+                                        session.take(&index.into_iter().collect::<Vec<_>>());
+                                        continue;
+                                    }
+                                    Err(err) => {
+                                        if err["code"] == METHOD_NOT_FOUND {
+                                            can_steer = false;
+                                        }
+                                        tracing::debug!(%err, "codex turn/steer refused; holding the message");
+                                    }
+                                }
+                            }
+                            held.push((text, index));
+                            // The turn may have ended while we asked.
+                            if lock(&turn).is_none() {
+                                start_turn(std::mem::take(&mut held)).await;
+                            }
+                        }
+                        Input::SetModel(_) => {} // read at the next turn/start
+                        Input::Interrupt => {
+                            let running = lock(&turn).clone();
+                            if let Some(turn_id) = running {
+                                let interrupt = rpc.request(
+                                    "turn/interrupt",
+                                    json!({ "threadId": thread, "turnId": turn_id }),
+                                );
+                                if let Ok(Err(err)) = tokio::time::timeout(Duration::from_secs(5), interrupt).await {
+                                    session.apply(AgentEvent::Notice(err));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -690,21 +896,27 @@ impl Codex {
     }
 
     /// Fallback: one `codex exec --json` process per user message (untested against real Codex).
-    async fn exec_mode(&self, mut input: mpsc::UnboundedReceiver<String>) {
+    async fn exec_mode(&self, mut input: mpsc::UnboundedReceiver<Input>) {
         let session = self.session.clone();
         let cancel = session.cancel_token();
         let mut thread: Option<String> = self.resume.clone();
         loop {
-            let text = tokio::select! {
+            let next = tokio::select! {
                 _ = cancel.cancelled() => break,
-                text = input.recv() => match text { Some(t) => t, None => break },
+                next = input.recv() => match next { Some(next) => next, None => break },
             };
+            // Model changes are read per message; exec mode cannot interrupt a turn.
+            let Input::Message { text, index, .. } = next else {
+                continue;
+            };
+            session.take(&index.into_iter().collect::<Vec<_>>());
             session.set_status(Status::Running);
+            let model = session.model().or_else(|| self.model.clone());
             let mut cmd = command(&self.binary, &self.access.cwd);
             cmd.args(exec_args(
                 thread.as_deref(),
                 &self.mcp_url,
-                self.model.as_deref(),
+                model.as_deref(),
                 &self.access,
             ));
             let (mut child, tree) = match spawn(&mut cmd) {
@@ -773,7 +985,7 @@ impl Codex {
                     }
                 }
             }
-            session.set_status(Status::Idle);
+            session.settle();
         }
         if session.status() == Status::Running {
             session.apply(AgentEvent::Done("stopped".into()));
@@ -858,7 +1070,27 @@ mod tests {
         assert_eq!(p["sandbox"], "read-only");
         assert_eq!(p["approvalPolicy"], "never");
         assert!(p.get("model").is_none());
-        assert_eq!(turn_start_params("t1", "go")["input"][0]["text"], "go");
+        assert_eq!(
+            turn_start_params("t1", "go", None)["input"][0]["text"],
+            "go"
+        );
+        assert!(turn_start_params("t1", "go", None).get("model").is_none());
+        assert_eq!(
+            turn_start_params("t1", "go", Some("gpt-y"))["model"],
+            "gpt-y"
+        );
+        let steer = turn_steer_params("t1", "u3", "also this");
+        assert_eq!(
+            (
+                steer["expectedTurnId"].as_str(),
+                steer["input"][0]["text"].as_str()
+            ),
+            (Some("u3"), Some("also this"))
+        );
+        assert_eq!(
+            rollback_params("t1", 2),
+            json!({"threadId": "t1", "numTurns": 2})
+        );
     }
 
     #[test]
@@ -1032,9 +1264,10 @@ mod tests {
             mcp_url: "http://127.0.0.1:9/mcp?agent=codex-test".into(),
             access: access(dir.path()),
             resume: None,
+            rollback: None,
         };
         let (tx, rx) = mpsc::unbounded_channel();
-        tx.send("--help -m gpt-x hi".to_string()).unwrap();
+        tx.send(Input::text("--help -m gpt-x hi")).unwrap();
         drop(tx); // one message, then the queue ends and the session stops
         tokio::time::timeout(Duration::from_secs(60), codex.exec_mode(rx))
             .await

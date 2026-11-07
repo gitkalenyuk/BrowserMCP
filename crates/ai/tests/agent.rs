@@ -475,10 +475,12 @@ async fn two_sends_to_a_stopped_chat_start_one_backend() {
     );
     a.unwrap();
     b.unwrap();
-    until_done(&mut rx, "custom-1").await;
-    until_done(&mut rx, "custom-1").await;
+    // The second message arrives while the first is being answered: it joins that turn (or
+    // the next one), the chat ends idle with nothing queued.
+    until_idle(&h, "custom-1").await;
     let list = h.call("ai.sessions_list", json!({})).await.unwrap();
     assert_eq!(list["sessions"][0]["status"], "idle");
+    assert_eq!(list["sessions"][0]["queued"], 0);
     // The last request saw both messages: neither was lost with a second backend.
     let requests = server.received_requests().await.unwrap();
     let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
@@ -730,4 +732,240 @@ async fn term_commands_through_the_registry() {
         .await
         .unwrap_err();
     assert_eq!(err.code, bmcp_core::ErrorCode::NotFound);
+}
+
+/// Wait until `session` is idle with nothing queued.
+async fn until_idle(h: &Harness, session: &str) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+            let s = list["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == session)
+                .cloned()
+                .unwrap();
+            if s["status"] == "idle" && s["queued"] == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the chat did not become idle");
+}
+
+/// The bodies of the requests the model server got, as JSON.
+async fn bodies(server: &MockServer) -> Vec<Value> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect()
+}
+
+async fn custom_provider(h: &Harness, server: &MockServer) {
+    h.call(
+        "ai.provider_set",
+        json!({ "id": "custom", "base_url": format!("{}/v1", server.uri()), "model": "test-model" }),
+    )
+    .await
+    .unwrap();
+}
+
+/// A message sent while the API agent works joins the conversation before the next model
+/// request (after the tool results); it is queued until then.
+#[tokio::test(flavor = "multi_thread")]
+async fn api_agent_takes_messages_sent_while_it_works() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    // The first request (tool calls) takes a while: time to send another message.
+    Mock::given(method("POST"))
+        .respond_with(|req: &Request| {
+            let response = openai_responder(req);
+            if has_tool_result(req) {
+                response
+            } else {
+                response.set_delay(Duration::from_millis(1500))
+            }
+        })
+        .mount(&server)
+        .await;
+    custom_provider(&h, &server).await;
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "open b.test" }),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let sent = h
+        .call(
+            "ai.session_send",
+            json!({ "id": "custom-1", "text": "and close it after" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (sent["status"].as_str(), sent["queued"].as_u64()),
+        (Some("running"), Some(1))
+    );
+    let events = until_done(&mut rx, "custom-1").await;
+    let user: Vec<&Event> = events
+        .iter()
+        .filter(|e| e.topic == "ai.message" && e.data["role"] == "user")
+        .collect();
+    assert_eq!(user[1].data["queued"], true);
+    let taken = events
+        .iter()
+        .find(|e| e.topic == "ai.message_taken")
+        .unwrap();
+    assert_eq!(taken.data["index"], 1);
+    assert_eq!(events.iter().filter(|e| e.topic == "ai.done").count(), 1);
+    until_idle(&h, "custom-1").await;
+
+    // The second request: the tool results, then the new message.
+    let bodies = bodies(&server).await;
+    assert_eq!(bodies.len(), 2, "one turn");
+    let messages = bodies[1]["messages"].as_array().unwrap();
+    let last = messages.last().unwrap();
+    assert_eq!(
+        (last["role"].as_str(), last["content"].as_str()),
+        (Some("user"), Some("and close it after"))
+    );
+    assert_eq!(messages[messages.len() - 2]["role"], "tool");
+}
+
+/// ai.session_interrupt ends the running turn; the chat stays alive (idle, same loop).
+#[tokio::test(flavor = "multi_thread")]
+async fn api_agent_interrupt_keeps_the_chat() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|req: &Request| {
+            let body = String::from_utf8_lossy(&req.body);
+            if body.contains("forever") && !body.contains("quick") {
+                ResponseTemplate::new(200).set_delay(Duration::from_secs(60))
+            } else {
+                sse(&[json!({"choices": [{"index": 0, "delta": {"content": "quick answer"}, "finish_reason": "stop"}]})])
+            }
+        })
+        .mount(&server)
+        .await;
+    custom_provider(&h, &server).await;
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "think forever" }),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let info = h
+        .call("ai.session_interrupt", json!({ "id": "custom-1" }))
+        .await
+        .unwrap();
+    assert_eq!(info["status"], "idle");
+    let events = until_done(&mut rx, "custom-1").await;
+    assert_eq!(events.last().unwrap().data["reason"], "stopped");
+    h.call(
+        "ai.session_send",
+        json!({ "id": "custom-1", "text": "quick" }),
+    )
+    .await
+    .unwrap();
+    let events = until_done(&mut rx, "custom-1").await;
+    assert_eq!(events.last().unwrap().data["reason"], "end_turn");
+    // The conversation went on (the interrupted message is still in it).
+    let last = bodies(&server).await.pop().unwrap();
+    let body = last["messages"].to_string();
+    assert!(
+        body.contains("think forever") && body.contains("quick"),
+        "{body}"
+    );
+}
+
+/// Editing a message cuts the API history before it; the model change applies to the next
+/// request.
+#[tokio::test(flavor = "multi_thread")]
+async fn api_agent_edit_rewinds_the_history_and_model_changes_apply() {
+    let h = Harness::new();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(openai_responder)
+        .mount(&server)
+        .await;
+    custom_provider(&h, &server).await;
+    let mut rx = h.bus.subscribe();
+    h.call(
+        "ai.session_start",
+        json!({ "provider": "custom", "prompt": "open b.test" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+    h.call(
+        "ai.session_send",
+        json!({ "id": "custom-1", "text": "and now?" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "custom-1").await;
+
+    let changed = h
+        .call(
+            "ai.session_set_model",
+            json!({ "id": "custom-1", "model": "other-model" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed["model"], "other-model");
+    let before = bodies(&server).await.len();
+    h.call(
+        "ai.session_edit",
+        json!({ "id": "custom-1", "index": 1, "text": "instead, open c.test" }),
+    )
+    .await
+    .unwrap();
+    let events = until_done(&mut rx, "custom-1").await;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.topic == "ai.session_rewound" && e.data["index"] == 1)
+    );
+    let all = bodies(&server).await;
+    let after = &all[before];
+    assert_eq!(after["model"], "other-model");
+    let body = after["messages"].to_string();
+    assert!(
+        body.contains("open b.test") && body.contains("Opened tab 2."),
+        "{body}"
+    );
+    assert!(body.contains("instead, open c.test"), "{body}");
+    assert!(
+        !body.contains("and now?"),
+        "the edited message is gone: {body}"
+    );
+    // The transcript: the first exchange, then the edited message (index 1) and its answer.
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": "custom-1" }))
+        .await
+        .unwrap();
+    let users: Vec<&str> = transcript["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "user")
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(users, ["open b.test", "instead, open c.test"]);
+    // Saved too: the history file has no trace of the edited message.
+    let saved =
+        std::fs::read_to_string(h._dir.path().join("ai/sessions/custom-1.history.json")).unwrap();
+    assert!(!saved.contains("and now?"));
+    assert!(saved.contains("instead, open c.test"));
 }

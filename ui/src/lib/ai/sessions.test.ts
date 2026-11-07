@@ -10,6 +10,11 @@ const session = (id: string, status: AiSession['status']): AiSession => ({
   status,
   tabs: [],
   created_ms: 1,
+  title: 'Claude Code',
+  title_set: false,
+  archived: false,
+  updated_ms: 1,
+  queued: 0,
 });
 
 const permission = (id: string, sessionId: string, status: AiPermission['status'] = 'pending'): AiPermission => ({

@@ -576,6 +576,31 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- ai.models ----
+
+  /** Arguments of `ai.models`. */
+  export interface AiModelsArgs {
+    /** Provider id from ai.providers. */
+    provider: string;
+  }
+
+  /** Result of `ai.models`. */
+  export interface AiModelsOutput {
+    models: {
+      /**
+       * What ai.session_start / ai.session_set_model take ("default" = the provider's or
+       * CLI's own default).
+       */
+      id: string;
+      /** Display name. */
+      name: string;
+      /** A short note (alias of…, description from the provider). */
+      hint?: string | null;
+    }[];
+    /** The model new chats of this provider use. */
+    default?: string | null;
+  }
+
   // ---- ai.permission_answer ----
 
   /** Arguments of `ai.permission_answer`. */
@@ -1005,7 +1030,8 @@ declare namespace BrowserMCP {
     /** Session id. */
     id: string;
     /**
-     * Also delete its transcript file (data/ai/sessions/<id>.jsonl). Default false.
+     * Older form of ai.session_delete: delete the chat and all its files instead of
+     * archiving it. Default false.
      * @default false
      */
     delete_transcript?: boolean;
@@ -1015,6 +1041,360 @@ declare namespace BrowserMCP {
   export interface AiSessionCloseOutput {
     /** The closed session. */
     closed: string;
+  }
+
+  // ---- ai.session_delete ----
+
+  /** Arguments of `ai.session_delete`. */
+  export interface AiSessionDeleteArgs {
+    /** Session id. */
+    id: string;
+  }
+
+  /** Result of `ai.session_delete`. */
+  export interface AiSessionDeleteOutput {
+    deleted: boolean;
+  }
+
+  // ---- ai.session_edit ----
+
+  /** Arguments of `ai.session_edit`. */
+  export interface AiSessionEditArgs {
+    /** Session id. */
+    id: string;
+    /**
+     * 0-based number of the USER message in the chat (`index` of ai.message / transcript
+     * entries).
+     */
+    index: number;
+    /** The new text of that message. */
+    text: string;
+  }
+
+  /**
+   * Result of `ai.session_edit`.
+   * Public summary for `ai.sessions_list`.
+   */
+  export interface AiSessionEditOutput {
+    /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
+    id: string;
+    /** Provider id, e.g. `anthropic`, `claude-code`. */
+    provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
+    /**
+     * - `"running"`: Working on a user message.
+     * - `"idle"`: Waiting for the next message (`ai.session_send`).
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
+     */
+    status: "running" | "idle" | "stopped" | "failed";
+    /** Tabs this agent opened or acted on. */
+    tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
+  }
+
+  // ---- ai.session_interrupt ----
+
+  /** Arguments of `ai.session_interrupt`. */
+  export interface AiSessionInterruptArgs {
+    /** Session id. */
+    id: string;
+  }
+
+  /**
+   * Result of `ai.session_interrupt`.
+   * Public summary for `ai.sessions_list`.
+   */
+  export interface AiSessionInterruptOutput {
+    /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
+    id: string;
+    /** Provider id, e.g. `anthropic`, `claude-code`. */
+    provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
+    /**
+     * - `"running"`: Working on a user message.
+     * - `"idle"`: Waiting for the next message (`ai.session_send`).
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
+     */
+    status: "running" | "idle" | "stopped" | "failed";
+    /** Tabs this agent opened or acted on. */
+    tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
+  }
+
+  // ---- ai.session_rename ----
+
+  /** Arguments of `ai.session_rename`. */
+  export interface AiSessionRenameArgs {
+    /** Session id. */
+    id: string;
+    /** New title; "" = back to the automatic title (the first message). */
+    title: string;
+  }
+
+  /**
+   * Result of `ai.session_rename`.
+   * Public summary for `ai.sessions_list`.
+   */
+  export interface AiSessionRenameOutput {
+    /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
+    id: string;
+    /** Provider id, e.g. `anthropic`, `claude-code`. */
+    provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
+    /**
+     * - `"running"`: Working on a user message.
+     * - `"idle"`: Waiting for the next message (`ai.session_send`).
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
+     */
+    status: "running" | "idle" | "stopped" | "failed";
+    /** Tabs this agent opened or acted on. */
+    tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
+  }
+
+  // ---- ai.session_reopen ----
+
+  /** Arguments of `ai.session_reopen`. */
+  export interface AiSessionReopenArgs {
+    /** Session id. */
+    id: string;
+  }
+
+  /**
+   * Result of `ai.session_reopen`.
+   * Public summary for `ai.sessions_list`.
+   */
+  export interface AiSessionReopenOutput {
+    /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
+    id: string;
+    /** Provider id, e.g. `anthropic`, `claude-code`. */
+    provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
+    /**
+     * - `"running"`: Working on a user message.
+     * - `"idle"`: Waiting for the next message (`ai.session_send`).
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
+     */
+    status: "running" | "idle" | "stopped" | "failed";
+    /** Tabs this agent opened or acted on. */
+    tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
   }
 
   // ---- ai.session_send ----
@@ -1084,6 +1464,107 @@ declare namespace BrowserMCP {
     } | null;
     /** Approval requests waiting for an answer (see ai.permissions_list). */
     pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
+  }
+
+  // ---- ai.session_set_model ----
+
+  /** Arguments of `ai.session_set_model`. */
+  export interface AiSessionSetModelArgs {
+    /** Session id. */
+    id: string;
+    /** A model id from ai.models; "" or "default" = the provider's default. */
+    model: string;
+  }
+
+  /**
+   * Result of `ai.session_set_model`.
+   * Public summary for `ai.sessions_list`.
+   */
+  export interface AiSessionSetModelOutput {
+    /** Session id; also the agent id (`Caller::Agent { id }`, MCP `?agent=`). */
+    id: string;
+    /** Provider id, e.g. `anthropic`, `claude-code`. */
+    provider: string;
+    model: string | null;
+    /** Tab-group color of this agent, `#rrggbb`. */
+    color: string;
+    /**
+     * - `"running"`: Working on a user message.
+     * - `"idle"`: Waiting for the next message (`ai.session_send`).
+     * - `"stopped"`: Ended by `ai.session_stop` (or the CLI exited normally). The next message continues it.
+     * - `"failed"`: Could not start or crashed. The next message tries to continue it.
+     */
+    status: "running" | "idle" | "stopped" | "failed";
+    /** Tabs this agent opened or acted on. */
+    tabs: number[];
+    /** Creation time, ms since the Unix epoch. */
+    created_ms: number;
+    /** CLI agents: permission mode, sandbox and working folder in effect. */
+    access: {
+      /**
+       * Claude Code: who decides about tool calls outside the browser's MCP tools.
+       *
+       * - `"ask"`: Every tool call that needs permission asks the user (an approval card in the chat).
+       * - `"accept_edits"`: File edits are accepted without asking; everything else still asks.
+       * - `"full_access"`: Nothing asks: the agent may run any command and change any file.
+       * - `"plan"`: The agent only reads and plans; it asks before leaving plan mode.
+       * - `"browser_only"`: Only the browser's MCP tools; everything else is refused without asking.
+       */
+      permission_mode: "ask" | "accept_edits" | "full_access" | "plan" | "browser_only";
+      /** Working folder of the agent. */
+      cwd: string;
+      add_dirs: string[];
+      /**
+       * Codex: the shell sandbox of a thread.
+       *
+       * - `"read_only"`: Commands may read files but not change them.
+       * - `"workspace_write"`: Commands may change files in the working folder.
+       * - `"full_access"`: No sandbox at all.
+       */
+      sandbox: "read_only" | "workspace_write" | "full_access";
+      /**
+       * Codex: when it asks before running a command or changing files.
+       *
+       * - `"untrusted"`: Ask for anything that is not a known-safe read.
+       * - `"on_request"`: The agent asks when it needs to leave the sandbox.
+       * - `"never"`: Never ask; whatever the sandbox refuses fails.
+       */
+      approval_policy: "untrusted" | "on_request" | "never";
+    } | null;
+    /** Approval requests waiting for an answer (see ai.permissions_list). */
+    pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
   }
 
   // ---- ai.session_start ----
@@ -1212,6 +1693,22 @@ declare namespace BrowserMCP {
     } | null;
     /** Approval requests waiting for an answer (see ai.permissions_list). */
     pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
   }
 
   // ---- ai.session_stop ----
@@ -1279,6 +1776,22 @@ declare namespace BrowserMCP {
     } | null;
     /** Approval requests waiting for an answer (see ai.permissions_list). */
     pending_permissions: number;
+    /**
+     * Name to show: the user's (ai.session_rename), else the first user message
+     * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+     */
+    title: string;
+    /** The user renamed the chat: the automatic title no longer replaces it. */
+    title_set: boolean;
+    /**
+     * Closed with ai.session_close: not among the open chats, listed with
+     * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+     */
+    archived: boolean;
+    /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+    updated_ms: number;
+    /** User messages sent while the agent was busy that it has not taken yet. */
+    queued: number;
   }
 
   // ---- ai.session_transcript ----
@@ -1298,11 +1811,15 @@ declare namespace BrowserMCP {
 
   // ---- ai.sessions_list ----
 
-  /**
-   * Arguments of `ai.sessions_list`.
-   * Arguments/output for commands that take or return nothing: `{}`.
-   */
-  export type AiSessionsListArgs = Record<string, never>;
+  /** Arguments of `ai.sessions_list`. */
+  export interface AiSessionsListArgs {
+    /**
+     * true: the archived (closed) chats, most recently active first; default: the open
+     * chats.
+     * @default null
+     */
+    archived?: boolean | null;
+  }
 
   /** Result of `ai.sessions_list`. */
   export interface AiSessionsListOutput {
@@ -1359,6 +1876,22 @@ declare namespace BrowserMCP {
       } | null;
       /** Approval requests waiting for an answer (see ai.permissions_list). */
       pending_permissions: number;
+      /**
+       * Name to show: the user's (ai.session_rename), else the first user message
+       * (whitespace collapsed, ~48 chars with "…"), else the provider's name. Never the id.
+       */
+      title: string;
+      /** The user renamed the chat: the automatic title no longer replaces it. */
+      title_set: boolean;
+      /**
+       * Closed with ai.session_close: not among the open chats, listed with
+       * ai.sessions_list {archived: true}; ai.session_reopen brings it back.
+       */
+      archived: boolean;
+      /** Last activity (message, rename, model change…), ms since the Unix epoch. */
+      updated_ms: number;
+      /** User messages sent while the agent was busy that it has not taken yet. */
+      queued: number;
     }[];
   }
 
@@ -9423,6 +9956,8 @@ declare namespace BrowserMCP {
     "ai.agent_access_set": { args: AiAgentAccessSetArgs; output: AiAgentAccessSetOutput };
     /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
     "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
+    /** The models a provider offers, for ai.session_start / ai.session_set_model: Claude Code's aliases and model ids, Codex's model/list, an API provider's live list (no tokens spent) or its configured models. */
+    "ai.models": { args: AiModelsArgs; output: AiModelsOutput };
     /** Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL. */
     "ai.permission_answer": { args: AiPermissionAnswerArgs; output: AiPermissionAnswerOutput };
     /** Approval requests of CLI agents waiting for an answer (tool, input, reason). New ones arrive as ai.permission {status: pending} events. */
@@ -9437,17 +9972,29 @@ declare namespace BrowserMCP {
     "ai.provider_test": { args: AiProviderTestArgs; output: AiProviderTestOutput };
     /** List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with configured/default flags, base URL, default model and known models. */
     "ai.providers": { args: AiProvidersArgs; output: AiProvidersOutput };
-    /** Close an AI session: stops it if running and removes it from ai.sessions_list (also after a restart). The transcript file is kept unless delete_transcript. Emits ai.session_closed. */
+    /** Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete). */
     "ai.session_close": { args: AiSessionCloseArgs; output: AiSessionCloseOutput };
-    /** Send the next user message to an AI session (queued if it is still working). A stopped or failed session continues the same conversation. Returns the session. */
+    /** Delete an AI chat for good: stops it if running and removes all its files (meta, transcript, history). Emits ai.session_closed and ai.session_deleted. An AI agent may delete only its own chat (NEEDS_APPROVAL otherwise). */
+    "ai.session_delete": { args: AiSessionDeleteArgs; output: AiSessionDeleteOutput };
+    /** Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. Returns the session. */
+    "ai.session_edit": { args: AiSessionEditArgs; output: AiSessionEditOutput };
+    /** Interrupt the current turn of an AI chat but keep the chat (and the CLI agent) alive: the answer ends with ai.done {reason: stopped} and the next message goes on in the same conversation. ai.session_stop also ends the agent process. */
+    "ai.session_interrupt": { args: AiSessionInterruptArgs; output: AiSessionInterruptOutput };
+    /** Rename an AI chat (saved); "" goes back to the automatic title. An AI agent may rename only its own chat (NEEDS_APPROVAL otherwise). Returns the session. */
+    "ai.session_rename": { args: AiSessionRenameArgs; output: AiSessionRenameOutput };
+    /** Reopen an archived (closed) AI chat: it is among the open chats again with its history; the next ai.session_send continues the conversation like a stopped chat. */
+    "ai.session_reopen": { args: AiSessionReopenArgs; output: AiSessionReopenOutput };
+    /** Send the next user message to an AI session. Never refused while it works: the agent takes it during the current turn (Claude Code folds it in, Codex steers, API agents add it before the next model call) or right after; until then the ai.message event carries queued:true and SessionInfo.queued counts it (ai.message_taken follows). A stopped or failed session continues the same conversation. Returns the session. */
     "ai.session_send": { args: AiSessionSendArgs; output: AiSessionSendOutput };
+    /** Change the model of an AI chat from its next turn on (saved). A running Claude Code switches at once (set_model), Codex uses it on the next turn/start, API agents on the next request. Returns the session. */
+    "ai.session_set_model": { args: AiSessionSetModelArgs; output: AiSessionSetModelOutput };
     /** Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status). */
     "ai.session_start": { args: AiSessionStartArgs; output: AiSessionStartOutput };
     /** Stop an AI session: cancels the running model call / kills the CLI agent and its pending approval requests. The session stays (ai.session_send continues it). Returns the session. */
     "ai.session_stop": { args: AiSessionStopArgs; output: AiSessionStopOutput };
     /** The transcript of an AI session: user and assistant messages, tool calls and results, answered approval requests. */
     "ai.session_transcript": { args: AiSessionTranscriptArgs; output: AiSessionTranscriptOutput };
-    /** List AI sessions (agents) with id, provider, color, status, the tabs each touched, access settings and the number of pending approval requests. */
+    /** List AI chats (agents) with id, title, provider, model, color, status, the tabs each touched, access settings, pending approval requests and queued messages. Default: the open chats; archived: true lists the closed ones, newest first. */
     "ai.sessions_list": { args: AiSessionsListArgs; output: AiSessionsListOutput };
     /** Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state. */
     "api.config": { args: ApiConfigArgs; output: ApiConfigOutput };
@@ -9938,6 +10485,12 @@ declare namespace BrowserMCP {
        */
       handoff(args: AiHandoffArgs): Promise<AiHandoffOutput>;
       /**
+       * The models a provider offers, for ai.session_start / ai.session_set_model: Claude Code's aliases and model ids, Codex's model/list, an API provider's live list (no tokens spent) or its configured models.
+       *
+       * `ai.models` (MCP: `ai_models`): toolset `ai`, read.
+       */
+      models(args: AiModelsArgs): Promise<AiModelsOutput>;
+      /**
        * Answer a CLI agent's approval request: allow, allow_always (this tool, for the rest of the chat) or deny with an optional reason. For people and the clients they connected: the browser's own AI agents get NEEDS_APPROVAL.
        *
        * `ai.permission_answer` (MCP: `ai_permission_answer`): toolset `ai`, act.
@@ -9980,17 +10533,53 @@ declare namespace BrowserMCP {
        */
       providers(args?: AiProvidersArgs): Promise<AiProvidersOutput>;
       /**
-       * Close an AI session: stops it if running and removes it from ai.sessions_list (also after a restart). The transcript file is kept unless delete_transcript. Emits ai.session_closed.
+       * Close an AI chat: stops it if running and archives it — it leaves the open chats (ai.sessions_list) but keeps every file and is listed with ai.sessions_list {archived: true}; ai.session_reopen brings it back. Emits ai.session_closed. delete_transcript: true deletes it instead (ai.session_delete).
        *
        * `ai.session_close` (MCP: `ai_session_close`): toolset `ai`, act.
        */
       session_close(args: AiSessionCloseArgs): Promise<AiSessionCloseOutput>;
       /**
-       * Send the next user message to an AI session (queued if it is still working). A stopped or failed session continues the same conversation. Returns the session.
+       * Delete an AI chat for good: stops it if running and removes all its files (meta, transcript, history). Emits ai.session_closed and ai.session_deleted. An AI agent may delete only its own chat (NEEDS_APPROVAL otherwise).
+       *
+       * `ai.session_delete` (MCP: `ai_session_delete`): toolset `ai`, act.
+       */
+      session_delete(args: AiSessionDeleteArgs): Promise<AiSessionDeleteOutput>;
+      /**
+       * Edit an earlier user message of an AI chat: the conversation is rewound to just before it (the transcript is cut there, ai.session_rewound) and the new text is sent instead, as the next user message. Stops the current turn first. Returns the session.
+       *
+       * `ai.session_edit` (MCP: `ai_session_edit`): toolset `ai`, act.
+       */
+      session_edit(args: AiSessionEditArgs): Promise<AiSessionEditOutput>;
+      /**
+       * Interrupt the current turn of an AI chat but keep the chat (and the CLI agent) alive: the answer ends with ai.done {reason: stopped} and the next message goes on in the same conversation. ai.session_stop also ends the agent process.
+       *
+       * `ai.session_interrupt` (MCP: `ai_session_interrupt`): toolset `ai`, act.
+       */
+      session_interrupt(args: AiSessionInterruptArgs): Promise<AiSessionInterruptOutput>;
+      /**
+       * Rename an AI chat (saved); "" goes back to the automatic title. An AI agent may rename only its own chat (NEEDS_APPROVAL otherwise). Returns the session.
+       *
+       * `ai.session_rename` (MCP: `ai_session_rename`): toolset `ai`, act.
+       */
+      session_rename(args: AiSessionRenameArgs): Promise<AiSessionRenameOutput>;
+      /**
+       * Reopen an archived (closed) AI chat: it is among the open chats again with its history; the next ai.session_send continues the conversation like a stopped chat.
+       *
+       * `ai.session_reopen` (MCP: `ai_session_reopen`): toolset `ai`, act.
+       */
+      session_reopen(args: AiSessionReopenArgs): Promise<AiSessionReopenOutput>;
+      /**
+       * Send the next user message to an AI session. Never refused while it works: the agent takes it during the current turn (Claude Code folds it in, Codex steers, API agents add it before the next model call) or right after; until then the ai.message event carries queued:true and SessionInfo.queued counts it (ai.message_taken follows). A stopped or failed session continues the same conversation. Returns the session.
        *
        * `ai.session_send` (MCP: `ai_session_send`): toolset `ai`, act.
        */
       session_send(args: AiSessionSendArgs): Promise<AiSessionSendOutput>;
+      /**
+       * Change the model of an AI chat from its next turn on (saved). A running Claude Code switches at once (set_model), Codex uses it on the next turn/start, API agents on the next request. Returns the session.
+       *
+       * `ai.session_set_model` (MCP: `ai_session_set_model`): toolset `ai`, act.
+       */
+      session_set_model(args: AiSessionSetModelArgs): Promise<AiSessionSetModelOutput>;
       /**
        * Start an AI agent session that drives the browser through BrowserMCP's tools. Progress arrives as ai.message / ai.tool_call / ai.tool_result / ai.done events; CLI agents may ask for approval (ai.permission events, answer with ai.permission_answer). The browser's own agents may not start a chat with more access than the provider's defaults. Returns the session (id = agent id, color, status).
        *
@@ -10010,7 +10599,7 @@ declare namespace BrowserMCP {
        */
       session_transcript(args: AiSessionTranscriptArgs): Promise<AiSessionTranscriptOutput>;
       /**
-       * List AI sessions (agents) with id, provider, color, status, the tabs each touched, access settings and the number of pending approval requests.
+       * List AI chats (agents) with id, title, provider, model, color, status, the tabs each touched, access settings, pending approval requests and queued messages. Default: the open chats; archived: true lists the closed ones, newest first.
        *
        * `ai.sessions_list` (MCP: `ai_sessions_list`): toolset `ai`, read.
        */

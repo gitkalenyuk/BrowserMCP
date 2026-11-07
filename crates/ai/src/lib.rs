@@ -6,7 +6,9 @@
 //! * [`agent`] — the agent loop for API providers; tools are the registry's commands;
 //! * [`cli`] — Claude Code (`claude -p … stream-json`) and Codex (`codex app-server`) sessions;
 //! * [`session`] — agent id, color, status, transcript, touched tabs, `ai.*` events;
-//! * [`sessions`] — continuing, closing and restoring sessions; approval answers;
+//! * [`sessions`] — continuing, interrupting, editing, archiving, deleting and restoring
+//!   sessions; approval answers;
+//! * [`models`] — the models a provider offers (`ai.models`);
 //! * [`term`] — PTY terminals (`term.*`);
 //! * [`proc_tree`] — kill a child with everything it started (Windows Job Objects);
 //! * [`oneshot`] — one-shot text completions (no tools) for self-healing and `page.extract`.
@@ -25,6 +27,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod model;
+pub mod models;
 pub mod oneshot;
 pub mod proc_tree;
 pub mod session;
@@ -165,8 +168,25 @@ impl AiService {
         })
     }
 
+    /// The open chats, oldest first (`archived`: false), or the archived ones, most recently
+    /// active first (`archived`: true).
+    pub fn sessions_filtered(&self, archived: bool) -> Vec<SessionInfo> {
+        let mut list: Vec<SessionInfo> = lock(&self.sessions)
+            .values()
+            .map(|s| s.info())
+            .filter(|s| s.archived == archived)
+            .collect();
+        if archived {
+            list.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
+        } else {
+            list.sort_by_key(|s| s.created_ms);
+        }
+        list
+    }
+
+    /// The open chats (see [`AiService::sessions_filtered`]).
     pub fn sessions(&self) -> Vec<SessionInfo> {
-        lock(&self.sessions).values().map(|s| s.info()).collect()
+        self.sessions_filtered(false)
     }
 
     /// Start an agent and queue `prompt` as its first message. Needs a tokio runtime.
@@ -230,6 +250,7 @@ impl AiService {
             max_steps: opts.max_steps,
             access,
         };
+        session.provider_name = resolved.name.clone();
         let session = Arc::new(session);
         self.spawn_backend(ctx, &session, input)?;
         session.save_meta();
@@ -262,13 +283,22 @@ impl AiService {
         &self,
         ctx: &Ctx,
         session: &Arc<Session>,
-        input: tokio::sync::mpsc::UnboundedReceiver<String>,
+        input: tokio::sync::mpsc::UnboundedReceiver<session::Input>,
     ) -> Result<(), CmdError> {
         let resolved = self.resolve(&session.provider)?;
         let id = session.id.clone();
         let launch = &session.launch;
         let toolsets: Vec<Toolset> = parse_toolsets(&launch.toolsets)?;
-        let model = session.model.clone().or(resolved.model.clone());
+        // The backends prefer the chat's own model (ai.session_set_model) at each turn; this
+        // is the provider's default for when it has none.
+        let model = resolved.model.clone();
+        if matches!(resolved.kind, Kind::Api(_)) && model.is_none() && session.model().is_none() {
+            return Err(CmdError::invalid_params(format!(
+                "no model set for '{}'",
+                session.provider
+            )));
+        }
+        let model = model.or_else(|| session.model());
         let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
             match resolved.kind {
                 Kind::Api(_) => {
@@ -322,6 +352,7 @@ impl AiService {
                                 mcp_config: self.sessions_dir().join(format!("{id}.mcp.json")),
                                 access,
                                 resume,
+                                resume_at: session.take_resume_at(),
                             }
                             .run(input),
                         )
@@ -334,6 +365,7 @@ impl AiService {
                                 mcp_url,
                                 access,
                                 resume,
+                                rollback: session.take_rollback(),
                             }
                             .run(input),
                         )

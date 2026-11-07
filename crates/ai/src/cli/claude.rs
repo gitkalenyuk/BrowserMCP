@@ -25,9 +25,20 @@
 //!   behaviour: `--permission-mode dontAsk`, no prompts, anything else is refused.
 //! * Continuing: the `session_id` of `system/init` is kept; the next run of a stopped session
 //!   passes `--resume=<id>` (same working folder: Claude Code stores conversations per folder).
+//! * Messages sent while it works go to stdin at once, each with our own `uuid`: Claude Code
+//!   queues them and folds them into the running turn (or starts the next turn with them),
+//!   reporting `{"type":"system","subtype":"command_lifecycle","command_uuid":…,"state":
+//!   "queued"|"started"|…}`; `started` = the agent has the message ([`Session::take`]).
+//! * Control requests we send: `set_model {model}` (ai.session_set_model, from the next turn)
+//!   and `interrupt` (ai.session_interrupt: the turn ends, the process stays).
+//! * Editing a message: the next run passes `--resume=<id> --resume-session-at=<uuid>`, the
+//!   uuid of the last conversation entry of the turn to keep ([`AgentEvent::Checkpoint`],
+//!   recorded from the `uuid` of `assistant` / `user` lines). Both flags are accepted by
+//!   claude 2.1.x (`--resume-session-at requires --resume` otherwise).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -38,7 +49,7 @@ use tokio::sync::mpsc;
 use super::access::{Access, PermissionMode};
 use super::permission::{Ask, Decision, NewPermission, PermissionKind};
 use super::{StderrTail, command, join_reader, kill_tree, spawn};
-use crate::session::{AgentEvent, Session, Status, summarize};
+use crate::session::{AgentEvent, Input, Session, Status, summarize};
 
 /// Name of the MCP server in the generated config; tools appear as `mcp__browsermcp__<tool>`.
 pub const SERVER: &str = "browsermcp";
@@ -47,6 +58,7 @@ const TOOL_PREFIX: &str = "mcp__browsermcp__";
 pub struct ClaudeCode {
     pub session: Arc<Session>,
     pub binary: PathBuf,
+    /// Used when the chat has no model of its own (the provider's default).
     pub model: Option<String>,
     /// MCP URL including `?agent=<id>&toolsets=…`.
     pub mcp_url: String,
@@ -56,6 +68,8 @@ pub struct ClaudeCode {
     pub access: Access,
     /// Claude Code session id to continue (`--resume`).
     pub resume: Option<String>,
+    /// After an edit: keep the conversation only up to this entry (`--resume-session-at`).
+    pub resume_at: Option<String>,
 }
 
 /// The MCP config file content.
@@ -70,6 +84,8 @@ pub struct Args<'a> {
     pub append_prompt: &'a str,
     pub access: &'a Access,
     pub resume: Option<&'a str>,
+    /// With `resume` only.
+    pub resume_at: Option<&'a str>,
 }
 
 /// Command-line arguments (without the binary).
@@ -112,6 +128,9 @@ pub fn args(a: &Args) -> Vec<String> {
     if let Some(id) = a.resume.filter(|r| !r.is_empty()) {
         // `--flag=value`, like the SDK: the id can never be taken for another option.
         args.push(format!("--resume={id}"));
+        if let Some(at) = a.resume_at.filter(|r| !r.is_empty()) {
+            args.push(format!("--resume-session-at={at}"));
+        }
     }
     args
 }
@@ -123,6 +142,88 @@ pub fn user_line(text: &str) -> String {
         "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
     });
     format!("{line}\n")
+}
+
+/// A user message with our own `uuid`, which Claude Code's `command_lifecycle` events name.
+pub fn user_line_with_uuid(text: &str, uuid: &str) -> String {
+    let line = json!({
+        "type": "user",
+        "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+        "uuid": uuid,
+        "session_id": "",
+        "parent_tool_use_id": null,
+    });
+    format!(
+        "{line}
+"
+    )
+}
+
+/// The `set_model` control request (`None`: back to the session's default model).
+pub fn set_model_line(request_id: &str, model: Option<&str>) -> String {
+    let line = json!({
+        "type": "control_request",
+        "request_id": request_id,
+        "request": { "subtype": "set_model", "model": model },
+    });
+    format!(
+        "{line}
+"
+    )
+}
+
+/// The `interrupt` control request: ends the current turn, the process stays.
+pub fn interrupt_line(request_id: &str) -> String {
+    let line = json!({
+        "type": "control_request",
+        "request_id": request_id,
+        "request": { "subtype": "interrupt" },
+    });
+    format!(
+        "{line}
+"
+    )
+}
+
+/// `system/command_lifecycle`: `(command_uuid, state)`.
+pub fn lifecycle(v: &Value) -> Option<(String, String)> {
+    if v["type"] != "system" || v["subtype"] != "command_lifecycle" {
+        return None;
+    }
+    Some((
+        v["command_uuid"].as_str()?.to_string(),
+        v["state"].as_str().unwrap_or_default().to_string(),
+    ))
+}
+
+/// A random version 4 UUID (Claude Code checks the shape of message uuids).
+pub fn new_uuid() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut bytes = [0u8; 16];
+    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default(),
+        );
+        h.write_usize(i);
+        chunk.copy_from_slice(&h.finish().to_le_bytes());
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 /// The `initialize` control request (sent once, before the first message).
@@ -253,6 +354,8 @@ pub fn error_response(request_id: &str, error: &str) -> String {
 pub struct Parser {
     /// tool_use id → tool name, to name the matching tool_result.
     tools: HashMap<String, String>,
+    /// `uuid` of the last conversation entry (`assistant` / `user` line) seen.
+    last_uuid: Option<String>,
 }
 
 impl Parser {
@@ -264,7 +367,14 @@ impl Parser {
     }
 
     pub fn value(&mut self, v: &Value) -> Vec<AgentEvent> {
-        match v["type"].as_str().unwrap_or_default() {
+        let kind = v["type"].as_str().unwrap_or_default();
+        if matches!(kind, "assistant" | "user")
+            && v["parent_tool_use_id"].is_null()
+            && let Some(uuid) = v["uuid"].as_str().filter(|u| !u.is_empty())
+        {
+            self.last_uuid = Some(uuid.to_string());
+        }
+        match kind {
             "system" if v["subtype"] == "init" => {
                 let mut events = init_notices(v);
                 if let Some(id) = v["session_id"].as_str().filter(|s| !s.is_empty()) {
@@ -297,7 +407,12 @@ impl Parser {
                 } else {
                     "end_turn".to_string()
                 };
-                vec![AgentEvent::Done(reason)]
+                let mut events = Vec::new();
+                if let Some(uuid) = &self.last_uuid {
+                    events.push(AgentEvent::Checkpoint(uuid.clone()));
+                }
+                events.push(AgentEvent::Done(reason));
+                events
             }
             _ => Vec::new(),
         }
@@ -394,29 +509,55 @@ async fn write_line(stdin: &Stdin, line: &str) -> std::io::Result<()> {
     stdin.flush().await
 }
 
-/// Writes user messages to the CLI.
+/// Writes user messages and our control requests to the CLI.
 struct Writer {
     stdin: Stdin,
     unanswered: Arc<Mutex<Vec<String>>>,
-    /// `initialize` was sent (it goes out once, right before the first message).
+    /// Our message uuid → the message's index in the chat (for `command_lifecycle`).
+    uuids: Arc<Mutex<HashMap<String, usize>>>,
+    /// `initialize` goes out right before the first message (modes that prompt) or the
+    /// first control request of ours.
+    init_before_messages: bool,
     initialized: bool,
+    requests: u64,
 }
 
 impl Writer {
-    async fn message(&mut self, session: &Session, text: &str) {
+    async fn ensure_init(&mut self) -> std::io::Result<()> {
+        if self.initialized {
+            return Ok(());
+        }
+        self.initialized = true;
+        write_line(&self.stdin, &initialize_line()).await
+    }
+
+    async fn message(&mut self, session: &Session, text: &str, index: Option<usize>) {
         lock(&self.unanswered).push(text.to_string());
+        let uuid = new_uuid();
+        if let Some(index) = index {
+            lock(&self.uuids).insert(uuid.clone(), index);
+        }
         let mut written = Ok(());
-        if !self.initialized {
-            self.initialized = true;
-            written = write_line(&self.stdin, &initialize_line()).await;
+        if self.init_before_messages {
+            written = self.ensure_init().await;
         }
         if written.is_ok() {
-            written = write_line(&self.stdin, &user_line(text)).await;
+            written = write_line(&self.stdin, &user_line_with_uuid(text, &uuid)).await;
         }
         if let Err(err) = written {
             session.apply(AgentEvent::Notice(format!(
                 "cannot write to Claude Code: {err}"
             )));
+        }
+    }
+
+    /// A control request of ours; `line` gets the request id.
+    async fn control(&mut self, line: impl FnOnce(&str) -> String) {
+        self.requests += 1;
+        let id = format!("bmcp-{}", self.requests);
+        if self.ensure_init().await.is_ok() {
+            // Fails only when claude is gone (the run ends then anyway).
+            let _ = write_line(&self.stdin, &line(&id)).await;
         }
     }
 }
@@ -442,7 +583,7 @@ impl ClaudeCode {
     /// The session task: run the CLI until stopped or it exits. When resuming fails before
     /// the conversation loads (e.g. Claude Code no longer has it), starts a fresh conversation
     /// in the same chat, says so, and sends the unanswered messages again.
-    pub async fn run(self, mut input: mpsc::UnboundedReceiver<String>) {
+    pub async fn run(self, mut input: mpsc::UnboundedReceiver<Input>) {
         let session = self.session.clone();
         let fail = |message: String| {
             session.apply(AgentEvent::Notice(message.clone()));
@@ -456,10 +597,16 @@ impl ClaudeCode {
             return fail(format!("cannot write {}: {err}", self.mcp_config.display()));
         }
         let mut resume = self.resume.clone();
+        let mut resume_at = self.resume_at.clone();
         let mut replay = Vec::new();
         loop {
             let exit = self
-                .run_process(resume.as_deref(), &mut input, replay)
+                .run_process(
+                    resume.as_deref(),
+                    resume_at.take().as_deref(),
+                    &mut input,
+                    replay,
+                )
                 .await;
             session.cancel_permissions();
             match exit {
@@ -505,18 +652,22 @@ impl ClaudeCode {
     async fn run_process(
         &self,
         resume: Option<&str>,
-        input: &mut mpsc::UnboundedReceiver<String>,
+        resume_at: Option<&str>,
+        input: &mut mpsc::UnboundedReceiver<Input>,
         replay: Vec<String>,
     ) -> Exit {
         let session = self.session.clone();
         let cancel = session.cancel_token();
         let mut cmd = command(&self.binary, &self.access.cwd);
+        // The chat's own model (ai.session_set_model) wins over the provider's.
+        let model = session.model().or_else(|| self.model.clone());
         cmd.args(args(&Args {
             mcp_config: &self.mcp_config.to_string_lossy(),
-            model: self.model.as_deref(),
+            model: model.as_deref(),
             append_prompt: &crate::agent::system_prompt(&session.id),
             access: &self.access,
             resume,
+            resume_at,
         }));
         // `tree` also covers the real agent behind an npm `claude.cmd` shim (a grandchild).
         let (mut child, tree) = match spawn(&mut cmd) {
@@ -534,47 +685,77 @@ impl ClaudeCode {
         let stderr = StderrTail::collect(stderr, "claude");
         // Messages written but not answered yet (a `result` answers the oldest).
         let unanswered: Arc<Mutex<Vec<String>>> = Arc::default();
-        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(false));
+        let uuids: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+        // We asked for an interrupt: the turn that ends next was stopped, not failed.
+        let interrupting = Arc::new(AtomicBool::new(false));
 
         // stdout → events and permission requests.
         let reader = {
-            let (session, stdin, unanswered, started) = (
+            let (session, stdin, unanswered, started, uuids, interrupting) = (
                 session.clone(),
                 stdin.clone(),
                 unanswered.clone(),
                 started.clone(),
+                uuids.clone(),
+                interrupting.clone(),
             );
             tokio::spawn(async move {
                 let mut parser = Parser::default();
                 // CLI request id → our permission id, for `control_cancel_request`.
                 let waiting: Arc<Mutex<HashMap<String, String>>> = Arc::default();
+                // This claude reports when it takes a queued message (`command_lifecycle`).
+                let mut lifecycle_seen = false;
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let Ok(v) = serde_json::from_str::<Value>(&line) else {
                         continue;
                     };
+                    if let Some((uuid, state)) = lifecycle(&v) {
+                        lifecycle_seen = true;
+                        let index = lock(&uuids).get(&uuid).copied();
+                        if state == "started"
+                            && let Some(index) = index
+                        {
+                            session.take(&[index]);
+                            session.set_status(Status::Running);
+                        }
+                        continue;
+                    }
                     if let Some(control) = control(&v) {
                         handle_control(&session, &stdin, &waiting, control);
                         continue;
                     }
-                    for event in parser.value(&v) {
+                    for mut event in parser.value(&v) {
                         match &event {
-                            AgentEvent::ConversationId(_) => {
-                                started.store(true, std::sync::atomic::Ordering::Relaxed)
-                            }
+                            AgentEvent::ConversationId(_) => started.store(true, Ordering::Relaxed),
                             AgentEvent::Done(_) => {
-                                let mut list = unanswered.lock().unwrap_or_else(|e| e.into_inner());
-                                if !list.is_empty() {
-                                    list.remove(0);
+                                {
+                                    let mut list = lock(&unanswered);
+                                    if !list.is_empty() {
+                                        list.remove(0);
+                                    }
+                                }
+                                // Without lifecycle reports: the agent has seen every message
+                                // written so far once a turn ends.
+                                if !lifecycle_seen {
+                                    session.take_all();
+                                }
+                                if interrupting.swap(false, Ordering::Relaxed) {
+                                    event = AgentEvent::Done("stopped".into());
                                 }
                             }
-                            _ => {}
+                            AgentEvent::Checkpoint(_) => {}
+                            // Output after a turn ended: claude went on with a message it
+                            // had queued (also without lifecycle reports).
+                            _ => {
+                                if session.status() == Status::Idle {
+                                    session.set_status(Status::Running);
+                                }
+                            }
                         }
-                        let done = matches!(event, AgentEvent::Done(_));
+                        // Done: idle, or still running for queued messages (Session::settle).
                         session.apply(event);
-                        if done {
-                            session.set_status(Status::Idle);
-                        }
                     }
                 }
             })
@@ -583,12 +764,15 @@ impl ClaudeCode {
         let mut writer = Writer {
             stdin: stdin.clone(),
             unanswered: unanswered.clone(),
-            // "Browser tools only" never prompts: no control protocol needed.
-            initialized: !self.access.permission_mode.prompts(),
+            uuids,
+            // "Browser tools only" never prompts: no control protocol needed for messages.
+            init_before_messages: self.access.permission_mode.prompts(),
+            initialized: false,
+            requests: 0,
         };
         for text in replay {
             session.set_status(Status::Running);
-            writer.message(&session, &text).await;
+            writer.message(&session, &text, None).await;
         }
 
         // Relay user messages until stopped or the process ends.
@@ -596,10 +780,26 @@ impl ClaudeCode {
             tokio::select! {
                 _ = cancel.cancelled() => break None,
                 status = child.wait() => break Some(status),
-                text = input.recv() => {
-                    let Some(text) = text else { break None };
-                    session.set_status(Status::Running);
-                    writer.message(&session, &text).await;
+                next = input.recv() => {
+                    let Some(next) = next else { break None };
+                    match next {
+                        // Also while a turn runs: claude folds it in (or answers it next).
+                        Input::Message { text, index, queued } => {
+                            if !queued {
+                                session.set_status(Status::Running);
+                            }
+                            writer.message(&session, &text, index).await;
+                        }
+                        Input::SetModel(model) => {
+                            writer.control(|id| set_model_line(id, model.as_deref())).await;
+                        }
+                        Input::Interrupt => {
+                            if session.status() == Status::Running {
+                                interrupting.store(true, Ordering::Relaxed);
+                                writer.control(interrupt_line).await;
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -903,6 +1103,7 @@ mod tests {
             mcp_config: mcp_config.clone(),
             access,
             resume: None,
+            resume_at: None,
         };
         let task = tokio::spawn(agent.run(input));
         // Give cmd.exe time to start ping.exe.
@@ -942,6 +1143,7 @@ mod tests {
                 append_prompt: "prompt",
                 access,
                 resume,
+                resume_at: None,
             })
             .join(" ")
         };
@@ -983,5 +1185,87 @@ mod tests {
         );
         let init: Value = serde_json::from_str(initialize_line().trim()).unwrap();
         assert_eq!(init["request"]["subtype"], "initialize");
+    }
+
+    #[test]
+    fn edit_resumes_at_a_checkpoint() {
+        let ask = access(PermissionMode::Ask);
+        let with = |resume: Option<&str>, resume_at: Option<&str>| {
+            args(&Args {
+                mcp_config: "c.json",
+                model: None,
+                append_prompt: "p",
+                access: &ask,
+                resume,
+                resume_at,
+            })
+        };
+        let a = with(Some("5f0c"), Some("u-9"));
+        let at = a.iter().position(|x| x == "--resume=5f0c").unwrap();
+        assert_eq!(a[at + 1], "--resume-session-at=u-9");
+        // Only together with --resume (claude refuses it alone).
+        assert!(!with(None, Some("u-9")).iter().any(|x| x.contains("resume")));
+        assert!(
+            !with(Some("5f0c"), None)
+                .iter()
+                .any(|x| x.contains("session-at"))
+        );
+
+        // The last entry of a turn becomes the checkpoint of its `done`.
+        let mut parser = Parser::default();
+        let lines = [
+            r#"{"type":"assistant","uuid":"a-1","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#,
+            r#"{"type":"user","uuid":"u-2","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+            r#"{"type":"assistant","uuid":"sub-1","parent_tool_use_id":"t1","message":{"content":[]}}"#,
+            r#"{"type":"assistant","uuid":"a-3","message":{"content":[{"type":"text","text":"done"}]}}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"uuid":"r-1"}"#,
+        ];
+        let events: Vec<AgentEvent> = lines.iter().flat_map(|l| parser.line(l)).collect();
+        let n = events.len();
+        assert_eq!(
+            events[n - 2..],
+            [
+                AgentEvent::Checkpoint("a-3".into()),
+                AgentEvent::Done("end_turn".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn control_requests_and_queued_messages() {
+        let set: Value =
+            serde_json::from_str(set_model_line("bmcp-1", Some("opus")).trim()).unwrap();
+        assert_eq!(
+            set,
+            json!({"type": "control_request", "request_id": "bmcp-1",
+                   "request": {"subtype": "set_model", "model": "opus"}})
+        );
+        let reset: Value = serde_json::from_str(set_model_line("bmcp-2", None).trim()).unwrap();
+        assert!(reset["request"]["model"].is_null());
+        let stop: Value = serde_json::from_str(interrupt_line("bmcp-3").trim()).unwrap();
+        assert_eq!(
+            stop,
+            json!({"type": "control_request", "request_id": "bmcp-3",
+                   "request": {"subtype": "interrupt"}})
+        );
+
+        let uuid = new_uuid();
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(&uuid[14..15], "4", "{uuid}");
+        assert!(matches!(&uuid[19..20], "8" | "9" | "a" | "b"), "{uuid}");
+        assert_ne!(uuid, new_uuid());
+        let line: Value = serde_json::from_str(user_line_with_uuid("more", &uuid).trim()).unwrap();
+        assert_eq!(line["uuid"], uuid.as_str());
+        assert_eq!(line["message"]["content"][0]["text"], "more");
+
+        assert_eq!(
+            lifecycle(&json!({"type": "system", "subtype": "command_lifecycle",
+                "command_uuid": "c-1", "state": "started", "uuid": "x", "session_id": "s"})),
+            Some(("c-1".to_string(), "started".to_string()))
+        );
+        assert_eq!(
+            lifecycle(&json!({"type": "system", "subtype": "init"})),
+            None
+        );
     }
 }

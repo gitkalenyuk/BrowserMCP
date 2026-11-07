@@ -587,8 +587,19 @@ async fn a_lost_conversation_goes_on_in_a_new_one_and_says_so() {
     h.stop_all().await;
 }
 
+fn ids(list: &Value) -> Vec<String> {
+    list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Closing archives a chat (files kept, listed as archived, also after a restart), reopening
+/// brings it back and continues its conversation, deleting removes it and its files.
 #[tokio::test(flavor = "multi_thread")]
-async fn closing_removes_chats_and_keeps_transcripts_unless_asked() {
+async fn closed_chats_are_archived_reopened_and_deleted() {
     let data = tempfile::tempdir().unwrap();
     let fake = tempfile::tempdir().unwrap();
     let sessions_dir = data.path().join("ai").join("sessions");
@@ -596,66 +607,249 @@ async fn closing_removes_chats_and_keeps_transcripts_unless_asked() {
         let h = Harness::open(data.path());
         h.use_fake("claude-code", fake.path()).await;
         let mut rx = h.bus.subscribe();
-        let first = h
+        h.call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "hello there" }),
+        )
+        .await
+        .unwrap();
+        until_done(&mut rx, "claude-code-1").await;
+        // A running one, waiting for an approval.
+        let second = h
             .call(
                 "ai.session_start",
-                json!({ "provider": "claude-code", "prompt": "hello" }),
+                json!({ "provider": "claude-code", "prompt": "bash" }),
             )
             .await
             .unwrap();
-        until_done(&mut rx, "claude-code-1").await;
-        // A running one, waiting for an approval.
-        h.call(
-            "ai.session_start",
-            json!({ "provider": "claude-code", "prompt": "bash" }),
-        )
-        .await
-        .unwrap();
+        assert_eq!(second["title"], "bash");
         wait_for(&mut rx, pending_permission).await;
 
-        h.call("ai.session_close", json!({ "id": "claude-code-2" }))
+        let closed = h
+            .call("ai.session_close", json!({ "id": "claude-code-2" }))
             .await
             .unwrap();
-        let closed = wait_for(&mut rx, |e| e.topic == "ai.session_closed").await;
-        assert_eq!(closed.data["session"], "claude-code-2");
+        assert_eq!(closed, json!({ "closed": "claude-code-2" }));
+        let event = wait_for(&mut rx, |e| e.topic == "ai.session_closed").await;
+        assert_eq!(event.data["session"], "claude-code-2");
         let list = h.call("ai.sessions_list", json!({})).await.unwrap();
-        let ids: Vec<&str> = list["sessions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|s| s["id"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, [first["id"].as_str().unwrap()]);
+        assert_eq!(ids(&list), ["claude-code-1"]);
+        let archived = h
+            .call("ai.sessions_list", json!({ "archived": true }))
+            .await
+            .unwrap();
+        assert_eq!(ids(&archived), ["claude-code-2"]);
+        let s = &archived["sessions"][0];
+        assert_eq!(
+            (s["archived"].as_bool(), s["status"].as_str()),
+            (Some(true), Some("stopped"))
+        );
+        // Every file stays (but the MCP config of the stopped CLI).
         assert!(sessions_dir.join("claude-code-2.jsonl").exists());
-        assert!(!sessions_dir.join("claude-code-2.meta.json").exists());
+        assert!(sessions_dir.join("claude-code-2.meta.json").exists());
         assert!(!sessions_dir.join("claude-code-2.mcp.json").exists());
-
-        h.call(
-            "ai.session_close",
-            json!({ "id": "claude-code-1", "delete_transcript": true }),
-        )
-        .await
-        .unwrap();
-        assert!(!sessions_dir.join("claude-code-1.jsonl").exists());
+        // The history can be read; writing needs a reopen first.
+        let transcript = h
+            .call("ai.session_transcript", json!({ "id": "claude-code-2" }))
+            .await
+            .unwrap();
+        assert!(!transcript["entries"].as_array().unwrap().is_empty());
         let err = h
-            .call("ai.session_close", json!({ "id": "claude-code-1" }))
+            .call(
+                "ai.session_send",
+                json!({ "id": "claude-code-2", "text": "x" }),
+            )
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
+        assert!(err.hint.as_deref().unwrap_or_default().contains("reopen"));
+
+        // Closing the first one too: the most recently active archived chat comes first.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        h.call("ai.session_close", json!({ "id": "claude-code-1" }))
+            .await
+            .unwrap();
+        let archived = h
+            .call("ai.sessions_list", json!({ "archived": true }))
+            .await
+            .unwrap();
+        assert_eq!(ids(&archived), ["claude-code-1", "claude-code-2"]);
     }
-    // Closed chats stay closed after a restart; numbering goes on after the kept transcript.
+
+    // After a restart: still archived, with title and transcript.
     let h = Harness::open(data.path());
     h.use_fake("claude-code", fake.path()).await;
     let list = h.call("ai.sessions_list", json!({})).await.unwrap();
-    assert!(list["sessions"].as_array().unwrap().is_empty());
-    let info = h
-        .call(
-            "ai.session_start",
-            json!({ "provider": "claude-code", "prompt": "new" }),
+    assert!(ids(&list).is_empty());
+    let archived = h
+        .call("ai.sessions_list", json!({ "archived": true }))
+        .await
+        .unwrap();
+    assert_eq!(ids(&archived).len(), 2);
+    let first = archived["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "claude-code-1")
+        .unwrap();
+    assert_eq!(first["title"], "hello there");
+
+    // Reopened: open again, and the next message continues the same conversation.
+    let mut rx = h.bus.subscribe();
+    let reopened = h
+        .call("ai.session_reopen", json!({ "id": "claude-code-1" }))
+        .await
+        .unwrap();
+    assert_eq!(
+        (reopened["archived"].as_bool(), reopened["status"].as_str()),
+        (Some(false), Some("stopped"))
+    );
+    let update = wait_for(&mut rx, |e| {
+        e.topic == "ai.session" && e.data["archived"] == false
+    })
+    .await;
+    assert_eq!(update.data["session"], "claude-code-1");
+    assert_eq!(
+        ids(&h.call("ai.sessions_list", json!({})).await.unwrap()),
+        ["claude-code-1"]
+    );
+    h.call(
+        "ai.session_send",
+        json!({ "id": "claude-code-1", "text": "again" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, "claude-code-1").await;
+    let last = runs(fake.path()).pop().unwrap();
+    assert!(
+        argv(&last).iter().any(|a| a.starts_with("--resume=sess-")),
+        "{last}"
+    );
+
+    // Deleted: gone with every file, now and after a restart.
+    let deleted = h
+        .call("ai.session_delete", json!({ "id": "claude-code-1" }))
+        .await
+        .unwrap();
+    assert_eq!(deleted, json!({ "deleted": true }));
+    wait_for(&mut rx, |e| e.topic == "ai.session_deleted").await;
+    for ext in ["jsonl", "meta.json", "history.json", "mcp.json"] {
+        assert!(
+            !sessions_dir.join(format!("claude-code-1.{ext}")).exists(),
+            "{ext}"
+        );
+    }
+    let err = h
+        .call("ai.session_reopen", json!({ "id": "claude-code-1" }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    // The older form: close with delete_transcript deletes.
+    h.call(
+        "ai.session_close",
+        json!({ "id": "claude-code-2", "delete_transcript": true }),
+    )
+    .await
+    .unwrap();
+    assert!(!sessions_dir.join("claude-code-2.jsonl").exists());
+    assert!(!sessions_dir.join("claude-code-2.meta.json").exists());
+    drop(h);
+    let h = Harness::open(data.path());
+    assert!(
+        ids(&h
+            .call("ai.sessions_list", json!({ "archived": true }))
+            .await
+            .unwrap())
+        .is_empty()
+    );
+    assert!(ids(&h.call("ai.sessions_list", json!({})).await.unwrap()).is_empty());
+}
+
+/// The browser's agents may rename or delete their own chat, never another agent's.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_cannot_rename_or_delete_other_agents_chats() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    for prompt in ["one", "two"] {
+        let info = h
+            .call(
+                "ai.session_start",
+                json!({ "provider": "claude-code", "prompt": prompt }),
+            )
+            .await
+            .unwrap();
+        until_done(&mut rx, info["id"].as_str().unwrap()).await;
+    }
+    let as_agent = |id: &str| Caller::Mcp {
+        session: "m1".into(),
+        agent: Some(id.to_string()),
+    };
+    for (name, args) in [
+        (
+            "ai.session_rename",
+            json!({ "id": "claude-code-2", "title": "mine" }),
+        ),
+        ("ai.session_delete", json!({ "id": "claude-code-2" })),
+        (
+            "ai.session_close",
+            json!({ "id": "claude-code-2", "delete_transcript": true }),
+        ),
+    ] {
+        let err = h
+            .call_as(as_agent("claude-code-1"), name, args.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NeedsApproval, "{name}");
+        let err = h
+            .call_as(
+                Caller::Agent {
+                    id: "anthropic-9".into(),
+                },
+                name,
+                args,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NeedsApproval, "{name}");
+    }
+    // Its own chat: yes. The person: any chat.
+    let renamed = h
+        .call_as(
+            as_agent("claude-code-1"),
+            "ai.session_rename",
+            json!({ "id": "claude-code-1", "title": "Agent's own" }),
         )
         .await
         .unwrap();
-    assert_eq!(info["id"], "claude-code-3");
+    assert_eq!(
+        (renamed["title"].as_str(), renamed["title_set"].as_bool()),
+        (Some("Agent's own"), Some(true))
+    );
+    let renamed = h
+        .call(
+            "ai.session_rename",
+            json!({ "id": "claude-code-2", "title": "  Shopping   list " }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed["title"], "Shopping list");
+    let back = h
+        .call(
+            "ai.session_rename",
+            json!({ "id": "claude-code-2", "title": "" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (back["title"].as_str(), back["title_set"].as_bool()),
+        (Some("two"), Some(false))
+    );
+    h.call("ai.session_delete", json!({ "id": "claude-code-2" }))
+        .await
+        .unwrap();
     h.stop_all().await;
 }
 
@@ -861,4 +1055,525 @@ async fn codex_approvals_use_the_same_cards_and_threads_resume() {
             .contains("not approved")
     );
     h.stop_all().await;
+}
+
+/// Texts of the `ai.message` events of `role` with a whole `text`.
+fn texts(events: &[Event], role: &str) -> Vec<String> {
+    of(events, "ai.message")
+        .into_iter()
+        .filter(|e| e.data["role"] == role)
+        .filter_map(|e| e.data["text"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Wait until `session` is idle with nothing queued.
+async fn until_idle(h: &Harness, session: &str) {
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+            let s = list["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == session)
+                .cloned()
+                .unwrap();
+            if s["status"] == "idle" && s["queued"] == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the chat did not become idle");
+}
+
+/// A message sent while Claude Code works goes to it at once (with a uuid), is queued until
+/// claude reports it took it (`command_lifecycle started`), and lands in the running turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_takes_messages_sent_while_it_works() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "slow task" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    wait_for(&mut rx, |e| {
+        e.topic == "ai.message" && e.data["text"] == "working on it"
+    })
+    .await;
+
+    let sent = h
+        .call("ai.session_send", json!({ "id": id, "text": "also this" }))
+        .await
+        .unwrap();
+    assert_eq!(sent["status"], "running");
+    let events = until_done(&mut rx, &id).await;
+    let user = of(&events, "ai.message")
+        .into_iter()
+        .find(|e| e.data["role"] == "user")
+        .unwrap();
+    assert_eq!(
+        (user.data["queued"].as_bool(), user.data["index"].as_u64()),
+        (Some(true), Some(1))
+    );
+    let taken = of(&events, "ai.message_taken");
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].data["index"], 1);
+    assert!(
+        of(&events, "ai.session")
+            .iter()
+            .any(|e| e.data["queued"] == 1),
+        "an update counts the queued message"
+    );
+    assert_eq!(
+        texts(&events, "assistant").last().unwrap(),
+        "echo: slow task + also this"
+    );
+    assert_eq!(events.last().unwrap().data["reason"], "end_turn");
+    until_idle(&h, &id).await;
+    // One process; the message carried our uuid.
+    assert_eq!(runs(fake.path()).len(), 1);
+    let users: Vec<Value> = jsonl(&fake.path().join("stdin.jsonl"))
+        .into_iter()
+        .filter(|l| l["type"] == "user")
+        .collect();
+    assert_eq!(users.len(), 2);
+    assert!(users[1]["uuid"].as_str().is_some_and(|u| u.len() == 36));
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": id }))
+        .await
+        .unwrap();
+    assert!(
+        transcript["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e.get("queued").is_none()),
+        "nothing is left queued"
+    );
+
+    // Two messages right after each other while idle: the second waits for the next turn,
+    // the chat stays running until both are answered.
+    let (a, b) = tokio::join!(
+        h.call("ai.session_send", json!({ "id": id, "text": "first" })),
+        h.call("ai.session_send", json!({ "id": id, "text": "second" })),
+    );
+    a.unwrap();
+    b.unwrap();
+    let mut answers = Vec::new();
+    for _ in 0..2 {
+        answers.extend(texts(&until_done(&mut rx, &id).await, "assistant"));
+    }
+    answers.sort();
+    assert_eq!(answers, ["echo: first", "echo: second"]);
+    until_idle(&h, &id).await;
+    h.stop_all().await;
+}
+
+/// ai.session_interrupt ends the turn but not the process; ai.session_set_model reaches the
+/// running process at once and the next one through --model.
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_interrupts_and_switches_models_without_restarting() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "slow job" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    wait_for(&mut rx, |e| {
+        e.topic == "ai.message" && e.data["text"] == "working on it"
+    })
+    .await;
+    let interrupted = h
+        .call("ai.session_interrupt", json!({ "id": id }))
+        .await
+        .unwrap();
+    assert_eq!(interrupted["status"], "idle");
+    let events = until_done(&mut rx, &id).await;
+    assert_eq!(events.last().unwrap().data["reason"], "stopped");
+    let control: Vec<Value> = jsonl(&fake.path().join("stdin.jsonl"))
+        .into_iter()
+        .filter(|l| l["type"] == "control_request")
+        .collect();
+    assert!(
+        control
+            .iter()
+            .any(|c| c["request"]["subtype"] == "interrupt"),
+        "{control:?}"
+    );
+    // Nothing to interrupt now: a no-op.
+    let idle = h
+        .call("ai.session_interrupt", json!({ "id": id }))
+        .await
+        .unwrap();
+    assert_eq!(idle["status"], "idle");
+
+    let changed = h
+        .call(
+            "ai.session_set_model",
+            json!({ "id": id, "model": "haiku" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed["model"], "haiku");
+    h.call("ai.session_send", json!({ "id": id, "text": "model?" }))
+        .await
+        .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    assert!(texts(&events, "assistant").contains(&"model: haiku".to_string()));
+    assert_eq!(runs(fake.path()).len(), 1, "the same process went on");
+    let set = jsonl(&fake.path().join("stdin.jsonl"))
+        .into_iter()
+        .find(|l| l["request"]["subtype"] == "set_model")
+        .unwrap();
+    assert_eq!(set["request"]["model"], "haiku");
+
+    // Saved: a stopped chat starts its next process with it; "default" goes back.
+    h.call("ai.session_stop", json!({ "id": id }))
+        .await
+        .unwrap();
+    h.call("ai.session_send", json!({ "id": id, "text": "hi" }))
+        .await
+        .unwrap();
+    until_done(&mut rx, &id).await;
+    let args = argv(&runs(fake.path())[1]);
+    assert!(
+        args.windows(2).any(|w| w == ["--model", "haiku"]),
+        "{args:?}"
+    );
+    let reset = h
+        .call(
+            "ai.session_set_model",
+            json!({ "id": id, "model": "default" }),
+        )
+        .await
+        .unwrap();
+    assert!(reset["model"].is_null());
+    h.stop_all().await;
+}
+
+/// Editing a message: Claude Code resumes at the end of the turn before it
+/// (`--resume-session-at`), the transcript is cut there and the new text follows.
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_a_message_rewinds_claude_code() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "claude-code", "prompt": "one" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    until_done(&mut rx, &id).await;
+    for text in ["two", "three"] {
+        h.call("ai.session_send", json!({ "id": id, "text": text }))
+            .await
+            .unwrap();
+        until_done(&mut rx, &id).await;
+    }
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": id }))
+        .await
+        .unwrap();
+    let dones: Vec<String> = transcript["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "done")
+        .map(|e| e["at"].as_str().expect("a checkpoint").to_string())
+        .collect();
+    assert_eq!(dones.len(), 3);
+
+    let err = h
+        .call(
+            "ai.session_edit",
+            json!({ "id": id, "index": 7, "text": "x" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    let edited = h
+        .call(
+            "ai.session_edit",
+            json!({ "id": id, "index": 1, "text": "TWO" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(edited["id"], id.as_str());
+    let events = until_done(&mut rx, &id).await;
+    let rewound = of(&events, "ai.session_rewound");
+    assert_eq!(rewound[0].data["index"], 1);
+    assert_eq!(texts(&events, "user"), ["TWO"]);
+    assert_eq!(texts(&events, "assistant").last().unwrap(), "echo: TWO");
+
+    // A new process resumes the same conversation at the end of turn 1.
+    let all = runs(fake.path());
+    assert_eq!(all.len(), 2);
+    let args = argv(&all[1]);
+    assert!(
+        args.iter().any(|a| a.starts_with("--resume=sess-")),
+        "{args:?}"
+    );
+    assert!(
+        args.contains(&format!("--resume-session-at={}", dones[0])),
+        "{args:?}"
+    );
+    let transcript = h
+        .call("ai.session_transcript", json!({ "id": id }))
+        .await
+        .unwrap();
+    let users: Vec<(Value, Value)> = transcript["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "user")
+        .map(|e| (e["text"].clone(), e["index"].clone()))
+        .collect();
+    assert_eq!(users, [(json!("one"), json!(0)), (json!("TWO"), json!(1))]);
+    // The file holds the same (a restart shows the edited chat).
+    let file = jsonl(&data.path().join("ai/sessions").join(format!("{id}.jsonl")));
+    assert_eq!(file.iter().filter(|e| e["type"] == "user").count(), 2);
+
+    // Editing the first message: a new conversation (nothing before it to keep), new title.
+    h.call(
+        "ai.session_edit",
+        json!({ "id": id, "index": 0, "text": "fresh start" }),
+    )
+    .await
+    .unwrap();
+    until_done(&mut rx, &id).await;
+    let args = argv(&runs(fake.path())[2]);
+    assert!(!args.iter().any(|a| a.contains("resume")), "{args:?}");
+    let list = h.call("ai.sessions_list", json!({})).await.unwrap();
+    assert_eq!(list["sessions"][0]["title"], "fresh start");
+    h.stop_all().await;
+}
+
+/// Codex: a message sent during a turn is steered into it; an older Codex without
+/// turn/steer gets it as the next turn. Interrupt, the model per turn, ai.models.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_steers_holds_interrupts_and_lists_models() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("codex", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "codex", "prompt": "slow work" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    // The turn runs (turn/started seen by the adapter once a steer is accepted).
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.call("ai.session_send", json!({ "id": id, "text": "and this" }))
+        .await
+        .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    assert_eq!(
+        texts(&events, "assistant").last().unwrap(),
+        "echo: slow work + and this"
+    );
+    assert_eq!(of(&events, "ai.message_taken")[0].data["index"], 1);
+    let sent = jsonl(&fake.path().join("stdin.jsonl"));
+    let steer = sent
+        .iter()
+        .find(|m| m["method"] == "turn/steer")
+        .expect("turn/steer");
+    assert_eq!(steer["params"]["expectedTurnId"], "u1");
+    until_idle(&h, &id).await;
+
+    // Interrupt: the turn ends as stopped, the thread and process stay.
+    h.call("ai.session_send", json!({ "id": id, "text": "slow again" }))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.call("ai.session_interrupt", json!({ "id": id }))
+        .await
+        .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    assert_eq!(events.last().unwrap().data["reason"], "stopped");
+    assert!(
+        jsonl(&fake.path().join("stdin.jsonl"))
+            .iter()
+            .any(|m| m["method"] == "turn/interrupt")
+    );
+
+    // The model goes with every turn/start from now on.
+    h.call(
+        "ai.session_set_model",
+        json!({ "id": id, "model": "fake-small" }),
+    )
+    .await
+    .unwrap();
+    h.call("ai.session_send", json!({ "id": id, "text": "model?" }))
+        .await
+        .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    assert!(texts(&events, "assistant").contains(&"model: fake-small".to_string()));
+    assert_eq!(runs(fake.path()).len(), 1);
+    h.stop_all().await;
+
+    // An older Codex without turn/steer: held, then the next turn.
+    std::fs::write(fake.path().join("scenario.json"), r#"{"no_steer": true}"#).unwrap();
+    h.call("ai.session_send", json!({ "id": id, "text": "slow three" }))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.call("ai.session_send", json!({ "id": id, "text": "held one" }))
+        .await
+        .unwrap();
+    let first = until_done(&mut rx, &id).await;
+    assert_eq!(
+        texts(&first, "assistant").last().unwrap(),
+        "echo: slow three"
+    );
+    let second = until_done(&mut rx, &id).await;
+    assert_eq!(
+        texts(&second, "assistant").last().unwrap(),
+        "echo: held one"
+    );
+    until_idle(&h, &id).await;
+
+    // ai.models: Codex's model/list (no thread started), else the static list.
+    let models = h
+        .call("ai.models", json!({ "provider": "codex" }))
+        .await
+        .unwrap();
+    let names: Vec<&str> = models["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["default", "fake-large", "fake-small"]);
+    assert_eq!(models["default"], "fake-large");
+    assert_eq!(models["models"][1]["hint"], "the big one");
+    std::fs::write(
+        fake.path().join("scenario.json"),
+        r#"{"no_model_list": true}"#,
+    )
+    .unwrap();
+    let models = h
+        .call("ai.models", json!({ "provider": "codex" }))
+        .await
+        .unwrap();
+    assert!(models["models"].as_array().unwrap().len() > 1);
+    assert!(
+        models["models"][1]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("static")
+    );
+    h.stop_all().await;
+}
+
+/// Editing a Codex message rolls the thread back by the turns after it.
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_a_codex_message_rolls_the_thread_back() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("codex", fake.path()).await;
+    let mut rx = h.bus.subscribe();
+    let info = h
+        .call(
+            "ai.session_start",
+            json!({ "provider": "codex", "prompt": "one" }),
+        )
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    until_done(&mut rx, &id).await;
+    for text in ["two", "three"] {
+        h.call("ai.session_send", json!({ "id": id, "text": text }))
+            .await
+            .unwrap();
+        until_done(&mut rx, &id).await;
+    }
+    h.call(
+        "ai.session_edit",
+        json!({ "id": id, "index": 1, "text": "TWO" }),
+    )
+    .await
+    .unwrap();
+    let events = until_done(&mut rx, &id).await;
+    assert_eq!(texts(&events, "assistant").last().unwrap(), "echo: TWO");
+    let sent = jsonl(&fake.path().join("stdin.jsonl"));
+    let rollback = sent
+        .iter()
+        .find(|m| m["method"] == "thread/rollback")
+        .expect("thread/rollback");
+    assert_eq!(
+        rollback["params"],
+        json!({ "threadId": "th-1", "numTurns": 2 })
+    );
+    assert!(sent.iter().any(|m| m["method"] == "thread/resume"));
+    // Still the same thread: no new one was started after the first.
+    assert_eq!(
+        sent.iter()
+            .filter(|m| m["method"] == "thread/start")
+            .count(),
+        1
+    );
+    h.stop_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_models_are_its_aliases_and_ids() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = tempfile::tempdir().unwrap();
+    let h = Harness::open(data.path());
+    h.use_fake("claude-code", fake.path()).await;
+    let models = h
+        .call("ai.models", json!({ "provider": "claude-code" }))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = models["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    for id in [
+        "default",
+        "opus",
+        "sonnet",
+        "haiku",
+        "fable",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-1",
+    ] {
+        assert!(ids.contains(&id), "{id} in {ids:?}");
+    }
+    assert!(models["default"].is_string());
+    let err = h
+        .call("ai.models", json!({ "provider": "nope" }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
 }
