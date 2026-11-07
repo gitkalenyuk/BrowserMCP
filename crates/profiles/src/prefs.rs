@@ -4,14 +4,57 @@
 //! | Preference | From | Value |
 //! |---|---|---|
 //! | `proxy` | [`Services::profile_proxy_pref`](bmcp_identity::Services::profile_proxy_pref) (the profile's `proxy.rules_set` routes / `profile.create {proxy}`) | `{"mode": "direct"}`, `fixed_servers` to a local forwarder (+ `bypass_list` from `profile.create {proxy_bypass}`), or `pac_script` |
-//! | `webrtc.ip_handling_policy`, `webrtc.multiple_routes_enabled`, `webrtc.nonproxied_udp_enabled` | [`cef_prefs::profile_prefs`](bmcp_identity::cef_prefs::profile_prefs) | limited to the proxy when proxied, Chromium's defaults otherwise |
+//! | `webrtc.ip_handling_policy`, `webrtc.multiple_routes_enabled`, `webrtc.nonproxied_udp_enabled` | [`cef_prefs::profile_prefs`](bmcp_identity::cef_prefs::profile_prefs), or the profile's [`WebrtcPolicy`] (`profile.create {webrtc}`) | `auto`: limited to the proxy when proxied, Chromium's defaults otherwise |
 //! | `intl.accept_languages` | `profile.create {accept_language}`, else the assigned identity's | `de-DE,de,en-US,en` |
 
 use bmcp_identity::Identity;
 use bmcp_identity::cef_prefs::{is_proxied, profile_prefs};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const ACCEPT_LANGUAGES: &str = "intl.accept_languages";
+const IP_HANDLING: &str = "webrtc.ip_handling_policy";
+const MULTIPLE_ROUTES: &str = "webrtc.multiple_routes_enabled";
+const NONPROXIED_UDP: &str = "webrtc.nonproxied_udp_enabled";
+
+/// Which network addresses WebRTC (calls, peer-to-peer) may use in a profile. Sites can read
+/// the addresses WebRTC finds, so a proxied profile normally limits it to the proxy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WebrtcPolicy {
+    /// Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+    #[default]
+    Auto,
+    /// Chromium's defaults even with a proxy: calls work everywhere, but sites can see the
+    /// real IP address.
+    Normal,
+    /// Only the public address of the default route: local network addresses stay hidden.
+    PublicOnly,
+    /// No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+    ProxyOnly,
+}
+
+impl WebrtcPolicy {
+    pub fn is_auto(&self) -> bool {
+        *self == WebrtcPolicy::Auto
+    }
+
+    /// The three WebRTC preferences, or `None` for `auto` (then they follow the proxy).
+    fn prefs(self) -> Option<[(&'static str, Value); 3]> {
+        let (handling, routes, udp) = match self {
+            WebrtcPolicy::Auto => return None,
+            WebrtcPolicy::Normal => ("default", true, true),
+            WebrtcPolicy::PublicOnly => ("default_public_interface_only", false, true),
+            WebrtcPolicy::ProxyOnly => ("disable_non_proxied_udp", false, false),
+        };
+        Some([
+            (IP_HANDLING, json!(handling)),
+            (MULTIPLE_ROUTES, json!(routes)),
+            (NONPROXIED_UDP, json!(udp)),
+        ])
+    }
+}
 
 /// What one profile's request context should look like.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +108,28 @@ impl Prefs {
             accept_language,
             other,
         }
+    }
+
+    /// Use the profile's own WebRTC policy instead of the one that follows the proxy.
+    pub fn with_webrtc(mut self, policy: WebrtcPolicy) -> Prefs {
+        if let Some(prefs) = policy.prefs() {
+            for (name, value) in prefs {
+                match self.other.iter_mut().find(|(n, _)| *n == name) {
+                    Some(slot) => slot.1 = value,
+                    None => self.other.push((name, value)),
+                }
+            }
+        }
+        self
+    }
+
+    /// The `webrtc.ip_handling_policy` handed to the browser, e.g. "disable_non_proxied_udp".
+    pub fn webrtc_handling(&self) -> &str {
+        self.other
+            .iter()
+            .find(|(n, _)| *n == IP_HANDLING)
+            .and_then(|(_, v)| v.as_str())
+            .unwrap_or("default")
     }
 
     /// Does the profile's traffic go through a proxy?
@@ -150,6 +215,38 @@ mod tests {
         assert_eq!(prefs.accept_language.as_deref(), Some("de-DE,de,en"));
         assert_eq!(prefs.proxy_server(), Some("socks5://127.0.0.1:5000"));
         assert!(prefs.proxied());
+    }
+
+    #[test]
+    fn the_profile_webrtc_policy_wins_over_the_proxy() {
+        let proxied = json!({"mode": "fixed_servers", "server": "socks5://127.0.0.1:5000"});
+        let auto = Prefs::build(proxied.clone(), None, None, None).with_webrtc(WebrtcPolicy::Auto);
+        assert_eq!(auto.webrtc_handling(), "disable_non_proxied_udp");
+
+        let normal = Prefs::build(proxied, None, None, None).with_webrtc(WebrtcPolicy::Normal);
+        let list = normal.to_preferences();
+        assert_eq!(get(&list, IP_HANDLING).unwrap(), "default");
+        assert_eq!(get(&list, MULTIPLE_ROUTES).unwrap(), &json!(true));
+        assert_eq!(get(&list, NONPROXIED_UDP).unwrap(), &json!(true));
+        // Replaced in place, never listed twice.
+        assert_eq!(list.iter().filter(|(n, _)| *n == IP_HANDLING).count(), 1);
+
+        let direct = Prefs::default().with_webrtc(WebrtcPolicy::ProxyOnly);
+        assert_eq!(direct.webrtc_handling(), "disable_non_proxied_udp");
+        let list = direct.to_preferences();
+        assert_eq!(get(&list, NONPROXIED_UDP).unwrap(), &json!(false));
+        let public = Prefs::default().with_webrtc(WebrtcPolicy::PublicOnly);
+        assert_eq!(public.webrtc_handling(), "default_public_interface_only");
+    }
+
+    #[test]
+    fn webrtc_policy_names_on_the_wire() {
+        assert_eq!(
+            serde_json::to_value(WebrtcPolicy::PublicOnly).unwrap(),
+            "public_only"
+        );
+        let policy: WebrtcPolicy = serde_json::from_value(json!("proxy_only")).unwrap();
+        assert_eq!(policy, WebrtcPolicy::ProxyOnly);
     }
 
     #[test]

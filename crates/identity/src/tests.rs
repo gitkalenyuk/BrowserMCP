@@ -85,7 +85,7 @@ fn every_command_is_in_the_stealth_toolset() {
     crate::register(&mut registry);
     crate::install(&registry, dir.path());
     let all = registry.list(None);
-    assert_eq!(all.len(), 25);
+    assert_eq!(all.len(), 26);
     assert!(all.iter().all(|c| c.toolset == bmcp_core::Toolset::Stealth));
 }
 
@@ -398,6 +398,43 @@ async fn fingerprint_set_needs_exactly_one_source() {
             .contains("navigator.platform"),
         "{out}"
     );
+}
+
+#[tokio::test]
+async fn no_identity_is_assigned_while_the_cdp_port_is_open() {
+    let h = Harness::new();
+    h.ok(
+        "identity.generate",
+        json!({ "seed": 1, "id": "alpha", "save": true }),
+    )
+    .await;
+    h.registry.extensions().insert(bmcp_core::CdpLaunch {
+        port: Some(9222),
+        ..Default::default()
+    });
+    let err = h
+        .call(
+            "identity.assign",
+            json!({ "profile": "work", "id": "alpha" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    assert!(err.message.contains("CDP port 9222"), "{}", err.message);
+    let list = h.ok("identity.list", json!({})).await;
+    assert!(list["profiles"].as_object().unwrap().is_empty());
+    // Removing an assignment is always allowed.
+    h.ok("identity.assign", json!({ "profile": "work" })).await;
+
+    // Port closed: assigning works.
+    h.registry
+        .extensions()
+        .insert(bmcp_core::CdpLaunch::default());
+    h.ok(
+        "identity.assign",
+        json!({ "profile": "work", "id": "alpha" }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -941,4 +978,47 @@ async fn patch_and_probe_cover_the_available_screen() {
     let id = crate::identity::from_preset(android, "a");
     assert_eq!(crate::stealth::available_screen(&id), None);
     assert!(crate::stealth::patch_script(&id, false).contains("\"availHeight\":null"));
+}
+
+#[tokio::test]
+async fn rules_get_masks_and_masked_urls_keep_their_password() {
+    let h = Harness::new();
+    let none = h.ok("proxy.rules_get", json!({})).await;
+    assert_eq!(none["routes"], json!([]));
+    h.ok(
+        "proxy.rules_set",
+        json!({
+            "profile": "work",
+            "rules": [{ "match": "*.example.com", "via": "socks5://u:secret@127.0.0.1:1081" }],
+            "default": "http://bob:pw@127.0.0.1:3128",
+        }),
+    )
+    .await;
+    let got = h.ok("proxy.rules_get", json!({ "profile": "work" })).await;
+    let text = got.to_string();
+    assert!(!text.contains("secret") && !text.contains(":pw@"), "{text}");
+    let route = &got["routes"][0];
+    assert_eq!(route["profile"], "work");
+    assert_eq!(route["default"], "http://bob:***@127.0.0.1:3128");
+    assert_eq!(route["rules"][0]["match"], "*.example.com");
+    assert_eq!(
+        h.ok("proxy.rules_get", json!({ "profile": "other" })).await["routes"],
+        json!([])
+    );
+
+    // Sending the masked routes back (plus a new rule) keeps both stored passwords.
+    h.ok(
+        "proxy.rules_set",
+        json!({
+            "profile": "work",
+            "rules": [route["rules"][0].clone(), { "match": "*.ru", "via": "direct" }],
+            "default": route["default"].clone(),
+        }),
+    )
+    .await;
+    let file = h.services().proxies.read().unwrap();
+    let stored = &file.routes["work"];
+    assert_eq!(stored.default, "http://bob:pw@127.0.0.1:3128");
+    assert_eq!(stored.rules[0].via, "socks5://u:secret@127.0.0.1:1081");
+    assert_eq!(stored.rules[1].via, "direct");
 }

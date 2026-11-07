@@ -12,6 +12,8 @@
 //!   (see `session.rs`).
 //! * `record.codegen` — the log as a TypeScript script for `bmcp-script-host` (see [`codegen`]).
 //! * `record.video_start` / `record.video_stop` — CDP screencast → ffmpeg (see [`video`]).
+//! * `record.settings` — video defaults (`data/config/recording.json`), ffmpeg status and the
+//!   folders (see [`settings`]).
 //!
 //! Events on the bus (a default WS topic, for the UI's Recording panel):
 //! `record.started {id, tab, name, start_url}`, `record.step {id, step}` (each finished step,
@@ -26,6 +28,7 @@ pub mod commands;
 pub mod human;
 pub mod model;
 mod session;
+pub mod settings;
 pub mod store;
 #[cfg(test)]
 mod tests;
@@ -50,5 +53,6 @@ pub fn register(registry: &mut Registry) {
         .add::<commands::Get>()
         .add::<commands::Codegen>()
         .add::<commands::VideoStart>()
-        .add::<commands::VideoStop>();
+        .add::<commands::VideoStop>()
+        .add::<settings::Settings>();
 }

@@ -104,7 +104,18 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         (cli.url_given || automation).then_some(cli.url.as_str()),
         !cli.no_restore && !automation,
     );
-    let cdp_port = checked_cdp_port(cli.cdp_port, &data);
+    // `--cdp-port`, else Settings → Connections & API (data/config/connections.json).
+    let connections =
+        bmcp_api::info::ConnectionsConfig::load(&data.config()).unwrap_or_else(|err| {
+            tracing::warn!(%err, "connections.json ignored");
+            Default::default()
+        });
+    let cdp_launch = checked_cdp_port(
+        connections.startup_cdp_port(cli.cdp_port),
+        cli.cdp_port.is_some(),
+        &data,
+    );
+    let cdp_port = cdp_launch.port;
 
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
@@ -115,6 +126,7 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         let settings = settings.clone();
         let more_urls = start.more_urls.clone();
         let profile = profile.to_string();
+        let cdp_launch = cdp_launch.clone();
         Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
             None => {
                 handle.spawn(dump_ax_and_quit(backend));
@@ -133,6 +145,7 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
                         settings,
                         more_urls,
                         profile,
+                        cdp_launch,
                     },
                 ));
             }
@@ -188,31 +201,45 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
 fn bind_api(port: u16, data: &DataDir) -> anyhow::Result<std::net::TcpListener> {
     std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| {
         format!(
-            "cannot use API port {port} on 127.0.0.1 (another BrowserMCP may be running: see {});              pick another with --api-port <n> or --api-port 0",
+            "cannot use API port {port} on 127.0.0.1 (another BrowserMCP may be running: see \
+             {}); pick another with --api-port <n> or --api-port 0",
             data.runtime().join("endpoint.json").display()
         )
     })
 }
 
-/// `--cdp-port`, unless a profile has a stealth identity: an open debugging port is easy for
-/// sites and local software to detect, so the two are never combined.
-fn checked_cdp_port(port: Option<u16>, data: &DataDir) -> Option<u16> {
-    let port = port?;
+/// The CDP port asked for (`--cdp-port` or the saved setting), unless a profile has a stealth
+/// identity: an open debugging port is easy for sites and local software to detect, so the
+/// two are never combined.
+/// `from_cli`: the port came from `--cdp-port` (shown in Settings, which then never asks for a
+/// restart).
+fn checked_cdp_port(port: Option<u16>, from_cli: bool, data: &DataDir) -> bmcp_core::CdpLaunch {
+    let Some(port) = port else {
+        return Default::default();
+    };
     let identities = bmcp_identity::Services::new(data.config())
         .identities
         .read()
         .map(|f| f.profiles)
         .unwrap_or_default();
     if identities.is_empty() {
-        Some(port)
+        bmcp_core::CdpLaunch {
+            port: Some(port),
+            refused: false,
+            from_cli,
+        }
     } else {
         let profiles: Vec<&String> = identities.keys().collect();
         tracing::error!(
             ?profiles,
-            "--cdp-port refused: these profiles use a stealth identity (identity_assign); \
+            "CDP port refused: these profiles use a stealth identity (identity_assign); \
              remove the assignment to use the CDP port"
         );
-        None
+        bmcp_core::CdpLaunch {
+            port: None,
+            refused: true,
+            from_cli,
+        }
     }
 }
 
@@ -230,6 +257,8 @@ struct ApiServices {
     more_urls: Vec<String>,
     /// The profile the browser runs with (`--profile`).
     profile: String,
+    /// What happened to the CDP port at launch (for `api.info`).
+    cdp_launch: bmcp_api::info::CdpLaunch,
 }
 
 async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
@@ -244,6 +273,7 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         settings,
         more_urls,
         profile,
+        cdp_launch,
     } = services;
     let port = listener.local_addr().map_or(0, |addr| addr.port());
     // The browser is up (this runs once its first window exists): Settings → About's uptime.
@@ -267,6 +297,7 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
             let exe_dir = exe_dir.clone();
             move || vec![settings.download_dir(None), exe_dir.clone()]
         })));
+    registry.extensions().insert(cdp_launch);
     // Identities and proxy pools in data/config.
     bmcp_identity::install(&registry, data.config());
     // The adblock service whose gate the browser already asks for every request; load the
@@ -312,9 +343,10 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     if let Some(jobs) = &jobs {
         registry.extensions().insert(jobs.clone());
         // Isolated rows with `proxy_pool` / `fit_identity`: lease + identity per row.
-        jobs.set_row_profiles(Arc::new(RowProfilesHook(bmcp_profiles::RowProfiles::new(
-            profiles.clone(),
-        ))));
+        jobs.set_row_profiles(Arc::new(RowProfilesHook {
+            rows: bmcp_profiles::RowProfiles::new(profiles.clone()),
+            cdp: bmcp_core::CdpLaunch::of(registry.extensions()),
+        }));
     }
     // Self-healing of runs and page.extract (data/extract-cache).
     registry
@@ -438,7 +470,11 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
 
 /// `bmcp_jobs::RowProfileHook` on top of `bmcp_profiles::RowProfiles` (the two crates do
 /// not depend on each other).
-struct RowProfilesHook(bmcp_profiles::RowProfiles);
+struct RowProfilesHook {
+    rows: bmcp_profiles::RowProfiles,
+    /// `fit_identity` gives each row a stealth identity: never while the CDP port is open.
+    cdp: bmcp_core::CdpLaunch,
+}
 
 impl RowProfilesHook {
     fn request(row: &bmcp_jobs::RowProfile) -> bmcp_profiles::RowRequest {
@@ -459,14 +495,17 @@ impl bmcp_jobs::RowProfileHook for RowProfilesHook {
         proxy_pool: Option<&str>,
         fit_identity: bool,
     ) -> Result<(), bmcp_core::CmdError> {
-        self.0.check(proxy_pool, fit_identity)
+        if fit_identity {
+            self.cdp.check_stealth_allowed()?;
+        }
+        self.rows.check(proxy_pool, fit_identity)
     }
 
     fn prepare(
         &self,
         row: bmcp_jobs::RowProfile,
     ) -> bmcp_core::BoxFuture<'static, Result<(), bmcp_core::CmdError>> {
-        let rows = self.0.clone();
+        let rows = self.rows.clone();
         Box::pin(async move { rows.prepare(&Self::request(&row)).await.map(|_| ()) })
     }
 
@@ -475,7 +514,7 @@ impl bmcp_jobs::RowProfileHook for RowProfilesHook {
         row: bmcp_jobs::RowProfile,
         row_done: bool,
     ) -> bmcp_core::BoxFuture<'static, ()> {
-        let rows = self.0.clone();
+        let rows = self.rows.clone();
         Box::pin(async move { rows.release(&Self::request(&row), row_done).await })
     }
 
@@ -485,7 +524,7 @@ impl bmcp_jobs::RowProfileHook for RowProfilesHook {
         proxy_pool: Option<String>,
         profile_prefix: String,
     ) -> bmcp_core::BoxFuture<'static, ()> {
-        let rows = self.0.clone();
+        let rows = self.rows.clone();
         Box::pin(async move {
             rows.finish_run(&run, proxy_pool.as_deref(), &profile_prefix)
                 .await

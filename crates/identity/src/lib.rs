@@ -127,6 +127,7 @@ pub fn register(registry: &mut Registry) {
         .add::<commands::GeoLookup>()
         .add::<commands::RulesSet>()
         .add::<commands::RulesTest>()
+        .add::<commands::RulesGet>()
         .add::<commands::FitToProxy>()
         .add::<commands::Lease>()
         .add::<commands::Release>();

@@ -1,4 +1,5 @@
-//! Commands that live in the API crate until their real home exists.
+//! Commands that live in the API crate until their real home exists, plus `api.info` /
+//! `api.config` (see [`crate::info`]).
 //!
 //! `page.ax_tree` is the spike-era accessibility preview, now in the hidden toolset: the
 //! `perception`-based `page.snapshot` / `page.find` / `page.act` (crate `bmcp-browser`)
@@ -11,6 +12,7 @@ use serde_json::json;
 
 pub fn register(registry: &mut Registry) {
     registry.add::<PageAxTree>();
+    crate::info::register(registry);
 }
 
 pub struct PageAxTree;

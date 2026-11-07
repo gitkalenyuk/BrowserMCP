@@ -20,6 +20,10 @@ export const SETTINGS_SECTIONS = [
   'sites',
   'data',
   'about',
+  'connections',
+  'profiles',
+  'proxies',
+  'recording',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 

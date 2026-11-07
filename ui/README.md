@@ -287,6 +287,9 @@ URL; `crates/cef/src/scheme.rs` allow-list). Opened by Ctrl+, (`settings.open`),
   add a shortcut by pressing it, remove, reset, conflicts in red. Overrides are kept in
   localStorage (`bmcp.keymap.overrides`, keymap.json shape) and the chrome merges them
   (`ChromeController.keymap`, follows the storage event).
+* **Connections & API**, **Profiles & identity**, **Proxies**, **Recording & scripts**: see
+  `docs/settings/connections-profiles-proxies-recording.md` (`api.*`, `identity.*`, `proxy.*`,
+  `record.settings`, `script.settings`; logic in `lib/settings/e2-*.ts`).
 
 The Ctrl+K palette also lists the entries of running plugins (`plugins.palette`, read whenever it
 opens) and runs them with `plugins.palette_run`. Types: `api/types-settings.ts` (generated

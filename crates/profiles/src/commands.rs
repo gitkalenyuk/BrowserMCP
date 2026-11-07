@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::CookieTarget;
 use crate::cookies::CookieInfo;
 use crate::permissions::{PermissionKind, PermissionRule, PermissionStore};
-use crate::prefs::Prefs;
+use crate::prefs::{Prefs, WebrtcPolicy};
 use crate::service::{ProfileConfig, ProfilesService};
 
 fn check_id(id: &str) -> Result<(), CmdError> {
@@ -38,6 +38,9 @@ pub struct ProxyView {
     pub proxy_mode: Option<String>,
     /// The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p).
     pub proxy_server: Option<String>,
+    /// The WebRTC IP handling Chromium was told, e.g. "disable_non_proxied_udp" (null = not
+    /// applied yet).
+    pub webrtc_applied: Option<String>,
 }
 
 impl ProxyView {
@@ -49,6 +52,7 @@ impl ProxyView {
             proxy_rules: routes.rules.len(),
             proxy_mode: applied.map(|p| p.proxy_mode().to_string()),
             proxy_server: applied.and_then(|p| p.proxy_server().map(str::to_string)),
+            webrtc_applied: applied.map(|p| p.webrtc_handling().to_string()),
         }
     }
 }
@@ -74,6 +78,11 @@ pub struct ProfileEntry {
     pub open: bool,
     /// In memory only.
     pub incognito: bool,
+    /// New tabs of this profile open in memory unless the caller says otherwise
+    /// (profile_create incognito_default).
+    pub incognito_default: bool,
+    /// WebRTC policy setting (profile_create webrtc).
+    pub webrtc: WebrtcPolicy,
     pub tabs: Vec<TabId>,
     /// The profile the browser started with.
     pub launch: bool,
@@ -135,6 +144,8 @@ impl Command for List {
                     stored: config.is_some(),
                     open: live.is_some(),
                     incognito,
+                    incognito_default: config.is_some_and(|c| c.incognito_default),
+                    webrtc: config.map(|c| c.webrtc).unwrap_or_default(),
                     tabs: live.map(|p| p.tabs.clone()).unwrap_or_default(),
                     launch: id == service.launch_profile && !incognito,
                     id,
@@ -165,6 +176,13 @@ pub struct CreateArgs {
     pub identity: Option<String>,
     /// Accept-Language list, e.g. "de-DE,de,en". Default: the identity's.
     pub accept_language: Option<String>,
+    /// Open its tabs in memory by default: tabs_open {profile} without `incognito` keeps
+    /// nothing on disk (default false).
+    pub incognito_default: Option<bool>,
+    /// Which addresses WebRTC may use: "auto" (default: limited to the proxy when proxied),
+    /// "normal" (Chromium's defaults, even with a proxy), "public_only" (no local network
+    /// addresses) or "proxy_only" (no UDP outside the proxy).
+    pub webrtc: Option<WebrtcPolicy>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -175,6 +193,9 @@ pub struct CreateOutput {
     #[serde(flatten)]
     pub proxy: ProxyView,
     pub identity: Option<String>,
+    /// New tabs open in memory unless tabs_open says otherwise.
+    pub incognito_default: bool,
+    pub webrtc: WebrtcPolicy,
     /// Folder of its cookies/cache.
     pub data_dir: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,9 +210,10 @@ impl Command for Create {
     fn meta() -> Meta {
         Meta::new(
             "Create (or update) a browser profile: own cookies/cache folder, optional proxy \
-             (through a local forwarder; WebRTC is then limited to the proxy; same setting as \
-             the default of proxy_rules_set), identity applied to each new tab, \
-             Accept-Language. Open tabs in it with tabs_open {profile}.",
+             (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` \
+             says otherwise; same setting as the default of proxy_rules_set), identity \
+             applied to each new tab, Accept-Language, incognito_default (its tabs keep \
+             nothing on disk). Open tabs in it with tabs_open {profile}.",
             Toolset::Profile,
         )
         .act()
@@ -213,6 +235,8 @@ impl Command for Create {
         }
         if let Some(identity) = empty_to_none(&args.identity) {
             services.identities.read()?.get(&identity)?;
+            // Never a stealth identity next to an open debugging port (easy to detect).
+            bmcp_core::CdpLaunch::of(&ctx.extensions).check_stealth_allowed()?;
         }
         // The proxy resolves first (e.g. an empty pool fails here, nothing is stored).
         if let Some(proxy) = &args.proxy {
@@ -243,6 +267,12 @@ impl Command for Create {
             if args.accept_language.is_some() {
                 entry.accept_language = empty_to_none(&args.accept_language);
             }
+            if let Some(incognito_default) = args.incognito_default {
+                entry.incognito_default = incognito_default;
+            }
+            if let Some(webrtc) = args.webrtc {
+                entry.webrtc = webrtc;
+            }
             Ok(created)
         })?;
         let prefs = service.apply(&args.id).await?;
@@ -267,6 +297,8 @@ impl Command for Create {
         Ok(CreateOutput {
             proxy: ProxyView::of(Some(&services), Some(&prefs), &args.id),
             identity,
+            incognito_default: config.incognito_default,
+            webrtc: config.webrtc,
             data_dir: service.profile_dir(&args.id).display().to_string(),
             warning,
             created,

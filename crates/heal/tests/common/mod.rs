@@ -151,6 +151,7 @@ impl Env {
                 // Long: the fake host honours its own timeout; a slow start on a busy
                 // machine must not turn that into a kill.
                 kill_grace: Duration::from_secs(60),
+                settings_path: None,
             },
             events.clone(),
         )

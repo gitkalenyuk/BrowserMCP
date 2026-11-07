@@ -1356,6 +1356,132 @@ export interface AiSessionsListOutput {
   }[];
 }
 
+// ---- api.config ----
+
+/** Arguments of `api.config`. */
+export interface ApiConfigArgs {
+  /**
+   * Open the CDP port at the next start (refused while a profile has a stealth identity).
+   * Only the browser UI may turn it on (a person confirms it there); agents may turn it off.
+   */
+  cdp_enabled?: boolean | null;
+  /** CDP port, 1024-65535 (default 9222). */
+  cdp_port?: number | null;
+}
+
+/** Result of `api.config`. */
+export interface ApiConfigOutput {
+  /** The saved settings. */
+  config: {
+    /**
+     * Open Chromium's remote debugging (CDP) port at startup, for Playwright / Puppeteer.
+     * @default false
+     */
+    cdp_enabled: boolean;
+    /**
+     * The CDP port (1024-65535, default 9222).
+     * @default 9222
+     */
+    cdp_port: number;
+  };
+  cdp: {
+    /** The port Chromium listens on now (null = closed). */
+    active_port: number | null;
+    /** A port was asked for at launch but refused because a profile has a stealth identity. */
+    refused: boolean;
+    /** The saved setting (connections.json) used at the next start. */
+    enabled: boolean;
+    port: number;
+    /** Profiles with a stealth identity: while there are any, the port stays closed. */
+    stealth_profiles: string[];
+    /**
+     * The saved setting differs from what is running: restart the browser to apply it.
+     * Always false when `from_flag` (the flag decides at every start).
+     */
+    restart_needed: boolean;
+    /**
+     * The port was asked for with `--cdp-port`: the saved setting is not used while the
+     * browser is started with that flag.
+     */
+    from_flag: boolean;
+    /** connections.json could not be read (the defaults are shown); fix or delete the file. */
+    config_error?: string | null;
+  };
+}
+
+// ---- api.info ----
+
+/**
+ * Arguments of `api.info`.
+ * Arguments/output for commands that take or return nothing: `{}`.
+ */
+export type ApiInfoArgs = Record<string, never>;
+
+/** Result of `api.info`. */
+export interface ApiInfoOutput {
+  /** BrowserMCP version. */
+  version: string;
+  /** The API server is listening (false only while starting). */
+  listening: boolean;
+  /** The API port (default 47800, `--api-port`). */
+  port: number | null;
+  urls: {
+    /**
+     * MCP over Streamable HTTP, e.g. "http://127.0.0.1:47800/mcp". Add `?toolsets=core,net`
+     * to list more toolsets.
+     */
+    mcp: string;
+    /** REST base, e.g. "http://127.0.0.1:47800/v1" (POST /v1/cmd/{name}). */
+    rest: string;
+    /** JSON-RPC 2.0 over WebSocket + events. */
+    ws: string;
+    /** OpenAPI 3.1 description of the REST API. */
+    openapi: string;
+    /** GET → {ok, name, version}. */
+    health: string;
+  } | null;
+  /** `data/runtime/endpoint.json`: how tools (and `browsermcp mcp-stdio`) find this instance. */
+  endpoint_file: string | null;
+  /** The file exists (written once the API listens, removed on exit). */
+  endpoint_present: boolean;
+  /** Full path of browsermcp.exe (for the stdio MCP command). */
+  exe: string | null;
+  /** The portable data folder. */
+  data_dir: string | null;
+  /** MCP toolsets with their command counts. */
+  toolsets: {
+    /** Name for `?toolsets=`, e.g. "net". */
+    name: string;
+    /** Commands in it. */
+    commands: number;
+    /** Listed by MCP when the URL names no toolsets. */
+    default: boolean;
+  }[];
+  cdp: {
+    /** The port Chromium listens on now (null = closed). */
+    active_port: number | null;
+    /** A port was asked for at launch but refused because a profile has a stealth identity. */
+    refused: boolean;
+    /** The saved setting (connections.json) used at the next start. */
+    enabled: boolean;
+    port: number;
+    /** Profiles with a stealth identity: while there are any, the port stays closed. */
+    stealth_profiles: string[];
+    /**
+     * The saved setting differs from what is running: restart the browser to apply it.
+     * Always false when `from_flag` (the flag decides at every start).
+     */
+    restart_needed: boolean;
+    /**
+     * The port was asked for with `--cdp-port`: the saved setting is not used while the
+     * browser is started with that flag.
+     */
+    from_flag: boolean;
+    /** connections.json could not be read (the defaults are shown); fix or delete the file. */
+    config_error?: string | null;
+  };
+}
+
 // ---- bookmarks.add ----
 
 /** Arguments of `bookmarks.add`. */
@@ -5681,6 +5807,22 @@ export interface ProfileCreateArgs {
   identity?: string | null;
   /** Accept-Language list, e.g. "de-DE,de,en". Default: the identity's. */
   accept_language?: string | null;
+  /**
+   * Open its tabs in memory by default: tabs_open {profile} without `incognito` keeps
+   * nothing on disk (default false).
+   */
+  incognito_default?: boolean | null;
+  /**
+   * Which addresses WebRTC may use: "auto" (default: limited to the proxy when proxied),
+   * "normal" (Chromium's defaults, even with a proxy), "public_only" (no local network
+   * addresses) or "proxy_only" (no UDP outside the proxy).
+   *
+   * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+   * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+   * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+   * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+   */
+  webrtc?: "auto" | "normal" | "public_only" | "proxy_only" | null;
 }
 
 /**
@@ -5702,7 +5844,24 @@ export interface ProfileCreateOutput {
   proxy_mode: string | null;
   /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
   proxy_server: string | null;
+  /**
+   * The WebRTC IP handling Chromium was told, e.g. "disable_non_proxied_udp" (null = not
+   * applied yet).
+   */
+  webrtc_applied: string | null;
   identity: string | null;
+  /** New tabs open in memory unless tabs_open says otherwise. */
+  incognito_default: boolean;
+  /**
+   * Which network addresses WebRTC (calls, peer-to-peer) may use in a profile. Sites can read
+   * the addresses WebRTC finds, so a proxied profile normally limits it to the proxy.
+   *
+   * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+   * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+   * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+   * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+   */
+  webrtc: "auto" | "normal" | "public_only" | "proxy_only";
   /** Folder of its cookies/cache. */
   data_dir: string;
   warning?: string | null;
@@ -5754,6 +5913,11 @@ export interface ProfileListOutput {
     proxy_mode: string | null;
     /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
     proxy_server: string | null;
+    /**
+     * The WebRTC IP handling Chromium was told, e.g. "disable_non_proxied_udp" (null = not
+     * applied yet).
+     */
+    webrtc_applied: string | null;
     accept_language: string | null;
     /** Identity applied to its new tabs (identity_assign). */
     identity: string | null;
@@ -5763,6 +5927,20 @@ export interface ProfileListOutput {
     open: boolean;
     /** In memory only. */
     incognito: boolean;
+    /**
+     * New tabs of this profile open in memory unless the caller says otherwise
+     * (profile_create incognito_default).
+     */
+    incognito_default: boolean;
+    /**
+     * WebRTC policy setting (profile_create webrtc).
+     *
+     * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+     * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+     * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+     * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+     */
+    webrtc: "auto" | "normal" | "public_only" | "proxy_only";
     tabs: number[];
     /** The profile the browser started with. */
     launch: boolean;
@@ -6008,6 +6186,31 @@ export interface ProxyReleaseOutput {
   released: number;
 }
 
+// ---- proxy.rules_get ----
+
+/** Arguments of `proxy.rules_get`. */
+export interface ProxyRulesGetArgs {
+  /** One profile; omit for every profile that has routing. */
+  profile?: string | null;
+}
+
+/** Result of `proxy.rules_get`. */
+export interface ProxyRulesGetOutput {
+  /** Profiles with a proxy or split routing (a profile without any is direct). */
+  routes: {
+    profile: string;
+    /** Checked in order (passwords masked). */
+    rules: {
+      /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+      match: string;
+      /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+      via: string;
+    }[];
+    /** Where everything else goes (the profile's proxy; "direct" = none). */
+    default: string;
+  }[];
+}
+
 // ---- proxy.rules_set ----
 
 /** Arguments of `proxy.rules_set`. */
@@ -6186,6 +6389,94 @@ export interface RecordListOutput {
   }[];
 }
 
+// ---- record.settings ----
+
+/** Arguments of `record.settings`. */
+export interface RecordSettingsArgs {
+  /** Back to the defaults first (the other fields then apply on top). */
+  reset?: boolean | null;
+  /** Default frames per second of videos, 1-60. */
+  video_fps?: number | null;
+  /**
+   * Default format: webm or mp4.
+   *
+   * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+   * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+   */
+  video_format?: "webm" | "mp4" | null;
+  /** Default quality, 1-100. */
+  video_quality?: number | null;
+}
+
+/** Result of `record.settings`. */
+export interface RecordSettingsOutput {
+  /** The settings in force (saved in data/config/recording.json). */
+  settings: {
+    /**
+     * Frames per second of videos, 1-60 (default 10). More = smoother and bigger files.
+     * @default 10
+     */
+    video_fps: number;
+    /**
+     * webm (VP9, default) or mp4 (H.264, plays everywhere).
+     *
+     * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+     * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+     * @default "webm"
+     */
+    video_format: "webm" | "mp4";
+    /**
+     * 1-100 (default 80): JPEG quality of the frames and encoder quality.
+     * @default 80
+     */
+    video_quality: number;
+  };
+  /** The built-in defaults. */
+  defaults: {
+    /**
+     * Frames per second of videos, 1-60 (default 10). More = smoother and bigger files.
+     * @default 10
+     */
+    video_fps: number;
+    /**
+     * webm (VP9, default) or mp4 (H.264, plays everywhere).
+     *
+     * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+     * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+     * @default "webm"
+     */
+    video_format: "webm" | "mp4";
+    /**
+     * 1-100 (default 80): JPEG quality of the frames and encoder quality.
+     * @default 80
+     */
+    video_quality: number;
+  };
+  ffmpeg: {
+    found: boolean;
+    /** The program that will be run. */
+    path: string | null;
+    /**
+     * - `"env"`: The `BMCP_FFMPEG` environment variable.
+     * - `"next_to_exe"`: `ffmpeg.exe` next to browsermcp.exe.
+     * - `"path"`: A folder on `PATH` (e.g. installed with winget).
+     */
+    source: "env" | "next_to_exe" | "path" | null;
+    /** First line of `ffmpeg -version`, e.g. "ffmpeg version 7.1-full_build-www.gyan.dev". */
+    version: string | null;
+    /** The value of `BMCP_FFMPEG`, when set (even when it points nowhere). */
+    env: string | null;
+    /** The folder to put ffmpeg.exe in (next to browsermcp.exe). */
+    exe_dir: string | null;
+    /** The install command for Windows. */
+    install: string;
+  };
+  /** `data/recordings` (one folder per recording). */
+  recordings_dir: string;
+  /** `data/videos` (record_video_start without a recording). */
+  videos_dir: string;
+}
+
 // ---- record.start ----
 
 /** Arguments of `record.start`. */
@@ -6242,16 +6533,19 @@ export interface RecordStopOutput {
 export interface RecordVideoStartArgs {
   /** Tab id from tabs_list. Default: the most recently opened tab. */
   tab?: number | null;
-  /** Frames per second, 1–60 (default 10). */
+  /** Frames per second, 1–60 (default: record_settings video_fps, 10 out of the box). */
   fps?: number | null;
   /**
-   * webm (VP9, default) or mp4 (H.264).
+   * webm (VP9) or mp4 (H.264) (default: record_settings video_format, webm).
    *
    * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
    * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
    */
   format?: "webm" | "mp4" | null;
-  /** 1–100 (default 80): JPEG quality of the frames and encoder quality. */
+  /**
+   * 1–100: JPEG quality of the frames and encoder quality (default: record_settings
+   * video_quality, 80).
+   */
   quality?: number | null;
 }
 
@@ -6888,11 +7182,17 @@ export interface RunStartArgs {
     /** Inline rows: an array of objects. */
     rows?: Record<string, unknown>[] | null;
   };
-  /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
+  /**
+   * Rows at once (default: script_settings run_parallel, 4 out of the box; limited to CPU
+   * count / 2 and free RAM / 400 MB).
+   */
   parallel?: number | null;
-  /** Extra attempts for a failed row, with exponential backoff (default 1). */
+  /**
+   * Extra attempts for a failed row, with exponential backoff (default: script_settings
+   * run_retries, 1).
+   */
   retries?: number | null;
-  /** Per-row timeout in seconds (default 300). */
+  /** Per-row timeout in seconds (default: script_settings run_timeout_secs, 300). */
   timeout_secs?: number | null;
   /** Stop the run at the first failed row (default false). */
   stop_on_error?: boolean | null;
@@ -7193,7 +7493,10 @@ export interface ScriptRunArgs {
   code?: string | null;
   /** Values the script reads as inputs.<key> (passed as strings). */
   inputs?: Record<string, unknown> | null;
-  /** Kill the script after this many seconds (default 300). */
+  /**
+   * Kill the script after this many seconds (default: script_settings script_timeout_secs,
+   * 300 out of the box).
+   */
   timeout_secs?: number | null;
 }
 
@@ -7256,6 +7559,89 @@ export interface ScriptSaveOutput {
   size: number;
   /** Last change, milliseconds since the Unix epoch. */
   modified_ms: number;
+}
+
+// ---- script.settings ----
+
+/** Arguments of `script.settings`. */
+export interface ScriptSettingsArgs {
+  /** Back to the defaults first (the other fields then apply on top). */
+  reset?: boolean | null;
+  /** Default timeout of script_run, seconds (1-86400). */
+  script_timeout_secs?: number | null;
+  /** Default per-row timeout of run_start, seconds (1-86400). */
+  run_timeout_secs?: number | null;
+  /** Default rows at once of run_start (1 to the hard limit). */
+  run_parallel?: number | null;
+  /** Default extra attempts of a failed row (0-10). */
+  run_retries?: number | null;
+}
+
+/** Result of `script.settings`. */
+export interface ScriptSettingsOutput {
+  /** The settings in force (saved in data/config/scripts.json). */
+  settings: {
+    /**
+     * Seconds before `script.run` (and a cron trigger's script) is stopped (default 300).
+     * @default 300
+     */
+    script_timeout_secs: number;
+    /**
+     * Seconds per row of a mass run before the row is stopped (default 300).
+     * @default 300
+     */
+    run_timeout_secs: number;
+    /**
+     * Rows of a mass run at once (default 4; still capped by CPUs and free RAM).
+     * @default 4
+     */
+    run_parallel: number;
+    /**
+     * Extra attempts for a failed row (default 1).
+     * @default 1
+     */
+    run_retries: number;
+  };
+  /** The built-in defaults. */
+  defaults: {
+    /**
+     * Seconds before `script.run` (and a cron trigger's script) is stopped (default 300).
+     * @default 300
+     */
+    script_timeout_secs: number;
+    /**
+     * Seconds per row of a mass run before the row is stopped (default 300).
+     * @default 300
+     */
+    run_timeout_secs: number;
+    /**
+     * Rows of a mass run at once (default 4; still capped by CPUs and free RAM).
+     * @default 4
+     */
+    run_parallel: number;
+    /**
+     * Extra attempts for a failed row (default 1).
+     * @default 1
+     */
+    run_retries: number;
+  };
+  host: {
+    /** bmcp-script-host(.exe) was found: scripts and mass runs can start. */
+    found: boolean;
+    path: string | null;
+    /** Why it was not found. */
+    error: string | null;
+    /** How to fix it. */
+    hint: string | null;
+  };
+  /** `data/scripts` (saved scripts). */
+  scripts_dir: string;
+  /** `data/runs` (exports of mass runs). */
+  runs_dir: string;
+  /** Hard upper limit of rows at once. */
+  max_parallel: number;
+  /** What this machine can run at once right now (CPUs / 2, free RAM / 400 MB). */
+  recommended_parallel: number;
 }
 
 // ---- search.config ----
@@ -8216,8 +8602,9 @@ export interface TabsOpenArgs {
    */
   profile?: string | null;
   /**
-   * In-memory profile, nothing is written to disk (default false). With `profile`: the
-   * in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+   * In-memory profile, nothing is written to disk. With `profile`: the in-memory profile
+   * of that name (shared by its tabs, gone when its last tab closes). Default: false, or
+   * the profile's `incognito_default` (profile_create) when `profile` is given.
    */
   incognito?: boolean | null;
   /**
@@ -9056,6 +9443,10 @@ export interface Commands {
   "ai.session_transcript": { args: AiSessionTranscriptArgs; output: AiSessionTranscriptOutput };
   /** List AI sessions (agents) with id, provider, color, status, the tabs each touched, access settings and the number of pending approval requests. */
   "ai.sessions_list": { args: AiSessionsListArgs; output: AiSessionsListOutput };
+  /** Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state. */
+  "api.config": { args: ApiConfigArgs; output: ApiConfigOutput };
+  /** How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed). */
+  "api.info": { args: ApiInfoArgs; output: ApiInfoOutput };
   /** Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark. */
   "bookmarks.add": { args: BookmarksAddArgs; output: BookmarksAddOutput };
   /** Create a bookmark folder at the end of a parent folder (default: the bookmarks bar). Returns the new folder. */
@@ -9118,7 +9509,7 @@ export interface Commands {
   "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
   /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
   "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
-  /** Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. */
+  /** Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API). */
   "identity.assign": { args: IdentityAssignArgs; output: IdentityAssignOutput };
   /** Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set. */
   "identity.fit_to_proxy": { args: IdentityFitToProxyArgs; output: IdentityFitToProxyOutput };
@@ -9258,7 +9649,7 @@ export interface Commands {
   "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
   /** Stop a plugin and delete its folder from data/plugins. */
   "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
-  /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
+  /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}. */
   "profile.create": { args: ProfileCreateArgs; output: ProfileCreateOutput };
   /** Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first. */
   "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
@@ -9286,7 +9677,9 @@ export interface Commands {
   "proxy.pool_remove": { args: ProxyPoolRemoveArgs; output: ProxyPoolRemoveOutput };
   /** Release proxy leases of a mass run (one row, or the whole run). */
   "proxy.release": { args: ProxyReleaseArgs; output: ProxyReleaseOutput };
-  /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test. */
+  /** Read the proxy routing of one profile or of all: the split rules (proxy_rules_set) in order and the default route (its proxy), passwords masked. */
+  "proxy.rules_get": { args: ProxyRulesGetArgs; output: ProxyRulesGetOutput };
+  /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get keep their stored password. Test a URL with proxy_rules_test. */
   "proxy.rules_set": { args: ProxyRulesSetArgs; output: ProxyRulesSetOutput };
   /** Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does. */
   "proxy.rules_test": { args: ProxyRulesTestArgs; output: ProxyRulesTestOutput };
@@ -9296,6 +9689,8 @@ export interface Commands {
   "record.get": { args: RecordGetArgs; output: RecordGetOutput };
   /** List recordings (running and saved), newest first. */
   "record.list": { args: RecordListArgs; output: RecordListOutput };
+  /** Read or change the video defaults (fps, format, quality; saved in data/config/recording.json; used when record_video_start / record_start video=true leave them out). Also reports where ffmpeg was found (BMCP_FFMPEG, next to browsermcp.exe, PATH) and the recordings / videos folders. No arguments = just read. */
+  "record.settings": { args: RecordSettingsArgs; output: RecordSettingsOutput };
   /** Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id. */
   "record.start": { args: RecordStartArgs; output: RecordStartOutput };
   /** Stop a recording and write its files. Returns the paths of actions.jsonl, meta.json and the optional video / traffic log. */
@@ -9344,6 +9739,8 @@ export interface Commands {
   "script.run": { args: ScriptRunArgs; output: ScriptRunOutput };
   /** Create or overwrite a saved TypeScript script in data/scripts/<name>.ts. */
   "script.save": { args: ScriptSaveArgs; output: ScriptSaveOutput };
+  /** Read or change the defaults of script_run (timeout) and run_start (timeout per row, rows at once, retries), saved in data/config/scripts.json and used when a call leaves them out. Also reports whether bmcp-script-host was found, the folders, and how many rows this machine can run at once. No arguments = just read. */
+  "script.settings": { args: ScriptSettingsArgs; output: ScriptSettingsOutput };
   /** Read or change the address bar's search engines (data/config/search.json): default (engine id), add {name, url with %s, keyword?}, update {id, name, url, keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}. */
   "search.config": { args: SearchConfigArgs; output: SearchConfigOutput };
   /** The search results URL for a query with the browser's search engines (the default one, or "<keyword> words", or `engine`). Opens nothing: pass the url to nav_goto. Returns {url, engine}. */
@@ -9682,6 +10079,24 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "api.config": {
+    wireName: "api_config",
+    description: "Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.",
+    toolset: "system",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "api.info": {
+    wireName: "api_info",
+    description: "How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed).",
+    toolset: "system",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "bookmarks.add": {
     wireName: "bookmarks_add",
     description: "Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark.",
@@ -9963,7 +10378,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "identity.assign": {
     wireName: "identity_assign",
-    description: "Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included.",
+    description: "Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API).",
     toolset: "stealth",
     sensitivity: "act",
     mutatesTab: false,
@@ -10593,7 +11008,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "profile.create": {
     wireName: "profile_create",
-    description: "Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.",
+    description: "Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}.",
     toolset: "profile",
     sensitivity: "act",
     mutatesTab: false,
@@ -10717,9 +11132,18 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     palette: null,
     defaultKeys: [],
   },
+  "proxy.rules_get": {
+    wireName: "proxy_rules_get",
+    description: "Read the proxy routing of one profile or of all: the split rules (proxy_rules_set) in order and the default route (its proxy), passwords masked.",
+    toolset: "stealth",
+    sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
   "proxy.rules_set": {
     wireName: "proxy_rules_set",
-    description: "Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.",
+    description: "Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get keep their stored password. Test a URL with proxy_rules_test.",
     toolset: "stealth",
     sensitivity: "secret",
     mutatesTab: false,
@@ -10758,6 +11182,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
     description: "List recordings (running and saved), newest first.",
     toolset: "record",
     sensitivity: "read",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "record.settings": {
+    wireName: "record_settings",
+    description: "Read or change the video defaults (fps, format, quality; saved in data/config/recording.json; used when record_video_start / record_start video=true leave them out). Also reports where ffmpeg was found (BMCP_FFMPEG, next to browsermcp.exe, PATH) and the recordings / videos folders. No arguments = just read.",
+    toolset: "record",
+    sensitivity: "act",
     mutatesTab: false,
     palette: null,
     defaultKeys: [],
@@ -10972,6 +11405,15 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   "script.save": {
     wireName: "script_save",
     description: "Create or overwrite a saved TypeScript script in data/scripts/<name>.ts.",
+    toolset: "script",
+    sensitivity: "act",
+    mutatesTab: false,
+    palette: null,
+    defaultKeys: [],
+  },
+  "script.settings": {
+    wireName: "script_settings",
+    description: "Read or change the defaults of script_run (timeout) and run_start (timeout per row, rows at once, retries), saved in data/config/scripts.json and used when a call leaves them out. Also reports whether bmcp-script-host was found, the folders, and how many rows this machine can run at once. No arguments = just read.",
     toolset: "script",
     sensitivity: "act",
     mutatesTab: false,
@@ -11622,6 +12064,21 @@ export interface Browser {
      */
     sessions_list(args?: AiSessionsListArgs, options?: CallOptions): Promise<AiSessionsListOutput>;
   };
+  /** Commands `api.*`. */
+  api: {
+    /**
+     * Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.
+     *
+     * `api.config` (MCP: `api_config`): toolset `system`, act.
+     */
+    config(args?: ApiConfigArgs, options?: CallOptions): Promise<ApiConfigOutput>;
+    /**
+     * How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed).
+     *
+     * `api.info` (MCP: `api_info`): toolset `system`, read.
+     */
+    info(args?: ApiInfoArgs, options?: CallOptions): Promise<ApiInfoOutput>;
+  };
   /** Commands `bookmarks.*`. */
   bookmarks: {
     /**
@@ -11847,7 +12304,7 @@ export interface Browser {
   /** Commands `identity.*`. */
   identity: {
     /**
-     * Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included.
+     * Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API).
      *
      * `identity.assign` (MCP: `identity_assign`): toolset `stealth`, act.
      */
@@ -12298,7 +12755,7 @@ export interface Browser {
   /** Commands `profile.*`. */
   profile: {
     /**
-     * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
+     * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}.
      *
      * `profile.create` (MCP: `profile_create`): toolset `profile`, act.
      */
@@ -12385,7 +12842,13 @@ export interface Browser {
      */
     release(args: ProxyReleaseArgs, options?: CallOptions): Promise<ProxyReleaseOutput>;
     /**
-     * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.
+     * Read the proxy routing of one profile or of all: the split rules (proxy_rules_set) in order and the default route (its proxy), passwords masked.
+     *
+     * `proxy.rules_get` (MCP: `proxy_rules_get`): toolset `stealth`, read.
+     */
+    rules_get(args?: ProxyRulesGetArgs, options?: CallOptions): Promise<ProxyRulesGetOutput>;
+    /**
+     * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get keep their stored password. Test a URL with proxy_rules_test.
      *
      * `proxy.rules_set` (MCP: `proxy_rules_set`): toolset `stealth`, secret.
      */
@@ -12417,6 +12880,12 @@ export interface Browser {
      * `record.list` (MCP: `record_list`): toolset `record`, read.
      */
     list(args?: RecordListArgs, options?: CallOptions): Promise<RecordListOutput>;
+    /**
+     * Read or change the video defaults (fps, format, quality; saved in data/config/recording.json; used when record_video_start / record_start video=true leave them out). Also reports where ffmpeg was found (BMCP_FFMPEG, next to browsermcp.exe, PATH) and the recordings / videos folders. No arguments = just read.
+     *
+     * `record.settings` (MCP: `record_settings`): toolset `record`, act.
+     */
+    settings(args?: RecordSettingsArgs, options?: CallOptions): Promise<RecordSettingsOutput>;
     /**
      * Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id.
      *
@@ -12567,6 +13036,12 @@ export interface Browser {
      * `script.save` (MCP: `script_save`): toolset `script`, act.
      */
     save(args: ScriptSaveArgs, options?: CallOptions): Promise<ScriptSaveOutput>;
+    /**
+     * Read or change the defaults of script_run (timeout) and run_start (timeout per row, rows at once, retries), saved in data/config/scripts.json and used when a call leaves them out. Also reports whether bmcp-script-host was found, the folders, and how many rows this machine can run at once. No arguments = just read.
+     *
+     * `script.settings` (MCP: `script_settings`): toolset `script`, act.
+     */
+    settings(args?: ScriptSettingsArgs, options?: CallOptions): Promise<ScriptSettingsOutput>;
   };
   /** Commands `search.*`. */
   search: {
@@ -12966,6 +13441,10 @@ export function createBrowser(transport: Transport): Browser {
       session_transcript: (args, options) => call<AiSessionTranscriptOutput>("ai.session_transcript", args, options),
       sessions_list: (args, options) => call<AiSessionsListOutput>("ai.sessions_list", args, options),
     },
+    api: {
+      config: (args, options) => call<ApiConfigOutput>("api.config", args, options),
+      info: (args, options) => call<ApiInfoOutput>("api.info", args, options),
+    },
     bookmarks: {
       add: (args, options) => call<BookmarksAddOutput>("bookmarks.add", args, options),
       add_folder: (args, options) => call<BookmarksAddFolderOutput>("bookmarks.add_folder", args, options),
@@ -13128,6 +13607,7 @@ export function createBrowser(transport: Transport): Browser {
       pool_list: (args, options) => call<ProxyPoolListOutput>("proxy.pool_list", args, options),
       pool_remove: (args, options) => call<ProxyPoolRemoveOutput>("proxy.pool_remove", args, options),
       release: (args, options) => call<ProxyReleaseOutput>("proxy.release", args, options),
+      rules_get: (args, options) => call<ProxyRulesGetOutput>("proxy.rules_get", args, options),
       rules_set: (args, options) => call<ProxyRulesSetOutput>("proxy.rules_set", args, options),
       rules_test: (args, options) => call<ProxyRulesTestOutput>("proxy.rules_test", args, options),
     },
@@ -13135,6 +13615,7 @@ export function createBrowser(transport: Transport): Browser {
       codegen: (args, options) => call<RecordCodegenOutput>("record.codegen", args, options),
       get: (args, options) => call<RecordGetOutput>("record.get", args, options),
       list: (args, options) => call<RecordListOutput>("record.list", args, options),
+      settings: (args, options) => call<RecordSettingsOutput>("record.settings", args, options),
       start: (args, options) => call<RecordStartOutput>("record.start", args, options),
       stop: (args, options) => call<RecordStopOutput>("record.stop", args, options),
       video_start: (args, options) => call<RecordVideoStartOutput>("record.video_start", args, options),
@@ -13163,6 +13644,7 @@ export function createBrowser(transport: Transport): Browser {
       list: (args, options) => call<ScriptListOutput>("script.list", args, options),
       run: (args, options) => call<ScriptRunOutput>("script.run", args, options),
       save: (args, options) => call<ScriptSaveOutput>("script.save", args, options),
+      settings: (args, options) => call<ScriptSettingsOutput>("script.settings", args, options),
     },
     search: {
       config: (args, options) => call<SearchConfigOutput>("search.config", args, options),

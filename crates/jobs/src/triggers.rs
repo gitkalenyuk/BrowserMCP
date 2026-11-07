@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::runner::{DEFAULT_TIMEOUT_SECS, ScriptSource};
+use crate::runner::ScriptSource;
 use crate::store::{TriggerRecord, now_ms};
 use crate::{Inner, topics};
 
@@ -164,7 +164,8 @@ async fn fire(inner: Arc<Inner>, trigger: TriggerRecord) {
             ScriptSource::Name(&trigger.script),
             &inputs,
             &[],
-            Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            // Settings → Recording & scripts (data/config/scripts.json).
+            Duration::from_secs(inner.settings().script_timeout_secs),
             &inner.shutdown,
         )
         .await;

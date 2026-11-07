@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 bmcp-core.workspace = true
+# api.config refuses the CDP port while a profile has a stealth identity (identities.json).
+bmcp-identity = { path = "../identity" }
 # `ws` = WebSocket upgrade support for /v1/ws.
 axum = { workspace = true, features = ["ws"] }
 rmcp.workspace = true
@@ -20,6 +22,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 # FakeBackend for the router tests.
 bmcp-core = { path = "../core", features = ["testing"] }
 # `ServiceExt::oneshot`: send one request through the router without a socket.

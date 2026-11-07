@@ -631,3 +631,70 @@ async fn video_without_ffmpeg_or_bad_args_is_a_clear_error() {
     let missing = crate::video::ffmpeg_missing();
     assert!(missing.hint.unwrap().contains("winget install Gyan.FFmpeg"));
 }
+
+#[tokio::test]
+async fn record_settings_are_saved_and_used_by_new_videos() {
+    let h = Harness::new();
+    let read = h.ok("record.settings", json!({})).await;
+    assert_eq!(read["settings"]["video_fps"], 10);
+    assert_eq!(read["settings"]["video_format"], "webm");
+    assert!(
+        read["recordings_dir"]
+            .as_str()
+            .unwrap()
+            .ends_with("recordings")
+    );
+    assert!(
+        read["ffmpeg"]["install"]
+            .as_str()
+            .unwrap()
+            .contains("winget")
+    );
+    // A read writes no settings (only creates the folders it offers to open).
+    assert!(!h.data.path().join("config").join("recording.json").exists());
+    assert!(h.data.path().join("videos").is_dir());
+
+    let saved = h
+        .ok(
+            "record.settings",
+            json!({ "video_format": "mp4", "video_fps": 24 }),
+        )
+        .await;
+    assert_eq!(saved["settings"]["video_format"], "mp4");
+    assert_eq!(saved["defaults"]["video_format"], "webm");
+    let err = h
+        .call("record.settings", json!({ "video_quality": 0 }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+
+    // A recording with video now writes an mp4 (the fake encoder does not care).
+    let seen = Arc::new(Mutex::new(None));
+    let seen_in = seen.clone();
+    h.registry
+        .extensions()
+        .insert(crate::EncoderOverride(Box::new(move |out| {
+            *seen_in.lock().unwrap() = Some(out.clone());
+            Box::new(move |_, _| {
+                Ok(crate::video::Encoder {
+                    program: std::env::current_exe().unwrap(),
+                    args: vec![
+                        "video::tests::fake_encoder_process".into(),
+                        "--exact".into(),
+                    ],
+                    env: vec![("FAKE_ENCODER_OUT".into(), out.display().to_string())],
+                    codec: "fake".into(),
+                })
+            })
+        })));
+    let out = h
+        .ok("record.start", json!({ "name": "mp4", "video": true }))
+        .await;
+    assert!(out["video"].as_str().unwrap().ends_with("video.mp4"));
+    h.ok("record.stop", json!({})).await;
+    let path = seen.lock().unwrap().clone().unwrap();
+    assert_eq!(path.extension().unwrap(), "mp4");
+
+    let reset = h.ok("record.settings", json!({ "reset": true })).await;
+    assert_eq!(reset["settings"]["video_fps"], 10);
+}

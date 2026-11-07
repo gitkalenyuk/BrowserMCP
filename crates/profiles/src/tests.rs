@@ -322,6 +322,135 @@ async fn create_rejects_bad_input_without_storing_anything() {
 }
 
 #[tokio::test]
+async fn incognito_default_is_stored_listed_and_offered_to_tabs_open() {
+    let s = setup();
+    let out = call(
+        &s,
+        "profile.create",
+        json!({"id": "private", "incognito_default": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["incognito_default"], true);
+    // Other settings changes leave it alone.
+    call(
+        &s,
+        "profile.create",
+        json!({"id": "private", "accept_language": "de"}),
+    )
+    .await
+    .unwrap();
+    let list = call(&s, "profile.list", json!({})).await.unwrap();
+    let entry = |id: &str| {
+        list["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(entry("private")["incognito_default"], true);
+    assert_eq!(entry("default")["incognito_default"], false);
+    let defaults = s
+        .registry
+        .extensions()
+        .get::<bmcp_core::commands::tabs::ProfileTabDefaults>()
+        .unwrap();
+    assert!(defaults.0.incognito_default("private"));
+    assert!(!defaults.0.incognito_default("default"));
+    assert!(!defaults.0.incognito_default("unknown"));
+
+    let out = call(
+        &s,
+        "profile.create",
+        json!({"id": "private", "incognito_default": false}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["incognito_default"], false);
+    assert!(!defaults.0.incognito_default("private"));
+    // false is the default: not written to the file.
+    assert!(!s.file("profiles.json").contains("incognito_default"));
+}
+
+#[tokio::test]
+async fn webrtc_policy_is_stored_and_applied() {
+    let s = setup();
+    let out = call(
+        &s,
+        "profile.create",
+        json!({"id": "calls", "proxy": "socks5://u:p@10.0.0.1:1080"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["webrtc"], "auto");
+    assert_eq!(out["webrtc_applied"], "disable_non_proxied_udp");
+    let out = call(
+        &s,
+        "profile.create",
+        json!({"id": "calls", "webrtc": "public_only"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["webrtc"], "public_only");
+    let last = s.backend.last("calls").unwrap();
+    assert_eq!(
+        pref(&last, "webrtc.ip_handling_policy").unwrap(),
+        "default_public_interface_only"
+    );
+    let list = call(&s, "profile.list", json!({})).await.unwrap();
+    let calls = list["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "calls")
+        .unwrap()
+        .clone();
+    assert_eq!(calls["webrtc"], "public_only");
+    assert_eq!(calls["webrtc_applied"], "default_public_interface_only");
+    assert!(s.file("profiles.json").contains("public_only"));
+    let err = call(
+        &s,
+        "profile.create",
+        json!({"id": "calls", "webrtc": "off"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+}
+
+#[tokio::test]
+async fn create_refuses_an_identity_while_the_cdp_port_is_open() {
+    let s = setup();
+    call(
+        &s,
+        "identity.generate",
+        json!({"seed": 1, "id": "alpha", "save": true}),
+    )
+    .await
+    .unwrap();
+    s.registry.extensions().insert(bmcp_core::CdpLaunch {
+        port: Some(9222),
+        ..Default::default()
+    });
+    let err = call(
+        &s,
+        "profile.create",
+        json!({"id": "shop", "identity": "alpha"}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, bmcp_core::ErrorCode::InvalidParams);
+    assert!(!s.file("profiles.json").contains("\"shop\""));
+    assert!(!s.file("identities.json").contains("\"shop\""));
+    // Removing it, and profiles without one, still work.
+    call(&s, "profile.create", json!({"id": "shop", "identity": ""}))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn proxy_bypass_for_fixed_proxies_and_pool_references() {
     let s = setup();
     call(

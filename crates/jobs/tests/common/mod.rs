@@ -39,6 +39,7 @@ pub fn config(root: &Path) -> JobsConfig {
         // The fake host always honours its own timeout (exit 124). A long grace keeps a slow
         // process start on a loaded machine from turning that into "killed by us".
         kill_grace: Duration::from_secs(60),
+        settings_path: Some(root.join("config/scripts.json")),
     }
 }
 

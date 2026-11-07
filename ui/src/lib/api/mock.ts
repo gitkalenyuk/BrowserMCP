@@ -323,7 +323,8 @@ export class MockApi implements BrowserApi {
         tabs: (this.#state.get(p.id)?.tabs ?? []).map((t) => t.id),
       })),
     }),
-    'profile.create': ({ id }) => {
+    'profile.create': ({ id, proxy, identity, accept_language, incognito_default, webrtc }) => {
+      if (!/^[a-z0-9_-]{1,64}$/.test(id)) throw new RpcError('INVALID_PARAMS', `invalid profile id "${id}": use 1-64 chars of a-z, 0-9, '-' or '_'`);
       const created = !this.#profiles.some((p) => p.id === id);
       if (created) {
         this.#profiles.push({
@@ -331,7 +332,18 @@ export class MockApi implements BrowserApi {
           identity: null, stored: true, open: false, incognito: false, tabs: [], launch: false,
         });
       }
-      return { id, created };
+      // Like the core: only the given fields change, "" removes, passwords come back masked.
+      const p = this.#profiles.find((x) => x.id === id)!;
+      if (proxy !== undefined) {
+        const url = proxy.trim();
+        p.proxy = url && url !== 'direct' ? url.replace(/^(\w+:\/\/[^:@/]+):[^@/]*@/, '$1:***@') : null;
+        p.proxy_server = p.proxy ? 'socks5://127.0.0.1:53122' : null;
+      }
+      if (identity !== undefined) p.identity = identity || null;
+      if (accept_language !== undefined) p.accept_language = accept_language.trim() || null;
+      if (incognito_default !== undefined) p.incognito_default = incognito_default;
+      if (webrtc !== undefined) p.webrtc = webrtc;
+      return { id, created, incognito_default: p.incognito_default ?? false, webrtc: p.webrtc ?? 'auto' };
     },
     'profile.update': ({ id, label, color }) => {
       const p = this.#profiles.find((x) => x.id === id);

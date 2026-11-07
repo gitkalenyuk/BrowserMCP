@@ -141,6 +141,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tabs_open_uses_the_profile_incognito_default() {
+        struct Private;
+        impl tabs::TabDefaults for Private {
+            fn incognito_default(&self, profile: &str) -> bool {
+                profile == "private"
+            }
+        }
+        let fake = FakeBackend::new();
+        let registry = registry();
+        registry
+            .extensions()
+            .insert(tabs::ProfileTabDefaults(std::sync::Arc::new(Private)));
+        let open = |args: Value| {
+            let registry = &registry;
+            let fake = fake.clone();
+            async move {
+                registry
+                    .call(ctx(Caller::Rest, fake), "tabs.open", args)
+                    .await
+                    .unwrap();
+            }
+        };
+        open(json!({ "url": "https://a.test/", "profile": "private" })).await;
+        open(json!({ "url": "https://b.test/", "profile": "private", "incognito": false })).await;
+        open(json!({ "url": "https://c.test/", "profile": "work" })).await;
+        let calls = fake.calls();
+        let call = |url: &str| {
+            calls
+                .iter()
+                .find(|c| c.contains(url))
+                .cloned()
+                .unwrap_or_default()
+        };
+        assert!(
+            call("https://a.test/").contains("incognito: true"),
+            "{calls:?}"
+        );
+        assert!(
+            call("https://b.test/").contains("incognito: false"),
+            "{calls:?}"
+        );
+        assert!(
+            call("https://c.test/").contains("incognito: false"),
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn tabs_activate_close_and_stop() {
         let fake =
             FakeBackend::with_tabs(&["https://a.test/", "https://b.test/", "https://c.test/"]);
