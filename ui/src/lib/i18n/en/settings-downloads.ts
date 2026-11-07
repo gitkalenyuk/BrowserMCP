@@ -1,0 +1,41 @@
+// Settings → Downloads. Conventions: ../index.svelte.ts.
+export default {
+  'settings.downloads.nav': 'Downloads',
+  'settings.downloads.title': 'Downloads',
+  'settings.downloads.intro': 'Where downloaded files go and whether the browser asks first. Saved in data/config/downloads.json.',
+  'settings.downloads.loadError': 'Could not read the download settings: {error}',
+  'settings.downloads.retry': 'Retry',
+
+  'settings.downloads.location': 'Location',
+  'settings.downloads.folder': 'Download folder',
+  'settings.downloads.folderDefaultHelp': 'The default: the downloads folder inside the portable data folder, so it moves with the browser.',
+  'settings.downloads.folderCustomHelp': 'A folder you chose. “Use default” goes back to the data folder.',
+  'settings.downloads.folderTypeHelp': 'Type or paste the full path of a folder; it is created if it does not exist. Default: {example}',
+  'settings.downloads.folderPlaceholder': 'C:\\Users\\you\\Downloads',
+  'settings.downloads.openFolder': 'Open folder',
+  'settings.downloads.change': 'Change…',
+  'settings.downloads.useDefault': 'Use default',
+  'settings.downloads.dirSaved': 'Downloads now go to the new folder',
+  'settings.downloads.dirReset': 'Downloads go to the default folder again',
+  'settings.downloads.ask': 'Ask where to save each file',
+  'settings.downloads.askHelp':
+    'Shows the Save as dialog for every download, starting in the folder above. Off: files are saved there right away (an existing file is never overwritten: “report (1).pdf”).',
+  'settings.downloads.askOn': 'The browser will ask where to save each file',
+  'settings.downloads.askOff': 'Files are saved straight into the download folder',
+
+  'settings.downloads.list': 'Downloads list',
+  'settings.downloads.count.one': '{n} download in the list',
+  'settings.downloads.count.few': '{n} downloads in the list',
+  'settings.downloads.count.many': '{n} downloads in the list',
+  'settings.downloads.count.other': '{n} downloads in the list',
+  'settings.downloads.listUnknown': 'The list is not available',
+  'settings.downloads.listHelp': 'Clearing the list keeps the files on disk and leaves running downloads alone.',
+  'settings.downloads.showAll': 'Show downloads',
+  'settings.downloads.clear': 'Clear the list',
+  'settings.downloads.cleared.one': 'Removed {n} entry from the list',
+  'settings.downloads.cleared.few': 'Removed {n} entries from the list',
+  'settings.downloads.cleared.many': 'Removed {n} entries from the list',
+  'settings.downloads.cleared.other': 'Removed {n} entries from the list',
+  'settings.downloads.runsNote':
+    'Tabs of mass runs always save into their run’s own folder (data/runs/<run>/downloads) and never ask, so no run waits for a dialog nobody sees.',
+};

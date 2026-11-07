@@ -11,7 +11,9 @@ import { windowKey, type NativeHost } from '../native';
 import { NetStore } from '../net/store.svelte';
 import { TerminalStore } from '../term/store.svelte';
 import { settings, type PanelId } from '../settings.svelte';
-import { NEWTAB_URL, resolveOmniboxInput } from '../urls';
+import { NEWTAB_URL } from '../urls';
+import { BrowserPrefs } from '../settings/e1-prefs.svelte';
+import { resolveWithEngines } from '../settings/e1-search';
 import {
   activeTab,
   cycleTab,
@@ -80,6 +82,8 @@ export class ChromeController {
   #keyIndex = $derived(buildKeyIndex(this.keymap));
   #closed: string[] = [];
   #unsubs: Array<() => void> = [];
+  /** Settings → Search / Startup & tabs: address bar engines, new tab page, Home button. */
+  prefs = new BrowserPrefs();
 
   /** The profile the browser started with (tabs without a `profile` belong to it). */
   launchProfile = $derived(this.workspaces.find((w) => w.launch)?.id ?? 'default');
@@ -107,6 +111,7 @@ export class ChromeController {
     const dispatch = (a: TabsAction) => (this.allTabs = reduceTabs(this.allTabs, a));
     const api = this.api;
     this.#unsubs.push(
+      this.prefs.start(api),
       api.onStatus((s) => {
         this.status = s;
         if (s === 'open') void this.#refresh();
@@ -217,13 +222,21 @@ export class ChromeController {
 
   // ---- tabs ------------------------------------------------------------------
 
-  newTab(url: string = NEWTAB_URL): void {
+  newTab(url: string = this.prefs.newTabUrl): void {
     // A new tab belongs to the workspace on screen (its profile: cookies, proxy, identity).
     const profile = this.workspaceId ?? undefined;
     const params = profile && this.workspaces.length > 0 ? { url, background: false, profile } : { url, background: false };
     void this.#guard(this.api.call('tabs.open', params));
-    if (url === NEWTAB_URL) this.focusOmnibox();
+    if (url === NEWTAB_URL || url === 'about:blank') this.focusOmnibox();
   }
+
+  /** The Home button: the home page (Settings → Startup & tabs) in the shown tab. */
+  home = (): void => {
+    const url = this.prefs.homeUrl;
+    const tab = this.tabs.activeId;
+    if (tab === null) this.newTab(url);
+    else void this.#guard(this.api.call('nav.goto', { tab, url }));
+  };
 
   closeTab(id: TabId | null = this.tabs.activeId): void {
     if (id === null) return;
@@ -335,7 +348,7 @@ export class ChromeController {
   // ---- navigation --------------------------------------------------------------
 
   navigate(input: string): boolean {
-    const url = resolveOmniboxInput(input);
+    const url = resolveWithEngines(input, this.prefs.search);
     if (!url) return false;
     const tab = this.tabs.activeId;
     if (tab === null) this.newTab(url);

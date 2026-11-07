@@ -137,3 +137,43 @@ questions (UI + Telegram), and plugin entries in the Ctrl+K palette. Code map: `
 * Settings sections load once and on their own polling (performance, blocking counters, plugin
   logs); changes made elsewhere (e.g. an agent calling `notify.config_set`) show after switching
   sections.
+
+## Startup & tabs, Search, Downloads, Site settings, Data & storage, About
+
+Date: 2026-11-07. Six more sections, each backed by real browser behaviour (new crate
+`crates/settings`, `bmcp-settings`; UI in `ui/src/settings/{Startup,Search,Downloads,
+SiteSettings,Data,About}Section.svelte`, logic in `ui/src/lib/settings/e1-*.ts`, strings in
+`ui/src/lib/i18n/{en,uk}/settings-{startup,search,downloads,sites,data,about}.ts`).
+
+| Section | What it does | Commands | Stored in |
+|---|---|---|---|
+| Startup & tabs | on startup: last session / new tab page / specific pages (`--url`, `--no-restore`, `--headless` still win); Home button + home page; what a new tab shows (built-in page, blank, a URL); new tabs at the end or next to the current one; keep the window when its last tab closes; recently closed tabs (reopen one, clear) | `startup.config`, `tabs.closed`, `tabs.closed_reopen`, `tabs.closed_clear` | `data/config/startup.json` (closed tabs: `data/runtime/session.json`) |
+| Search | default engine of the address bar (Google, Bing, DuckDuckGo, Brave, Startpage + own engines with `%s`), keywords (`d cats` searches DuckDuckGo), a "try it" box; the address bar hint says which engine | `search.config`, `search.url` | `data/config/search.json` |
+| Downloads | download folder (default `data/downloads`; mass runs keep `data/runs/<run>/downloads`), Save as dialog for each file, open the folder, clear the list | `downloads.config`, `downloads.clear`, `system.open_path` | `data/config/downloads.json` |
+| Site settings | remembered permissions per site (allow / block / forget, reset a site, add a rule, `*` = all sites), per-site zoom (reset one / all, open tabs follow at once), how pop-ups are handled | `permissions.list/set`, `zoom.list`, `zoom.reset` | `data/config/permissions.json`, `data/config/zoom.json` |
+| Data & storage | clear history / downloads list / cookies / cache / site data for a time range and a workspace; data folder size by area (each profile separately); import from Chrome (opens the library wizard); backup hint | `browsing_data.clear`, `browsing_data.usage`, `import.*` | — |
+| About | BrowserMCP / CEF / Chromium versions, OS, PID, uptime, API port and MCP / REST / WS addresses with the connection state, folders (data, logs, config, exe) with Open, license files next to the exe (open / show in folder), Copy diagnostics | `system.about` | — |
+
+How the browser follows the settings:
+
+* `crates/app` loads `BrowserSettings` before CEF starts, plans the start
+  (`bmcp_settings::startup::plan`) and opens the extra startup pages once the API listens; the
+  same instance goes into the registry, so a change through a command is in force at once.
+* `crates/cef`: the download handler takes the folder and the Save as flag from the settings
+  (never a dialog for mass-run tabs); `tabs.open` puts new tabs after the active one when asked;
+  `close_tab` keeps the window (new tab page in place of the last tab) when asked; tabs the
+  browser opens itself use the chosen new tab page; `zoom.rs` lists and resets per-host zoom.
+* Clearing data: history and the downloads list in `browsermcp.sqlite`; cookies through the
+  profile's cookie manager (with a time range: cookies of the sites visited in it); cache with
+  CDP `Network.clearBrowserCache` and site data with `Storage.clearDataForOrigin` in a tab of
+  that profile (an open one, else a temporary off-screen `about:blank` tab). Sites for site
+  data: visited in the range, plus for "all time" every cookie domain and IndexedDB folder.
+* `system.open_path` / `reveal_path` may also show the chosen download folder and the exe folder
+  (`bmcp_system::ExtraRoots`), for "Open folder" and the license files.
+* `settings.changed {area}` on the bus (UI subscribes to `settings.*`): every window's address
+  bar engine, new tab page and Home button follow at once (`ui/src/lib/settings/e1-prefs.svelte.ts`).
+
+Gaps: there is no native folder picker (the download folder is typed); the Save as dialog and
+the startup choices were not exercised in a live window (unit tests + the API e2e only); the
+cache is always cleared completely (Chromium's CDP has no time range for it); with a time range,
+cookies and site data are cleared for the sites visited in that range, not by creation time.

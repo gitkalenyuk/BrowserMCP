@@ -1,0 +1,41 @@
+// Налаштування → Завантаження. Правила: ../index.svelte.ts.
+export default {
+  'settings.downloads.nav': 'Завантаження',
+  'settings.downloads.title': 'Завантаження',
+  'settings.downloads.intro': 'Куди зберігаються завантажені файли і чи питає браузер перед збереженням. Зберігається в data/config/downloads.json.',
+  'settings.downloads.loadError': 'Не вдалося прочитати налаштування завантажень: {error}',
+  'settings.downloads.retry': 'Спробувати ще раз',
+
+  'settings.downloads.location': 'Розташування',
+  'settings.downloads.folder': 'Папка для завантажень',
+  'settings.downloads.folderDefaultHelp': 'За замовчуванням — папка downloads у портативній папці даних, тож вона переїжджає разом із браузером.',
+  'settings.downloads.folderCustomHelp': 'Вибрана вами папка. «За замовчуванням» повертає папку в даних браузера.',
+  'settings.downloads.folderTypeHelp': 'Введіть або вставте повний шлях до папки; якщо її немає, вона створиться. За замовчуванням: {example}',
+  'settings.downloads.folderPlaceholder': 'C:\\Users\\Ім’я\\Downloads',
+  'settings.downloads.openFolder': 'Відкрити папку',
+  'settings.downloads.change': 'Змінити…',
+  'settings.downloads.useDefault': 'За замовчуванням',
+  'settings.downloads.dirSaved': 'Тепер файли завантажуються в нову папку',
+  'settings.downloads.dirReset': 'Файли знову завантажуються в папку за замовчуванням',
+  'settings.downloads.ask': 'Питати, куди зберегти кожен файл',
+  'settings.downloads.askHelp':
+    'Для кожного завантаження відкривається вікно «Зберегти як» з папкою вище. Вимкнено: файли одразу зберігаються туди (наявний файл ніколи не перезаписується: «report (1).pdf»).',
+  'settings.downloads.askOn': 'Браузер питатиме, куди зберегти кожен файл',
+  'settings.downloads.askOff': 'Файли зберігаються одразу в папку завантажень',
+
+  'settings.downloads.list': 'Список завантажень',
+  'settings.downloads.count.one': '{n} завантаження в списку',
+  'settings.downloads.count.few': '{n} завантаження в списку',
+  'settings.downloads.count.many': '{n} завантажень у списку',
+  'settings.downloads.count.other': '{n} завантаження в списку',
+  'settings.downloads.listUnknown': 'Список недоступний',
+  'settings.downloads.listHelp': 'Після очищення списку файли лишаються на диску, а поточні завантаження тривають.',
+  'settings.downloads.showAll': 'Показати завантаження',
+  'settings.downloads.clear': 'Очистити список',
+  'settings.downloads.cleared.one': 'Видалено {n} запис зі списку',
+  'settings.downloads.cleared.few': 'Видалено {n} записи зі списку',
+  'settings.downloads.cleared.many': 'Видалено {n} записів зі списку',
+  'settings.downloads.cleared.other': 'Видалено {n} запису зі списку',
+  'settings.downloads.runsNote':
+    'Вкладки масових запусків завжди зберігають файли у власну папку запуску (data/runs/<run>/downloads) і ніколи не питають, тож жоден запуск не чекає на вікно, якого ніхто не бачить.',
+};

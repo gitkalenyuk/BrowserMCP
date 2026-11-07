@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { settings, type PanelId } from '../settings.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import type { CommandId } from '../keymap';
@@ -44,6 +45,11 @@
     {:else}
       <button class="icon-btn" aria-label="Reload" title="Reload (Ctrl+R)" disabled={!tab} onclick={chrome.reload}>
         <Icon name="reload" size={16} />
+      </button>
+    {/if}
+    {#if chrome.prefs.showHome}
+      <button class="icon-btn" aria-label={t('settings.startup.homeButton')} title={t('settings.startup.homeButton')} onclick={chrome.home}>
+        <Icon name="home" size={16} />
       </button>
     {/if}
   </div>

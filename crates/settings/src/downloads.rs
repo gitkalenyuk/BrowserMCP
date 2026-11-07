@@ -131,10 +131,14 @@ impl Command for Config {
         } else {
             settings.downloads()
         };
+        let dir = download_dir(&config, settings.data_root(), None);
+        // The browser creates it with the first download; create it now so "Open folder"
+        // works before that (best effort: a failure shows up when downloading).
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tracing::debug!(dir = %dir.display(), %err, "download folder not created");
+        }
         Ok(ConfigOutput {
-            dir: download_dir(&config, settings.data_root(), None)
-                .display()
-                .to_string(),
+            dir: dir.display().to_string(),
             default_dir: default_dir(settings.data_root()).display().to_string(),
             custom: config.dir.is_some(),
             ask: config.ask,

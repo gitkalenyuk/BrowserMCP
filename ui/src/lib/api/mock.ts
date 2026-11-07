@@ -4,6 +4,7 @@ import { createPanelMocks } from './mock-panels';
 import { createRecordRunsMocks } from './mock-record-runs';
 import { createScriptMocks } from './mock-scripts';
 import { createSettingsMocks } from './mock-settings';
+import { createE1Mocks } from './mock-e1';
 import type {
   Agent,
   ApiEvents,
@@ -66,6 +67,15 @@ function titleFor(url: string): string {
 
 type Handlers = { [M in Method]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
 
+/** The host a remembered zoom belongs to (like bmcp_core::zoom::host_of: www. is kept). */
+function zoomHost(url: string): string {
+  try {
+    return /^https?:/i.test(url) ? new URL(url).hostname.toLowerCase() : '';
+  } catch {
+    return '';
+  }
+}
+
 const AGENT_TOURS: Record<string, string[]> = {
   claude: [
     'https://www.bestbuy.com/site/laptops',
@@ -94,7 +104,9 @@ export class MockApi implements BrowserApi {
   #profiles: ProfileEntry[];
   /** Profile of the tab shown last. */
   #activeWorkspace: WorkspaceId;
-  #closedTabs: { url: string; profile: string }[] = [];
+  #closedTabs: { url: string; profile: string; title?: string }[] = [];
+  /** Remembered zoom per host (like data/config/zoom.json). */
+  #zoomHosts = new Map<string, number>();
   #state = new Map<WorkspaceId, WorkspaceState>();
   #agents: Agent[];
   #runs: Run[];
@@ -239,6 +251,38 @@ export class MockApi implements BrowserApi {
       const tab = this.#handlers['tabs.open']({ url: last.url, profile: last.profile }) as TabInfo;
       return { tab: tab.id };
     },
+    'tabs.closed': () => ({
+      tabs: [...this.#closedTabs].reverse().map((c, index) => ({
+        index,
+        url: c.url,
+        title: c.title ?? fallbackTitle(c.url),
+        profile: c.profile === (this.#profiles.find((p) => p.launch)?.id ?? 'default') ? null : c.profile,
+      })),
+    }),
+    'tabs.closed_reopen': ({ index }) => {
+      const at = this.#closedTabs.length - 1 - index;
+      if (index < 0 || at < 0) return { tab: null };
+      const [entry] = this.#closedTabs.splice(at, 1);
+      const tab = this.#handlers['tabs.open']({ url: entry.url, profile: entry.profile }) as TabInfo;
+      return { tab: tab.id };
+    },
+    'tabs.closed_clear': () => {
+      const cleared = this.#closedTabs.length;
+      this.#closedTabs = [];
+      return { cleared };
+    },
+    'zoom.list': () => ({
+      sites: [...this.#zoomHosts].sort(([a], [b]) => a.localeCompare(b)).map(([host, percent]) => ({ host, percent })),
+    }),
+    'zoom.reset': (args) => {
+      const host = args?.host?.trim().toLowerCase();
+      const hosts = host ? (this.#zoomHosts.has(host) ? [host] : []) : [...this.#zoomHosts.keys()];
+      for (const h of hosts) this.#zoomHosts.delete(h);
+      for (const t of this.#snapshot().tabs) {
+        if (hosts.includes(zoomHost(t.url))) this.#update(t.id, { zoom: null });
+      }
+      return { reset: hosts };
+    },
     'tabs.split': ({ left, right, ratio }) => {
       this.#require(left);
       this.#require(right);
@@ -267,6 +311,9 @@ export class MockApi implements BrowserApi {
       else if (delta !== undefined && delta > 0) next = steps.find((s) => s > now) ?? 500;
       else if (delta !== undefined && delta < 0) next = [...steps].reverse().find((s) => s < now) ?? 25;
       this.#update(id, { zoom: next === 100 ? null : next });
+      const host = zoomHost(t.url);
+      if (host && next === 100) this.#zoomHosts.delete(host);
+      else if (host) this.#zoomHosts.set(host, next);
       return { tab: id, level: next };
     },
     'profile.list': () => ({
@@ -412,6 +459,7 @@ export class MockApi implements BrowserApi {
     ),
     ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
     ...createSettingsMocks((e, p) => this.#emit(e, p), (e, h) => this.on(e, h), async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
+    ...createE1Mocks((e, p) => this.#emit(e, p), async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { useChrome } from '../state/chrome.svelte';
-  import { displayUrl, isNewTab, omniboxIntent } from '../urls';
+  import { t } from '../i18n/index.svelte';
+  import { intentWithEngines } from '../settings/e1-search';
+  import { displayUrl, isNewTab } from '../urls';
   import BookmarkStar from './BookmarkStar.svelte';
   import Icon, { type IconName } from './Icon.svelte';
 
@@ -14,11 +16,11 @@
   // What Enter would do with the current draft, shown as a hint while editing.
   const intent = $derived.by(() => {
     if (!focused || draft === displayUrl(url)) return null;
-    return omniboxIntent(draft);
+    return intentWithEngines(draft, chrome.prefs.search);
   });
 
   const icon: IconName = $derived.by(() => {
-    if (intent === 'search') return 'search';
+    if (intent?.kind === 'search') return 'search';
     if (focused || isNewTab(url)) return 'search';
     if (url.startsWith('https://')) return 'lock';
     return 'info';
@@ -81,7 +83,7 @@
   />
   {#if intent}
     <span class="hint" aria-hidden="true">
-      {intent === 'search' ? 'Search Google' : 'Open'} <kbd>Enter</kbd>
+      {intent.kind === 'search' ? t('settings.search.omniboxSearch', { engine: intent.engine }) : t('settings.search.omniboxOpen')} <kbd>Enter</kbd>
     </span>
   {:else}
     {#if chrome.active?.zoom}

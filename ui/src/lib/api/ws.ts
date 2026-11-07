@@ -9,7 +9,7 @@ export const DEFAULT_WS_URL = 'ws://127.0.0.1:47800/v1/ws';
  * bookmarks.* / history.* keep the bookmarks bar, the star and the library current (an older
  * core without them in its defaults still sends them). Subscribing twice is harmless.
  */
-export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*', 'bookmarks.*', 'history.*', 'permission.*'];
+export const EXTRA_TOPICS = ['ai.*', 'term.*', 'net.*', 'record.*', 'run.*', 'trigger.*', 'ui.*', 'script.*', 'bookmarks.*', 'history.*', 'permission.*', 'settings.*'];
 
 interface Pending {
   resolve: (value: unknown) => void;
