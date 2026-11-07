@@ -85,8 +85,10 @@
     if (!mock) return;
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== location.origin) return;
-      const data = e.data as { type?: string; url?: string; key?: KeyLike } | null;
+      const data = e.data as { type?: string; url?: string; key?: KeyLike; session?: string } | null;
       if (data?.type === 'bmcp:navigate' && typeof data.url === 'string') chrome.navigate(data.url);
+      // "Open in the AI panel" under the new tab's task box.
+      if (data?.type === 'bmcp:open-ai' && typeof data.session === 'string') chrome.openAiSession(data.session);
       // Shortcuts pressed inside the iframe (the real core intercepts them before the page).
       if (data?.type === 'bmcp:key' && data.key) chrome.handleKey(data.key);
     };

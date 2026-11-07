@@ -978,20 +978,20 @@ wrap_context_menu_handler! {
             model: Option<&mut MenuModel>,
         ) {
             let (Some(params), Some(model)) = (params, model) else { return };
-            match self.kind {
-                // Web pages: our own menu (menu.rs), drawn natively over the page.
-                ViewKind::Content => {
-                    if let Some(browser) = browser {
-                        crate::menu::fill(browser, params, model);
-                    }
-                }
-                ViewKind::DevTools => {}
-                // Alloy's default menu (Back, Reload, View source, ...) makes no sense on
-                // our chrome; keep it only for text fields (cut/copy/paste).
-                ViewKind::Ui | ViewKind::Palette => {
-                    if params.is_editable() != 1 {
-                        model.clear();
-                    }
+            let in_tab = match self.kind {
+                ViewKind::DevTools => return,
+                // Tabs: the web page menu, or a smaller one when the tab shows one of our
+                // pages (new tab, settings).
+                ViewKind::Content => true,
+                // Our chrome / palette: Cut / Copy / Paste / Select all and Copy link only
+                // (Alloy's default menu, Back / Reload / View source, makes no sense there).
+                ViewKind::Ui | ViewKind::Palette => false,
+            };
+            match browser {
+                // Our own model (menu.rs), drawn natively over the views.
+                Some(browser) => crate::menu::fill(browser, params, model, in_tab),
+                None => {
+                    model.clear();
                 }
             }
         }
@@ -1024,7 +1024,9 @@ wrap_context_menu_handler! {
             _event_flags: EventFlags,
         ) -> ::std::os::raw::c_int {
             match (self.kind, browser) {
-                (ViewKind::Content, Some(browser)) => crate::menu::run(browser, command_id),
+                (ViewKind::Content | ViewKind::Ui | ViewKind::Palette, Some(browser)) => {
+                    crate::menu::run(browser, command_id)
+                }
                 _ => 0,
             }
         }

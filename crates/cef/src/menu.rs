@@ -1,5 +1,10 @@
-//! The context menu of web pages: CEF's native menu (it is drawn over the page by the OS, so
-//! it is never hidden under a view) filled with our own model.
+//! The context menu of web pages and of our own UI: CEF's native menu (it is drawn over the
+//! page by the OS, so it is never hidden under a view) filled with our own model.
+//!
+//! Three surfaces ([`Surface`]): a web page gets the full menu; one of our pages in a tab
+//! (new tab, settings) gets editing, link and Back / Forward / Reload entries; our chrome and
+//! the palette get only Cut / Copy / Paste / Select all and "Copy link address" (and no menu
+//! at all on bare chrome, where Alloy would offer Back / Reload / View source).
 //!
 //! * [`build`] decides the entries from what was clicked (pure, unit-tested);
 //! * [`fill`] puts them into CEF's `MenuModel` (`on_before_context_menu`);
@@ -46,9 +51,35 @@ pub(crate) const WORKSPACE_MENU: i32 = USER_FIRST + 50;
 /// `WORKSPACE_FIRST + i` = open the link in workspace `i` of [`MenuFacts::workspaces`].
 pub(crate) const WORKSPACE_FIRST: i32 = USER_FIRST + 100;
 
+/// Where the menu was opened.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Surface {
+    /// A web page in a tab: the full menu.
+    #[default]
+    Web,
+    /// One of our own pages shown in a tab (new tab page, settings, library): editing and
+    /// link entries plus Back / Forward / Reload, no "Ask AI" / Print / Inspect.
+    OurPage,
+    /// Our chrome itself (tab strip, toolbar, side panels) or the Ctrl+K palette: only
+    /// Cut / Copy / Paste / Select all and "Copy link address"; nothing on bare chrome.
+    OurView,
+}
+
+// `cef_context_menu_edit_state_flags_t`: what the focused text field can do right now.
+pub(crate) const CAN_UNDO: u32 = 1;
+pub(crate) const CAN_REDO: u32 = 2;
+pub(crate) const CAN_CUT: u32 = 4;
+pub(crate) const CAN_COPY: u32 = 8;
+pub(crate) const CAN_PASTE: u32 = 16;
+pub(crate) const CAN_SELECT_ALL: u32 = 64;
+
 /// What was right-clicked, as far as the menu cares.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct MenuFacts {
+    pub surface: Surface,
+    /// `CAN_*` bits of a text field (Undo … Select all are greyed out when they would do
+    /// nothing); `None` = unknown, everything enabled.
+    pub edit_flags: Option<u32>,
     pub link: Option<String>,
     /// Source URL of a clicked image.
     pub image: Option<String>,
@@ -95,26 +126,110 @@ pub(crate) fn short(text: &str, max: usize) -> String {
     }
 }
 
-/// The menu for `facts` (pure). Groups are separated; there is never a separator at the
-/// start, at the end or twice in a row.
+/// Undo … Select all for a text field, greyed out by the field's edit flags.
+fn edit_group(facts: &MenuFacts) -> Vec<Entry> {
+    let can = |bit: u32| facts.edit_flags.is_none_or(|f| f & bit != 0);
+    let entry = |id: i32, label: &str, bit: u32| Entry::Item {
+        id,
+        label: label.to_string(),
+        enabled: can(bit),
+    };
+    vec![
+        entry(UNDO, "Undo", CAN_UNDO),
+        entry(REDO, "Redo", CAN_REDO),
+        Entry::Separator,
+        entry(CUT, "Cut", CAN_CUT),
+        entry(COPY, "Copy", CAN_COPY),
+        entry(PASTE, "Paste", CAN_PASTE),
+        entry(SELECT_ALL, "Select all", CAN_SELECT_ALL),
+    ]
+}
+
+/// "Open link in new tab" (+ other workspaces) and "Copy link address".
+fn link_group(facts: &MenuFacts) -> Vec<Entry> {
+    let mut g = vec![item(OPEN_LINK_NEW_TAB, "Open link in new tab")];
+    if !facts.workspaces.is_empty() {
+        g.push(Entry::Submenu {
+            id: WORKSPACE_MENU,
+            label: "Open link in workspace".into(),
+            items: facts
+                .workspaces
+                .iter()
+                .enumerate()
+                .map(|(i, (_, label))| (WORKSPACE_FIRST + i as i32, label.clone()))
+                .collect(),
+        });
+    }
+    g.push(item(COPY_LINK, "Copy link address"));
+    g
+}
+
+fn navigation_group(facts: &MenuFacts) -> Vec<Entry> {
+    vec![
+        Entry::Item {
+            id: BACK,
+            label: "Back".into(),
+            enabled: facts.can_back,
+        },
+        Entry::Item {
+            id: FORWARD,
+            label: "Forward".into(),
+            enabled: facts.can_forward,
+        },
+        item(RELOAD, "Reload"),
+    ]
+}
+
+/// Join groups with separators; there is never a separator at the start, at the end or twice
+/// in a row.
+fn join(groups: Vec<Vec<Entry>>) -> Vec<Entry> {
+    let mut out = Vec::new();
+    for g in groups.into_iter().filter(|g| !g.is_empty()) {
+        if !out.is_empty() {
+            out.push(Entry::Separator);
+        }
+        out.extend(g);
+    }
+    out
+}
+
+/// The menu for `facts` (pure). An empty menu is not shown at all.
 pub(crate) fn build(facts: &MenuFacts) -> Vec<Entry> {
+    match facts.surface {
+        Surface::Web => build_web(facts),
+        Surface::OurPage | Surface::OurView => build_ours(facts),
+    }
+}
+
+/// Our own pages and views: copy & paste where there is text, links can be copied (and, in
+/// a tab, opened), nothing that treats our UI as a web page.
+fn build_ours(facts: &MenuFacts) -> Vec<Entry> {
+    let in_tab = facts.surface == Surface::OurPage;
     let mut groups: Vec<Vec<Entry>> = Vec::new();
     if facts.link.is_some() {
-        let mut g = vec![item(OPEN_LINK_NEW_TAB, "Open link in new tab")];
-        if !facts.workspaces.is_empty() {
-            g.push(Entry::Submenu {
-                id: WORKSPACE_MENU,
-                label: "Open link in workspace".into(),
-                items: facts
-                    .workspaces
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (_, label))| (WORKSPACE_FIRST + i as i32, label.clone()))
-                    .collect(),
-            });
-        }
-        g.push(item(COPY_LINK, "Copy link address"));
-        groups.push(g);
+        groups.push(if in_tab {
+            link_group(facts)
+        } else {
+            vec![item(COPY_LINK, "Copy link address")]
+        });
+    }
+    if facts.editable {
+        groups.push(edit_group(facts));
+    } else if facts.selection.is_some() {
+        groups.push(vec![item(COPY, "Copy"), item(SELECT_ALL, "Select all")]);
+    }
+    let nothing_special = facts.link.is_none() && !facts.editable && facts.selection.is_none();
+    if in_tab && nothing_special {
+        groups.push(navigation_group(facts));
+    }
+    join(groups)
+}
+
+/// A web page's menu.
+fn build_web(facts: &MenuFacts) -> Vec<Entry> {
+    let mut groups: Vec<Vec<Entry>> = Vec::new();
+    if facts.link.is_some() {
+        groups.push(link_group(facts));
     }
     if facts.image.is_some() {
         groups.push(vec![
@@ -124,34 +239,15 @@ pub(crate) fn build(facts: &MenuFacts) -> Vec<Entry> {
         ]);
     }
     if facts.editable {
-        groups.push(vec![
-            item(UNDO, "Undo"),
-            item(REDO, "Redo"),
-            Entry::Separator,
-            item(CUT, "Cut"),
-            item(COPY, "Copy"),
-            item(PASTE, "Paste"),
-            item(SELECT_ALL, "Select all"),
-        ]);
+        groups.push(edit_group(facts));
     } else if facts.selection.is_some() {
         groups.push(vec![item(COPY, "Copy")]);
     }
     let nothing_special = facts.link.is_none() && facts.image.is_none() && !facts.editable;
     if nothing_special && facts.selection.is_none() {
-        groups.push(vec![
-            Entry::Item {
-                id: BACK,
-                label: "Back".into(),
-                enabled: facts.can_back,
-            },
-            Entry::Item {
-                id: FORWARD,
-                label: "Forward".into(),
-                enabled: facts.can_forward,
-            },
-            item(RELOAD, "Reload"),
-            item(PRINT, "Print…"),
-        ]);
+        let mut g = navigation_group(facts);
+        g.push(item(PRINT, "Print…"));
+        groups.push(g);
     }
     let ask = match (&facts.selection, &facts.link) {
         (Some(text), _) => format!("Ask AI about “{}”", short(text, 32)),
@@ -165,15 +261,7 @@ pub(crate) fn build(facts: &MenuFacts) -> Vec<Entry> {
         enabled: true,
     }]);
     groups.push(vec![item(INSPECT, "Inspect")]);
-
-    let mut out = Vec::new();
-    for g in groups.into_iter().filter(|g| !g.is_empty()) {
-        if !out.is_empty() {
-            out.push(Entry::Separator);
-        }
-        out.extend(g);
-    }
-    out
+    join(groups)
 }
 
 /// What `ui.ask_ai` carries for these facts: `(kind, text)`.
@@ -203,14 +291,38 @@ fn text(s: CefStringUserfree) -> String {
     CefString::from(&s).to_string()
 }
 
-/// Read what was clicked from CEF's params.
-pub(crate) fn facts(browser: &Browser, params: &ContextMenuParams) -> MenuFacts {
+/// Read what was clicked from CEF's params (`in_tab`: see [`fill`]).
+pub(crate) fn facts(browser: &Browser, params: &ContextMenuParams, in_tab: bool) -> MenuFacts {
     let non_empty = |s: String| (!s.is_empty()).then_some(s);
     let link = non_empty(text(params.link_url()));
     let image = (params.media_type() == ContextMenuMediaType::IMAGE)
         .then(|| text(params.source_url()))
         .and_then(non_empty);
     let selection = non_empty(text(params.selection_text())).filter(|s| !s.trim().is_empty());
+    let editable = params.is_editable() == 1;
+    let edit_flags = editable.then(|| {
+        let raw: sys::cef_context_menu_edit_state_flags_t = params.edit_state_flags().into();
+        raw.0 as u32
+    });
+    let surface = if !in_tab {
+        Surface::OurView
+    } else if crate::scheme::is_chrome_url(&text(params.page_url())) {
+        Surface::OurPage
+    } else {
+        Surface::Web
+    };
+    if surface == Surface::OurView {
+        // The chrome is not a tab: no history, no workspaces to open links in.
+        return MenuFacts {
+            surface,
+            edit_flags,
+            link,
+            image,
+            selection,
+            editable,
+            ..Default::default()
+        };
+    }
     let id = TabId(browser.identifier());
     let (can_back, can_forward, profile) = with_ui(|ui| {
         ui.tabs.get(&id).map_or((false, false, String::new()), |t| {
@@ -218,10 +330,12 @@ pub(crate) fn facts(browser: &Browser, params: &ContextMenuParams) -> MenuFacts 
         })
     });
     MenuFacts {
+        surface,
+        edit_flags,
         link,
         image,
         selection,
-        editable: params.is_editable() == 1,
+        editable,
         can_back,
         can_forward,
         workspaces: crate::profiles::workspaces()
@@ -231,9 +345,10 @@ pub(crate) fn facts(browser: &Browser, params: &ContextMenuParams) -> MenuFacts 
     }
 }
 
-/// `on_before_context_menu` of a web page: replace CEF's model with ours.
-pub(crate) fn fill(browser: &Browser, params: &ContextMenuParams, model: &MenuModel) {
-    let facts = facts(browser, params);
+/// `on_before_context_menu`: replace CEF's model with ours. `in_tab` = a tab (a web page or
+/// one of our pages in it); false = our chrome / palette view.
+pub(crate) fn fill(browser: &Browser, params: &ContextMenuParams, model: &MenuModel, in_tab: bool) {
+    let facts = facts(browser, params, in_tab);
     model.clear();
     for entry in build(&facts) {
         match entry {
@@ -490,6 +605,136 @@ mod tests {
         );
     }
 
+    /// Entries a menu of our own UI must never have.
+    const WEB_ONLY: [i32; 6] = [
+        ASK_AI,
+        INSPECT,
+        PRINT,
+        SAVE_IMAGE,
+        OPEN_IMAGE_NEW_TAB,
+        COPY_IMAGE_URL,
+    ];
+
+    fn view(facts: MenuFacts) -> Vec<Entry> {
+        build(&MenuFacts {
+            surface: Surface::OurView,
+            ..facts
+        })
+    }
+
+    fn page(facts: MenuFacts) -> Vec<Entry> {
+        build(&MenuFacts {
+            surface: Surface::OurPage,
+            ..facts
+        })
+    }
+
+    fn enabled(entries: &[Entry], wanted: i32) -> bool {
+        entries
+            .iter()
+            .any(|e| matches!(e, Entry::Item { id, enabled: true, .. } if *id == wanted))
+    }
+
+    #[test]
+    fn our_chrome_gets_copy_and_paste_only() {
+        // A text field (omnibox, AI chat input, settings field).
+        let field = view(MenuFacts {
+            editable: true,
+            ..Default::default()
+        });
+        assert_eq!(ids(&field), [UNDO, REDO, 0, CUT, COPY, PASTE, SELECT_ALL]);
+        // Selected text in a chat message / log / details.
+        let text = view(MenuFacts {
+            selection: Some("output line".into()),
+            ..Default::default()
+        });
+        assert_eq!(ids(&text), [COPY, SELECT_ALL]);
+        // A link: copy it (the chrome is not a tab to open it next to).
+        let link = view(MenuFacts {
+            link: Some("https://docs.test/".into()),
+            selection: Some("docs".into()),
+            ..Default::default()
+        });
+        assert_eq!(ids(&link), [COPY_LINK, 0, COPY, SELECT_ALL]);
+        // Bare chrome (buttons, tab strip): no menu at all.
+        assert!(view(MenuFacts::default()).is_empty());
+        // Images in the chrome are icons, not content.
+        assert!(
+            view(MenuFacts {
+                image: Some("bmcp://ui/icon.svg".into()),
+                ..Default::default()
+            })
+            .is_empty()
+        );
+        for menu in [&field, &text, &link] {
+            assert!(
+                !ids(menu)
+                    .iter()
+                    .any(|id| WEB_ONLY.contains(id) || *id == BACK)
+            );
+        }
+    }
+
+    #[test]
+    fn edit_flags_grey_out_what_the_field_cannot_do() {
+        let menu = view(MenuFacts {
+            editable: true,
+            edit_flags: Some(CAN_PASTE | CAN_SELECT_ALL),
+            ..Default::default()
+        });
+        assert!(enabled(&menu, PASTE));
+        assert!(enabled(&menu, SELECT_ALL));
+        for id in [UNDO, REDO, CUT, COPY] {
+            assert!(!enabled(&menu, id), "{id} should be disabled");
+        }
+        // With a selection in the field everything that applies is on.
+        let menu = view(MenuFacts {
+            editable: true,
+            edit_flags: Some(CAN_UNDO | CAN_CUT | CAN_COPY | CAN_PASTE | CAN_SELECT_ALL),
+            ..Default::default()
+        });
+        assert!(enabled(&menu, CUT) && enabled(&menu, COPY) && enabled(&menu, UNDO));
+        assert!(!enabled(&menu, REDO));
+        // Web pages use the same flags.
+        let web = build(&MenuFacts {
+            editable: true,
+            edit_flags: Some(0),
+            ..Default::default()
+        });
+        assert!(!enabled(&web, PASTE));
+        assert!(enabled(&web, ASK_AI));
+    }
+
+    #[test]
+    fn our_pages_in_a_tab_keep_navigation_but_not_web_entries() {
+        let plain = page(MenuFacts {
+            can_back: true,
+            ..Default::default()
+        });
+        assert_eq!(ids(&plain), [BACK, FORWARD, RELOAD]);
+        assert!(enabled(&plain, BACK) && !enabled(&plain, FORWARD));
+        // A top site / bookmark tile on the new tab page.
+        let link = page(MenuFacts {
+            link: Some("https://a.test/".into()),
+            workspaces: vec![("work".into(), "Work".into())],
+            ..Default::default()
+        });
+        assert_eq!(ids(&link), [OPEN_LINK_NEW_TAB, WORKSPACE_MENU, COPY_LINK]);
+        let field = page(MenuFacts {
+            editable: true,
+            ..Default::default()
+        });
+        assert_eq!(ids(&field), [UNDO, REDO, 0, CUT, COPY, PASTE, SELECT_ALL]);
+        let text = page(MenuFacts {
+            selection: Some("guide text".into()),
+            ..Default::default()
+        });
+        assert_eq!(ids(&text), [COPY, SELECT_ALL]);
+        for menu in [&plain, &link, &field, &text] {
+            assert!(!ids(menu).iter().any(|id| WEB_ONLY.contains(id)));
+        }
+    }
+
     #[test]
     fn builtin_ids_match_cef() {
         assert_eq!(BACK, MenuId::BACK.get_raw());
@@ -503,5 +748,12 @@ mod tests {
         assert_eq!(SELECT_ALL, MenuId::SELECT_ALL.get_raw());
         assert_eq!(PRINT, MenuId::PRINT.get_raw());
         assert_eq!(USER_FIRST, MenuId::USER_FIRST.get_raw());
+        type F = sys::cef_context_menu_edit_state_flags_t;
+        assert_eq!(CAN_UNDO, F::CM_EDITFLAG_CAN_UNDO.0 as u32);
+        assert_eq!(CAN_REDO, F::CM_EDITFLAG_CAN_REDO.0 as u32);
+        assert_eq!(CAN_CUT, F::CM_EDITFLAG_CAN_CUT.0 as u32);
+        assert_eq!(CAN_COPY, F::CM_EDITFLAG_CAN_COPY.0 as u32);
+        assert_eq!(CAN_PASTE, F::CM_EDITFLAG_CAN_PASTE.0 as u32);
+        assert_eq!(CAN_SELECT_ALL, F::CM_EDITFLAG_CAN_SELECT_ALL.0 as u32);
     }
 }

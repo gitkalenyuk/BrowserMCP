@@ -17,6 +17,8 @@ installHooks({
   run: (id) => {
     if ((COMMAND_IDS as readonly string[]).includes(id)) chrome.run(id as CommandId);
   },
+  // "Open in the AI panel" on a new tab page of this window (bmcp://cmd/open-ai).
+  openAi: (session) => chrome.openAiSession(session),
 });
 
 mount(App, { target: document.getElementById('app')!, props: { chrome } });

@@ -1,21 +1,45 @@
 <script lang="ts">
   import { t } from '../../lib/i18n/index.svelte';
-  import type { BrowserApi, Script } from '../../lib/api';
+  import { relativeTime } from '../../lib/i18n/intl';
+  import type { BrowserApi, ScriptEntry } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
 
   let { api }: { api: BrowserApi } = $props();
-  let scripts = $state<Script[] | null>(null);
-  let started = $state<string | null>(null);
+
+  /** Scripts shown as tiles: the most recently changed ones. */
+  const MAX = 6;
+
+  let scripts = $state<ScriptEntry[] | null>(null);
+  /** Last outcome per script name (`script.run` waits until the script ends). */
+  let outcome = $state<Record<string, { state: 'running' } | { state: 'ok' } | { state: 'failed'; error: string }>>({});
 
   $effect(() => {
-    api.call('scripts.list').then((s) => (scripts = s)).catch(() => (scripts = []));
+    api
+      .call('script.list')
+      .then((r) => (scripts = [...r.scripts].sort((a, b) => b.modified_ms - a.modified_ms).slice(0, MAX)))
+      .catch(() => (scripts = []));
   });
 
-  async function run(s: Script) {
-    await api.call('scripts.run', { id: s.id });
-    started = s.id;
-    scripts = await api.call('scripts.list');
-    setTimeout(() => started === s.id && (started = null), 2000);
+  async function run(s: ScriptEntry) {
+    if (outcome[s.name]?.state === 'running') return;
+    outcome = { ...outcome, [s.name]: { state: 'running' } };
+    try {
+      const r = await api.call('script.run', { name: s.name });
+      outcome = {
+        ...outcome,
+        [s.name]: r.ok ? { state: 'ok' } : { state: 'failed', error: r.error?.message ?? t('newtab.scripts.exitCode', { code: String(r.exit_code ?? '—') }) },
+      };
+    } catch (err) {
+      outcome = { ...outcome, [s.name]: { state: 'failed', error: (err as Error).message } };
+    }
+  }
+
+  function meta(s: ScriptEntry): string {
+    const o = outcome[s.name];
+    if (o?.state === 'running') return t('newtab.scripts.running');
+    if (o?.state === 'ok') return t('newtab.scripts.ok');
+    if (o?.state === 'failed') return t('newtab.scripts.failed', { error: o.error });
+    return t('newtab.scripts.changed', { when: relativeTime(s.modified_ms) });
   }
 </script>
 
@@ -27,14 +51,15 @@
     <p class="muted">{t('newtab.scripts.none')}</p>
   {:else}
     <div class="tiles">
-      {#each scripts as s (s.id)}
-        <button class="tile" onclick={() => run(s)} title={s.description}>
-          <span class="play" class:ok={started === s.id}>
-            <Icon name={started === s.id ? 'check' : 'play'} size={13} stroke={2.25} />
+      {#each scripts as s (s.name)}
+        {@const o = outcome[s.name]}
+        <button class="tile" onclick={() => run(s)} title={t('newtab.scripts.runHint', { name: s.name })} aria-busy={o?.state === 'running'}>
+          <span class="play" class:ok={o?.state === 'ok'} class:bad={o?.state === 'failed'}>
+            <Icon name={o?.state === 'ok' ? 'check' : o?.state === 'failed' ? 'x' : 'play'} size={13} stroke={2.25} />
           </span>
           <span class="text">
             <span class="name">{s.name}</span>
-            <span class="meta">{started === s.id ? t('newtab.scripts.started') : s.lastRun ? t('newtab.scripts.ran', { when: s.lastRun }) : t('newtab.scripts.never')}</span>
+            <span class="meta">{meta(s)}</span>
           </span>
         </button>
       {/each}
@@ -102,7 +127,15 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .play.bad,
+  .tile:hover .play.bad {
+    background: color-mix(in oklab, var(--danger) 16%, transparent);
+    color: var(--danger);
+  }
   .meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--fg-subtle);
     font-size: var(--fs-sm);
   }

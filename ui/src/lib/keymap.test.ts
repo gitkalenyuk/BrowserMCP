@@ -92,6 +92,21 @@ describe('default keymap', () => {
     expect(commandForEvent(index, ev({ key: 'k', code: 'KeyK', ctrlKey: true }))).toBe('palette.open');
     expect(commandForEvent(index, ev({ key: 'k', code: 'KeyK' }))).toBeNull();
   });
+
+  it('leaves copy & paste keys to the text, even when keymap.json binds them', () => {
+    const { keymap } = parseKeymapOverrides({ 'tab.new': ['Ctrl+T', 'Ctrl+C'], 'palette.open': ['Ctrl+K', 'Ctrl+A', 'Shift+Insert'] });
+    const custom = buildKeyIndex(keymap);
+    // Ukrainian layout: key "с" on the C key.
+    expect(commandForEvent(custom, ev({ key: 'с', code: 'KeyC', ctrlKey: true }))).toBeNull();
+    expect(commandForEvent(custom, ev({ key: 'a', code: 'KeyA', ctrlKey: true }))).toBeNull();
+    expect(commandForEvent(custom, ev({ key: 'Insert', code: 'Insert', shiftKey: true }))).toBeNull();
+    for (const code of ['KeyV', 'KeyX', 'KeyZ', 'KeyY']) {
+      expect(commandForEvent(index, ev({ key: code.slice(3).toLowerCase(), code, ctrlKey: true }))).toBeNull();
+    }
+    // The other bindings still work.
+    expect(commandForEvent(custom, ev({ key: 't', code: 'KeyT', ctrlKey: true }))).toBe('tab.new');
+    expect(commandForEvent(custom, ev({ key: 'k', code: 'KeyK', ctrlKey: true }))).toBe('palette.open');
+  });
 });
 
 describe('parseKeymapOverrides', () => {
