@@ -108,10 +108,17 @@ const NONE: Decision = { prevent: false, action: 'none' };
  * the prompt is empty; combos (Ctrl+Space, Alt+V) and function keys start at once anywhere.
  *
  * Tap mode: press to start (Space: on an empty prompt), press again to stop.
+ *
+ * A reset while the hotkey is still physically down (an auto-stop, Esc) swallows the key's
+ * repeats until it is released, so a held Space does not start typing spaces.
  */
 export class HotkeyMachine {
   state: 'idle' | 'warmup' | 'active' = 'idle';
   #repeats = 0;
+  /** The hotkey's main key is down (pressed and not yet released). */
+  #down = false;
+  /** Swallow the repeats of the current press (it ended a recording). */
+  #swallow = false;
 
   constructor(
     public hotkey: Hotkey,
@@ -125,11 +132,17 @@ export class HotkeyMachine {
   }
 
   reset(): void {
+    this.#swallow = this.#down && this.state !== 'idle';
     this.state = 'idle';
     this.#repeats = 0;
   }
 
   keydown(e: KeyEventLike, ctx: { empty: boolean; recording: boolean }): Decision {
+    if (e.code === codeOf(this.hotkey.key)) {
+      if (!e.repeat) this.#swallow = false;
+      else if (this.#swallow) return { prevent: true, action: 'none' };
+    }
+    if (matchesKey(e, this.hotkey)) this.#down = true;
     if (!matchesKey(e, this.hotkey)) {
       // Typing something else during the warm-up: it was just a space.
       if (this.state === 'warmup') {
@@ -174,6 +187,10 @@ export class HotkeyMachine {
   }
 
   keyup(e: KeyEventLike): Decision {
+    if (e.code === codeOf(this.hotkey.key)) {
+      this.#down = false;
+      this.#swallow = false;
+    }
     if (this.mode === 'tap' || this.state === 'idle') return NONE;
     const h = this.hotkey;
     const released =

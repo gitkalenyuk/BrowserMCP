@@ -54,8 +54,17 @@
   /** Auto-submit after dictation: the draft is updated by then (the controller fires `input`). */
   function voiceSubmit() {
     void tick().then(() => {
-      if (ai.draft.trim()) onsend();
+      if (canSend && ai.draft.trim()) onsend();
     });
+  }
+
+  let voice = $state<VoiceInput>();
+
+  /** Enter / the send button. While dictating, the dictation finishes first and its final
+   * text is sent once (voiceSubmit); the interim text is never sent. */
+  function send() {
+    if (voice?.finishAndSubmit()) return;
+    if (canSend) onsend();
   }
 
   let area = $state<HTMLTextAreaElement>();
@@ -92,7 +101,7 @@
     if (e.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (canSend) onsend();
+      send();
     } else if (e.key === 'ArrowUp' && !ai.draft && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       if (oneditlast?.()) e.preventDefault();
     }
@@ -124,7 +133,7 @@
   class="composer"
   onsubmit={(e) => {
     e.preventDefault();
-    if (canSend) onsend();
+    send();
   }}
   ondragover={(e) => {
     if (e.dataTransfer?.types.includes('text/plain')) e.preventDefault();
@@ -144,7 +153,7 @@
   <div class="tools">
     <div class="composer-tools" role="group" aria-label={t('aiChat.composerTools')}>
       <!-- Voice dictation: hold Space in the empty box, or the mic button (Settings → Voice). -->
-      <VoiceInput api={chrome.api} target={area} onsubmit={voiceSubmit} context={pageContext} onsetup={() => openSettings(chrome, 'voice')} size={28} />
+      <VoiceInput bind:this={voice} api={chrome.api} target={area} onsubmit={voiceSubmit} context={pageContext} onsetup={() => openSettings(chrome, 'voice')} size={28} />
     </div>
     {#if queued > 0}
       <span class="queued" title={t('aiChat.queuedTitle')}><Icon name="clock" size={11} />{tp('aiChat.queuedCount', queued)}</span>

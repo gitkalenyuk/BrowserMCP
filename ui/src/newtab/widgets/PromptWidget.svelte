@@ -30,6 +30,7 @@
   let sending = $state(false);
   let status = $state<{ ok: true; text: string; session: string } | { ok: false; text: string } | null>(null);
   let field = $state<HTMLTextAreaElement>();
+  let voice = $state<VoiceInput>();
   const name = $derived(AGENTS.find((p) => p.id === provider)?.name ?? 'AI');
   const defaultName = $derived(defaultModelName(offered));
   const modelHint = $derived(offered?.models.find((m) => m.id === model)?.hint ?? t('newtab.prompt.model'));
@@ -69,6 +70,12 @@
   // Example tasks in the UI language (`newtab.prompt.example1..3`).
   const EXAMPLES = $derived([1, 2, 3].map((n) => t(`newtab.prompt.example${n}`)));
 
+  /** Enter / the send button: while dictating, finish first; its final text is sent once. */
+  function send() {
+    if (voice?.finishAndSubmit()) return;
+    void submit();
+  }
+
   async function submit() {
     const task = text.trim();
     if (!task || sending) return;
@@ -106,7 +113,7 @@
     class="box"
     onsubmit={(e) => {
       e.preventDefault();
-      void submit();
+      send();
     }}
   >
     <textarea
@@ -116,7 +123,7 @@
       onkeydown={(e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          void submit();
+          send();
         }
       }}
       rows="1"
@@ -126,7 +133,7 @@
     <div class="bar">
       <!-- Voice dictation, bottom left: hold Space in the empty box, or the mic button. -->
       <div class="lead">
-        <VoiceInput {api} target={field} onsubmit={() => void submit()} onsetup={openVoiceSettings} />
+        <VoiceInput bind:this={voice} {api} target={field} onsubmit={() => void submit()} onsetup={openVoiceSettings} />
       </div>
       <div class="controls">
         <label class="select">

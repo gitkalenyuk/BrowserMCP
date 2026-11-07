@@ -23,6 +23,8 @@ pub const MIN_SPEECH_SAMPLES: usize = wav::SAMPLE_RATE as usize * 3 / 10;
 pub const INTERIM_EVERY: Duration = Duration::from_millis(1500);
 /// A stream nobody pushed to for this long is dropped.
 const STREAM_IDLE: Duration = Duration::from_secs(60);
+/// How often the background reaper looks for idle streams while any is open.
+const REAP_EVERY: Duration = Duration::from_secs(15);
 const MAX_STREAMS: usize = 8;
 
 /// How an engine gets its key, and whether it is ready.
@@ -51,6 +53,8 @@ pub struct VoiceService {
     client: reqwest::Client,
     streams: Mutex<HashMap<String, Arc<Stream>>>,
     next_stream: AtomicU64,
+    /// The idle-stream reaper runs (one at a time, only while streams are open).
+    reaping: AtomicBool,
     /// Serializes `voice.settings_set` (read → change → write).
     pub writes: Mutex<()>,
 }
@@ -72,6 +76,7 @@ impl VoiceService {
             client: engines::http_client(),
             streams: Mutex::new(HashMap::new()),
             next_stream: AtomicU64::new(1),
+            reaping: AtomicBool::new(false),
             writes: Mutex::new(()),
         }
     }
@@ -310,6 +315,7 @@ impl VoiceService {
             finished: AtomicBool::new(false),
         });
         lock(&self.streams).insert(id, stream.clone());
+        self.watch_streams();
         Ok(stream)
     }
 
@@ -437,9 +443,64 @@ impl VoiceService {
         Ok((t, stream.engine))
     }
 
-    /// Drop streams nobody fed for [`STREAM_IDLE`].
+    /// Drop streams nobody fed for [`STREAM_IDLE`] (a page that went away mid-recording),
+    /// closing their Deepgram sockets.
     fn reap(&self) {
-        lock(&self.streams).retain(|_, s| lock(&s.last_seen).elapsed() < STREAM_IDLE);
+        let idle: Vec<Arc<Stream>> = {
+            let mut streams = lock(&self.streams);
+            let ids: Vec<String> = streams
+                .iter()
+                .filter(|(_, s)| lock(&s.last_seen).elapsed() >= STREAM_IDLE)
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.iter().filter_map(|id| streams.remove(id)).collect()
+        };
+        for stream in idle {
+            tracing::debug!(stream = stream.id, "voice stream idle: dropped");
+            stream.finished.store(true, Ordering::SeqCst);
+            if let Some(live) = lock(&stream.live).take() {
+                live.abort();
+            }
+        }
+    }
+
+    /// Reap idle streams every [`REAP_EVERY`] while any is open, so an abandoned stream
+    /// does not hold its slot (and a live socket) until the next `stream_start`.
+    fn watch_streams(self: &Arc<Self>) {
+        if self.reaping.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(REAP_EVERY).await;
+                let Some(this) = weak.upgrade() else { return };
+                this.reap();
+                if lock(&this.streams).is_empty() {
+                    this.reaping.store(false, Ordering::SeqCst);
+                    // A stream opened between the check and the store starts its own watcher;
+                    // one opened just before it would be missed, so look once more.
+                    if lock(&this.streams).is_empty() || this.reaping.swap(true, Ordering::SeqCst) {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Age a stream as if nobody had pushed to it for `by` (tests of the reaper).
+    #[cfg(test)]
+    pub(crate) fn age_stream(&self, id: &str, by: Duration) {
+        if let Some(s) = lock(&self.streams).get(id) {
+            let mut seen = lock(&s.last_seen);
+            *seen = seen.checked_sub(by).unwrap_or(*seen);
+        }
+    }
+
+    /// Run the reaper now (tests).
+    #[cfg(test)]
+    pub(crate) fn reap_now(&self) {
+        self.reap();
     }
 
     pub fn open_streams(&self) -> usize {

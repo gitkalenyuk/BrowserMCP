@@ -4,7 +4,9 @@
 //   to record, release to finish; tap mode: press to start, press again to stop;
 // * the mic button: click = tap mode, press and hold = hold mode;
 // * the transcript appears at the cursor while you speak (dimmed until final) and mixes with
-//   typing; Esc (or Ctrl+C) cancels and restores the prompt as it was;
+//   typing; Esc (or Ctrl+C in the prompt / on the mic button, with nothing selected) cancels
+//   and restores the prompt as it was;
+// * Enter (send) while dictating finishes the dictation first, then sends the final text once;
 // * auto-stop after 15 s of silence or 2 min; auto-submit with ≥3 words when enabled;
 // * three failures within 10 s pause dictation for 10 s.
 //
@@ -52,6 +54,8 @@ interface Session {
   startedAt: number;
   lastSpeechAt: number;
   stopRequested: boolean;
+  /** Send the prompt once the final text is in (Enter / send pressed while dictating). */
+  submitWhenDone: boolean;
   region: Region;
   partial: string;
 }
@@ -73,6 +77,8 @@ export class VoiceController {
 
   #api: BrowserApi;
   #target: Field | null = null;
+  /** The mic button (Ctrl+C there cancels too). */
+  #button: HTMLElement | null = null;
   #onsubmit: (() => void) | undefined;
   #context: (() => string | undefined) | undefined;
   #machine: HotkeyMachine | null = null;
@@ -107,6 +113,11 @@ export class VoiceController {
 
   get active(): boolean {
     return this.phase === 'starting' || this.phase === 'recording' || this.phase === 'transcribing';
+  }
+
+  /** The mic button of this prompt (set by VoiceInput). */
+  set button(el: HTMLElement | null) {
+    this.#button = el;
   }
 
   get hotkeyLabel(): string {
@@ -179,10 +190,14 @@ export class VoiceController {
 
   // ------------------------------------------------------------------ keys
 
-  /** Esc / Ctrl+C anywhere on the page cancel a recording (focus may be on the mic button). */
+  /**
+   * Esc anywhere on the page cancels a recording (focus may be on the mic button). Ctrl+C
+   * cancels only in the prompt or on the mic button and only when nothing is selected:
+   * elsewhere it is the usual copy.
+   */
   #windowKey = (e: KeyboardEvent) => {
     if (this.phase === 'idle' || this.phase === 'paused') return;
-    const ctrlC = (e.ctrlKey || e.metaKey) && e.code === 'KeyC' && !this.#hasSelection();
+    const ctrlC = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyC' && this.#ownsKey(e) && !this.#hasSelection();
     if (e.key === 'Escape' || ctrlC) {
       e.preventDefault();
       e.stopPropagation();
@@ -190,9 +205,22 @@ export class VoiceController {
     }
   };
 
+  /** The key went to this prompt or its mic button. */
+  #ownsKey(e: Event): boolean {
+    const at = e.target;
+    return !!at && (at === this.#target || at === this.#button);
+  }
+
+  /** Text selected in the prompt or anywhere on the page (Ctrl+C then copies it). */
   #hasSelection(): boolean {
     const t = this.#target;
-    return !!t && t.selectionStart !== t.selectionEnd;
+    if (t && t.selectionStart !== t.selectionEnd) return true;
+    try {
+      const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
+      return !!sel && !sel.isCollapsed && sel.toString() !== '';
+    } catch {
+      return false;
+    }
   }
 
   #keydown(e: KeyboardEvent): void {
@@ -264,6 +292,19 @@ export class VoiceController {
     if (s.mode === 'hold') void this.stop();
   }
 
+  /**
+   * Enter / the send button while dictating: finish the dictation and send the prompt once
+   * the final text is in (never the interim text, never twice). True when it took over the
+   * send: the caller must not send now.
+   */
+  finishAndSubmit(): boolean {
+    const s = this.#session;
+    if (!s || !this.active) return false;
+    s.submitWhenDone = true;
+    if (this.phase === 'starting' || this.phase === 'recording') void this.stop();
+    return true;
+  }
+
   /** Keyboard activation of the mic button: toggle (tap mode). */
   toggle(): void {
     if (this.phase === 'recording' || this.phase === 'starting') void this.stop();
@@ -303,6 +344,7 @@ export class VoiceController {
       startedAt: now,
       lastSpeechAt: now,
       stopRequested: false,
+      submitWhenDone: false,
       region: { start: snap.start, length: 0, text: '' },
       partial: '',
     };
@@ -315,9 +357,10 @@ export class VoiceController {
     this.hint = false;
     this.#countHint();
     const context = this.settings.page_hint ? this.#context?.()?.trim() || undefined : undefined;
+    const opening = this.#api.call('voice.stream_start', { language: this.#language(), prompt: context });
     try {
       const [started] = await Promise.all([
-        this.#api.call('voice.stream_start', { language: this.#language(), prompt: context }),
+        opening,
         session.mic!.start({
           onPcm: (pcm) => session.queue.push(pcm),
           onLevel: (level) => this.#onLevel(session, level),
@@ -337,6 +380,11 @@ export class VoiceController {
       if (session.stopRequested) await this.stop();
     } catch (err) {
       session.mic?.stop();
+      // The microphone failed but the stream may open (or have opened) anyway: close it,
+      // or it holds one of the browser's few stream slots (and a Deepgram socket).
+      if (!session.stream) {
+        void opening.then((st) => this.#api.call('voice.stream_stop', { stream: st.stream, cancel: true })).catch(() => {});
+      }
       if (this.#session === session) {
         this.#session = null;
         this.phase = 'idle';
@@ -420,9 +468,10 @@ export class VoiceController {
       this.#showText(session, r.text, true);
       this.phase = 'idle';
       this.#backoff.succeed();
-      if (!r.text.trim()) this.#flash({ kind: 'nothing' });
-      else if (this.settings && shouldAutoSubmit(r.text, session.mode, this.settings)) {
-        // After the input event reached the page's own state (bind:value).
+      if (!r.text.trim() && !session.submitWhenDone) this.#flash({ kind: 'nothing' });
+      else if (session.submitWhenDone || (this.settings && shouldAutoSubmit(r.text, session.mode, this.settings))) {
+        // After the input event reached the page's own state (bind:value). Once: the session
+        // is over, so a later Enter is an ordinary send of whatever the prompt holds then.
         queueMicrotask(() => this.#onsubmit?.());
       }
     } catch (err) {
