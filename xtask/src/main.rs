@@ -221,20 +221,32 @@ fn cargo(args: &[&str], extra_env: &[(String, String)]) -> Result {
     }
 }
 
+/// `CARGO_TARGET_DIR` when set, else `<root>/target`.
+fn target_dir() -> PathBuf {
+    env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root().join("target"))
+}
+
 fn build(release: bool) -> Result {
     let envs = build_env()?;
     let mut args = vec!["build", "--package", "browsermcp"];
     if release {
         args.push("--release");
     }
-    cargo(&args, &envs)
+    cargo(&args, &envs)?;
+    let profile = if release { "release" } else { "debug" };
+    let copied = dist::ensure_cef_runtime(&target_dir().join(profile))?;
+    if copied > 0 {
+        println!("xtask: restored {copied} CEF runtime file(s) next to browsermcp.exe");
+    }
+    Ok(())
 }
 
 fn run(release: bool, browser_args: Vec<String>) -> Result {
     build(release)?;
     let profile = if release { "release" } else { "debug" };
-    let exe = workspace_root()
-        .join("target")
+    let exe = target_dir()
         .join(profile)
         .join(format!("browsermcp{}", env::consts::EXE_SUFFIX));
     let status = Command::new(&exe)

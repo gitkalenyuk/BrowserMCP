@@ -11,7 +11,7 @@
 //!   script and mass-run tests run instead of being skipped;
 //! * `--no-build`: use the binaries that are there.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use crate::{Result, build_env, cargo, has_flag, workspace_root};
@@ -24,7 +24,7 @@ pub fn e2e(args: &[String]) -> Result {
             cargo(&["build", "--package", "bmcp-script"], &build_env()?)?;
         }
     }
-    let exe = target_dir(&root)
+    let exe = crate::target_dir()
         .join("debug")
         .join(format!("browsermcp{}", std::env::consts::EXE_SUFFIX));
     if !exe.exists() {
@@ -46,13 +46,6 @@ pub fn e2e(args: &[String]) -> Result {
 fn value_of(args: &[String], flag: &str) -> Option<String> {
     let at = args.iter().position(|a| a == flag)?;
     args.get(at + 1).cloned()
-}
-
-/// `CARGO_TARGET_DIR` when set, else `<root>/target`.
-fn target_dir(root: &Path) -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"))
 }
 
 fn pnpm(root: &Path, args: &[&str], exe: &Path) -> Result {

@@ -2,7 +2,7 @@
 // server. Only processes started here are ever stopped, by their own PID (never by image name).
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -158,11 +158,29 @@ export async function startBrowser(opts: StartOptions): Promise<BrowserProcess> 
   while (!(await healthy(opts.apiPort))) {
     if (exited(pid) || Date.now() > deadline) {
       killPid(pid);
-      throw new Error(`the browser did not come up; see ${log}`);
+      throw new Error(`the browser did not come up; see ${log}${startupReport(child.exitCode, log)}`);
     }
     await sleep(300);
   }
   return { pid, apiPort: opts.apiPort, dataDir: opts.dataDir, log, child, exitCode, stop };
+}
+
+/** Exit code and the end of the log, so a CI failure shows its cause without the log file. */
+function startupReport(code: number | null, log: string): string {
+  const parts: string[] = [];
+  if (code !== null) {
+    // Windows NTSTATUS codes arrive as large unsigned numbers.
+    const unsigned = code >>> 0;
+    const hint = unsigned === 0xc0000135 ? " (a DLL is missing next to the exe: libcef.dll?)" : "";
+    parts.push(`exit code ${code} (0x${unsigned.toString(16).toUpperCase()})${hint}`);
+  }
+  try {
+    const text = readFileSync(log, "utf8").trimEnd();
+    parts.push(text ? `last log lines:\n${text.split(/\r?\n/).slice(-40).join("\n")}` : "the log is empty");
+  } catch {
+    parts.push("no log was written");
+  }
+  return parts.map((p) => `\n${p}`).join("");
 }
 
 /**

@@ -292,7 +292,7 @@ fn package_version(meta: &Value, name: &str) -> Result<String> {
         .ok_or(format!("package {name} not in cargo metadata"))
 }
 
-/// The CEF distribution folder of the last release build of `cef-dll-sys`.
+/// The CEF distribution folder of the last build of `cef-dll-sys` in a profile dir.
 fn find_cef_dir(release: &Path) -> Result<PathBuf> {
     let build = release.join("build");
     let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
@@ -354,6 +354,42 @@ fn is_cef_runtime_file(name: &str) -> bool {
 fn locale_of(file: &str) -> &str {
     let stem = file.strip_suffix(".pak").unwrap_or(file);
     stem.split_once('_').map_or(stem, |(base, _)| base)
+}
+
+/// Make sure the CEF runtime sits next to the exe in `profile_dir` (`target/debug`…).
+///
+/// `cef-dll-sys` copies it there from its build script, which only runs when that crate
+/// rebuilds. A build cache that keeps just `deps/`, `build/` and `.fingerprint/` (CI's
+/// rust-cache does) restores a fresh crate without those files: the exe then dies with
+/// STATUS_DLL_NOT_FOUND before it logs a line. Copies what is missing or differs in size;
+/// returns how many files it copied.
+pub(crate) fn ensure_cef_runtime(profile_dir: &Path) -> Result<usize> {
+    let cef_dir = find_cef_dir(profile_dir)?;
+    let mut copied = 0;
+    let mut sync = |src: &Path, dest: &Path| -> Result {
+        let same = matches!(
+            (fs::metadata(src), fs::metadata(dest)),
+            (Ok(a), Ok(b)) if a.len() == b.len()
+        );
+        if !same {
+            copy(src, dest)?;
+            copied += 1;
+        }
+        Ok(())
+    };
+    for entry in read_dir_sorted(&cef_dir)? {
+        let name = entry.file_name().unwrap_or_default().to_string_lossy();
+        if entry.is_file() && is_cef_runtime_file(&name) {
+            sync(&entry, &profile_dir.join(&*name))?;
+        }
+    }
+    let locales = profile_dir.join("locales");
+    mkdir(&locales)?;
+    for entry in read_dir_sorted(&cef_dir.join("locales"))? {
+        let name = entry.file_name().unwrap_or_default().to_string_lossy();
+        sync(&entry, &locales.join(&*name))?;
+    }
+    Ok(copied)
 }
 
 fn copy_cef_runtime(
