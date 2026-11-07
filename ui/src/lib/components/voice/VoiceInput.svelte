@@ -8,6 +8,7 @@
    * Hotkeys work while `target` has focus (Space on an empty prompt by default, see
    * Settings → Voice). Hidden while dictation is off in the settings.
    */
+  import { untrack } from 'svelte';
   import type { BrowserApi } from '../../api';
   import { t } from '../../i18n/index.svelte';
   import { VoiceController, type Field } from '../../voice/controller.svelte';
@@ -37,12 +38,14 @@
   const voice = new VoiceController(api, { onsubmit, context });
   $effect(() => voice.setCallbacks({ onsubmit, context }));
 
+  // Once on mount (untrack: nothing the controller reads should re-run these).
   $effect(() => {
-    void voice.loadSettings();
+    untrack(() => void voice.loadSettings());
   });
   $effect(() => {
-    if (!target) return;
-    return voice.attach(target);
+    const el = target;
+    if (!el) return;
+    return untrack(() => voice.attach(el));
   });
 
   const key = $derived(voice.hotkeyLabel === 'Space' ? t('voice.key.space') : voice.hotkeyLabel);
