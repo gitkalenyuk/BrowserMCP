@@ -10,8 +10,17 @@ import { BLANK_TEMPLATE } from '../providers';
 
 export interface HeaderRow {
   name: string;
+  /** A new value; for a `stored` row '' keeps the saved one. */
   value: string;
+  /**
+   * The header is saved in the core, whose value is never sent to clients (it may be a
+   * credential, like the API key). Its name is fixed: the value belongs to it.
+   */
+  stored?: boolean;
 }
+
+/** Header values as ai.provider_set takes them: null keeps a stored header's value. */
+export type HeaderValues = Record<string, string | null>;
 
 export interface ProviderForm {
   /** User providers only (built-in names are fixed). */
@@ -42,21 +51,23 @@ export function asApi(protocol: string): AiApi {
   return protocol === 'anthropic' || protocol === 'gemini' ? protocol : 'openai';
 }
 
-export function headerRows(headers: Record<string, string> | undefined): HeaderRow[] {
-  return Object.entries(headers ?? {}).map(([name, value]) => ({ name, value }));
+/** Rows of the headers a provider has saved (names only; see HeaderRow.stored). */
+export function headerRows(names: readonly string[] | undefined): HeaderRow[] {
+  return (names ?? []).map((name) => ({ name, value: '', stored: true }));
 }
 
-/** Rows as the core stores them: trimmed, rows without a name dropped. */
-export function headerMap(rows: HeaderRow[]): Record<string, string> {
-  const out: Record<string, string> = {};
+/** Rows as the core stores them: trimmed, rows without a name dropped, null = keep stored. */
+export function headerMap(rows: HeaderRow[]): HeaderValues {
+  const out: HeaderValues = {};
   for (const row of rows) {
     const name = row.name.trim();
-    if (name) out[name] = row.value.trim();
+    const value = row.value.trim();
+    if (name) out[name] = row.stored && !value ? null : value;
   }
   return out;
 }
 
-function sameHeaders(a: Record<string, string>, b: Record<string, string>): boolean {
+function sameHeaders(a: HeaderValues, b: HeaderValues): boolean {
   const ka = Object.keys(a);
   return ka.length === Object.keys(b).length && ka.every((k) => k in b && a[k] === b[k]);
 }
@@ -67,9 +78,10 @@ export function formFrom(p: AiProvider): ProviderForm {
     api: asApi(p.protocol),
     baseUrl: p.base_url,
     apiKey: '',
-    model: p.model ?? '',
+    // '' = "Provider default": a model the user never chose follows the preset / tested list.
+    model: p.model_set ? (p.model ?? '') : '',
     path: p.path ?? '',
-    headers: headerRows(p.headers),
+    headers: headerRows(p.header_names),
   };
 }
 
@@ -139,7 +151,7 @@ export function rebase(form: ProviderForm, saved: ProviderForm, fresh: ProviderF
     model: pick('model'),
     path: pick('path'),
     // Plain copies: `form` may be a Svelte state proxy.
-    headers: pick('headers').map((h) => ({ name: h.name, value: h.value })),
+    headers: pick('headers').map((h) => ({ ...h })),
   };
 }
 
@@ -165,7 +177,8 @@ export function addArgs(form: ProviderForm, template: string | null): AiProvider
   };
   if (form.apiKey.trim()) args.api_key = form.apiKey.trim();
   if (form.model.trim()) args.model = form.model.trim();
-  const headers = headerMap(form.headers);
+  // A new provider has no stored headers, so every value is known.
+  const headers = Object.fromEntries(Object.entries(headerMap(form.headers)).map(([name, value]) => [name, value ?? '']));
   if (Object.keys(headers).length) args.headers = headers;
   return args;
 }
@@ -182,6 +195,18 @@ export function isHttpUrl(text: string): boolean {
 
 /** RFC 9110 token: what an HTTP header name may contain. */
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+/** What the core (reqwest's `HeaderValue::from_str`) accepts in a value: tab and visible ASCII. */
+const HEADER_VALUE = /^[\t\x20-\x7e]*$/;
+
+/** i18n key of what is wrong with the header rows, if anything. */
+export function headerError(rows: HeaderRow[]): 'aiProviders.error.header' | 'aiProviders.error.headerAscii' | undefined {
+  const named = rows.filter((h) => h.name.trim());
+  // A value without a name would be dropped silently.
+  if (rows.some((h) => !h.name.trim() && h.value.trim())) return 'aiProviders.error.header';
+  if (named.some((h) => !HEADER_NAME.test(h.name.trim()))) return 'aiProviders.error.header';
+  if (named.some((h) => !HEADER_VALUE.test(h.value.trim()))) return 'aiProviders.error.headerAscii';
+  return undefined;
+}
 
 export interface ValidateOptions {
   kind: 'api' | 'cli';
@@ -204,8 +229,8 @@ export function validate(form: ProviderForm, opts: ValidateOptions): FormErrors 
     // An empty URL resets a built-in to its preset; a user provider needs one.
     if (!url && opts.user) errors.baseUrl = 'aiProviders.error.urlEmpty';
     else if (url && !isHttpUrl(url)) errors.baseUrl = 'aiProviders.error.urlBad';
-    const bad = form.headers.some((h) => (h.name.trim() ? !HEADER_NAME.test(h.name.trim()) || /[\r\n]/.test(h.value) : h.value.trim() !== ''));
-    if (bad) errors.headers = 'aiProviders.error.header';
+    const header = headerError(form.headers);
+    if (header) errors.headers = header;
   }
   return errors;
 }

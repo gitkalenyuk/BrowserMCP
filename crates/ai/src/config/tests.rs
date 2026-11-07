@@ -15,6 +15,16 @@ fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Headers as `ai.provider_set` takes them: every value given.
+fn set_headers(pairs: &[(&str, &str)]) -> Option<BTreeMap<String, Option<String>>> {
+    Some(
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), Some(v.to_string())))
+            .collect(),
+    )
+}
+
 fn message(result: Result<impl std::fmt::Debug, CmdError>) -> String {
     result.unwrap_err().message
 }
@@ -282,7 +292,7 @@ fn update_renames_and_edits_user_providers() {
                 api: Some(Api::Anthropic),
                 base_url: Some("https://proxy.test/".into()),
                 api_key: Some("k".into()),
-                headers: Some(headers(&[("X-Team", "lab")])),
+                headers: set_headers(&[("X-Team", "lab")]),
                 default: Some(true),
                 ..Default::default()
             },
@@ -345,7 +355,7 @@ fn update_guards_the_built_ins() {
     };
     assert!(message(config.update_provider("openai", rename)).contains("built-in"));
     let cli_headers = ProviderChanges {
-        headers: Some(headers(&[("X-A", "b")])),
+        headers: set_headers(&[("X-A", "b")]),
         ..Default::default()
     };
     assert!(message(config.update_provider("claude-code", cli_headers)).contains("CLI agent"));
@@ -356,7 +366,7 @@ fn update_guards_the_built_ins() {
 
     let set = ProviderChanges {
         base_url: Some("http://127.0.0.1:9000/v1".into()),
-        headers: Some(headers(&[("HTTP-Referer", "https://me.test")])),
+        headers: set_headers(&[("HTTP-Referer", "https://me.test")]),
         ..Default::default()
     };
     config.update_provider("openrouter", set).unwrap();
@@ -429,4 +439,54 @@ fn extra_settings_fields_survive_for_user_providers() {
     assert!(!lab.needs_key, "no template: the key is optional");
     let back = serde_json::to_value(&config).unwrap();
     assert_eq!(back["user_providers"][0]["headers"]["X-A"], "b");
+}
+
+#[test]
+fn a_null_header_value_keeps_the_stored_one() {
+    let mut config = AiConfig::default();
+    let mut lab = new("Azure", None);
+    lab.base_url = Some("https://me.openai.azure.test/openai/v1".into());
+    lab.headers = headers(&[("api-key", "secret-1"), ("X-Title", "Mine")]);
+    let id = config.add_provider(lab).unwrap();
+
+    // The client knows only the names: it keeps `api-key` (any case), changes `X-Title` and
+    // drops nothing else.
+    let keep = ProviderChanges {
+        headers: Some(BTreeMap::from([
+            ("API-Key".to_string(), None),
+            ("X-Title".to_string(), Some("Ours".to_string())),
+        ])),
+        ..Default::default()
+    };
+    config.update_provider(&id, keep).unwrap();
+    assert_eq!(
+        config.resolve(&id).unwrap().headers,
+        headers(&[("API-Key", "secret-1"), ("X-Title", "Ours")])
+    );
+
+    // A header that was never stored cannot be "kept"; nothing changes.
+    let before = config.clone();
+    let unknown = ProviderChanges {
+        headers: Some(BTreeMap::from([("X-New".to_string(), None)])),
+        ..Default::default()
+    };
+    assert!(message(config.update_provider(&id, unknown)).contains("no stored value"));
+    assert_eq!(config, before);
+}
+
+#[test]
+fn the_template_stays_known_after_an_api_change() {
+    let mut config = AiConfig::default();
+    let id = config.add_provider(new("Work", Some("openai"))).unwrap();
+    let to_anthropic = ProviderChanges {
+        api: Some(Api::Anthropic),
+        ..Default::default()
+    };
+    config.update_provider(&id, to_anthropic).unwrap();
+    let r = config.resolve(&id).unwrap();
+    assert_eq!(r.template.as_deref(), Some("openai"));
+    // The OpenAI models no longer apply, but an OpenAI account still needs its key.
+    assert!(r.preset.is_none());
+    assert!(r.needs_key);
+    assert_eq!(config.resolve("openai").unwrap().template, None);
 }

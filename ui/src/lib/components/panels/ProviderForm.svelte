@@ -1,10 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { AiProvider, AiProviderTest } from '../../api';
+  import type { AiProblem } from '../../api/types-ai';
   import type { AiStore } from '../../ai/store.svelte';
+  import { draftFor, dropDraft, keepDraft, NEW_DRAFT } from '../../ai/provider-draft';
   import { addArgs, changes, formFrom, formFromTemplate, isDirty, isDraftDirty, isUser, MAX_NAME, rebase, validate, type ProviderForm } from '../../ai/provider-form';
   import { t, tp } from '../../i18n/index.svelte';
-  import { APIS } from '../../providers';
+  import { APIS, BLANK_TEMPLATE } from '../../providers';
   import Icon from '../Icon.svelte';
 
   /**
@@ -37,15 +39,27 @@
 
   const OTHER_MODEL = '\u0000other';
   const EXAMPLE_URL = 'http://localhost:11434/v1';
+  /** i18n keys of what ai.provider_test reports missing (it sent nothing then). */
+  const PROBLEM: Record<AiProblem, string> = {
+    no_base_url: 'aiProviders.problem.noBaseUrl',
+    no_api_key: 'aiProviders.problem.noApiKey',
+    not_installed: 'aiProviders.problem.notInstalled',
+  };
 
   // svelte-ignore state_referenced_locally
   const isNew = provider === null;
   // svelte-ignore state_referenced_locally
-  const start = provider ? formFrom(provider) : formFromTemplate(template, ai.providers.map((p) => p.name));
+  const draftKey = provider?.id ?? NEW_DRAFT;
+  // svelte-ignore state_referenced_locally
+  const templateKey = isNew ? (template?.id ?? BLANK_TEMPLATE) : undefined;
+  /** Edits this form held when it was last unmounted (Settings opened another section, the panel closed). */
+  const draft = draftFor(draftKey, templateKey);
+  // svelte-ignore state_referenced_locally
+  const start = draft?.saved ?? (provider ? formFrom(provider) : formFromTemplate(template, ai.providers.map((p) => p.name)));
   // svelte-ignore state_referenced_locally
   const startModels = provider?.models ?? template?.models ?? [];
 
-  let form = $state(structuredClone(start));
+  let form = $state(structuredClone(draft?.form ?? start));
   /** The form as the provider was last loaded or saved: what "unsaved changes" compare with. */
   let saved = $state.raw<ProviderForm>(structuredClone(start));
   /** The user chose "Other model…": type an id instead of picking one. */
@@ -53,7 +67,7 @@
   let showKey = $state(false);
   let busy = $state<'save' | 'test' | 'remove' | null>(null);
   // svelte-ignore state_referenced_locally
-  let result = $state<{ ok: boolean; text: string } | null>(notice ? { ok: true, text: notice } : null);
+  let result = $state<{ ok: boolean; text: string } | null>(notice ? { ok: true, text: notice } : draft ? { ok: true, text: t('aiProviders.draftRestored') } : null);
   /** Submitted once: "empty" errors show from now on. */
   let tried = $state(false);
   let confirmRemove = $state(false);
@@ -70,6 +84,8 @@
   /** A text field instead of the list: asked for, or the model is not in the list. */
   const typeModel = $derived(!models.length || otherModel || (form.model !== '' && !models.includes(form.model)));
   const headerCount = $derived(form.headers.filter((h) => h.name.trim()).length);
+  /** The model used while none is chosen ("Provider default"), when the core told us. */
+  const autoModel = $derived(provider && !provider.model_set ? provider.model : null);
 
   $effect(() => {
     const p = provider;
@@ -83,6 +99,13 @@
 
   $effect(() => {
     dirty = isNew ? isDraftDirty(form, start) : provider ? isDirty(form, saved, provider) : false;
+  });
+
+  // Unsaved edits also live outside this component, so a remount the list cannot ask about
+  // (another Settings section, the AI panel closed) brings them back; see provider-draft.ts.
+  $effect(() => {
+    if (dirty) keepDraft({ key: draftKey, templateId: templateKey, form: $state.snapshot(form), saved: isNew ? start : saved });
+    else dropDraft(draftKey);
   });
 
   function err(field: keyof typeof errors): string | null {
@@ -127,7 +150,9 @@
     });
   }
 
-  function describe(r: AiProviderTest): string {
+  function describe(r: AiProviderTest, p: AiProvider): string {
+    // Known problems in the UI's language; a network or endpoint error as the core reports it.
+    if (!r.ok && r.problem) return t(PROBLEM[r.problem], { name: p.name });
     if (!r.ok) return r.error ?? t('aiProviders.result.failed');
     if (r.version) return t('aiProviders.result.okVersion', { version: r.version });
     if (!r.models.length) return t('aiProviders.result.ok');
@@ -146,7 +171,7 @@
     void run('test', async () => {
       const saved = await saveEdits(p);
       const r = await ai.testProvider(saved.id);
-      result = { ok: r.ok, text: describe(r) };
+      result = { ok: r.ok, text: describe(r, saved) };
     });
   }
 
@@ -253,13 +278,13 @@
     <span>{t('aiProviders.field.model')}</span>
     {#if !typeModel}
       <select value={form.model} onchange={(e) => pickModel(e.currentTarget.value)}>
-        <option value="">{t('aiProviders.model.auto')}</option>
+        <option value="">{autoModel ? t('aiProviders.model.autoWith', { model: autoModel }) : t('aiProviders.model.auto')}</option>
         {#each models as m (m)}<option value={m}>{m}</option>{/each}
         <option value={OTHER_MODEL}>{t('aiProviders.model.other')}</option>
       </select>
     {:else}
       <span class="inline">
-        <input spellcheck="false" bind:value={form.model} placeholder={models[0] ?? t('aiProviders.model.placeholder')} />
+        <input spellcheck="false" bind:value={form.model} placeholder={autoModel ?? models[0] ?? t('aiProviders.model.placeholder')} />
         {#if models.length}
           <button
             type="button"
@@ -284,8 +309,20 @@
       <p class="help">{t('aiProviders.headers.note')}</p>
       {#each form.headers as h, i (i)}
         <div class="header-row">
-          <input spellcheck="false" aria-label={t('aiProviders.headers.name')} placeholder={t('aiProviders.headers.name')} bind:value={h.name} />
-          <input spellcheck="false" aria-label={t('aiProviders.headers.value')} placeholder={t('aiProviders.headers.value')} bind:value={h.value} />
+          {#if h.stored}
+            <!-- The saved value belongs to this name, which therefore stays fixed. -->
+            <input spellcheck="false" aria-label={t('aiProviders.headers.name')} title={t('aiProviders.headers.storedName')} readonly value={h.name} />
+            <input
+              spellcheck="false"
+              autocomplete="off"
+              aria-label={t('aiProviders.headers.newValue', { name: h.name })}
+              placeholder={t('aiProviders.headers.stored')}
+              bind:value={h.value}
+            />
+          {:else}
+            <input spellcheck="false" aria-label={t('aiProviders.headers.name')} placeholder={t('aiProviders.headers.name')} bind:value={h.name} />
+            <input spellcheck="false" aria-label={t('aiProviders.headers.value')} placeholder={t('aiProviders.headers.value')} bind:value={h.value} />
+          {/if}
           <button type="button" class="icon-btn" aria-label={t('aiProviders.headers.remove')} title={t('aiProviders.headers.remove')} onclick={() => form.headers.splice(i, 1)}>
             <Icon name="x" size={13} />
           </button>

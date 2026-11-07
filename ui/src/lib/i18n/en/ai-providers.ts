@@ -4,13 +4,13 @@
 export default {
   'aiProviders.title': 'Providers',
   'aiProviders.back': 'Back to chat',
-  'aiProviders.loadError': 'Could not load providers: {error}',
+  'aiProviders.loadError': 'Could not load the provider list: {error}',
   'aiProviders.loading': 'Loading providers…',
 
   'aiProviders.group.agents': 'CLI agents',
   'aiProviders.group.agentsNote': 'Claude Code and Codex run as programs on this computer and sign in on their own.',
   'aiProviders.group.builtin': 'Built-in providers',
-  'aiProviders.group.builtinNote': 'One account each: add a key and it is ready.',
+  'aiProviders.group.builtinNote': 'One account each; cloud services need a key, local ones (Ollama, LM Studio) do not.',
   'aiProviders.group.mine': 'My providers',
   'aiProviders.group.mineNote': 'As many as you need: a second account of the same service, local servers, any OpenAI-compatible endpoint.',
   'aiProviders.mine.empty': 'No providers of your own yet.',
@@ -64,6 +64,7 @@ export default {
   'aiProviders.key.missing': 'This provider needs an API key before it can be used.',
 
   'aiProviders.model.auto': 'Provider default',
+  'aiProviders.model.autoWith': 'Provider default ({model})',
   'aiProviders.model.other': 'Other model…',
   'aiProviders.model.pick': 'Pick from list',
   'aiProviders.model.placeholder': 'model id',
@@ -75,11 +76,14 @@ export default {
 
   'aiProviders.headers.title': 'Extra HTTP headers',
   'aiProviders.headers.titleCount': 'Extra HTTP headers ({n})',
-  'aiProviders.headers.note': 'Sent with every request, e.g. HTTP-Referer for OpenRouter. Keep the key in the API key field.',
+  'aiProviders.headers.note': 'Sent with every request, e.g. HTTP-Referer for OpenRouter or api-key for Azure. Saved values stay hidden, like the API key.',
   'aiProviders.headers.name': 'Header',
   'aiProviders.headers.value': 'Value',
   'aiProviders.headers.add': 'Add header',
   'aiProviders.headers.remove': 'Remove header',
+  'aiProviders.headers.stored': '•••••••• saved — type to replace',
+  'aiProviders.headers.storedName': 'To rename a saved header, remove it and add it again',
+  'aiProviders.headers.newValue': 'New value of the {name} header',
 
   'aiProviders.note': 'Saved in data/config/ai.json on this computer. Test lists the models (or runs --version) and spends no tokens.',
   'aiProviders.saving': 'Saving…',
@@ -94,6 +98,9 @@ export default {
   'aiProviders.result.okModels.many': 'OK · {n} models: {list}',
   'aiProviders.result.okModels.other': 'OK · {n} models: {list}',
   'aiProviders.result.failed': 'Failed',
+  'aiProviders.problem.noBaseUrl': 'No base URL set. Enter one and save.',
+  'aiProviders.problem.noApiKey': 'No API key set. Paste one and save.',
+  'aiProviders.problem.notInstalled': '{name} was not found on this computer.',
 
   'aiProviders.use': 'Use for new chats',
   'aiProviders.inUse': 'In use',
@@ -107,6 +114,7 @@ export default {
   'aiProviders.unsavedNew': 'The new provider is not added yet.',
   'aiProviders.unsavedDiscard': 'Discard changes',
   'aiProviders.unsavedKeep': 'Keep editing',
+  'aiProviders.draftRestored': 'Your unsaved changes are back. Save them or discard them.',
 
   'aiProviders.error.nameEmpty': 'Give the provider a name.',
   'aiProviders.error.nameLong': 'The name is too long (at most {max} characters).',
@@ -114,6 +122,7 @@ export default {
   'aiProviders.error.urlEmpty': 'Enter the base URL of the API.',
   'aiProviders.error.urlBad': 'Use a full address that starts with http:// or https://.',
   'aiProviders.error.header': 'Each header needs a valid name (letters, digits, dashes) and a one-line value.',
+  'aiProviders.error.headerAscii': 'Header values may use only Latin letters, digits and plain ASCII symbols.',
 
   'aiProviders.section.title': 'AI',
   'aiProviders.section.lead':

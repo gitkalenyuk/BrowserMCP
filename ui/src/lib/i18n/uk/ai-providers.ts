@@ -4,13 +4,13 @@
 export default {
   'aiProviders.title': 'Провайдери',
   'aiProviders.back': 'Назад до чату',
-  'aiProviders.loadError': 'Не вдалося завантажити провайдерів: {error}',
+  'aiProviders.loadError': 'Не вдалося завантажити список провайдерів: {error}',
   'aiProviders.loading': 'Завантаження провайдерів…',
 
   'aiProviders.group.agents': 'CLI-агенти',
   'aiProviders.group.agentsNote': 'Claude Code і Codex працюють як програми на цьому комп’ютері й мають власний вхід в акаунт.',
   'aiProviders.group.builtin': 'Вбудовані провайдери',
-  'aiProviders.group.builtinNote': 'По одному акаунту на кожен: додайте ключ — і можна працювати.',
+  'aiProviders.group.builtinNote': 'По одному акаунту на кожен; хмарним сервісам потрібен ключ, локальним (Ollama, LM Studio) — ні.',
   'aiProviders.group.mine': 'Мої провайдери',
   'aiProviders.group.mineNote': 'Скільки завгодно: другий акаунт того самого сервісу, локальні сервери, будь-який OpenAI-сумісний ендпоінт.',
   'aiProviders.mine.empty': 'Власних провайдерів поки немає.',
@@ -64,6 +64,7 @@ export default {
   'aiProviders.key.missing': 'Щоб користуватися цим провайдером, додайте API-ключ.',
 
   'aiProviders.model.auto': 'Як у провайдера',
+  'aiProviders.model.autoWith': 'Як у провайдера ({model})',
   'aiProviders.model.other': 'Інша модель…',
   'aiProviders.model.pick': 'Вибрати зі списку',
   'aiProviders.model.placeholder': 'ідентифікатор моделі',
@@ -75,11 +76,14 @@ export default {
 
   'aiProviders.headers.title': 'Додаткові HTTP-заголовки',
   'aiProviders.headers.titleCount': 'Додаткові HTTP-заголовки ({n})',
-  'aiProviders.headers.note': 'Надсилаються з кожним запитом, наприклад HTTP-Referer для OpenRouter. Ключ тримайте в полі «API-ключ».',
+  'aiProviders.headers.note': 'Надсилаються з кожним запитом, наприклад HTTP-Referer для OpenRouter чи api-key для Azure. Збережені значення приховані, як і API-ключ.',
   'aiProviders.headers.name': 'Заголовок',
   'aiProviders.headers.value': 'Значення',
   'aiProviders.headers.add': 'Додати заголовок',
   'aiProviders.headers.remove': 'Видалити заголовок',
+  'aiProviders.headers.stored': '•••••••• збережено — введіть, щоб замінити',
+  'aiProviders.headers.storedName': 'Щоб перейменувати збережений заголовок, видаліть його й додайте знову',
+  'aiProviders.headers.newValue': 'Нове значення заголовка {name}',
 
   'aiProviders.note':
     'Зберігається в data/config/ai.json на цьому комп’ютері. «Перевірити» лише отримує список моделей (або запускає --version) і не витрачає токенів.',
@@ -95,6 +99,9 @@ export default {
   'aiProviders.result.okModels.many': 'Працює · {n} моделей: {list}',
   'aiProviders.result.okModels.other': 'Працює · {n} моделі: {list}',
   'aiProviders.result.failed': 'Не вдалося',
+  'aiProviders.problem.noBaseUrl': 'Не вказано базовий URL. Введіть його й збережіть.',
+  'aiProviders.problem.noApiKey': 'Не вказано API-ключ. Вставте його й збережіть.',
+  'aiProviders.problem.notInstalled': '{name} не знайдено на цьому комп’ютері.',
 
   'aiProviders.use': 'Для нових чатів',
   'aiProviders.inUse': 'Використовується',
@@ -108,6 +115,7 @@ export default {
   'aiProviders.unsavedNew': 'Новий провайдер ще не додано.',
   'aiProviders.unsavedDiscard': 'Скасувати зміни',
   'aiProviders.unsavedKeep': 'Продовжити редагування',
+  'aiProviders.draftRestored': 'Незбережені зміни відновлено. Збережіть їх або скасуйте.',
 
   'aiProviders.error.nameEmpty': 'Дайте провайдеру назву.',
   'aiProviders.error.nameLong': 'Назва задовга (не більше {max} символів).',
@@ -115,6 +123,7 @@ export default {
   'aiProviders.error.urlEmpty': 'Вкажіть базовий URL API.',
   'aiProviders.error.urlBad': 'Потрібна повна адреса, що починається з http:// або https://.',
   'aiProviders.error.header': 'Кожному заголовку потрібна коректна назва (літери, цифри, дефіси) й однорядкове значення.',
+  'aiProviders.error.headerAscii': 'Значення заголовків можуть містити лише латиницю, цифри й звичайні символи ASCII.',
 
   'aiProviders.section.title': 'ШІ',
   'aiProviders.section.lead':

@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use bmcp_core::{CmdError, ErrorCode};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Api, Client};
@@ -219,8 +220,10 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
 /// What the user changed for one provider. Unset fields fall back to the preset (built-ins) or
 /// the template (user providers).
 ///
-/// Other parts of the crate may add optional fields here (e.g. CLI permission settings); every
-/// field must have a serde default so old files keep loading.
+/// Other parts of the crate may add optional fields here (e.g. CLI permission settings). Every
+/// field must have a serde default so old files keep loading, and its type must implement
+/// `Debug`, `Clone`, `Default` and `PartialEq`: the struct derives them, and the derives of
+/// [`UserProvider`] and [`AiConfig`] (compared in tests) need them too.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,7 +239,8 @@ pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     /// API providers: extra HTTP headers sent with every request (OpenRouter's `HTTP-Referer`,
-    /// `OpenAI-Organization`, a proxy's routing header…). Not treated as secret.
+    /// `OpenAI-Organization`, Azure's `api-key`…). Treated like the API key: `ai.providers`
+    /// lists the names only, because a header may carry a credential.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
 }
@@ -286,8 +290,9 @@ pub struct ProviderChanges {
     pub model: Option<String>,
     /// CLI providers only.
     pub path: Option<String>,
-    /// API providers only; replaces every extra header (`{}` removes them all).
-    pub headers: Option<BTreeMap<String, String>>,
+    /// API providers only; replaces every extra header (`{}` removes them all). A `None` value
+    /// keeps that header's stored value (clients never see the values, see [`ProviderSettings`]).
+    pub headers: Option<BTreeMap<String, Option<String>>>,
     /// `true` = default of background AI features; `false` = stop being it.
     pub default: Option<bool>,
 }
@@ -518,7 +523,13 @@ impl AiConfig {
             Some(url) if !url.is_empty() => Some(check_base_url(url)?),
             other => other.map(String::from),
         };
-        let headers = ch.headers.as_ref().map(check_headers).transpose()?;
+        let headers = match &ch.headers {
+            Some(headers) => Some(check_headers(&keep_stored(
+                headers,
+                &self.settings(id).headers,
+            )?)?),
+            None => None,
+        };
         if !builtin {
             let name = ch
                 .name
@@ -720,6 +731,33 @@ pub fn check_base_url(url: &str) -> Result<String, CmdError> {
     Ok(url.trim_end_matches('/').to_string())
 }
 
+/// `headers` with every `None` value replaced by the stored value of that header (names match
+/// ignoring case, as in HTTP). A header that has no stored value is an error.
+fn keep_stored(
+    headers: &BTreeMap<String, Option<String>>,
+    stored: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, CmdError> {
+    let mut out = BTreeMap::new();
+    for (name, value) in headers {
+        let value = match value {
+            Some(value) => value.clone(),
+            None => stored
+                .iter()
+                .find(|(old, _)| old.eq_ignore_ascii_case(name.trim()))
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| {
+                    CmdError::invalid_params(format!(
+                        "header '{}' has no stored value to keep",
+                        name.trim()
+                    ))
+                    .with_hint("Give its value, or leave the header out to remove it.")
+                })?,
+        };
+        out.insert(name.clone(), value);
+    }
+    Ok(out)
+}
+
 /// Trimmed headers if every name and value is valid in HTTP; empty names are dropped.
 pub fn check_headers(
     headers: &BTreeMap<String, String>,
@@ -737,8 +775,10 @@ pub fn check_headers(
     Ok(out)
 }
 
-/// Why a provider cannot be used yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a provider cannot be used yet. Serialized as a stable code (`no_base_url`…) that clients
+/// can translate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Problem {
     NoBaseUrl,
     NoApiKey,
@@ -754,8 +794,12 @@ pub struct Resolved {
     pub kind: Kind,
     /// `false` for the user's own providers.
     pub builtin: bool,
-    /// The built-in preset, or the template a user provider was made from.
+    /// Where suggested models and the default model come from: the built-in preset, or the
+    /// template of a user provider while its API type is still the template's.
     pub preset: Option<&'static Preset>,
+    /// User providers: the template they were made from, as stored (even after an API type
+    /// change); `None` for built-ins and blank providers.
+    pub template: Option<String>,
     pub needs_key: bool,
     pub base_url: String,
     pub api_key: Option<String>,
@@ -810,6 +854,7 @@ impl Resolved {
             None,
         );
         resolved.builtin = false;
+        resolved.template = user.template.clone();
         // Remembered even after an API type change: an OpenAI account still needs its key.
         resolved.needs_key = user
             .template
@@ -855,6 +900,7 @@ impl Resolved {
             kind,
             builtin: true,
             preset,
+            template: None,
             needs_key: preset.is_some_and(|p| p.needs_key),
             base_url,
             api_key: settings.api_key.clone().filter(|k| !k.is_empty()),

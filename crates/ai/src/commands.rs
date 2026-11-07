@@ -57,7 +57,8 @@ pub struct ProviderInfo {
     /// `true` for the built-in presets; `false` for providers added with ai.provider_add
     /// (those can be renamed and removed).
     pub builtin: bool,
-    /// User providers: the preset they were made from (`openai`, `ollama`…); null = blank.
+    /// User providers: the preset they were made from (`openai`, `ollama`…), kept when the API
+    /// type is changed later; null = blank (and for built-ins).
     pub template: Option<String>,
     /// Ready to start a session (URL and key set / CLI installed).
     pub configured: bool,
@@ -67,10 +68,14 @@ pub struct ProviderInfo {
     pub base_url: String,
     /// Model used when `ai.session_start` gives none.
     pub model: Option<String>,
+    /// `model` was chosen by the user (ai.provider_set / ai.provider_add); false = it is the
+    /// preset's default or the first known model, and follows them.
+    pub model_set: bool,
     /// Known models (live list after `ai.provider_test`).
     pub models: Vec<String>,
-    /// API providers: extra HTTP headers sent with every request.
-    pub headers: BTreeMap<String, String>,
+    /// API providers: names of the extra HTTP headers sent with every request. Their values are
+    /// not returned (a header may hold a credential, like the API key).
+    pub header_names: Vec<String>,
     /// CLI providers: the binary that will run.
     pub path: Option<String>,
     /// Used by background AI features (self-healing, page.extract) when they name no provider.
@@ -91,18 +96,15 @@ fn provider_info(r: &Resolved, default: Option<&str>) -> ProviderInfo {
         kind: kind.into(),
         protocol: protocol.into(),
         builtin: r.builtin,
-        template: if r.builtin {
-            None
-        } else {
-            r.preset.map(|p| p.id.to_string())
-        },
+        template: r.template.clone(),
         configured: r.configured(),
         needs_key: r.needs_key,
         has_key: r.api_key.is_some(),
         base_url: r.base_url.clone(),
         model: r.model.clone(),
+        model_set: r.settings.model.as_deref().is_some_and(|m| !m.is_empty()),
         models: r.models.clone(),
-        headers: r.headers.clone(),
+        header_names: r.headers.keys().cloned().collect(),
         path: r.binary.as_ref().map(|p| p.to_string_lossy().into_owned()),
         is_default: default == Some(r.id.as_str()),
     }
@@ -282,9 +284,11 @@ pub struct ProviderSetArgs {
     /// CLI providers: path of the claude / codex binary; "" = search PATH.
     #[serde(default)]
     pub path: Option<String>,
-    /// API providers: extra HTTP headers; replaces all of them ({} removes them).
+    /// API providers: extra HTTP headers; replaces all of them ({} removes them). A null value
+    /// keeps that header's stored value (ai.providers lists header names only), e.g.
+    /// {"api-key": null, "X-Title": "Mine"}.
     #[serde(default)]
-    pub headers: Option<BTreeMap<String, String>>,
+    pub headers: Option<BTreeMap<String, Option<String>>>,
     /// true: make this the default provider of background AI features (self-healing,
     /// page.extract); false: stop it being the default.
     #[serde(default)]
@@ -342,6 +346,9 @@ pub struct ProviderTestOutput {
     /// CLI providers: output of `--version`.
     pub version: Option<String>,
     pub error: Option<String>,
+    /// Set when the provider is not set up (nothing was sent): `no_base_url`, `no_api_key` or
+    /// `not_installed`. `error` then says the same in English.
+    pub problem: Option<Problem>,
 }
 
 impl Command for ProviderTest {
@@ -366,18 +373,17 @@ impl Command for ProviderTest {
             models: Vec::new(),
             version: None,
             error: None,
+            problem: None,
         };
         // Say what is missing instead of sending a request that must fail.
-        match r.problem() {
-            Some(Problem::NoBaseUrl) => {
-                out.error = Some("no base URL set".into());
-                return Ok(out);
-            }
-            Some(Problem::NoApiKey) => {
-                out.error = Some("no API key set".into());
-                return Ok(out);
-            }
-            _ => {}
+        if let Some(problem) = r.problem() {
+            out.error = Some(match problem {
+                Problem::NoBaseUrl => "no base URL set".into(),
+                Problem::NoApiKey => "no API key set".into(),
+                Problem::NotInstalled => format!("{} not found", r.name),
+            });
+            out.problem = Some(problem);
+            return Ok(out);
         }
         match r.kind {
             Kind::Api(_) => {
@@ -399,16 +405,19 @@ impl Command for ProviderTest {
                     Err(err) => out.error = Some(err.to_string()),
                 }
             }
-            Kind::ClaudeCode | Kind::Codex => match &r.binary {
-                None => out.error = Some(format!("{} not found", r.name)),
-                Some(binary) => match cli_version(binary).await {
+            Kind::ClaudeCode | Kind::Codex => {
+                let binary = r
+                    .binary
+                    .as_ref()
+                    .expect("problem() checked it is installed");
+                match cli_version(binary).await {
                     Ok(version) => {
                         out.ok = true;
                         out.version = Some(version);
                     }
                     Err(err) => out.error = Some(err),
-                },
-            },
+                }
+            }
         }
         Ok(out)
     }

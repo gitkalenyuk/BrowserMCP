@@ -4,7 +4,7 @@
 
 import { RpcError } from './client';
 import type { AiProvider, Params, Result } from './types';
-import type { AiApi } from './types-ai';
+import type { AiApi, AiProblem } from './types-ai';
 
 type ProviderMethod = 'ai.providers' | 'ai.provider_add' | 'ai.provider_set' | 'ai.provider_remove' | 'ai.provider_test';
 export type ProviderHandlers = { [M in ProviderMethod]: (params: Params<M>) => Result<M> | Promise<Result<M>> };
@@ -25,7 +25,8 @@ function provider(id: string, name: string, kind: 'api' | 'cli', protocol: AiPro
     is_default: false,
     builtin: true,
     template: null,
-    headers: {},
+    model_set: false,
+    header_names: [],
     ...opts,
   };
   return withConfigured(p);
@@ -65,7 +66,9 @@ export function seedProviders(): AiProvider[] {
       template: 'ollama',
       needs_key: false,
       model: 'qwen3:32b',
+      model_set: true,
       models: ['qwen3:32b', 'gemma3:27b'],
+      header_names: ['X-Team'],
     }),
   ];
 }
@@ -90,9 +93,27 @@ function slug(name: string): string {
   return s || 'provider';
 }
 
+/** `headers` with null values taken from `stored` (names match ignoring case), as the core does. */
+function keepStored(headers: Record<string, string | null>, stored: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!name.trim()) continue;
+    const kept = value ?? Object.entries(stored).find(([old]) => old.toLowerCase() === name.trim().toLowerCase())?.[1];
+    if (kept === undefined) throw invalid(`header '${name.trim()}' has no stored value to keep`);
+    out[name.trim()] = kept.trim();
+  }
+  return out;
+}
+
 export function createProviderMocks(): { get: (id: string) => AiProvider; handlers: ProviderHandlers } {
   let providers = seedProviders();
   const seed = seedProviders();
+  /** Header values by provider id: like the core, ai.providers only lists the names. */
+  const headerValues = new Map<string, Record<string, string>>([['home-server', { 'X-Team': 'home' }]]);
+  const storeHeaders = (id: string, headers: Record<string, string>) => {
+    headerValues.set(id, headers);
+    return Object.keys(headers).sort();
+  };
 
   const get = (id: string) => {
     const p = providers.find((x) => x.id === id);
@@ -126,14 +147,16 @@ export function createProviderMocks(): { get: (id: string) => AiProvider; handle
       if (template && template !== 'custom' && !from) throw new RpcError('NOT_FOUND', `unknown template '${template}'`);
       const url = base_url?.trim() ? checkUrl(base_url.trim()) : from?.base_url;
       if (!url) throw invalid('base_url is required for a blank provider');
-      const p = provider(freeId(clean), clean, 'api', (api ?? from?.protocol ?? 'openai') as AiApi, url, {
+      const id = freeId(clean);
+      const p = provider(id, clean, 'api', (api ?? from?.protocol ?? 'openai') as AiApi, url, {
         builtin: false,
         template: from?.id ?? null,
         needs_key: from?.needs_key ?? false,
         has_key: Boolean(api_key?.trim()),
         model: model?.trim() || from?.model || null,
+        model_set: Boolean(model?.trim()),
         models: from?.models ?? [],
-        headers: headers ?? {},
+        header_names: storeHeaders(id, keepStored(headers ?? {}, {})),
       });
       providers = [...providers, p];
       return p;
@@ -150,9 +173,13 @@ export function createProviderMocks(): { get: (id: string) => AiProvider; handle
         const url = base_url.trim();
         next.base_url = url ? checkUrl(url) : user ? '' : seed.find((x) => x.id === id)!.base_url;
       }
-      if (model !== undefined) next.model = model.trim() || null;
+      if (model !== undefined) {
+        // "" = back to the preset's default (or the first known model).
+        next.model_set = model.trim() !== '';
+        next.model = model.trim() || (user ? null : (seed.find((x) => x.id === id)?.model ?? null)) || next.models[0] || null;
+      }
       if (path !== undefined && p.kind === 'cli') next.path = path.trim() || null;
-      if (headers !== undefined) next.headers = headers;
+      if (headers !== undefined) next.header_names = storeHeaders(id, keepStored(headers, headerValues.get(id) ?? {}));
       if (isDefault !== undefined) next.is_default = isDefault;
       return replace(withConfigured(next), isDefault);
     },
@@ -160,20 +187,22 @@ export function createProviderMocks(): { get: (id: string) => AiProvider; handle
       const p = get(id);
       if (p.builtin !== false) throw invalid(`'${id}' is a built-in provider and cannot be removed`);
       providers = providers.filter((x) => x.id !== id);
+      headerValues.delete(id);
       return { id, was_default: Boolean(p.is_default) };
     },
     'ai.provider_test': async ({ id }) => {
       const p = get(id);
       await new Promise((r) => setTimeout(r, 450));
+      const missing = (problem: AiProblem, error: string) => ({ id, ok: false, models: [], version: null, error, problem });
       if (p.kind === 'cli') {
-        if (!p.path) return { id, ok: false, models: [], version: null, error: `${p.name} not found` };
-        return { id, ok: true, models: [], version: p.id === 'codex' ? 'codex-cli 0.98.0' : '2.4.1 (Claude Code)', error: null };
+        if (!p.path) return missing('not_installed', `${p.name} not found`);
+        return { id, ok: true, models: [], version: p.id === 'codex' ? 'codex-cli 0.98.0' : '2.4.1 (Claude Code)', error: null, problem: null };
       }
-      if (!p.base_url) return { id, ok: false, models: [], version: null, error: 'no base URL set' };
-      if (p.needs_key && !p.has_key) return { id, ok: false, models: [], version: null, error: 'no API key set' };
+      if (!p.base_url) return missing('no_base_url', 'no base URL set');
+      if (p.needs_key && !p.has_key) return missing('no_api_key', 'no API key set');
       const models = p.models.length ? p.models : [`${p.id}-large`, `${p.id}-small`];
       providers = providers.map((x) => (x.id === id ? { ...x, models, model: x.model ?? models[0] } : x));
-      return { id, ok: true, models, version: null, error: null };
+      return { id, ok: true, models, version: null, error: null, problem: null };
     },
   };
   return { get, handlers };

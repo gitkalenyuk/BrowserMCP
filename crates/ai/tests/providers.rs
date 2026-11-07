@@ -137,7 +137,18 @@ async fn add_list_edit_and_remove_user_providers() {
         .await
         .unwrap();
     assert_eq!(renamed["name"], "Personal");
-    assert_eq!(renamed["headers"], json!({ "X-Team": "me" }));
+    // Header values are not returned (they may hold a credential), only the names.
+    assert_eq!(renamed["header_names"], json!(["X-Team"]));
+    assert!(renamed.get("headers").is_none());
+    // So a client keeps a stored value by sending null for it.
+    let kept = h
+        .call(
+            "ai.provider_set",
+            json!({ "id": "openai-home", "headers": { "X-Team": null, "X-B": "c" } }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(kept["header_names"], json!(["X-B", "X-Team"]));
     assert_eq!(renamed["is_default"], true);
     let builtin_rename = h
         .call("ai.provider_set", json!({ "id": "openai", "name": "Mine" }))
@@ -219,6 +230,15 @@ async fn a_user_provider_is_tested_and_runs_sessions_with_its_headers() {
     let listed = h.provider(&id).await.unwrap();
     assert_eq!(listed["models"], json!(["qwen3:8b"]));
     assert_eq!(listed["model"], "qwen3:8b");
+    assert_eq!(
+        listed["model_set"], false,
+        "the model follows the tested list"
+    );
+    assert_eq!(listed["header_names"], json!(["X-Team"]));
+    assert!(
+        !listed.to_string().contains("\"lab\""),
+        "no header value in ai.providers: {listed}"
+    );
 
     let mut rx = h.bus.subscribe();
     let session = h
@@ -268,6 +288,7 @@ async fn provider_test_says_what_is_missing_without_a_request() {
         .unwrap();
     assert_eq!(test["ok"], false);
     assert_eq!(test["error"], "no API key set");
+    assert_eq!(test["problem"], "no_api_key");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -292,4 +313,5 @@ async fn the_old_custom_provider_keeps_working() {
         .await
         .unwrap();
     assert_eq!(set["model"], "m2");
+    assert_eq!(set["model_set"], true);
 }

@@ -519,7 +519,10 @@ declare namespace BrowserMCP {
      * (those can be renamed and removed).
      */
     builtin: boolean;
-    /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+    /**
+     * User providers: the preset they were made from (`openai`, `ollama`…), kept when the API
+     * type is changed later; null = blank (and for built-ins).
+     */
     template: string | null;
     /** Ready to start a session (URL and key set / CLI installed). */
     configured: boolean;
@@ -529,10 +532,18 @@ declare namespace BrowserMCP {
     base_url: string;
     /** Model used when `ai.session_start` gives none. */
     model: string | null;
+    /**
+     * `model` was chosen by the user (ai.provider_set / ai.provider_add); false = it is the
+     * preset's default or the first known model, and follows them.
+     */
+    model_set: boolean;
     /** Known models (live list after `ai.provider_test`). */
     models: string[];
-    /** API providers: extra HTTP headers sent with every request. */
-    headers: Record<string, string>;
+    /**
+     * API providers: names of the extra HTTP headers sent with every request. Their values are
+     * not returned (a header may hold a credential, like the API key).
+     */
+    header_names: string[];
     /** CLI providers: the binary that will run. */
     path: string | null;
     /** Used by background AI features (self-healing, page.extract) when they name no provider. */
@@ -595,10 +606,12 @@ declare namespace BrowserMCP {
      */
     path?: string | null;
     /**
-     * API providers: extra HTTP headers; replaces all of them ({} removes them).
+     * API providers: extra HTTP headers; replaces all of them ({} removes them). A null value
+     * keeps that header's stored value (ai.providers lists header names only), e.g.
+     * {"api-key": null, "X-Title": "Mine"}.
      * @default null
      */
-    headers?: Record<string, string> | null;
+    headers?: Record<string, string | null> | null;
     /**
      * true: make this the default provider of background AI features (self-healing,
      * page.extract); false: stop it being the default.
@@ -627,7 +640,10 @@ declare namespace BrowserMCP {
      * (those can be renamed and removed).
      */
     builtin: boolean;
-    /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+    /**
+     * User providers: the preset they were made from (`openai`, `ollama`…), kept when the API
+     * type is changed later; null = blank (and for built-ins).
+     */
     template: string | null;
     /** Ready to start a session (URL and key set / CLI installed). */
     configured: boolean;
@@ -637,10 +653,18 @@ declare namespace BrowserMCP {
     base_url: string;
     /** Model used when `ai.session_start` gives none. */
     model: string | null;
+    /**
+     * `model` was chosen by the user (ai.provider_set / ai.provider_add); false = it is the
+     * preset's default or the first known model, and follows them.
+     */
+    model_set: boolean;
     /** Known models (live list after `ai.provider_test`). */
     models: string[];
-    /** API providers: extra HTTP headers sent with every request. */
-    headers: Record<string, string>;
+    /**
+     * API providers: names of the extra HTTP headers sent with every request. Their values are
+     * not returned (a header may hold a credential, like the API key).
+     */
+    header_names: string[];
     /** CLI providers: the binary that will run. */
     path: string | null;
     /** Used by background AI features (self-healing, page.extract) when they name no provider. */
@@ -664,6 +688,13 @@ declare namespace BrowserMCP {
     /** CLI providers: output of `--version`. */
     version: string | null;
     error: string | null;
+    /**
+     * Set when the provider is not set up (nothing was sent): `no_base_url`, `no_api_key` or
+     * `not_installed`. `error` then says the same in English.
+     *
+     * - `"not_installed"`: The Claude Code / Codex binary was not found.
+     */
+    problem: "no_base_url" | "no_api_key" | "not_installed" | null;
   }
 
   // ---- ai.providers ----
@@ -693,7 +724,10 @@ declare namespace BrowserMCP {
        * (those can be renamed and removed).
        */
       builtin: boolean;
-      /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+      /**
+       * User providers: the preset they were made from (`openai`, `ollama`…), kept when the API
+       * type is changed later; null = blank (and for built-ins).
+       */
       template: string | null;
       /** Ready to start a session (URL and key set / CLI installed). */
       configured: boolean;
@@ -703,10 +737,18 @@ declare namespace BrowserMCP {
       base_url: string;
       /** Model used when `ai.session_start` gives none. */
       model: string | null;
+      /**
+       * `model` was chosen by the user (ai.provider_set / ai.provider_add); false = it is the
+       * preset's default or the first known model, and follows them.
+       */
+      model_set: boolean;
       /** Known models (live list after `ai.provider_test`). */
       models: string[];
-      /** API providers: extra HTTP headers sent with every request. */
-      headers: Record<string, string>;
+      /**
+       * API providers: names of the extra HTTP headers sent with every request. Their values are
+       * not returned (a header may hold a credential, like the API key).
+       */
+      header_names: string[];
       /** CLI providers: the binary that will run. */
       path: string | null;
       /** Used by background AI features (self-healing, page.extract) when they name no provider. */

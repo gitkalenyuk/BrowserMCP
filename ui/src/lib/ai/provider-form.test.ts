@@ -17,7 +17,8 @@ function provider(over: Partial<AiProvider> = {}): AiProvider {
     path: null,
     builtin: true,
     template: null,
-    headers: {},
+    model_set: false,
+    header_names: [],
     ...over,
   };
 }
@@ -52,22 +53,44 @@ describe('provider form', () => {
     expect(isDirty(form, formFrom(p), p)).toBe(false);
   });
 
-  it('removing every header sends {}', () => {
-    const p = provider({ headers: { 'HTTP-Referer': 'https://me.test' } });
+  it('saved headers: values stay hidden, null keeps them, {} removes them all', () => {
+    const p = provider({ header_names: ['HTTP-Referer'] });
     const form = formFrom(p);
-    expect(form.headers).toEqual([{ name: 'HTTP-Referer', value: 'https://me.test' }]);
+    expect(form.headers).toEqual([{ name: 'HTTP-Referer', value: '', stored: true }]);
+    expect(isDirty(form, formFrom(p), p)).toBe(false);
+    // Adding a header keeps the saved one's unknown value.
+    form.headers.push({ name: 'X-Title', value: 'Mine' });
+    expect(changes(form, formFrom(p), p)).toEqual({ id: 'openai', headers: { 'HTTP-Referer': null, 'X-Title': 'Mine' } });
+    // Typing into a saved header replaces its value.
+    form.headers = [{ name: 'HTTP-Referer', value: ' https://me.test ', stored: true }];
+    expect(changes(form, formFrom(p), p)).toEqual({ id: 'openai', headers: { 'HTTP-Referer': 'https://me.test' } });
     form.headers = [];
     expect(changes(form, formFrom(p), p)).toEqual({ id: 'openai', headers: {} });
+  });
+
+  it('a model the user never chose shows as "Provider default"', () => {
+    const auto = provider({ model: 'gpt-5', models: ['gpt-5', 'gpt-5-mini'] });
+    const form = formFrom(auto);
+    expect(form.model).toBe('');
+    expect(isDirty(form, formFrom(auto), auto)).toBe(false);
+    form.model = 'gpt-5-mini';
+    expect(changes(form, formFrom(auto), auto)).toEqual({ id: 'openai', model: 'gpt-5-mini' });
+    // A chosen one shows as itself; picking "Provider default" clears it.
+    const chosen = { ...auto, model: 'gpt-5-mini', model_set: true };
+    const again = formFrom(chosen);
+    expect(again.model).toBe('gpt-5-mini');
+    again.model = '';
+    expect(changes(again, formFrom(chosen), chosen)).toEqual({ id: 'openai', model: '' });
   });
 
   it('follows the provider when it changes underneath, keeping edits', () => {
     const saved = formFrom(user);
     const form = { ...formFrom(user), name: 'Edited', apiKey: 'k' };
-    // A test loaded models: the resolved default model changed; the user never touched it.
-    const tested = { ...user, model: 'qwen3:8b', models: ['qwen3:8b'] };
+    // Saved elsewhere: a new header and URL; the user never touched them here.
+    const tested = { ...user, base_url: 'http://gpu:11434/v1', header_names: ['X-Team'], models: ['qwen3:8b'] };
     const fresh = formFrom(tested);
     const next = rebase(form, saved, fresh);
-    expect(next).toMatchObject({ name: 'Edited', apiKey: 'k', model: 'qwen3:8b' });
+    expect(next).toMatchObject({ name: 'Edited', apiKey: 'k', baseUrl: 'http://gpu:11434/v1', headers: [{ name: 'X-Team', value: '', stored: true }] });
     expect(changes(next, fresh, tested)).toEqual({ id: 'lab', name: 'Edited', api_key: 'k' });
     // Without edits nothing is dirty after the change.
     expect(isDirty(rebase(formFrom(user), saved, fresh), fresh, tested)).toBe(false);
@@ -103,6 +126,10 @@ describe('provider form', () => {
     expect(validate({ ...form, baseUrl: 'localhost:8000' }, opts).baseUrl).toBe('aiProviders.error.urlBad');
     expect(validate({ ...form, headers: [{ name: 'Bad Name', value: 'x' }] }, opts).headers).toBe('aiProviders.error.header');
     expect(validate({ ...form, headers: [{ name: '', value: 'orphan' }] }, opts).headers).toBe('aiProviders.error.header');
+    // The core accepts visible ASCII only (reqwest's HeaderValue).
+    expect(validate({ ...form, headers: [{ name: 'X-Title', value: 'Мій браузер' }] }, opts).headers).toBe('aiProviders.error.headerAscii');
+    expect(validate({ ...form, headers: [{ name: 'X-Title', value: 'a\nb' }] }, opts).headers).toBe('aiProviders.error.headerAscii');
+    expect(validate({ ...form, headers: [{ name: 'api-key', value: '', stored: true }] }, opts)).toEqual({});
     // A built-in may clear its URL (back to the preset) and keeps its fixed name.
     expect(validate({ ...formFrom(provider()), baseUrl: '' }, { ...opts, user: false })).toEqual({});
     // CLI providers have no URL.
@@ -114,5 +141,6 @@ describe('provider form', () => {
     expect(isHttpUrl('ftp://host')).toBe(false);
     expect(isHttpUrl('nope')).toBe(false);
     expect(headerMap([{ name: 'A', value: '1' }, { name: 'A', value: '2' }])).toEqual({ A: '2' });
+    expect(headerMap([{ name: 'A', value: ' ', stored: true }])).toEqual({ A: null });
   });
 });

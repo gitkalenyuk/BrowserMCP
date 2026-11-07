@@ -198,8 +198,10 @@ starts the mock empty (wizard).
   `ai.providers`, a settings sub-view (`AiSettings.svelte` + `ProviderForm.svelte`: CLI agents,
   built-in providers and "My providers" — any number of user endpoints added from a template with
   `ai.provider_add`, renamed / edited via `ai.provider_set`, deleted with `ai.provider_remove`;
-  key (masked, show/hide) / base URL / model picker / extra headers, unsaved-changes guard, free
-  check via `ai.provider_test`; form logic in `ai/provider-form.ts`), sessions as colored chips, one thread per
+  key (masked, show/hide) / base URL / model picker / extra headers (values never returned, like
+  the key: `ai.providers` lists `header_names`, `ai.provider_set` takes `null` to keep a stored
+  value), unsaved-changes guard (drafts survive a remount: `ai/provider-draft.ts`), free check via
+  `ai.provider_test` (its `problem` code is translated); form logic in `ai/provider-form.ts`), sessions as colored chips, one thread per
   session folded from `ai.*` events (`text_delta` streams, `text` replaces and closes the row; tool
   calls are collapsible rows), stop button. New chat = `ai.session_start`, reply = `ai.session_send`.
 * **Terminal** (`TerminalPanel.svelte`, `XTermView.svelte`, `term/store.svelte.ts`): xterm.js +

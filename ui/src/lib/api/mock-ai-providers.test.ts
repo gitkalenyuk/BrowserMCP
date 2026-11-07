@@ -15,7 +15,11 @@ describe('provider mocks (follow crates/ai)', () => {
     expect(() => h['ai.provider_add']({ name: 'Box', base_url: 'localhost:1' })).toThrow(/bad base URL/);
 
     const renamed = await h['ai.provider_set']({ id: 'openai-work', name: 'Work', headers: { 'X-A': 'b' }, default: true });
-    expect(renamed).toMatchObject({ name: 'Work', headers: { 'X-A': 'b' }, is_default: true });
+    expect(renamed).toMatchObject({ name: 'Work', header_names: ['X-A'], is_default: true });
+    expect(renamed).not.toHaveProperty('headers');
+    const kept = await h['ai.provider_set']({ id: 'openai-work', headers: { 'x-a': null, 'X-B': 'c' } });
+    expect(kept.header_names).toEqual(['X-B', 'x-a']);
+    expect(() => h['ai.provider_set']({ id: 'openai-work', headers: { 'X-New': null } })).toThrow(/no stored value/);
     expect(() => h['ai.provider_set']({ id: 'openai', name: 'Mine' })).toThrow(/built-in/);
     const cleared = await h['ai.provider_set']({ id: 'openai-work', base_url: '' });
     expect(cleared.configured).toBe(false);
@@ -28,6 +32,6 @@ describe('provider mocks (follow crates/ai)', () => {
   it('test says what is missing', async () => {
     const { handlers: h } = createProviderMocks();
     await h['ai.provider_add']({ name: 'Groq 2', template: 'groq' });
-    expect(await h['ai.provider_test']({ id: 'groq-2' })).toMatchObject({ ok: false, error: 'no API key set' });
+    expect(await h['ai.provider_test']({ id: 'groq-2' })).toMatchObject({ ok: false, error: 'no API key set', problem: 'no_api_key' });
   });
 });

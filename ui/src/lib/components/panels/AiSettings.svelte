@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AiProvider } from '../../api';
   import type { AiStore } from '../../ai/store.svelte';
+  import { dropDraft, NEW_DRAFT, peekDraft } from '../../ai/provider-draft';
   import { isUser } from '../../ai/provider-form';
   import { t } from '../../i18n/index.svelte';
   import { BLANK_TEMPLATE, providerHint } from '../../providers';
@@ -19,15 +20,17 @@
   const ai = store ?? useChrome().ai;
 
   /** `openId` of the "add provider" form. */
-  const NEW = '\u0000new';
+  const NEW = NEW_DRAFT;
+  /** Edits left unsaved when this view was last unmounted: reopen their form, which restores them. */
+  const restored = peekDraft();
   // svelte-ignore state_referenced_locally
-  let openId = $state<string | null>(ai.provider);
+  let openId = $state<string | null>(restored?.key ?? ai.provider);
   /** The open form holds edits that are not saved. */
   let dirty = $state(false);
   /** What the user wanted to do while the open form was dirty; runs on "Discard changes". */
   let pending = $state<(() => void) | null>(null);
   /** Template of the add form: a built-in API provider id or BLANK_TEMPLATE. */
-  let templateId = $state('openai');
+  let templateId = $state(restored?.templateId ?? 'openai');
   /** First message of the next opened form (e.g. "Added" after creating a provider). */
   let notice = $state<string | null>(null);
 
@@ -47,8 +50,14 @@
     const action = pending;
     pending = null;
     dirty = false;
+    dropDraft();
     action?.();
   }
+
+  // A kept draft of a provider removed meanwhile (e.g. in another window) has nowhere to go.
+  $effect(() => {
+    if (openId && openId !== NEW && ai.providers.length && !ai.providers.some((p) => p.id === openId)) dropDraft(openId);
+  });
 
   function toggle(id: string) {
     guard(() => {
