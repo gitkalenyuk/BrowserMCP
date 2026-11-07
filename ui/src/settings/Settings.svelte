@@ -13,17 +13,28 @@
   import PerformanceSection from './PerformanceSection.svelte';
   import PluginsSection from './PluginsSection.svelte';
   import PrivacySection from './PrivacySection.svelte';
+  // Stream E2: Connections & API, Profiles & identity, Proxies, Recording & scripts.
+  import { t } from '../lib/i18n/index.svelte';
+  import ConnectionsSection from './ConnectionsSection.svelte';
+  import ProfilesSection from './ProfilesSection.svelte';
+  import ProxiesSection from './ProxiesSection.svelte';
+  import RecordingSection from './RecordingSection.svelte';
 
   let { api }: { api: BrowserApi } = $props();
 
   const SECTIONS: { id: SettingsSection; label: string; icon: IconName }[] = [
     { id: 'general', label: 'General', icon: 'settings' },
     { id: 'ai', label: 'AI', icon: 'sparkles' },
+    // Getters: t() is read while rendering, so the label follows the UI language.
+    { id: 'connections', get label() { return t('settings.connections.nav'); }, icon: 'bot' },
     { id: 'notifications', label: 'Notifications', icon: 'alert' },
     { id: 'performance', label: 'Performance', icon: 'runs' },
     { id: 'privacy', label: 'Privacy & blocking', icon: 'lock' },
+    { id: 'profiles', get label() { return t('settings.profiles.nav'); }, icon: 'eye' },
+    { id: 'proxies', get label() { return t('settings.proxies.nav'); }, icon: 'traffic' },
     { id: 'hints', label: 'Link hints', icon: 'hand' },
     { id: 'plugins', label: 'Plugins & userscripts', icon: 'layers' },
+    { id: 'recording', get label() { return t('settings.recording.nav'); }, icon: 'record' },
     { id: 'keyboard', label: 'Keyboard', icon: 'command' },
   ];
 
@@ -93,6 +104,14 @@
         <HintsSection {api} {notify} {fail} />
       {:else if section === 'plugins'}
         <PluginsSection {api} {notify} {fail} />
+      {:else if section === 'connections'}
+        <ConnectionsSection {api} {notify} {fail} />
+      {:else if section === 'profiles'}
+        <ProfilesSection {api} {notify} {fail} />
+      {:else if section === 'proxies'}
+        <ProxiesSection {api} {notify} {fail} />
+      {:else if section === 'recording'}
+        <RecordingSection {api} {notify} {fail} />
       {:else}
         <KeyboardSection {notify} />
       {/if}

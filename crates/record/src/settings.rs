@@ -251,12 +251,19 @@ impl Command for Settings {
             settings.check()?;
             bmcp_core::config_file::save(&RecordingSettings::path(&data), &settings)?;
         }
+        let (recordings, videos) = (store::recordings_dir(&data), store::videos_dir(&data));
+        // Settings offers "Open folder" for both: they must exist before the first recording.
+        for dir in [&recordings, &videos] {
+            if let Err(err) = std::fs::create_dir_all(dir) {
+                tracing::warn!(%err, dir = %dir.display(), "cannot create folder");
+            }
+        }
         Ok(SettingsOutput {
             settings,
             defaults: RecordingSettings::default(),
             ffmpeg: ffmpeg_status().await,
-            recordings_dir: store::recordings_dir(&data).display().to_string(),
-            videos_dir: store::videos_dir(&data).display().to_string(),
+            recordings_dir: recordings.display().to_string(),
+            videos_dir: videos.display().to_string(),
         })
     }
 }

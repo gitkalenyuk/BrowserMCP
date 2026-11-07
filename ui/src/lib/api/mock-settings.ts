@@ -19,6 +19,7 @@ import type {
   SitePolicy,
   UserscriptInfo,
 } from './types-settings';
+import type { E2SettingsMethods } from './types-e2-settings';
 import { DEFAULT_RULES } from '../settings/notify';
 
 type Emit = <E extends EventName>(event: E, payload: ApiEvents[E]) => void;
@@ -93,7 +94,7 @@ function headerOf(code: string): UserscriptInfo['header'] | null {
   };
 }
 
-export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHandlers {
+export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHandlers & E2SettingsHandlers {
   const now = Date.now();
 
   // ---- notify ----
@@ -330,6 +331,7 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
   }, 0);
 
   return {
+    ...createE2SettingsMocks(call),
     // ---- notify ----
     'notify.config_get': () => maskedNotify(),
     'notify.config_set': (args) => {
@@ -636,6 +638,401 @@ export function createSettingsMocks(emit: Emit, on: On, call: Call): SettingsHan
       if (on) disabledUser.delete(name);
       else disabledUser.add(name);
       return { name, enabled: on };
+    },
+  };
+}
+
+// =============================================================================================
+// Settings → Connections & API, Profiles & identity, Proxies, Recording & scripts
+// (api.*, identity.*, proxy.*, geo.lookup, record.settings, script.settings). Kept in its own
+// block: other settings sections add their fakes above.
+// =============================================================================================
+
+export type E2SettingsHandlers = {
+  [M in keyof E2SettingsMethods]: (params: Params<M>) => Result<M> | Promise<Result<M>>;
+};
+
+type FullIdentity = Result<'identity.generate'>['identity'];
+
+const E2_PRESETS: Result<'identity.presets'>['presets'] = [
+  { name: 'windows-1080p', title: 'Windows 11 · Chrome · 1920×1080', os: 'windows', kind: 'stealth', device: null, screen: { width: 1920, height: 1080, dpr: 1 } },
+  { name: 'windows-1440p', title: 'Windows 11 · Chrome · 2560×1440', os: 'windows', kind: 'stealth', device: null, screen: { width: 2560, height: 1440, dpr: 1 } },
+  { name: 'macos-retina', title: 'macOS · Chrome · MacBook Pro 14"', os: 'macos', kind: 'stealth', device: null, screen: { width: 1512, height: 982, dpr: 2 } },
+  { name: 'android-pixel-8', title: 'Android 14 · Chrome · Pixel 8', os: 'android', kind: 'stealth', device: 'Pixel 8', screen: { width: 412, height: 915, dpr: 2.625 } },
+  { name: 'iphone-15', title: 'iPhone 15 · Safari (layout testing)', os: 'ios', kind: 'device_emulation', device: 'iPhone 15', screen: { width: 393, height: 852, dpr: 3 } },
+  { name: 'ipad', title: 'iPad · Safari (layout testing)', os: 'ios', kind: 'device_emulation', device: 'iPad', screen: { width: 820, height: 1180, dpr: 2 } },
+];
+
+/** Where the fake exit IPs are, by a word in the proxy host. */
+const E2_GEO: Record<string, Result<'geo.lookup'>['geo']> = {
+  de: { ip: '185.12.64.20', country: 'Germany', country_code: 'DE', region: 'Berlin', city: 'Berlin', timezone: 'Europe/Berlin', latitude: 52.52, longitude: 13.405, isp: 'Mock Residential GmbH', locale: 'de-DE', accept_language: 'de-DE,de,en-US,en' },
+  us: { ip: '104.28.3.9', country: 'United States', country_code: 'US', region: 'Virginia', city: 'Ashburn', timezone: 'America/New_York', latitude: 39.04, longitude: -77.49, isp: 'Mock Cloud Inc.', locale: 'en-US', accept_language: 'en-US,en' },
+  ua: { ip: '91.214.10.4', country: 'Ukraine', country_code: 'UA', region: 'Kyiv City', city: 'Kyiv', timezone: 'Europe/Kyiv', latitude: 50.45, longitude: 30.52, isp: 'Mock Telecom', locale: 'uk-UA', accept_language: 'uk-UA,uk,en-US,en' },
+};
+
+function e2Identity(id: string, presetName: string, over: Partial<FullIdentity> = {}): FullIdentity {
+  const preset = E2_PRESETS.find((p) => p.name === presetName) ?? E2_PRESETS[0];
+  const mobile = preset.os === 'android' || preset.os === 'ios';
+  const ua =
+    preset.os === 'ios'
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
+      : preset.os === 'android'
+        ? 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36'
+        : preset.os === 'macos'
+          ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36'
+          : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
+  return {
+    id,
+    preset: preset.name,
+    kind: preset.kind,
+    os: preset.os,
+    user_agent: ua,
+    ua_metadata: null,
+    platform: preset.os === 'windows' ? 'Win32' : preset.os === 'macos' ? 'MacIntel' : preset.os === 'android' ? 'Linux armv81' : 'iPhone',
+    hardware_concurrency: mobile ? 8 : 12,
+    device_memory: 8,
+    screen: preset.screen,
+    viewport: mobile ? { width: preset.screen.width, height: preset.screen.height } : null,
+    timezone: 'Europe/Kyiv',
+    locale: 'uk-UA',
+    accept_language: 'uk-UA,uk,en-US,en',
+    geolocation: null,
+    touch: mobile,
+    max_touch_points: mobile ? 5 : 0,
+    mobile,
+    webgl_vendor: 'Google Inc. (NVIDIA)',
+    webgl_renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    ...over,
+  };
+}
+
+const e2Mask = (url: string) => url.replace(/^(\w+:\/\/[^:@/]+):[^@/]*@/, '$1:***@');
+
+/** A glob like the core's: `*.example.com` also matches `example.com`. */
+function e2Matches(pattern: string, url: string): boolean {
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (pattern.startsWith('re:')) {
+    try {
+      return new RegExp(pattern.slice(3), 'i').test(url);
+    } catch {
+      return false;
+    }
+  }
+  const glob = (p: string) => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
+  if (pattern.includes('://')) return glob(pattern).test(url);
+  if (pattern.startsWith('*.') && host === pattern.slice(2)) return true;
+  return glob(pattern).test(host);
+}
+
+export function createE2SettingsMocks(call: Call): E2SettingsHandlers {
+  // ---- connections ----
+  let connections = { cdp_enabled: false, cdp_port: 9222 };
+  const cdpLaunch: { port: number | null; refused: boolean } = { port: null, refused: false };
+  const cdpInfo = (): Result<'api.info'>['cdp'] => {
+    const stealth = [...assigned.keys()].sort();
+    const wanted = connections.cdp_enabled ? connections.cdp_port : null;
+    const effective = stealth.length ? null : wanted;
+    return { active_port: cdpLaunch.port, refused: cdpLaunch.refused, enabled: connections.cdp_enabled, port: connections.cdp_port, stealth_profiles: stealth, restart_needed: effective !== cdpLaunch.port };
+  };
+  const TOOLSET_COUNTS: [string, number, boolean][] = [
+    ['core', 31, true], ['net', 15, false], ['record', 8, false], ['script', 8, false], ['run', 10, false], ['profile', 12, false],
+    ['stealth', 26, false], ['data', 22, false], ['ai', 9, false], ['ui', 6, false], ['system', 7, true],
+  ];
+
+  // ---- identities ----
+  const identities = new Map<string, FullIdentity>([
+    ['de-desktop', e2Identity('de-desktop', 'windows-1080p', { timezone: 'Europe/Berlin', locale: 'de-DE', accept_language: 'de-DE,de,en-US,en' })],
+    ['phone-test', e2Identity('phone-test', 'iphone-15')],
+  ]);
+  /** profile → identity (mock.ts seeds stealth-de with de-desktop). */
+  const assigned = new Map<string, string>([['stealth-de', 'de-desktop']]);
+  const summary = (i: FullIdentity): Result<'identity.list'>['identities'][number] => ({
+    id: i.id, preset: i.preset, os: i.os, kind: i.kind, user_agent: i.user_agent, timezone: i.timezone, locale: i.locale, screen: i.screen,
+  });
+  const requireIdentity = (id: string) => {
+    const i = identities.get(id);
+    if (!i) throw new RpcError('NOT_FOUND', `no saved identity "${id}"`);
+    return i;
+  };
+
+  // ---- proxies ----
+  type Pool = Result<'proxy.pool_list'>['pools'][number] & { real: string[] };
+  const checked = Math.floor(Date.now() / 1000) - 3600;
+  const pools = new Map<string, Pool>([
+    ['residential-de', {
+      name: 'residential-de', strategy: 'round_robin',
+      real: ['socks5://u1:pw1@de1.pool.example:1080', 'socks5://u2:pw2@de2.pool.example:1080', 'socks5://u3:pw3@de3.pool.example:1080'],
+      proxies: [],
+    }],
+    ['datacenter-us', { name: 'datacenter-us', strategy: 'random', real: ['http://us1.dc.example:3128', 'http://us2.dc.example:3128'], proxies: [] }],
+  ]);
+  const health = new Map<string, Result<'proxy.pool_check'>['proxies'][number]>();
+  health.set('socks5://u1:pw1@de1.pool.example:1080', { proxy: '', healthy: true, latency_ms: 184, checked_at: checked, error: null });
+  health.set('socks5://u2:pw2@de2.pool.example:1080', { proxy: '', healthy: true, latency_ms: 231, checked_at: checked, error: null });
+  health.set('socks5://u3:pw3@de3.pool.example:1080', { proxy: '', healthy: false, latency_ms: null, checked_at: checked, error: 'connect timed out after 8000 ms' });
+  const proxyRow = (url: string) => ({ ...(health.get(url) ?? { healthy: null, latency_ms: null, checked_at: null, error: null }), proxy: e2Mask(url) });
+  const poolOut = (p: Pool) => ({ name: p.name, strategy: p.strategy, proxies: p.real.map(proxyRow) });
+  const forwarders: Result<'proxy.forward_list'>['forwarders'] = [
+    { id: 'fwd-1', socks5: 'socks5://127.0.0.1:53121', http: 'http://127.0.0.1:53121', upstream: 'http://corp-proxy:3128' },
+  ];
+  const routes = new Map<string, { rules: { match: string; via: string }[]; default: string }>([
+    ['work', { rules: [{ match: '*.corp.local', via: 'direct' }], default: 'http://corp-proxy:3128' }],
+    ['stealth-de', { rules: [], default: 'socks5://u:***@de.pool:1080' }],
+  ]);
+  const geoFor = (proxy: string | null | undefined) => {
+    const p = (proxy ?? '').toLowerCase();
+    if (!p || p === 'direct') return E2_GEO.ua;
+    if (p.includes('us')) return E2_GEO.us;
+    return E2_GEO.de;
+  };
+
+  // ---- recording & scripts ----
+  const recordDefaults = { video_fps: 10, video_format: 'webm' as const, video_quality: 80 };
+  let record: Result<'record.settings'>['settings'] = { ...recordDefaults };
+  const scriptDefaults = { script_timeout_secs: 300, run_timeout_secs: 300, run_parallel: 4, run_retries: 1 };
+  let scripts: Result<'script.settings'>['settings'] = { ...scriptDefaults };
+  const EXE_DIR = 'C:\\Users\\you\\BrowserMCP';
+  const int = (n: number | null | undefined, min: number, max: number, name: string) => {
+    if (n == null) return;
+    if (!Number.isInteger(n) || n < min || n > max) throw new RpcError('INVALID_PARAMS', `${name} must be ${min}-${max}, got ${n}`);
+  };
+
+  return {
+    'api.info': () => ({
+      version: '0.1.0',
+      listening: true,
+      port: 47800,
+      urls: {
+        mcp: 'http://127.0.0.1:47800/mcp',
+        rest: 'http://127.0.0.1:47800/v1',
+        ws: 'ws://127.0.0.1:47800/v1/ws',
+        openapi: 'http://127.0.0.1:47800/openapi.json',
+        health: 'http://127.0.0.1:47800/v1/health',
+      },
+      endpoint_file: `${DATA}\\runtime\\endpoint.json`,
+      endpoint_present: true,
+      exe: `${EXE_DIR}\\browsermcp.exe`,
+      data_dir: DATA,
+      toolsets: TOOLSET_COUNTS.map(([name, commands, def]) => ({ name, commands, default: def })),
+      cdp: cdpInfo(),
+    }),
+    'api.config': ({ cdp_enabled, cdp_port }) => {
+      int(cdp_port, 1024, 65535, 'cdp_port');
+      if (cdp_enabled && assigned.size) {
+        throw new RpcError('INVALID_PARAMS', `the CDP port cannot be opened while these profiles use a stealth identity: ${[...assigned.keys()].sort().join(', ')}`);
+      }
+      connections = { cdp_enabled: cdp_enabled ?? connections.cdp_enabled, cdp_port: cdp_port ?? connections.cdp_port };
+      return { config: { ...connections }, cdp: cdpInfo() };
+    },
+
+    'record.settings': async (args) => {
+      await sleep(80); // ffmpeg -version
+      if (args.reset) record = { ...recordDefaults };
+      int(args.video_fps, 1, 60, 'video_fps');
+      int(args.video_quality, 1, 100, 'video_quality');
+      record = {
+        video_fps: args.video_fps ?? record.video_fps,
+        video_format: args.video_format ?? record.video_format,
+        video_quality: args.video_quality ?? record.video_quality,
+      };
+      return {
+        settings: { ...record },
+        defaults: { ...recordDefaults },
+        ffmpeg: {
+          found: true,
+          path: 'C:\\Users\\you\\AppData\\Local\\Microsoft\\WinGet\\Links\\ffmpeg.exe',
+          source: 'path',
+          version: 'ffmpeg version 7.1-full_build-www.gyan.dev',
+          env: null,
+          exe_dir: EXE_DIR,
+          install: 'winget install Gyan.FFmpeg',
+        },
+        recordings_dir: `${DATA}\\recordings`,
+        videos_dir: `${DATA}\\videos`,
+      };
+    },
+    'script.settings': (args) => {
+      if (args.reset) scripts = { ...scriptDefaults };
+      int(args.script_timeout_secs, 1, 86400, 'script_timeout_secs');
+      int(args.run_timeout_secs, 1, 86400, 'run_timeout_secs');
+      int(args.run_parallel, 1, 32, 'run_parallel');
+      int(args.run_retries, 0, 10, 'run_retries');
+      scripts = {
+        script_timeout_secs: args.script_timeout_secs ?? scripts.script_timeout_secs,
+        run_timeout_secs: args.run_timeout_secs ?? scripts.run_timeout_secs,
+        run_parallel: args.run_parallel ?? scripts.run_parallel,
+        run_retries: args.run_retries ?? scripts.run_retries,
+      };
+      return {
+        settings: { ...scripts },
+        defaults: { ...scriptDefaults },
+        host: { found: true, path: `${EXE_DIR}\\bmcp-script-host.exe`, error: null, hint: null },
+        scripts_dir: `${DATA}\\scripts`,
+        runs_dir: `${DATA}\\runs`,
+        max_parallel: 32,
+        recommended_parallel: 6,
+      };
+    },
+
+    'identity.presets': () => ({ presets: structuredClone(E2_PRESETS) }),
+    'identity.list': () => ({
+      identities: [...identities.values()].map(summary),
+      profiles: Object.fromEntries(assigned),
+    }),
+    'identity.generate': ({ preset, os, id, save, timezone, locale }) => {
+      const name = preset ?? E2_PRESETS.find((p) => p.os === (os ?? 'windows'))?.name ?? 'windows-1080p';
+      if (!E2_PRESETS.some((p) => p.name === name)) throw new RpcError('NOT_FOUND', `no preset "${name}"`);
+      const ident = e2Identity(id ?? `${name}-${Math.random().toString(16).slice(2, 10)}`, name, {
+        ...(timezone ? { timezone } : {}),
+        ...(locale ? { locale } : {}),
+      });
+      if (save) identities.set(ident.id, ident);
+      return { identity: ident, seed: 42, saved: !!save, problems: [] };
+    },
+    'identity.assign': async ({ profile, id }) => {
+      if (id) requireIdentity(id);
+      if (id) assigned.set(profile, id);
+      else assigned.delete(profile);
+      await call('profile.create', { id: profile, identity: id ?? '' });
+      return { profile, id: id ?? null };
+    },
+    'identity.remove': async ({ id }) => {
+      const removed = identities.delete(id);
+      for (const [profile, ident] of [...assigned]) {
+        if (ident === id) {
+          assigned.delete(profile);
+          await call('profile.create', { id: profile, identity: '' });
+        }
+      }
+      return { removed };
+    },
+    'identity.fit_to_proxy': async ({ identity_id, proxy_id, save }) => {
+      await sleep(250);
+      const ident = requireIdentity(identity_id);
+      const geo = geoFor(proxy_id);
+      const next = {
+        ...ident,
+        timezone: geo.timezone,
+        locale: geo.locale ?? ident.locale,
+        accept_language: geo.accept_language ?? ident.accept_language,
+        geolocation: { latitude: geo.latitude + 0.01, longitude: geo.longitude - 0.01, accuracy: 30 },
+      };
+      const changes: { field: string; from: unknown; to: unknown }[] = (['timezone', 'locale', 'accept_language'] as const)
+        .filter((k) => ident[k] !== next[k])
+        .map((k) => ({ field: k, from: ident[k], to: next[k] }));
+      changes.push({ field: 'geolocation', from: ident.geolocation ?? null, to: next.geolocation });
+      if (save ?? true) identities.set(identity_id, next);
+      return { identity_id, via: proxy_id === 'direct' ? null : proxy_id, geo, changes, saved: save ?? true, identity: next };
+    },
+
+    'proxy.pool_list': () => ({ pools: [...pools.values()].map(poolOut) }),
+    'proxy.pool_add': ({ pool, proxies, strategy }) => {
+      if (!/^[a-z0-9_-]{1,64}$/.test(pool)) throw new RpcError('INVALID_PARAMS', `pool "${pool}" is invalid: use 1-64 chars of a-z, 0-9, '-' or '_'`);
+      for (const url of proxies) {
+        if (/^(https|socks4a?):\/\//i.test(url)) throw new RpcError('INVALID_PARAMS', `bad proxy "${e2Mask(url)}": use http:// or socks5://`);
+        if (!/:\d+(:[^:]+:[^:]+)?$/.test(url.replace(/@.*?:/, '@x:'))) throw new RpcError('INVALID_PARAMS', `bad proxy "${e2Mask(url)}": no port`);
+      }
+      const p = pools.get(pool) ?? { name: pool, strategy: strategy ?? 'round_robin', real: [], proxies: [] };
+      const before = p.real.length;
+      for (const url of proxies) if (!p.real.includes(url)) p.real.push(url);
+      if (strategy) p.strategy = strategy;
+      pools.set(pool, p);
+      return { pool, added: p.real.length - before, total: p.real.length, strategy: p.strategy };
+    },
+    'proxy.pool_remove': ({ pool, proxy }) => {
+      const p = pools.get(pool);
+      if (!p) return { removed: false, remaining: 0 };
+      if (proxy == null) {
+        pools.delete(pool);
+        return { removed: true, remaining: 0 };
+      }
+      const i = p.real.findIndex((u) => u === proxy || e2Mask(u) === proxy);
+      if (i >= 0) p.real.splice(i, 1);
+      return { removed: i >= 0, remaining: p.real.length };
+    },
+    'proxy.pool_check': async ({ pool }) => {
+      const p = pools.get(pool);
+      if (!p) throw new RpcError('NOT_FOUND', `no pool "${pool}"`);
+      await sleep(600);
+      const now = Math.floor(Date.now() / 1000);
+      p.real.forEach((url, i) => {
+        const bad = url.includes('de3') || url.includes('bad');
+        health.set(url, { proxy: '', healthy: !bad, latency_ms: bad ? null : 120 + ((i * 67) % 240), checked_at: now, error: bad ? 'connect timed out after 8000 ms' : null });
+      });
+      const rows = p.real.map(proxyRow);
+      return { pool, healthy: rows.filter((r) => r.healthy).length, unhealthy: rows.filter((r) => r.healthy === false).length, proxies: rows };
+    },
+    'proxy.forward_list': () => ({ forwarders: structuredClone(forwarders) }),
+    'proxy.rules_get': ({ profile }) => ({
+      routes: [...routes.entries()]
+        .filter(([id]) => !profile || id === profile)
+        .map(([id, r]) => ({ profile: id, rules: r.rules.map((x) => ({ ...x, via: e2Mask(x.via) })), default: e2Mask(r.default) })),
+    }),
+    'proxy.rules_set': ({ profile, rules, default: def }) => {
+      for (const [i, r] of (rules ?? []).entries()) {
+        if (!r.match.trim()) throw new RpcError('INVALID_PARAMS', `rule ${i + 1}: empty match`);
+        if (!/^(direct|fwd-\d+|pool:[a-z0-9_-]+|lease:.+|(http|socks5h?):\/\/.+)$/.test(r.via)) throw new RpcError('INVALID_PARAMS', `rule ${i + 1}: unknown route "${r.via}"`);
+        if (r.via.startsWith('pool:') && !pools.has(r.via.slice(5))) throw new RpcError('NOT_FOUND', `no pool "${r.via.slice(5)}"`);
+      }
+      const set = { rules: rules ?? [], default: def ?? 'direct' };
+      if (!set.rules.length && set.default === 'direct') routes.delete(profile);
+      else routes.set(profile, set);
+      return {
+        profile,
+        rules: set.rules.map((x) => ({ ...x, via: e2Mask(x.via) })),
+        default: e2Mask(set.default),
+        pref: set.rules.length ? { mode: 'pac_script' } : set.default === 'direct' ? { mode: 'direct' } : { mode: 'fixed_servers' },
+        pac_script: set.rules.length ? 'function FindProxyForURL(url, host) { /* mock */ return "DIRECT"; }' : null,
+        forwarders: set.default === 'direct' ? [] : ['fwd-1'],
+      };
+    },
+    'proxy.rules_test': ({ profile, url }) => {
+      if (!/^\w+:\/\//.test(url)) throw new RpcError('INVALID_PARAMS', `"${url}" is not a URL`);
+      const set = routes.get(profile) ?? { rules: [], default: 'direct' };
+      const index = set.rules.findIndex((r) => e2Matches(r.match, url));
+      const via = index >= 0 ? set.rules[index].via : set.default;
+      const u = new URL(url);
+      return {
+        profile,
+        pac_url: u.protocol === 'https:' ? `${u.protocol}//${u.host}/` : url,
+        host: u.hostname,
+        rule: index >= 0 ? index + 1 : null,
+        matched: index >= 0 ? set.rules[index].match : null,
+        via: e2Mask(via),
+        upstream: via === 'direct' ? null : via.startsWith('pool:') ? e2Mask(pools.get(via.slice(5))?.real[0] ?? '') || null : e2Mask(via),
+      };
+    },
+    'stealth.check': async ({ tab }) => {
+      await sleep(400);
+      const checks = [
+        { name: 'navigator.webdriver', status: 'pass', detail: 'false' },
+        { name: 'UA vs client hints', status: 'pass', detail: 'Chrome 156 on Windows in both' },
+        { name: 'timezone vs identity', status: 'pass', detail: 'Europe/Berlin' },
+        { name: 'WebRTC local IPs', status: 'pass', detail: 'none exposed (proxied)' },
+        { name: 'fonts vs OS', status: 'warn', detail: '2 macOS-only fonts found' },
+      ];
+      const count = (s: string) => checks.filter((c) => c.status === s).length;
+      return {
+        tab: tab ?? 1,
+        identity_id: 'de-desktop',
+        passed: count('pass'),
+        warned: count('warn'),
+        failed: count('fail'),
+        checks,
+        text: checks.map((c) => `${c.status.toUpperCase().padEnd(5)} ${c.name}  ${c.detail}`).join('\n'),
+      };
+    },
+    'geo.lookup': async ({ proxy, pool }) => {
+      await sleep(300);
+      if (proxy && /^(https|socks4a?):\/\//i.test(proxy)) throw new RpcError('INVALID_PARAMS', 'use http:// or socks5://');
+      if (proxy?.includes('bad')) throw new RpcError('TIMEOUT', 'the proxy did not answer in 10000 ms');
+      const via = proxy ? e2Mask(proxy) : pool ? e2Mask(pools.get(pool)?.real[0] ?? '') : null;
+      return { via, geo: geoFor(proxy ?? (pool ? pools.get(pool)?.real[0] : null)) };
     },
   };
 }

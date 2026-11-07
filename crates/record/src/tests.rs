@@ -650,8 +650,9 @@ async fn record_settings_are_saved_and_used_by_new_videos() {
             .unwrap()
             .contains("winget")
     );
-    // A read writes nothing.
+    // A read writes no settings (only creates the folders it offers to open).
     assert!(!h.data.path().join("config").join("recording.json").exists());
+    assert!(h.data.path().join("videos").is_dir());
 
     let saved = h
         .ok(

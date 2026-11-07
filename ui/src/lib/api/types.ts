@@ -202,7 +202,11 @@ export interface RpcMethods {
   'page.zoom': { params: { tab?: TabId; level?: number; delta?: number }; result: { tab: TabId; level: number } };
   // ---- profiles = workspaces (crates/profiles) -----------------------------------------------
   'profile.list': { params: void; result: { profiles: ProfileEntry[] } };
-  'profile.create': { params: { id: string }; result: { id: string; created: boolean } };
+  'profile.create': {
+    /** proxy / identity / accept_language: only the fields to change ("" removes). */
+    params: { id: string; proxy?: string; proxy_bypass?: string; identity?: string; accept_language?: string };
+    result: { id: string; created: boolean; warning?: string | null };
+  };
   'profile.update': { params: { id: string; label?: string; color?: string }; result: { id: string; label: string; color: string | null } };
   'profile.delete': { params: { id: string; keep_data?: boolean }; result: { id: string; removed: boolean } };
   'permissions.pending': { params: void; result: { prompts: PermissionPrompt[] } };
@@ -542,3 +546,4 @@ export type * from './types-record-runs';
 // Scripts panel debugger (script.debug_* methods and events are merged into RpcMethods / ApiEvents there).
 export type * from './types-scripts';
 export type * from './types-settings'; // settings page + heal UI (notify, governor, hints, adblock, plugins, run.heal_*)
+export type * from './types-e2-settings'; // settings: connections (api.*), identities, proxies, recording/script defaults
