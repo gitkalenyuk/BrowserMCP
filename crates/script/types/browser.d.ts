@@ -447,19 +447,140 @@ declare namespace BrowserMCP {
     } | null;
   }
 
+  // ---- ai.provider_add ----
+
+  /** Arguments of `ai.provider_add`. */
+  export interface AiProviderAddArgs {
+    /** Display name, unique among all providers, e.g. "OpenAI (work)", "Home server". */
+    name: string;
+    /**
+     * Preset to start from: an API provider id from ai.providers ("openai", "openrouter",
+     * "ollama", "lmstudio", "groq", "anthropic", "gemini"…) or "custom" for a blank
+     * endpoint (default). Gives the API type, base URL, suggested models and whether a key is
+     * required.
+     * @default null
+     */
+    template?: string | null;
+    /**
+     * Id for ai.session_start and the other ai.* commands; default = made from the name
+     * ("home-server"). Lowercase letters, digits, '-', '_', '.'.
+     * @default null
+     */
+    id?: string | null;
+    /**
+     * Wire protocol; default = the template's ("openai" for a blank one).
+     *
+     * - `"anthropic"`: Anthropic Messages API (`/v1/messages`).
+     * - `"openai"`: OpenAI-compatible `chat/completions` (OpenAI, OpenRouter, Ollama, LM Studio, vLLM…).
+     * - `"gemini"`: Google Gemini `generateContent`.
+     * @default null
+     */
+    api?: "anthropic" | "openai" | "gemini" | null;
+    /**
+     * API root, e.g. "http://10.0.0.5:8000/v1"; default = the template's (required for a blank
+     * one).
+     * @default null
+     */
+    base_url?: string | null;
+    /**
+     * API key. Stored in plain JSON in data/config/ai.json.
+     * @default null
+     */
+    api_key?: string | null;
+    /**
+     * Default model (ai.provider_test lists the endpoint's models).
+     * @default null
+     */
+    model?: string | null;
+    /**
+     * Extra HTTP headers sent with every request, e.g. {"HTTP-Referer": "https://me.test"}.
+     * @default {}
+     */
+    headers?: Record<string, string>;
+  }
+
+  /**
+   * Result of `ai.provider_add`.
+   * One provider as listed by `ai.providers`.
+   */
+  export interface AiProviderAddOutput {
+    /**
+     * e.g. `anthropic`, `openai`, `ollama`, `claude-code`, or a user provider's id
+     * (`openai-work`, `home-server`).
+     */
+    id: string;
+    name: string;
+    /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
+    kind: string;
+    /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
+    protocol: string;
+    /**
+     * `true` for the built-in presets; `false` for providers added with ai.provider_add
+     * (those can be renamed and removed).
+     */
+    builtin: boolean;
+    /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+    template: string | null;
+    /** Ready to start a session (URL and key set / CLI installed). */
+    configured: boolean;
+    needs_key: boolean;
+    /** Whether an API key is stored (the key itself is not returned). */
+    has_key: boolean;
+    base_url: string;
+    /** Model used when `ai.session_start` gives none. */
+    model: string | null;
+    /** Known models (live list after `ai.provider_test`). */
+    models: string[];
+    /** API providers: extra HTTP headers sent with every request. */
+    headers: Record<string, string>;
+    /** CLI providers: the binary that will run. */
+    path: string | null;
+    /** Used by background AI features (self-healing, page.extract) when they name no provider. */
+    is_default: boolean;
+  }
+
+  // ---- ai.provider_remove ----
+
+  /** Arguments of `ai.provider_remove`. */
+  export interface AiProviderRemoveArgs {
+    /** Provider id from ai.providers. */
+    id: string;
+  }
+
+  /** Result of `ai.provider_remove`. */
+  export interface AiProviderRemoveOutput {
+    id: string;
+    /** It was the default of background AI features; the default is automatic again. */
+    was_default: boolean;
+  }
+
   // ---- ai.provider_set ----
 
   /** Arguments of `ai.provider_set`. */
   export interface AiProviderSetArgs {
-    /** Provider id from ai.providers. */
+    /** Provider id from ai.providers (built-in or added with ai.provider_add). */
     id: string;
+    /**
+     * User providers: new display name (unique among all providers).
+     * @default null
+     */
+    name?: string | null;
+    /**
+     * User providers: wire protocol ("openai" = OpenAI-compatible, "anthropic", "gemini").
+     *
+     * - `"anthropic"`: Anthropic Messages API (`/v1/messages`).
+     * - `"openai"`: OpenAI-compatible `chat/completions` (OpenAI, OpenRouter, Ollama, LM Studio, vLLM…).
+     * - `"gemini"`: Google Gemini `generateContent`.
+     * @default null
+     */
+    api?: "anthropic" | "openai" | "gemini" | null;
     /**
      * API key; "" removes it. Stored in plain JSON in data/config/ai.json.
      * @default null
      */
     api_key?: string | null;
     /**
-     * API root, e.g. "http://localhost:11434/v1"; "" = preset default.
+     * API root, e.g. "http://localhost:11434/v1"; "" = preset default (built-ins) or none.
      * @default null
      */
     base_url?: string | null;
@@ -474,6 +595,11 @@ declare namespace BrowserMCP {
      */
     path?: string | null;
     /**
+     * API providers: extra HTTP headers; replaces all of them ({} removes them).
+     * @default null
+     */
+    headers?: Record<string, string> | null;
+    /**
      * true: make this the default provider of background AI features (self-healing,
      * page.extract); false: stop it being the default.
      * @default null
@@ -486,14 +612,24 @@ declare namespace BrowserMCP {
    * One provider as listed by `ai.providers`.
    */
   export interface AiProviderSetOutput {
-    /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
+    /**
+     * e.g. `anthropic`, `openai`, `ollama`, `claude-code`, or a user provider's id
+     * (`openai-work`, `home-server`).
+     */
     id: string;
     name: string;
     /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
     kind: string;
     /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
     protocol: string;
-    /** Ready to start a session (key set / CLI installed). */
+    /**
+     * `true` for the built-in presets; `false` for providers added with ai.provider_add
+     * (those can be renamed and removed).
+     */
+    builtin: boolean;
+    /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+    template: string | null;
+    /** Ready to start a session (URL and key set / CLI installed). */
     configured: boolean;
     needs_key: boolean;
     /** Whether an API key is stored (the key itself is not returned). */
@@ -503,6 +639,8 @@ declare namespace BrowserMCP {
     model: string | null;
     /** Known models (live list after `ai.provider_test`). */
     models: string[];
+    /** API providers: extra HTTP headers sent with every request. */
+    headers: Record<string, string>;
     /** CLI providers: the binary that will run. */
     path: string | null;
     /** Used by background AI features (self-healing, page.extract) when they name no provider. */
@@ -538,15 +676,26 @@ declare namespace BrowserMCP {
 
   /** Result of `ai.providers`. */
   export interface AiProvidersOutput {
+    /** Built-in providers first, then the user's own in the order they were added. */
     providers: {
-      /** e.g. `anthropic`, `openai`, `ollama`, `claude-code`. */
+      /**
+       * e.g. `anthropic`, `openai`, `ollama`, `claude-code`, or a user provider's id
+       * (`openai-work`, `home-server`).
+       */
       id: string;
       name: string;
       /** `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex). */
       kind: string;
       /** Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`. */
       protocol: string;
-      /** Ready to start a session (key set / CLI installed). */
+      /**
+       * `true` for the built-in presets; `false` for providers added with ai.provider_add
+       * (those can be renamed and removed).
+       */
+      builtin: boolean;
+      /** User providers: the preset they were made from (`openai`, `ollama`…); null = blank. */
+      template: string | null;
+      /** Ready to start a session (URL and key set / CLI installed). */
       configured: boolean;
       needs_key: boolean;
       /** Whether an API key is stored (the key itself is not returned). */
@@ -556,6 +705,8 @@ declare namespace BrowserMCP {
       model: string | null;
       /** Known models (live list after `ai.provider_test`). */
       models: string[];
+      /** API providers: extra HTTP headers sent with every request. */
+      headers: Record<string, string>;
       /** CLI providers: the binary that will run. */
       path: string | null;
       /** Used by background AI features (self-healing, page.extract) when they name no provider. */
@@ -7868,11 +8019,15 @@ declare namespace BrowserMCP {
     "agents.list": { args: AgentsListArgs; output: AgentsListOutput };
     /** Ask the user to do something in a tab (log in, CAPTCHA, confirm). The browser shows a banner with `reason`; when the user clicks Done the tab is yours again. Use wait_secs to wait for that. */
     "ai.handoff": { args: AiHandoffArgs; output: AiHandoffOutput };
-    /** Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider. */
+    /** Add your own AI provider (any number: two OpenAI accounts, several local servers…), starting from a template preset or a blank OpenAI-compatible endpoint. Saved in data/config/ai.json. Returns the provider; its id works everywhere a built-in id does. */
+    "ai.provider_add": { args: AiProviderAddArgs; output: AiProviderAddOutput };
+    /** Remove a provider added with ai.provider_add (its key and settings are deleted from data/config/ai.json). Built-in providers cannot be removed. */
+    "ai.provider_remove": { args: AiProviderRemoveArgs; output: AiProviderRemoveOutput };
+    /** Change any provider: API key, base URL, default model, extra headers, CLI path, and for your own providers the name and API type (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider. */
     "ai.provider_set": { args: AiProviderSetArgs; output: AiProviderSetOutput };
     /** Check a provider without spending tokens: API providers list their models (GET /models), CLI providers run --version. Returns ok, models/version or error. */
     "ai.provider_test": { args: AiProviderTestArgs; output: AiProviderTestOutput };
-    /** List AI providers (Anthropic, OpenAI-compatible, Gemini, Ollama, LM Studio, Claude Code, Codex…) with configured flag, base URL, default model and known models. */
+    /** List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with configured/default flags, base URL, default model and known models. */
     "ai.providers": { args: AiProvidersArgs; output: AiProvidersOutput };
     /** Send the next user message to an AI session (queued if it is still working). Returns the session. */
     "ai.session_send": { args: AiSessionSendArgs; output: AiSessionSendOutput };
@@ -8321,7 +8476,19 @@ declare namespace BrowserMCP {
        */
       handoff(args: AiHandoffArgs): Promise<AiHandoffOutput>;
       /**
-       * Set a provider's API key, base URL, default model or CLI path (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider.
+       * Add your own AI provider (any number: two OpenAI accounts, several local servers…), starting from a template preset or a blank OpenAI-compatible endpoint. Saved in data/config/ai.json. Returns the provider; its id works everywhere a built-in id does.
+       *
+       * `ai.provider_add` (MCP: `ai_provider_add`): toolset `ai`, secret.
+       */
+      provider_add(args: AiProviderAddArgs): Promise<AiProviderAddOutput>;
+      /**
+       * Remove a provider added with ai.provider_add (its key and settings are deleted from data/config/ai.json). Built-in providers cannot be removed.
+       *
+       * `ai.provider_remove` (MCP: `ai_provider_remove`): toolset `ai`, act.
+       */
+      provider_remove(args: AiProviderRemoveArgs): Promise<AiProviderRemoveOutput>;
+      /**
+       * Change any provider: API key, base URL, default model, extra headers, CLI path, and for your own providers the name and API type (saved to data/config/ai.json). Omitted fields stay unchanged; "" clears one. Returns the provider.
        *
        * `ai.provider_set` (MCP: `ai_provider_set`): toolset `ai`, secret.
        */
@@ -8333,7 +8500,7 @@ declare namespace BrowserMCP {
        */
       provider_test(args: AiProviderTestArgs): Promise<AiProviderTestOutput>;
       /**
-       * List AI providers (Anthropic, OpenAI-compatible, Gemini, Ollama, LM Studio, Claude Code, Codex…) with configured flag, base URL, default model and known models.
+       * List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with configured/default flags, base URL, default model and known models.
        *
        * `ai.providers` (MCP: `ai_providers`): toolset `ai`, read.
        */

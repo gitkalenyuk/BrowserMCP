@@ -387,3 +387,36 @@ fn truncate_marks_cut_text() {
     assert_eq!(truncate("abc", 5), "abc");
     assert!(truncate("abcdef", 3).starts_with("abc… [truncated, 6 chars total]"));
 }
+
+#[tokio::test]
+async fn extra_headers_go_with_every_request_but_auth_wins() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("x-team", "lab"))
+        .and(header("authorization", "Bearer sk-real"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "m1"}]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let headers = std::collections::BTreeMap::from([
+        ("X-Team".to_string(), "lab".to_string()),
+        // The adapter's own auth header is not replaced by an extra one.
+        ("Authorization".to_string(), "Bearer sk-other".to_string()),
+    ]);
+    let client = Client::new(
+        Api::OpenAi,
+        format!("{}/v1", server.uri()),
+        Some("sk-real".into()),
+    )
+    .with_headers(&headers);
+    assert_eq!(client.list_models().await.unwrap(), vec!["m1".to_string()]);
+}
+
+#[test]
+fn header_pairs_are_validated() {
+    assert!(header_pair("X-Title", "BrowserMCP").is_ok());
+    assert!(header_pair("bad name", "v").is_err());
+    assert!(header_pair("X-Ok", "line\nbreak").is_err());
+}

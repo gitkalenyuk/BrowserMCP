@@ -16,18 +16,24 @@ mod gemini;
 mod openai;
 pub mod sse;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Which wire protocol a provider speaks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Api {
+    /// Anthropic Messages API (`/v1/messages`).
     Anthropic,
+    /// OpenAI-compatible `chat/completions` (OpenAI, OpenRouter, Ollama, LM Studio, vLLM…).
     #[serde(rename = "openai")]
     OpenAi,
+    /// Google Gemini `generateContent`.
     Gemini,
 }
 
@@ -133,20 +139,51 @@ pub struct Client {
     http: reqwest::Client,
 }
 
+/// A header name and value as reqwest takes them, or why they are not valid HTTP.
+pub fn header_pair(name: &str, value: &str) -> Result<(HeaderName, HeaderValue), String> {
+    let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| "invalid header name")?;
+    let value = HeaderValue::from_str(value).map_err(|_| "invalid header value")?;
+    Ok((name, value))
+}
+
+fn http_client(headers: HeaderMap) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        // Whole-request timeout; streamed agent turns can take minutes.
+        .timeout(Duration::from_secs(600))
+        .default_headers(headers)
+        .build()
+        .unwrap_or_default()
+}
+
 impl Client {
     pub fn new(api: Api, base_url: impl Into<String>, api_key: Option<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(20))
-            // Whole-request timeout; streamed agent turns can take minutes.
-            .timeout(Duration::from_secs(600))
-            .build()
-            .unwrap_or_default();
         Client {
             api,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.filter(|k| !k.is_empty()),
-            http,
+            http: http_client(HeaderMap::new()),
         }
+    }
+
+    /// Send `headers` with every request (a provider's extra headers). The adapters' own
+    /// headers (auth, `anthropic-version`, content type) win over these. Invalid pairs are
+    /// skipped: `ai.provider_set` already rejects them.
+    pub fn with_headers(mut self, headers: &BTreeMap<String, String>) -> Self {
+        if headers.is_empty() {
+            return self;
+        }
+        let mut map = HeaderMap::new();
+        for (name, value) in headers {
+            match header_pair(name, value) {
+                Ok((name, value)) => {
+                    map.insert(name, value);
+                }
+                Err(why) => tracing::warn!(header = %name, why, "skipping an extra header"),
+            }
+        }
+        self.http = http_client(map);
+        self
     }
 
     /// Ask for the next assistant turn. Streamed text is passed to `on_text` as it arrives

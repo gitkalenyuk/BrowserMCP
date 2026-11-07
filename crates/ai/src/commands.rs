@@ -1,5 +1,6 @@
 //! `ai.*` and `term.*` commands (toolset `ai`).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -9,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::{Kind, PRESETS, Resolved};
+use crate::config::{Kind, NewProvider, Problem, ProviderChanges, Resolved};
 use crate::model::Api;
 use crate::session::SessionInfo;
 use crate::term::{OpenOptions, TermInfo};
@@ -20,6 +21,8 @@ use crate::{AiService, StartOptions, parse_toolsets};
 pub fn register(registry: &mut Registry) {
     registry
         .add::<Providers>()
+        .add::<ProviderAdd>()
+        .add::<ProviderRemove>()
         .add::<ProviderSet>()
         .add::<ProviderTest>()
         .add::<SessionStart>()
@@ -43,14 +46,20 @@ fn not_found(message: String) -> CmdError {
 /// One provider as listed by `ai.providers`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ProviderInfo {
-    /// e.g. `anthropic`, `openai`, `ollama`, `claude-code`.
+    /// e.g. `anthropic`, `openai`, `ollama`, `claude-code`, or a user provider's id
+    /// (`openai-work`, `home-server`).
     pub id: String,
     pub name: String,
     /// `api` (BrowserMCP runs the agent loop) or `cli` (Claude Code / Codex).
     pub kind: String,
     /// Wire protocol: `anthropic`, `openai`, `gemini`, `claude-code`, `codex`.
     pub protocol: String,
-    /// Ready to start a session (key set / CLI installed).
+    /// `true` for the built-in presets; `false` for providers added with ai.provider_add
+    /// (those can be renamed and removed).
+    pub builtin: bool,
+    /// User providers: the preset they were made from (`openai`, `ollama`…); null = blank.
+    pub template: Option<String>,
+    /// Ready to start a session (URL and key set / CLI installed).
     pub configured: bool,
     pub needs_key: bool,
     /// Whether an API key is stored (the key itself is not returned).
@@ -60,6 +69,8 @@ pub struct ProviderInfo {
     pub model: Option<String>,
     /// Known models (live list after `ai.provider_test`).
     pub models: Vec<String>,
+    /// API providers: extra HTTP headers sent with every request.
+    pub headers: BTreeMap<String, String>,
     /// CLI providers: the binary that will run.
     pub path: Option<String>,
     /// Used by background AI features (self-healing, page.extract) when they name no provider.
@@ -67,7 +78,7 @@ pub struct ProviderInfo {
 }
 
 fn provider_info(r: &Resolved, default: Option<&str>) -> ProviderInfo {
-    let (kind, protocol) = match r.preset.kind {
+    let (kind, protocol) = match r.kind {
         Kind::Api(Api::Anthropic) => ("api", "anthropic"),
         Kind::Api(Api::OpenAi) => ("api", "openai"),
         Kind::Api(Api::Gemini) => ("api", "gemini"),
@@ -75,19 +86,32 @@ fn provider_info(r: &Resolved, default: Option<&str>) -> ProviderInfo {
         Kind::Codex => ("cli", "codex"),
     };
     ProviderInfo {
-        id: r.preset.id.into(),
-        name: r.preset.name.into(),
+        id: r.id.clone(),
+        name: r.name.clone(),
         kind: kind.into(),
         protocol: protocol.into(),
+        builtin: r.builtin,
+        template: if r.builtin {
+            None
+        } else {
+            r.preset.map(|p| p.id.to_string())
+        },
         configured: r.configured(),
-        needs_key: r.preset.needs_key,
+        needs_key: r.needs_key,
         has_key: r.api_key.is_some(),
         base_url: r.base_url.clone(),
         model: r.model.clone(),
         models: r.models.clone(),
+        headers: r.headers.clone(),
         path: r.binary.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        is_default: default == Some(r.preset.id),
+        is_default: default == Some(r.id.as_str()),
     }
+}
+
+/// The provider `id` as `ai.providers` lists it (after a change).
+fn info_of(ai: &AiService, id: &str) -> Result<ProviderInfo, CmdError> {
+    let default = ai.default_provider();
+    Ok(provider_info(&ai.resolve(id)?, default.as_deref()))
 }
 
 /// `ai.providers`
@@ -95,6 +119,7 @@ pub struct Providers;
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ProvidersOutput {
+    /// Built-in providers first, then the user's own in the order they were added.
     pub providers: Vec<ProviderInfo>,
 }
 
@@ -105,8 +130,9 @@ impl Command for Providers {
 
     fn meta() -> Meta {
         Meta::new(
-            "List AI providers (Anthropic, OpenAI-compatible, Gemini, Ollama, LM Studio, Claude Code, \
-             Codex…) with configured flag, base URL, default model and known models.",
+            "List AI providers: the built-ins (Anthropic, OpenAI, Gemini, OpenRouter, Ollama, \
+             LM Studio, Claude Code, Codex…) and the user's own (ai.provider_add), with \
+             configured/default flags, base URL, default model and known models.",
             Toolset::Ai,
         )
     }
@@ -114,14 +140,119 @@ impl Command for Providers {
     async fn run(ctx: Ctx, _args: Empty) -> Result<ProvidersOutput, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
         let default = ai.default_provider();
-        let providers = PRESETS
+        let config = ai.config();
+        let providers = config
+            .ids()
             .iter()
-            .map(|p| {
-                ai.resolve(p.id)
+            .map(|id| {
+                config
+                    .resolve(id)
                     .map(|r| provider_info(&r, default.as_deref()))
             })
             .collect::<Result<_, _>>()?;
         Ok(ProvidersOutput { providers })
+    }
+}
+
+/// `ai.provider_add`
+pub struct ProviderAdd;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderAddArgs {
+    /// Display name, unique among all providers, e.g. "OpenAI (work)", "Home server".
+    pub name: String,
+    /// Preset to start from: an API provider id from ai.providers ("openai", "openrouter",
+    /// "ollama", "lmstudio", "groq", "anthropic", "gemini"…) or "custom" for a blank
+    /// endpoint (default). Gives the API type, base URL, suggested models and whether a key is
+    /// required.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Id for ai.session_start and the other ai.* commands; default = made from the name
+    /// ("home-server"). Lowercase letters, digits, '-', '_', '.'.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Wire protocol; default = the template's ("openai" for a blank one).
+    #[serde(default)]
+    pub api: Option<Api>,
+    /// API root, e.g. "http://10.0.0.5:8000/v1"; default = the template's (required for a blank
+    /// one).
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// API key. Stored in plain JSON in data/config/ai.json.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Default model (ai.provider_test lists the endpoint's models).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Extra HTTP headers sent with every request, e.g. {"HTTP-Referer": "https://me.test"}.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+impl Command for ProviderAdd {
+    const NAME: &'static str = "ai.provider_add";
+    type Args = ProviderAddArgs;
+    type Output = ProviderInfo;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Add your own AI provider (any number: two OpenAI accounts, several local servers…), \
+             starting from a template preset or a blank OpenAI-compatible endpoint. Saved in \
+             data/config/ai.json. Returns the provider; its id works everywhere a built-in id does.",
+            Toolset::Ai,
+        )
+        .secret()
+    }
+
+    async fn run(ctx: Ctx, args: ProviderAddArgs) -> Result<ProviderInfo, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        let new = NewProvider {
+            name: args.name,
+            template: args.template,
+            id: args.id,
+            api: args.api,
+            base_url: args.base_url,
+            api_key: args.api_key,
+            model: args.model,
+            headers: args.headers,
+        };
+        let id = ai.try_update_config(|config| config.add_provider(new))?;
+        info_of(&ai, &id)
+    }
+}
+
+/// `ai.provider_remove`
+pub struct ProviderRemove;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProviderRemoveOutput {
+    pub id: String,
+    /// It was the default of background AI features; the default is automatic again.
+    pub was_default: bool,
+}
+
+impl Command for ProviderRemove {
+    const NAME: &'static str = "ai.provider_remove";
+    type Args = ProviderIdArgs;
+    type Output = ProviderRemoveOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Remove a provider added with ai.provider_add (its key and settings are deleted from \
+             data/config/ai.json). Built-in providers cannot be removed.",
+            Toolset::Ai,
+        )
+        .act()
+    }
+
+    async fn run(ctx: Ctx, args: ProviderIdArgs) -> Result<ProviderRemoveOutput, CmdError> {
+        let ai = AiService::from_ctx(&ctx)?;
+        let was_default = ai.try_update_config(|config| config.remove_provider(&args.id))?;
+        Ok(ProviderRemoveOutput {
+            id: args.id,
+            was_default,
+        })
     }
 }
 
@@ -131,12 +262,18 @@ pub struct ProviderSet;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderSetArgs {
-    /// Provider id from ai.providers.
+    /// Provider id from ai.providers (built-in or added with ai.provider_add).
     pub id: String,
+    /// User providers: new display name (unique among all providers).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// User providers: wire protocol ("openai" = OpenAI-compatible, "anthropic", "gemini").
+    #[serde(default)]
+    pub api: Option<Api>,
     /// API key; "" removes it. Stored in plain JSON in data/config/ai.json.
     #[serde(default)]
     pub api_key: Option<String>,
-    /// API root, e.g. "http://localhost:11434/v1"; "" = preset default.
+    /// API root, e.g. "http://localhost:11434/v1"; "" = preset default (built-ins) or none.
     #[serde(default)]
     pub base_url: Option<String>,
     /// Default model; "" = preset default.
@@ -145,6 +282,9 @@ pub struct ProviderSetArgs {
     /// CLI providers: path of the claude / codex binary; "" = search PATH.
     #[serde(default)]
     pub path: Option<String>,
+    /// API providers: extra HTTP headers; replaces all of them ({} removes them).
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
     /// true: make this the default provider of background AI features (self-healing,
     /// page.extract); false: stop it being the default.
     #[serde(default)]
@@ -158,8 +298,9 @@ impl Command for ProviderSet {
 
     fn meta() -> Meta {
         Meta::new(
-            "Set a provider's API key, base URL, default model or CLI path (saved to \
-             data/config/ai.json). Omitted fields stay unchanged; \"\" clears one. Returns the provider.",
+            "Change any provider: API key, base URL, default model, extra headers, CLI path, and \
+             for your own providers the name and API type (saved to data/config/ai.json). \
+             Omitted fields stay unchanged; \"\" clears one. Returns the provider.",
             Toolset::Ai,
         )
         .secret()
@@ -167,29 +308,18 @@ impl Command for ProviderSet {
 
     async fn run(ctx: Ctx, args: ProviderSetArgs) -> Result<ProviderInfo, CmdError> {
         let ai = AiService::from_ctx(&ctx)?;
-        ai.resolve(&args.id)?; // unknown id → NOT_FOUND
-        // Some("") clears, None keeps.
-        fn apply(slot: &mut Option<String>, value: Option<String>) {
-            if let Some(value) = value {
-                *slot = Some(value.trim().to_string()).filter(|v| !v.is_empty());
-            }
-        }
-        ai.update_config(|config| {
-            let settings = config.providers.entry(args.id.clone()).or_default();
-            apply(&mut settings.api_key, args.api_key);
-            apply(&mut settings.base_url, args.base_url);
-            apply(&mut settings.model, args.model);
-            apply(&mut settings.path, args.path);
-            match args.default {
-                Some(true) => config.default_provider = Some(args.id.clone()),
-                Some(false) if config.default_provider.as_deref() == Some(args.id.as_str()) => {
-                    config.default_provider = None
-                }
-                _ => {}
-            }
-        })?;
-        let default = ai.default_provider();
-        Ok(provider_info(&ai.resolve(&args.id)?, default.as_deref()))
+        let changes = ProviderChanges {
+            name: args.name,
+            api: args.api,
+            api_key: args.api_key,
+            base_url: args.base_url,
+            model: args.model,
+            path: args.path,
+            headers: args.headers,
+            default: args.default,
+        };
+        ai.try_update_config(|config| config.update_provider(&args.id, changes))?;
+        info_of(&ai, &args.id)
     }
 }
 
@@ -237,20 +367,31 @@ impl Command for ProviderTest {
             version: None,
             error: None,
         };
-        match r.preset.kind {
-            Kind::Api(api) => {
-                if r.base_url.is_empty() {
-                    out.error = Some("no base_url set".into());
-                    return Ok(out);
-                }
-                let client = crate::model::Client::new(api, r.base_url.clone(), r.api_key.clone());
+        // Say what is missing instead of sending a request that must fail.
+        match r.problem() {
+            Some(Problem::NoBaseUrl) => {
+                out.error = Some("no base URL set".into());
+                return Ok(out);
+            }
+            Some(Problem::NoApiKey) => {
+                out.error = Some("no API key set".into());
+                return Ok(out);
+            }
+            _ => {}
+        }
+        match r.kind {
+            Kind::Api(_) => {
+                let client = r.client().expect("an API provider");
                 match client.list_models().await {
                     Ok(models) => {
                         out.ok = true;
                         if !models.is_empty() {
                             let saved = models.clone();
                             ai.update_config(|c| {
-                                c.providers.entry(args.id.clone()).or_default().models = saved
+                                // The provider may have been removed meanwhile.
+                                if let Some(settings) = c.settings_mut(&args.id) {
+                                    settings.models = saved;
+                                }
                             })?;
                         }
                         out.models = models;
@@ -259,7 +400,7 @@ impl Command for ProviderTest {
                 }
             }
             Kind::ClaudeCode | Kind::Codex => match &r.binary {
-                None => out.error = Some(format!("{} not found", r.preset.name)),
+                None => out.error = Some(format!("{} not found", r.name)),
                 Some(binary) => match cli_version(binary).await {
                     Ok(version) => {
                         out.ok = true;
