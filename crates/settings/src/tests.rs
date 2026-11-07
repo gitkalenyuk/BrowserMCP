@@ -209,7 +209,9 @@ async fn search_engines_end_to_end() {
         out,
         json!({ "url": "https://docs.test/?q=hello%20world", "engine": "custom-docs" })
     );
-    let out = s.call("search.url", json!({ "query": "b hello" })).await;
+    let out = s
+        .call("search.url", json!({ "query": "@bing hello" }))
+        .await;
     assert_eq!(out["engine"], "bing");
     let out = s
         .call("search.url", json!({ "query": "x", "engine": "brave" }))

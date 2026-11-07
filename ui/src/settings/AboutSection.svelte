@@ -23,6 +23,9 @@
 
   $effect(() => {
     void load();
+    // onStatus only reports changes, so start from the client's current state:
+    // the settings page is usually already connected when About opens.
+    status = api.status;
     return api.onStatus((s) => (status = s));
   });
 

@@ -17,6 +17,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+# WHATWG URL parsing, so page URLs are normalized exactly like the UI's `new URL()`.
+url = "2.5"
 
 [dev-dependencies]
 bmcp-core = { workspace = true, features = ["testing"] }

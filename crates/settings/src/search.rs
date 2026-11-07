@@ -26,7 +26,7 @@ pub struct SearchEngine {
     pub name: String,
     /// Search URL with `%s` where the words go, e.g. `https://example.com/search?q=%s`.
     pub url: String,
-    /// Shortcut typed before the words in the address bar (`g cats`); unique.
+    /// Shortcut typed before the words in the address bar (`@google cats`); unique.
     pub keyword: String,
     /// Built-in engines cannot be removed or edited.
     #[serde(default)]
@@ -34,32 +34,36 @@ pub struct SearchEngine {
 }
 
 /// The built-in engines, in the order Settings lists them.
+///
+/// Their keywords start with `@` (as Chrome's `@bookmarks`) because people cannot change
+/// them: a bare `d` or `b` would turn ordinary queries such as "d day" or "b 52" into a
+/// search of the rest ("day", "52") with another engine.
 pub fn builtin_engines() -> Vec<SearchEngine> {
     [
         (
             "google",
             "Google",
             "https://www.google.com/search?q=%s",
-            "g",
+            "@google",
         ),
-        ("bing", "Bing", "https://www.bing.com/search?q=%s", "b"),
+        ("bing", "Bing", "https://www.bing.com/search?q=%s", "@bing"),
         (
             "duckduckgo",
             "DuckDuckGo",
             "https://duckduckgo.com/?q=%s",
-            "d",
+            "@ddg",
         ),
         (
             "brave",
             "Brave Search",
             "https://search.brave.com/search?q=%s",
-            "br",
+            "@brave",
         ),
         (
             "startpage",
             "Startpage",
             "https://www.startpage.com/do/search?q=%s",
-            "sp",
+            "@startpage",
         ),
     ]
     .into_iter()
@@ -367,7 +371,9 @@ impl Command for Config {
              default (engine id), add {name, url with %s, keyword?}, update {id, name, url, \
              keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No \
              arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}.",
-            Toolset::System,
+            // A settings command like notify.config_set: not in the default MCP toolsets, so
+            // an agent only gets it when its client asks for `ui` (it redirects every search).
+            Toolset::Ui,
         )
         .act()
     }
@@ -504,11 +510,17 @@ mod tests {
         let (e, url) = resolve(&c, "  rust lang ").unwrap();
         assert_eq!(e.id, "google");
         assert_eq!(url, "https://www.google.com/search?q=rust%20lang");
-        let (e, url) = resolve(&c, "d cats & dogs").unwrap();
+        let (e, url) = resolve(&c, "@ddg cats & dogs").unwrap();
         assert_eq!(e.id, "duckduckgo");
         assert_eq!(url, "https://duckduckgo.com/?q=cats%20%26%20dogs");
         // A keyword alone is a plain search for that word.
-        assert_eq!(resolve(&c, "d").unwrap().0.id, "google");
+        assert_eq!(resolve(&c, "@ddg").unwrap().0.id, "google");
+        // Ordinary queries that start with a short word stay whole searches.
+        for q in ["d day", "b 52", "sp 500", "g force", "br cats"] {
+            let (e, url) = resolve(&c, q).unwrap();
+            assert_eq!(e.id, "google", "{q}");
+            assert_eq!(url, search_url(&e.url, q), "{q}");
+        }
         assert!(resolve(&c, "   ").is_none());
 
         c.default = "brave".into();
@@ -550,7 +562,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(id2, "custom-wikipedia-uk-2");
-        let err = add_engine(&mut c, input("G2", "https://x.test/?q=%s", Some("g"))).unwrap_err();
+        let err =
+            add_engine(&mut c, input("G2", "https://x.test/?q=%s", Some("@google"))).unwrap_err();
         assert!(err.message.contains("Google"), "{err:?}");
 
         // Templates must be web URLs with %s.

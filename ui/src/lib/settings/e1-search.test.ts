@@ -3,8 +3,8 @@ import { engineErrors, FALLBACK_SEARCH, intentWithEngines, keywordSearch, omnibo
 import type { SearchConfig, SearchEngine } from './e1-types';
 
 const engines: SearchEngine[] = [
-  { id: 'google', name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: 'g', builtin: true },
-  { id: 'duckduckgo', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: 'd', builtin: true },
+  { id: 'google', name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: '@google', builtin: true },
+  { id: 'duckduckgo', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: '@ddg', builtin: true },
   { id: 'custom-wiki', name: 'Wiki', url: 'https://uk.wikipedia.org/w/index.php?search=%s', keyword: 'w', builtin: false },
 ];
 const config: SearchConfig = { default: 'duckduckgo', engines };
@@ -27,12 +27,21 @@ describe('address bar search engines', () => {
     expect(resolveWithEngines('w', s)).toBe('https://duckduckgo.com/?q=w');
     // An unknown first word is part of the search.
     expect(resolveWithEngines('x cats', s)).toBe('https://duckduckgo.com/?q=x%20cats');
+    // Built-in keywords start with @, so short first words stay part of the search.
+    expect(resolveWithEngines('d day', s)).toBe('https://duckduckgo.com/?q=d%20day');
+    expect(resolveWithEngines('@google d day', s)).toBe('https://www.google.com/search?q=d%20day');
+  });
+
+  it('fills every %s, like search.url in the core', () => {
+    const twice = omniboxSearch({ default: 'x', engines: [{ id: 'x', name: 'X', url: 'https://x.test/?q=%s&oq=%s', keyword: 'x', builtin: false }] });
+    expect(resolveWithEngines('a b', twice)).toBe('https://x.test/?q=a%20b&oq=a%20b');
+    expect(intentWithEngines('a b', twice)).toEqual({ kind: 'search', engine: 'X' });
   });
 
   it('says what Enter would do, with the engine name', () => {
     const s = omniboxSearch(config);
     expect(intentWithEngines('cats', s)).toEqual({ kind: 'search', engine: 'DuckDuckGo' });
-    expect(intentWithEngines('g cats', s)).toEqual({ kind: 'search', engine: 'Google' });
+    expect(intentWithEngines('@google cats', s)).toEqual({ kind: 'search', engine: 'Google' });
     expect(intentWithEngines('https://a.test', s)).toEqual({ kind: 'url' });
     expect(intentWithEngines('', s)).toBeNull();
   });
@@ -61,7 +70,7 @@ describe('engine form', () => {
     expect(engineErrors({ ...draft, url: 'https://docs.test/?q=' }, engines).url).toBe('placeholder');
     expect(engineErrors({ ...draft, url: 'https://docs.test/?q=%s x' }, engines).url).toBe('spaces');
     expect(engineErrors({ ...draft, keyword: 'a b' }, engines).keyword).toBe('spaces');
-    expect(engineErrors({ ...draft, keyword: 'D' }, engines).keyword).toBe('taken');
+    expect(engineErrors({ ...draft, keyword: '@DDG' }, engines).keyword).toBe('taken');
     // Editing an engine may keep its own keyword.
     expect(engineErrors({ ...draft, keyword: 'w' }, engines, 'custom-wiki')).toEqual({});
   });

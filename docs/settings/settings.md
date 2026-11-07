@@ -148,7 +148,7 @@ SiteSettings,Data,About}Section.svelte`, logic in `ui/src/lib/settings/e1-*.ts`,
 | Section | What it does | Commands | Stored in |
 |---|---|---|---|
 | Startup & tabs | on startup: last session / new tab page / specific pages (`--url`, `--no-restore`, `--headless` still win); Home button + home page; what a new tab shows (built-in page, blank, a URL); new tabs at the end or next to the current one; keep the window when its last tab closes; recently closed tabs (reopen one, clear) | `startup.config`, `tabs.closed`, `tabs.closed_reopen`, `tabs.closed_clear` | `data/config/startup.json` (closed tabs: `data/runtime/session.json`) |
-| Search | default engine of the address bar (Google, Bing, DuckDuckGo, Brave, Startpage + own engines with `%s`), keywords (`d cats` searches DuckDuckGo), a "try it" box; the address bar hint says which engine | `search.config`, `search.url` | `data/config/search.json` |
+| Search | default engine of the address bar (Google, Bing, DuckDuckGo, Brave, Startpage + own engines with `%s`), keywords (`@ddg cats` searches DuckDuckGo; built-in keywords start with `@` so ordinary queries like "d day" are not taken over), a "try it" box; the address bar hint says which engine | `search.config`, `search.url` | `data/config/search.json` |
 | Downloads | download folder (default `data/downloads`; mass runs keep `data/runs/<run>/downloads`), Save as dialog for each file, open the folder, clear the list | `downloads.config`, `downloads.clear`, `system.open_path` | `data/config/downloads.json` |
 | Site settings | remembered permissions per site (allow / block / forget, reset a site, add a rule, `*` = all sites), per-site zoom (reset one / all, open tabs follow at once), how pop-ups are handled | `permissions.list/set`, `zoom.list`, `zoom.reset` | `data/config/permissions.json`, `data/config/zoom.json` |
 | Data & storage | clear history / downloads list / cookies / cache / site data for a time range and a workspace; data folder size by area (each profile separately); import from Chrome (opens the library wizard); backup hint | `browsing_data.clear`, `browsing_data.usage`, `import.*` | — |
@@ -169,7 +169,15 @@ How the browser follows the settings:
   that profile (an open one, else a temporary off-screen `about:blank` tab). Sites for site
   data: visited in the range, plus for "all time" every cookie domain and IndexedDB folder.
 * `system.open_path` / `reveal_path` may also show the chosen download folder and the exe folder
-  (`bmcp_system::ExtraRoots`), for "Open folder" and the license files.
+  (`bmcp_system::ExtraRoots`), for "Open folder" and the license files. That is why the download
+  folder can never be a system folder (`bmcp_settings::downloads::protected_reason`: a drive
+  root, Windows, Program Files, ProgramData, Roaming AppData with the Startup folder,
+  `%LOCALAPPDATA%\Microsoft`, the profile folder itself); a hand-edited `downloads.json` that
+  points at one is ignored.
+* Toolsets: `search.config` and `startup.config` are in the `ui` toolset (like
+  `notify.config_set`), not in MCP's default `core,system`; an agent gets them with
+  `/mcp?toolsets=ui`. `downloads.config` and `browsing_data.clear` are in `data`. Reading
+  commands (`search.url`, `zoom.list`, `browsing_data.usage`, `system.about`) stay in `system`.
 * `settings.changed {area}` on the bus (UI subscribes to `settings.*`): every window's address
   bar engine, new tab page and Home button follow at once (`ui/src/lib/settings/e1-prefs.svelte.ts`).
 

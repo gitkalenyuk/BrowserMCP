@@ -10,7 +10,7 @@ export default {
   'settings.downloads.folder': 'Download folder',
   'settings.downloads.folderDefaultHelp': 'The default: the downloads folder inside the portable data folder, so it moves with the browser.',
   'settings.downloads.folderCustomHelp': 'A folder you chose. “Use default” goes back to the data folder.',
-  'settings.downloads.folderTypeHelp': 'Type or paste the full path of a folder; it is created if it does not exist. Default: {example}',
+  'settings.downloads.folderTypeHelp': 'Type or paste the full path of a folder; it is created if it does not exist. System folders (a drive root, Windows, Program Files, AppData) are not allowed. Default: {example}',
   'settings.downloads.folderPlaceholder': 'C:\\Users\\you\\Downloads',
   'settings.downloads.openFolder': 'Open folder',
   'settings.downloads.change': 'Change…',

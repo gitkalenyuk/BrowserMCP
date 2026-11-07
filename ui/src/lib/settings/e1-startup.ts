@@ -77,17 +77,23 @@ export function startupErrors(f: StartupForm): StartupErrors {
   return e;
 }
 
+/** A stored URL the way the form would save it (files written by older versions, or by hand). */
+function asSaved(url: string | null | undefined): string {
+  return url ? (normalizePage(url) ?? url) : '';
+}
+
 /** The startup.config arguments that change `saved` into the form (only changed fields). */
 export function startupPatch(saved: StartupConfig, f: StartupForm): StartupArgs {
   const patch: StartupArgs = {};
   if (f.on_startup !== saved.on_startup) patch.on_startup = f.on_startup;
+  // Both sides normalized the same way, so a stored `https://Example.COM` is not a change.
   const { pages } = parsePages(f.pagesText);
-  if (pages.join('\n') !== saved.pages.join('\n')) patch.pages = pages;
+  if (pages.join('\n') !== saved.pages.map(asSaved).join('\n')) patch.pages = pages;
   if (f.show_home_button !== saved.show_home_button) patch.show_home_button = f.show_home_button;
   const home = f.home_page.trim() ? (normalizePage(f.home_page) ?? f.home_page.trim()) : '';
-  if (home !== (saved.home_page ?? '')) patch.home_page = home;
+  if (home !== asSaved(saved.home_page)) patch.home_page = home;
   const newTab = f.new_tab_mode === 'builtin' ? '' : f.new_tab_mode === 'blank' ? 'about:blank' : (normalizePage(f.new_tab_url) ?? f.new_tab_url.trim());
-  if (newTab !== (saved.new_tab_url ?? '')) patch.new_tab_url = newTab;
+  if (newTab !== asSaved(saved.new_tab_url)) patch.new_tab_url = newTab;
   if (f.new_tab_position !== saved.new_tab_position) patch.new_tab_position = f.new_tab_position;
   if (f.keep_window_on_last_tab !== saved.keep_window_on_last_tab) patch.keep_window_on_last_tab = f.keep_window_on_last_tab;
   return patch;

@@ -12,7 +12,7 @@ export default {
   'settings.about.os': 'Система',
   'settings.about.process': 'Процес',
   'settings.about.processValue': 'PID {pid}, працює {uptime}',
-  'settings.about.uptimeDays': '{d} д {h} год',
+  'settings.about.uptimeDays': '{d} дн. {h} год',
   'settings.about.uptimeHours': '{h} год {m} хв',
   'settings.about.uptimeMinutes': '{m} хв',
   'settings.about.copyDiagnostics': 'Скопіювати діагностику',

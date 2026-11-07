@@ -119,6 +119,18 @@ pub fn plan(config: &StartupConfig, cli_url: Option<&str>, may_restore: bool) ->
     }
 }
 
+/// The order to open [`StartPlan::more_urls`] in, one background tab after another, so they
+/// end up in the strip in the order listed. With "new tabs next to the current one" every
+/// background tab goes right after the (first, still active) page, pushing the earlier ones
+/// right, so they are opened last to first.
+pub fn open_order(more_urls: &[String], position: NewTabPosition) -> Vec<String> {
+    let mut urls = more_urls.to_vec();
+    if position == NewTabPosition::AfterActive {
+        urls.reverse();
+    }
+    urls
+}
+
 // --------------------------------------------------------------------------- startup.config
 
 pub struct Config;
@@ -164,7 +176,9 @@ impl Command for Config {
              new_tab_url, new_tab_position (end | after_active), keep_window_on_last_tab; reset \
              goes back to the defaults. No arguments = read. Startup choices apply on the next \
              start; the rest at once.",
-            Toolset::System,
+            // A settings command like notify.config_set: not in the default MCP toolsets, so
+            // an agent only gets it when its client asks for `ui` (it picks pages to open).
+            Toolset::Ui,
         )
         .act()
     }
@@ -260,6 +274,18 @@ mod tests {
             pages: pages.iter().map(|p| p.to_string()).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn extra_pages_end_up_in_the_listed_order() {
+        let more: Vec<String> = ["b", "c", "d"].map(String::from).to_vec();
+        assert_eq!(open_order(&more, NewTabPosition::End), more);
+        // Simulate the strip: each tab is inserted right after the active first page "a".
+        let mut strip = vec!["a".to_string()];
+        for url in open_order(&more, NewTabPosition::AfterActive) {
+            strip.insert(1, url);
+        }
+        assert_eq!(strip, ["a", "b", "c", "d"]);
     }
 
     #[test]

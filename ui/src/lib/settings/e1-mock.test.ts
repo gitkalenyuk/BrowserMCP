@@ -25,13 +25,13 @@ describe('mock: search engines', () => {
     expect(added.added).toBe('custom-docs');
     await e1['search.config']({ default: 'custom-docs' });
     expect(await e1['search.url']({ query: 'a b' })).toEqual({ url: 'https://docs.test/?q=a%20b', engine: 'custom-docs' });
-    expect(await e1['search.url']({ query: 'b hello' })).toMatchObject({ engine: 'bing' });
+    expect(await e1['search.url']({ query: '@bing hello' })).toMatchObject({ engine: 'bing' });
     expect(events.filter(([e]) => e === 'settings.changed')).toHaveLength(2);
   });
 
   it('refuses what the core refuses and keeps the old state', async () => {
     const { e1 } = setup();
-    expect(() => e1['search.config']({ add: { name: 'G2', url: 'https://g.test/?q=%s', keyword: 'g' } })).toThrow(/keyword/);
+    expect(() => e1['search.config']({ add: { name: 'G2', url: 'https://g.test/?q=%s', keyword: '@google' } })).toThrow(/keyword/);
     expect(() => e1['search.config']({ remove: 'google' })).toThrow(/built-in/);
     const out = (await e1['search.config']()) as { engines: unknown[]; default: string };
     expect(out.engines).toHaveLength(5);
@@ -51,6 +51,8 @@ describe('mock: startup and downloads', () => {
   it('download folder must be a full path', async () => {
     const { e1 } = setup();
     expect(() => e1['downloads.config']({ dir: 'relative' })).toThrow(/full path/);
+    expect(() => e1['downloads.config']({ dir: 'C:\\' })).toThrow(/system folder/);
+    expect(() => e1['downloads.config']({ dir: 'C:\\Users\\me\\AppData\\Roaming\\Startup' })).toThrow(/system folder/);
     expect(await e1['downloads.config']({ dir: 'D:\\Dl', ask: true })).toMatchObject({ dir: 'D:\\Dl', custom: true, ask: true });
     expect(await e1['downloads.config']({ dir: '' })).toMatchObject({ custom: false });
   });

@@ -21,11 +21,11 @@ const ROOT = 'C:\\BrowserMCP';
 const DATA = `${ROOT}\\data`;
 
 const BUILTIN: SearchEngine[] = [
-  { id: 'google', name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: 'g', builtin: true },
-  { id: 'bing', name: 'Bing', url: 'https://www.bing.com/search?q=%s', keyword: 'b', builtin: true },
-  { id: 'duckduckgo', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: 'd', builtin: true },
-  { id: 'brave', name: 'Brave Search', url: 'https://search.brave.com/search?q=%s', keyword: 'br', builtin: true },
-  { id: 'startpage', name: 'Startpage', url: 'https://www.startpage.com/do/search?q=%s', keyword: 'sp', builtin: true },
+  { id: 'google', name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: '@google', builtin: true },
+  { id: 'bing', name: 'Bing', url: 'https://www.bing.com/search?q=%s', keyword: '@bing', builtin: true },
+  { id: 'duckduckgo', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: '@ddg', builtin: true },
+  { id: 'brave', name: 'Brave Search', url: 'https://search.brave.com/search?q=%s', keyword: '@brave', builtin: true },
+  { id: 'startpage', name: 'Startpage', url: 'https://www.startpage.com/do/search?q=%s', keyword: '@startpage', builtin: true },
 ];
 
 const DEFAULT_STARTUP: StartupConfig = {
@@ -160,13 +160,17 @@ export function createE1Mocks(emit: Emit, call: Call): E1Handlers {
       const e = engine ? engines().find((x) => x.id === engine) : (byKeyword ?? engines().find((x) => x.id === search.default) ?? BUILTIN[0]);
       if (!e) throw new RpcError('NOT_FOUND', `no search engine "${engine}"`);
       const words = !engine && byKeyword && m ? m[2] : q;
-      return { url: e.url.replace('%s', encodeURIComponent(words)), engine: e.id };
+      return { url: e.url.replaceAll('%s', encodeURIComponent(words)), engine: e.id };
     },
     'downloads.config': (args) => {
       if (args?.dir != null) {
         const dir = args.dir.trim();
         if (dir && !/^[a-z]:\\/i.test(dir)) {
           throw new RpcError('INVALID_PARAMS', `the download folder must be a full path like C:\\Users\\you\\Downloads, got "${dir}"`);
+        }
+        // Like check_dir in crates/settings (simplified): no drive roots or system folders.
+        if (dir && /^[a-z]:\\*$|^[a-z]:\\(windows|program files|programdata)(\\|$)|\\appdata\\roaming(\\|$)/i.test(dir)) {
+          throw new RpcError('INVALID_PARAMS', `${dir} is a system folder: pick a folder of your own`);
         }
         downloads.dir = dir || null;
       }

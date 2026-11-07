@@ -9,7 +9,7 @@ export default {
 
   'settings.search.engines': 'Search engines',
   'settings.search.enginesLead':
-    'Pick the default. Keywords search with another engine without changing it: type the keyword, a space and your words, for example “d weather Kyiv” for DuckDuckGo.',
+    'Pick the default. Keywords search with another engine without changing it: type the keyword, a space and your words, for example “@ddg weather Kyiv” for DuckDuckGo.',
   'settings.search.col.default': 'Default',
   'settings.search.col.name': 'Engine',
   'settings.search.col.keyword': 'Keyword',

@@ -377,6 +377,7 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     );
     // Settings → About and the extra startup pages need these once the API listens.
     let (about_registry, about_backend) = (registry.clone(), backend.clone());
+    let about_settings = settings.clone();
     // Serve on the socket bound before CEF started (binding the port again would fail).
     match bmcp_api::serve_on(backend, registry, events, listener, shutdown.clone()).await {
         Ok(server) => {
@@ -409,7 +410,8 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
                 started_ms,
             });
             // Settings → Startup "open specific pages": the rest of the pages, in order.
-            for url in more_urls {
+            let position = about_settings.startup().new_tab_position;
+            for url in bmcp_settings::startup::open_order(&more_urls, position) {
                 if let Err(err) = about_backend.open_tab(url.clone(), true).await {
                     tracing::warn!(url, %err, "startup page not opened");
                 }

@@ -39,7 +39,7 @@ export function keywordSearch(input: string, search: OmniboxSearch): { engine: O
 /** Address bar input → URL: a keyword search, a typed address, or a default search. */
 export function resolveWithEngines(raw: string, search: OmniboxSearch = FALLBACK_SEARCH): string | null {
   const kw = keywordSearch(raw, search);
-  if (kw) return kw.engine.url.replace('%s', encodeURIComponent(kw.words));
+  if (kw) return kw.engine.url.replaceAll('%s', encodeURIComponent(kw.words));
   return resolveOmniboxInput(raw, search.template);
 }
 
@@ -50,7 +50,7 @@ export function intentWithEngines(raw: string, search: OmniboxSearch = FALLBACK_
   if (kw) return { kind: 'search', engine: kw.engine.name };
   const url = resolveOmniboxInput(raw, search.template);
   if (!url) return null;
-  return url === search.template.replace('%s', encodeURIComponent(raw.trim())) ? { kind: 'search', engine: search.name } : { kind: 'url' };
+  return url === search.template.replaceAll('%s', encodeURIComponent(raw.trim())) ? { kind: 'search', engine: search.name } : { kind: 'url' };
 }
 
 // ---- the form in Settings → Search -----------------------------------------------------

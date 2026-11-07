@@ -73,7 +73,7 @@ export default {
   'settings.data.area.logs': 'Журнали',
   'settings.data.area.runtime': 'Стан роботи',
   'settings.data.area.filters': 'Списки фільтрів блокування реклами',
-  'settings.data.area.extract-cache': 'Кеш витягування даних ШІ',
+  'settings.data.area.extract-cache': 'Кеш вилучення даних (ШІ)',
   'settings.data.area.files': 'Інші файли',
 
   'settings.data.importTitle': 'Імпорт і резервна копія',

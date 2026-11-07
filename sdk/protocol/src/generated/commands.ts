@@ -6531,7 +6531,7 @@ export interface SearchConfigOutput {
     name: string;
     /** Search URL with `%s` where the words go, e.g. `https://example.com/search?q=%s`. */
     url: string;
-    /** Shortcut typed before the words in the address bar (`g cats`); unique. */
+    /** Shortcut typed before the words in the address bar (`@google cats`); unique. */
     keyword: string;
     /**
      * Built-in engines cannot be removed or edited.
@@ -10116,7 +10116,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   "search.config": {
     wireName: "search_config",
     description: "Read or change the address bar's search engines (data/config/search.json): default (engine id), add {name, url with %s, keyword?}, update {id, name, url, keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}.",
-    toolset: "system",
+    toolset: "ui",
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
@@ -10179,7 +10179,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   "startup.config": {
     wireName: "startup_config",
     description: "Read or change the startup & tab settings (data/config/startup.json): on_startup (restore | new_tab | pages) with pages, home_page and show_home_button, new_tab_url, new_tab_position (end | after_active), keep_window_on_last_tab; reset goes back to the defaults. No arguments = read. Startup choices apply on the next start; the rest at once.",
-    toolset: "system",
+    toolset: "ui",
     sensitivity: "act",
     mutatesTab: false,
     palette: null,
@@ -11651,7 +11651,7 @@ export interface Browser {
     /**
      * Read or change the address bar's search engines (data/config/search.json): default (engine id), add {name, url with %s, keyword?}, update {id, name, url, keyword?}, remove (id). Built-ins: google, bing, duckduckgo, brave, startpage. No arguments = read. Returns {default, engines:[{id,name,url,keyword,builtin}]}.
      *
-     * `search.config` (MCP: `search_config`): toolset `system`, act.
+     * `search.config` (MCP: `search_config`): toolset `ui`, act.
      */
     config(args?: SearchConfigArgs, options?: CallOptions): Promise<SearchConfigOutput>;
     /**
@@ -11699,7 +11699,7 @@ export interface Browser {
     /**
      * Read or change the startup & tab settings (data/config/startup.json): on_startup (restore | new_tab | pages) with pages, home_page and show_home_button, new_tab_url, new_tab_position (end | after_active), keep_window_on_last_tab; reset goes back to the defaults. No arguments = read. Startup choices apply on the next start; the rest at once.
      *
-     * `startup.config` (MCP: `startup_config`): toolset `system`, act.
+     * `startup.config` (MCP: `startup_config`): toolset `ui`, act.
      */
     config(args?: StartupConfigArgs, options?: CallOptions): Promise<StartupConfigOutput>;
   };

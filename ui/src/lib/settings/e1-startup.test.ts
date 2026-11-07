@@ -37,6 +37,11 @@ describe('startup form', () => {
     expect(startupErrors(f)).toEqual({});
   });
 
+  it('a stored URL in another spelling is not an unsaved change', () => {
+    const odd = { ...saved, pages: ['https://Example.COM', 'https://київ.укр/'], home_page: 'https://Home.Test', new_tab_url: 'https://Start.Test' };
+    expect(startupPatch(odd, startupForm(odd))).toEqual({});
+  });
+
   it('sends only what changed', () => {
     const f = startupForm(saved);
     f.on_startup = 'pages';

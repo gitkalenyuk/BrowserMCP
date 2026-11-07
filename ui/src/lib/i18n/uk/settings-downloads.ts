@@ -10,7 +10,7 @@ export default {
   'settings.downloads.folder': 'Папка для завантажень',
   'settings.downloads.folderDefaultHelp': 'За замовчуванням — папка downloads у портативній папці даних, тож вона переїжджає разом із браузером.',
   'settings.downloads.folderCustomHelp': 'Вибрана вами папка. «За замовчуванням» повертає папку в даних браузера.',
-  'settings.downloads.folderTypeHelp': 'Введіть або вставте повний шлях до папки; якщо її немає, вона створиться. За замовчуванням: {example}',
+  'settings.downloads.folderTypeHelp': 'Введіть або вставте повний шлях до папки; якщо її немає, вона створиться. Системні папки (корінь диска, Windows, Program Files, AppData) не підходять. За замовчуванням: {example}',
   'settings.downloads.folderPlaceholder': 'C:\\Users\\Ім’я\\Downloads',
   'settings.downloads.openFolder': 'Відкрити папку',
   'settings.downloads.change': 'Змінити…',

@@ -7,7 +7,9 @@ use bmcp_core::CmdError;
 const PAGE_SCHEMES: &[&str] = &["https", "http", "bmcp", "about", "file"];
 
 /// A page URL as typed in Settings: `example.com` → `https://example.com/`, `localhost:3000`
-/// → `http://localhost:3000/`; full URLs keep their scheme if it is allowed.
+/// → `http://localhost:3000/`; full URLs keep their scheme if it is allowed. Web URLs are
+/// normalized the WHATWG way (lowercase host, punycode for `київ.укр`), the same as the UI's
+/// `new URL(…).href`, so Settings does not see a stored URL as an unsaved change.
 pub fn normalize_page_url(text: &str) -> Result<String, CmdError> {
     let text = text.trim();
     if text.is_empty() {
@@ -32,7 +34,7 @@ pub fn normalize_page_url(text: &str) -> Result<String, CmdError> {
         _ => {
             let local = text.starts_with("localhost") || text.starts_with("127.");
             let scheme = if local { "http" } else { "https" };
-            return Ok(with_root_path(&format!("{scheme}://{text}")));
+            return web_url(&format!("{scheme}://{text}"));
         }
     };
     if !PAGE_SCHEMES.contains(&scheme.as_str()) {
@@ -49,19 +51,19 @@ pub fn normalize_page_url(text: &str) -> Result<String, CmdError> {
         if host.is_empty() {
             return Err(CmdError::invalid_params(format!("{text:?} has no host")));
         }
+        return web_url(&format!("{scheme}:{rest}"));
     }
-    Ok(with_root_path(&format!("{scheme}:{rest}")))
+    Ok(format!("{scheme}:{rest}"))
 }
 
-/// `https://a.test` → `https://a.test/` (what the browser shows once it loads).
-fn with_root_path(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return url.to_string();
-    };
-    if matches!(scheme, "http" | "https") && !rest.contains(['/', '?', '#']) {
-        format!("{url}/")
-    } else {
-        url.to_string()
+/// Parse and normalize an http(s) URL: `https://Example.COM` → `https://example.com/`.
+fn web_url(text: &str) -> Result<String, CmdError> {
+    match url::Url::parse(text) {
+        Ok(url) if url.host_str().is_some_and(|h| !h.is_empty()) => Ok(url.to_string()),
+        Ok(_) => Err(CmdError::invalid_params(format!("{text:?} has no host"))),
+        Err(err) => Err(CmdError::invalid_params(format!(
+            "{text:?} is not a URL ({err})"
+        ))),
     }
 }
 
@@ -99,6 +101,15 @@ mod tests {
             "http://localhost:3000/"
         );
         assert_eq!(normalize_page_url("about:blank").unwrap(), "about:blank");
+        // Like `new URL(…).href` in the UI (ui/src/lib/settings/e1-startup.ts).
+        assert_eq!(
+            normalize_page_url("https://Example.COM").unwrap(),
+            "https://example.com/"
+        );
+        assert_eq!(
+            normalize_page_url("київ.укр").unwrap(),
+            "https://xn--b1alf1j.xn--j1amh/"
+        );
         assert_eq!(
             normalize_page_url("bmcp://ui/newtab.html").unwrap(),
             "bmcp://ui/newtab.html"

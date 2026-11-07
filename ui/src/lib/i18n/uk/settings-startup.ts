@@ -49,7 +49,7 @@ export default {
 
   'settings.startup.tabs': 'Вкладки',
   'settings.startup.position': 'Де відкривати нові вкладки',
-  'settings.startup.positionHelp': 'Де на панелі вкладок з’являються вкладки з Ctrl+T, кнопки «+» і ті, що відкривають агенти.',
+  'settings.startup.positionHelp': 'Де з’являються вкладки, відкриті через Ctrl+T, кнопкою «+» або агентами.',
   'settings.startup.position.end': 'У кінці',
   'settings.startup.position.after_active': 'Поруч із поточною',
   'settings.startup.keepWindow': 'Не закривати вікно разом з останньою вкладкою',
