@@ -81,6 +81,10 @@ export default {
   'settings.connections.cdp.closed': 'Closed.',
   'settings.connections.cdp.refused': 'Closed: it was requested at startup, but a profile uses a stealth identity.',
   'settings.connections.cdp.restart': 'Restart to apply',
+  'settings.connections.cdp.flagChip': 'From --cdp-port',
+  'settings.connections.cdp.fromFlag':
+    'The browser was started with --cdp-port, which decides at every such start: the setting above applies once it is started without the flag.',
+  'settings.connections.cdp.configError': 'connections.json cannot be read, so the defaults are shown. Fix or delete the file: {error}',
   'settings.connections.cdp.saved': 'CDP setting saved',
   'settings.connections.cdp.savedRestart': 'Saved. Restart the browser to apply it.',
   'settings.connections.cdp.playwright': 'Playwright',

@@ -401,6 +401,43 @@ async fn fingerprint_set_needs_exactly_one_source() {
 }
 
 #[tokio::test]
+async fn no_identity_is_assigned_while_the_cdp_port_is_open() {
+    let h = Harness::new();
+    h.ok(
+        "identity.generate",
+        json!({ "seed": 1, "id": "alpha", "save": true }),
+    )
+    .await;
+    h.registry.extensions().insert(bmcp_core::CdpLaunch {
+        port: Some(9222),
+        ..Default::default()
+    });
+    let err = h
+        .call(
+            "identity.assign",
+            json!({ "profile": "work", "id": "alpha" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+    assert!(err.message.contains("CDP port 9222"), "{}", err.message);
+    let list = h.ok("identity.list", json!({})).await;
+    assert!(list["profiles"].as_object().unwrap().is_empty());
+    // Removing an assignment is always allowed.
+    h.ok("identity.assign", json!({ "profile": "work" })).await;
+
+    // Port closed: assigning works.
+    h.registry
+        .extensions()
+        .insert(bmcp_core::CdpLaunch::default());
+    h.ok(
+        "identity.assign",
+        json!({ "profile": "work", "id": "alpha" }),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn identities_are_saved_listed_assigned_and_removed() {
     let h = Harness::new();
     let a = h

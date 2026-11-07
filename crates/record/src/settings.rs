@@ -132,11 +132,10 @@ pub struct FfmpegStatus {
 
 /// First line of `ffmpeg -version` (3 s at most: a hung program must not block Settings).
 async fn ffmpeg_version(ffmpeg: &Path) -> Option<String> {
-    let run = tokio::process::Command::new(ffmpeg)
+    let run = video::ffmpeg_command(ffmpeg)
         .arg("-version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
         .output();
     let output = tokio::time::timeout(Duration::from_secs(3), run)
         .await

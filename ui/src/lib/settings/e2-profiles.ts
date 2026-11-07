@@ -1,7 +1,7 @@
 // Settings → Profiles & identity: ids, the edit form → profile.create arguments, preset groups,
 // and which proxy reference an identity can be fitted to. Pure functions (e2-profiles.test.ts).
 
-import type { ProfileEntry } from '../api/types';
+import type { ProfileEntry, WebrtcPolicy } from '../api/types';
 import type { IdentityPreset, ProxyForwarder } from '../api/types-e2-settings';
 import { isMasked } from './e2-proxies';
 
@@ -35,17 +35,31 @@ export interface ProfileForm {
   /** '' = direct; a proxy URL, `pool:NAME` or `fwd-N` otherwise. Masked = unchanged. */
   proxy: string;
   acceptLanguage: string;
+  /** New tabs of the profile open in memory (profile.create incognito_default). */
+  incognitoDefault: boolean;
+  webrtc: WebrtcPolicy;
 }
 
 export function profileForm(p: ProfileEntry): ProfileForm {
-  return { label: p.label === p.id ? '' : p.label, proxy: p.proxy ?? '', acceptLanguage: p.accept_language ?? '' };
+  return {
+    label: p.label === p.id ? '' : p.label,
+    proxy: p.proxy ?? '',
+    acceptLanguage: p.accept_language ?? '',
+    incognitoDefault: p.incognito_default ?? false,
+    webrtc: p.webrtc ?? 'auto',
+  };
+}
+
+/** The proxy is a URL typed by hand (not direct and not one of the pool choices). */
+export function isCustomProxy(proxy: string, poolChoices: readonly string[]): boolean {
+  return !!proxy && !poolChoices.includes(proxy);
 }
 
 export interface ProfileSave {
   /** profile.update {label}, when the name changed. */
   label?: string;
   /** profile.create fields that changed (proxy "" removes it). */
-  create?: { proxy?: string; accept_language?: string };
+  create?: { proxy?: string; accept_language?: string; incognito_default?: boolean; webrtc?: WebrtcPolicy };
 }
 
 /**
@@ -60,6 +74,8 @@ export function profileSave(p: ProfileEntry, f: ProfileForm): ProfileSave {
   const proxy = f.proxy.trim();
   if (proxy !== before.proxy && !(isMasked(proxy) && proxy === before.proxy)) create.proxy = proxy;
   if (f.acceptLanguage.trim() !== before.acceptLanguage) create.accept_language = f.acceptLanguage.trim();
+  if (f.incognitoDefault !== before.incognitoDefault) create.incognito_default = f.incognitoDefault;
+  if (f.webrtc !== before.webrtc) create.webrtc = f.webrtc;
   if (Object.keys(create).length) out.create = create;
   return out;
 }
@@ -104,7 +120,27 @@ export function fitProxyRef(p: ProfileEntry, forwarders: ProxyForwarder[]): stri
   return isMasked(proxy) ? null : proxy;
 }
 
-/** "WebRTC: limited to the proxy" when proxied (the core does it by itself). */
-export function webrtcLimited(p: ProfileEntry): boolean {
-  return !!p.proxy && p.proxy !== 'direct';
+/** The WebRTC choices of the profile editor, in the order shown. */
+export const WEBRTC_POLICIES: readonly WebrtcPolicy[] = ['auto', 'normal', 'public_only', 'proxy_only'];
+
+export type WebrtcEffect = 'proxy' | 'public' | 'normal';
+
+/**
+ * What WebRTC does with `policy` for a profile with proxy `proxy` (the form's values, so the
+ * editor shows the effect before saving): `auto` limits it to the proxy when there is one.
+ */
+export function webrtcEffect(policy: WebrtcPolicy, proxy: string): WebrtcEffect {
+  if (policy === 'normal') return 'normal';
+  if (policy === 'public_only') return 'public';
+  if (policy === 'proxy_only') return 'proxy';
+  const p = proxy.trim();
+  return p && p !== 'direct' ? 'proxy' : 'normal';
+}
+
+/** i18n key of a warning for this WebRTC choice ('' = none). */
+export function webrtcWarning(policy: WebrtcPolicy, proxy: string): string {
+  const proxied = !!proxy.trim() && proxy.trim() !== 'direct';
+  if (policy === 'normal' && proxied) return 'settings.profiles.edit.webrtcLeak';
+  if (policy === 'proxy_only' && !proxied) return 'settings.profiles.edit.webrtcNoProxy';
+  return '';
 }

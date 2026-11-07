@@ -6,7 +6,7 @@
   import type { ProfileEntry } from '../lib/api/types';
   import type { GeoInfo, PoolStrategy, ProfileRoutes, ProxyForwarder, ProxyPool, ProxyRule, RulesTestResult } from '../lib/api/types-e2-settings';
   import Icon from '../lib/components/Icon.svelte';
-  import { t, tp } from '../lib/i18n/index.svelte';
+  import { locale, t, tp } from '../lib/i18n/index.svelte';
   import {
     buildProxyUrl,
     emptyProxyForm,
@@ -230,7 +230,8 @@
   }
 
   const strategyLabel = (s: PoolStrategy) => t(`settings.proxies.strategy.${s}`);
-  const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  // In the UI language (not the system's), and again when it changes.
+  const dateFmt = $derived(new Intl.DateTimeFormat(locale(), { dateStyle: 'short', timeStyle: 'short' }));
   const viaLabel = (via: string) =>
     via === 'direct' ? t('settings.proxies.via.direct') : via.startsWith('pool:') ? t('settings.proxies.via.pool', { name: via.slice(5) }) : via;
   /** "3 proxies · 2 working · 1 down · median 184 ms · checked …" with a color per part. */

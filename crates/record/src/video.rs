@@ -336,7 +336,7 @@ impl FrameJob {
         report.codec = encoder.codec.clone();
         report.width = width;
         report.height = height;
-        let mut child = tokio::process::Command::new(&encoder.program)
+        let mut child = ffmpeg_command(&encoder.program)
             .args(&encoder.args)
             .envs(encoder.env.iter().cloned())
             .stdin(Stdio::piped())
@@ -499,9 +499,23 @@ pub fn ffmpeg_missing() -> CmdError {
     )
 }
 
+/// A command for ffmpeg (or another encoder program) without a console window: the app is a
+/// GUI program in release builds, so every console child would flash a window. Killed when
+/// dropped (a hung ffmpeg must not outlive its caller).
+pub(crate) fn ffmpeg_command(program: &Path) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// The encoder names ffmpeg was built with (`ffmpeg -hide_banner -encoders`).
 pub async fn ffmpeg_encoders(ffmpeg: &Path) -> String {
-    let output = tokio::process::Command::new(ffmpeg)
+    let output = ffmpeg_command(ffmpeg)
         .args(["-hide_banner", "-encoders"])
         .stdin(Stdio::null())
         .output()

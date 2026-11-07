@@ -5,7 +5,7 @@ export default {
   'settings.profiles.intro':
     'Профіль — це окремий браузер: власні кукі, входи в акаунти, кеш, проксі, мова й відбиток. На панелі вкладок профілі — це робочі простори. Вкладку в профілі відкривають через перемикач просторів, а агент — командою tabs_open {profile}.',
   'settings.profiles.loadError': 'Не вдалося прочитати профілі: {error}',
-  'settings.profiles.retry': 'Спробувати ще',
+  'settings.profiles.retry': 'Спробувати ще раз',
 
   'settings.profiles.new.title': 'Новий профіль',
   'settings.profiles.new.lead': 'Створює порожній профіль. Проксі й ідентичність йому можна задати нижче, щойно він з’явиться.',
@@ -21,8 +21,9 @@ export default {
   'settings.profiles.list.title': 'Профілі',
   'settings.profiles.list.lead': 'Профілі в пам’яті (інкогніто) нічого не лишають на диску й показуються тут, лише поки мають вкладки.',
   'settings.profiles.list.empty': 'Профілів ще немає.',
-  'settings.profiles.chip.launch': 'Запущено з ним',
+  'settings.profiles.chip.launch': 'Профіль запуску',
   'settings.profiles.chip.memory': 'У пам’яті',
+  'settings.profiles.chip.incognitoDefault': 'Типово приватний',
   'settings.profiles.chip.tabs.one': '{n} вкладка',
   'settings.profiles.chip.tabs.few': '{n} вкладки',
   'settings.profiles.chip.tabs.many': '{n} вкладок',
@@ -36,7 +37,7 @@ export default {
   'settings.profiles.edit.nameHelp': 'Порожньо — як ідентифікатор.',
   'settings.profiles.edit.proxy': 'Проксі',
   'settings.profiles.edit.proxyHelp':
-    'Через нього йде весь трафік профілю (окремі правила для сайтів — у розділі «Проксі»). Паролі не потрапляють у рушій: їх додає локальний переадресатор.',
+    'Через нього йде весь трафік профілю (окремі правила для сайтів — у розділі «Проксі»). Паролі не потрапляють у рушій: їх додає локальний переадресувач.',
   'settings.profiles.edit.direct': 'Без проксі (напряму)',
   'settings.profiles.edit.pool': 'Пул {name} (один проксі, закріплений за профілем)',
   'settings.profiles.edit.custom': 'Адреса проксі…',
@@ -45,17 +46,29 @@ export default {
   'settings.profiles.edit.customLabel': 'Адреса проксі',
   'settings.profiles.edit.webrtc': 'WebRTC',
   'settings.profiles.edit.webrtcHelp':
-    'З проксі WebRTC може працювати лише через нього, тож STUN не видасть ваш справжній IP. Без проксі дзвінки працюють як завжди. Налаштовується автоматично.',
-  'settings.profiles.edit.webrtcLimited': 'Лише через проксі',
-  'settings.profiles.edit.webrtcNormal': 'Звичайний',
+    'Які мережеві адреси може використовувати WebRTC (дзвінки, з’єднання між браузерами). Сайти можуть їх прочитати, тому «Автоматично» обмежує WebRTC проксі, якщо він є в профілі: тоді STUN не видасть ваш справжній IP.',
+  'settings.profiles.edit.webrtcEffect.proxy': 'Лише через проксі',
+  'settings.profiles.edit.webrtcEffect.public': 'Лише публічна адреса',
+  'settings.profiles.edit.webrtcEffect.normal': 'Усі адреси',
+  'settings.profiles.edit.webrtcLeak': 'З проксі це дає сайтам змогу побачити ваш справжній IP через WebRTC.',
+  'settings.profiles.edit.webrtcNoProxy': 'У цього профілю немає проксі: дзвінки й інші з’єднання WebRTC, яким потрібен UDP, не встановляться.',
+  'settings.profiles.webrtc.auto': 'Автоматично (за проксі)',
+  'settings.profiles.webrtc.normal': 'Звичайний, усі адреси',
+  'settings.profiles.webrtc.public_only': 'Лише публічна адреса',
+  'settings.profiles.webrtc.proxy_only': 'Лише через проксі',
   'settings.profiles.edit.lang': 'Мови (Accept-Language)',
   'settings.profiles.edit.langHelp': 'Мови, які бачать сайти, від найбажанішої. Порожньо — мови ідентичності або системні.',
+  'settings.profiles.edit.incognito': 'Відкривати вкладки в пам’яті',
+  'settings.profiles.edit.incognitoHelp':
+    'Нові вкладки цього профілю нічого не записують на диск: кукі, історія й кеш зникають, щойно закриється остання з них. Діє для вкладок, відкритих у цьому профілі (його робочий простір або tabs_open із цим профілем), якщо їх явно не відкривають інакше. Те, що профіль уже зберіг, лишається.',
   'settings.profiles.edit.discard': 'Скасувати зміни',
   'settings.profiles.saved': 'Профіль «{name}» збережено',
 
   'settings.profiles.identity.title': 'Ідентичність (відбиток)',
   'settings.profiles.identity.lead':
     'Ідентичність — це узгоджений набір значень, які можуть прочитати сайти: user agent, платформа, екран, процесор і пам’ять, відеокарта, часовий пояс, мови й розташування. Кожна нова вкладка профілю отримує її ще до завантаження першої сторінки.',
+  'settings.profiles.identity.cdpOpen':
+    'Відкрито порт CDP {port}, тож призначити ідентичність зараз не можна: відкритий порт налагодження сайти легко помічають. Вимкніть його в розділі «Підключення та API» і перезапустіть браузер.',
   'settings.profiles.identity.use': 'Поточна ідентичність',
   'settings.profiles.identity.none': 'Немає (справжні значення)',
   'settings.profiles.identity.noneHelp': 'Сайти бачать цей комп’ютер таким, який він є.',
@@ -81,7 +94,7 @@ export default {
   'settings.profiles.fit.label': 'Підлаштувати під проксі',
   'settings.profiles.fit.help':
     'Визначає, де розташований вихідний IP проксі, і підганяє під нього часовий пояс, мови й розташування ідентичності (пристрій не змінюється). Зміни отримають нові вкладки.',
-  'settings.profiles.fit.cannot': 'Пароль проксі приховано, а локальний переадресатор для нього зараз не працює. Введіть проксі ще раз і збережіть, потім спробуйте знову.',
+  'settings.profiles.fit.cannot': 'Пароль проксі приховано, а локальний переадресувач для нього зараз не працює. Введіть проксі ще раз і збережіть, потім спробуйте знову.',
   'settings.profiles.fit.button': 'Підлаштувати',
   'settings.profiles.fit.where': 'Вихідний IP {ip}: {place} ({tz}).',
   'settings.profiles.fit.nothing': 'Ідентичність уже відповідає.',
@@ -91,6 +104,9 @@ export default {
   'settings.profiles.check.noTabs': 'Щоб перевірити профіль, відкрийте в ньому вкладку.',
   'settings.profiles.check.button': 'Перевірити',
   'settings.profiles.check.summary': 'Успішно: {passed}, попереджень: {warned}, помилок: {failed}',
+  'settings.profiles.check.status.pass': 'Успішно',
+  'settings.profiles.check.status.warn': 'Попередження',
+  'settings.profiles.check.status.fail': 'Помилка',
 
   'settings.profiles.delete.label': 'Видалити профіль {name}',
   'settings.profiles.delete.launch': 'Браузер запущено з цим профілем',

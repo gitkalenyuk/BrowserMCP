@@ -35,6 +35,16 @@ describe('E2 settings mock', () => {
     await expect(api.call('profile.create', { id: 'Bad Id' })).rejects.toThrow(/invalid/);
   });
 
+  it('profile.create keeps the incognito default', async () => {
+    make();
+    const r = await api.call('profile.create', { id: 'private', incognito_default: true });
+    expect(r.incognito_default).toBe(true);
+    await api.call('profile.create', { id: 'private', accept_language: 'de' });
+    const p = (await api.call('profile.list')).profiles.find((x) => x.id === 'private')!;
+    expect(p.incognito_default).toBe(true);
+    expect((await api.call('profile.create', { id: 'private', webrtc: 'public_only' })).webrtc).toBe('public_only');
+  });
+
   it('identities: generate, assign (profile.list follows), fit to a proxy, remove', async () => {
     make();
     const gen = await api.call('identity.generate', { preset: 'windows-1440p', id: 'shop-win', save: true });

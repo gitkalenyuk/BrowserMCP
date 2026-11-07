@@ -7,6 +7,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import {
+    agentName,
     cdpPortError,
     claudeHttpCommand,
     claudeStdioCommand,
@@ -221,6 +222,9 @@
     <section class="set-card" aria-labelledby="c-cdp">
       <h3 id="c-cdp">{t('settings.connections.cdp.title')}</h3>
       <p class="lead">{t('settings.connections.cdp.lead')}</p>
+      {#if info.cdp.config_error}
+        <p class="lib-error pad" role="alert">{t('settings.connections.cdp.configError', { error: info.cdp.config_error })}</p>
+      {/if}
       <div class="set-row">
         <div class="text">
           <span class="label">{t('settings.connections.cdp.enable')}</span>
@@ -269,8 +273,10 @@
               {t('settings.connections.cdp.closed')}
             {/if}
           </span>
+          {#if info.cdp.from_flag}<span class="help">{t('settings.connections.cdp.fromFlag')}</span>{/if}
         </div>
         <div class="ctl">
+          {#if info.cdp.from_flag}<span class="lib-chip">{t('settings.connections.cdp.flagChip')}</span>{/if}
           {#if info.cdp.restart_needed}<span class="lib-chip warn">{t('settings.connections.cdp.restart')}</span>{/if}
           <span class="lib-chip" class:ok={!!info.cdp.active_port}>{info.cdp.active_port ? t('common.on') : t('common.off')}</span>
         </div>
@@ -317,7 +323,7 @@
               <li>
                 <span class="lib-chip">{lockLabel(tab.lock!.state)}</span>
                 <span class="t" title={tab.url}>{tab.title || tab.url}</span>
-                <span class="set-muted">{t('settings.connections.lock.owner', { agent: tab.lock!.owner })}</span>
+                <span class="set-muted">{t('settings.connections.lock.owner', { agent: agentName(tab.lock!.owner, agents) })}</span>
               </li>
             {/each}
           </ul>

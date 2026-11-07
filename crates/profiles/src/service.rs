@@ -18,7 +18,7 @@ use bmcp_identity::store::JsonStore;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{ProfileBackend, ProfileSettings};
-use crate::prefs::Prefs;
+use crate::prefs::{Prefs, WebrtcPolicy};
 
 /// Settings of one profile as stored on disk.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +39,13 @@ pub struct ProfileConfig {
     /// Workspace color in the UI: grey, blue, red, yellow, green, pink, purple, cyan, orange.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// `tabs.open {profile}` without `incognito` opens an in-memory tab of this profile
+    /// (cookies, history and cache are gone when its last tab closes).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito_default: bool,
+    /// WebRTC addresses (default `auto`: limited to the proxy when proxied).
+    #[serde(default, skip_serializing_if = "WebrtcPolicy::is_auto")]
+    pub webrtc: WebrtcPolicy,
     #[serde(default)]
     pub created_ms: i64,
 }
@@ -202,7 +209,8 @@ impl ProfilesService {
             config.proxy_bypass.as_deref(),
             identity.as_ref(),
             config.accept_language.as_deref(),
-        );
+        )
+        .with_webrtc(config.webrtc);
         if let Ok(backend) = self.backend() {
             // No browser (tests, schema dump): only the files count.
             backend
@@ -227,5 +235,21 @@ impl ProfilesService {
             ids.extend(services.identities.read()?.profiles.into_keys());
         }
         Ok(ids.into_iter().collect())
+    }
+}
+
+impl bmcp_core::commands::tabs::TabDefaults for ProfilesService {
+    fn incognito_default(&self, profile: &str) -> bool {
+        match self.store.read() {
+            Ok(file) => file
+                .profiles
+                .get(profile)
+                .is_some_and(|c| c.incognito_default),
+            Err(err) => {
+                // A broken profiles.json must not stop tabs from opening.
+                tracing::warn!(%err, "profiles.json unreadable; tab opens normally");
+                false
+            }
+        }
     }
 }

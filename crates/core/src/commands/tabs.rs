@@ -1,5 +1,7 @@
 //! `tabs.*` commands.
 
+use std::sync::Arc;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +72,31 @@ impl Command for List {
     }
 }
 
+/// Per-profile defaults of `tabs.open`. bmcp-profiles owns the profile settings
+/// (profiles.json), which core does not know, so it provides them through the extensions
+/// ([`ProfileTabDefaults`]).
+pub trait TabDefaults: Send + Sync {
+    /// Tabs of `profile` open in memory when the caller leaves `incognito` out.
+    fn incognito_default(&self, profile: &str) -> bool;
+}
+
+/// The extension that holds the [`TabDefaults`] provider (absent = no defaults).
+pub struct ProfileTabDefaults(pub Arc<dyn TabDefaults>);
+
+/// `incognito` of a new tab: what the caller said, else the profile's default. Tabs opened
+/// without a profile never become incognito by default (the browser's own profile keeps its
+/// data, so a plain new tab never surprises).
+fn incognito_for(ctx: &Ctx, incognito: Option<bool>, profile: Option<&str>) -> bool {
+    match (incognito, profile) {
+        (Some(incognito), _) => incognito,
+        (None, Some(profile)) => ctx
+            .extensions
+            .get::<ProfileTabDefaults>()
+            .is_some_and(|d| d.0.incognito_default(profile)),
+        (None, None) => false,
+    }
+}
+
 /// `tabs.open`: open a URL in a new tab.
 pub struct Open;
 
@@ -83,8 +110,9 @@ pub struct OpenArgs {
     /// Profile to open it in (profile_list / profile_create): own cookies, cache, proxy and
     /// identity. Default: the profile the browser started with.
     pub profile: Option<String>,
-    /// In-memory profile, nothing is written to disk (default false). With `profile`: the
-    /// in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+    /// In-memory profile, nothing is written to disk. With `profile`: the in-memory profile
+    /// of that name (shared by its tabs, gone when its last tab closes). Default: false, or
+    /// the profile's `incognito_default` (profile_create) when `profile` is given.
     pub incognito: Option<bool>,
     /// "current" (default): a tab in the current window; "new": a window of its own;
     /// "offscreen": no visible window (automation; input and screenshots still work).
@@ -122,10 +150,11 @@ impl Command for Open {
 
     async fn run(ctx: Ctx, args: OpenArgs) -> Result<OpenOutput, CmdError> {
         let url = args.url.unwrap_or_else(|| NEW_TAB_URL.to_owned());
+        let profile = args.profile.filter(|p| !p.is_empty());
         let options = OpenTabOptions {
             background: args.background.unwrap_or(false),
-            profile: args.profile.filter(|p| !p.is_empty()),
-            incognito: args.incognito.unwrap_or(false),
+            incognito: incognito_for(&ctx, args.incognito, profile.as_deref()),
+            profile,
             window: args.window.unwrap_or_default(),
             run: args.run.filter(|r| !r.is_empty()),
         };

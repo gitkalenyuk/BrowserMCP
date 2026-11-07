@@ -5,7 +5,7 @@ export default {
   'settings.proxies.intro':
     'Проксі зберігаються в пулах (data/config/proxies.json). Профіль використовує один проксі з пулу або власну адресу проксі; масові запуски беруть для кожного рядка окремий проксі. Паролі зберігаються відкритим текстом у папці даних, а тут показуються прихованими.',
   'settings.proxies.loadError': 'Не вдалося прочитати проксі: {error}',
-  'settings.proxies.retry': 'Спробувати ще',
+  'settings.proxies.retry': 'Спробувати ще раз',
 
   'settings.proxies.pools.title': 'Пули проксі',
   'settings.proxies.pools.lead':
@@ -101,7 +101,7 @@ export default {
   'settings.proxies.routes.defaultHelp': 'Проксі профілю: куди йдуть сторінки, що не підпадають під жодне правило.',
   'settings.proxies.routes.rulesLabel': 'Правила',
   'settings.proxies.routes.rulesHelp':
-    'Перевіряються згори донизу; спрацьовує перше збігле. Шаблони: *.example.com (охоплює й example.com), https://example.com/api/* або re:РЕГУЛЯРНИЙ_ВИРАЗ. Для https-сторінок правила бачать лише схему, хост і порт.',
+    'Перевіряються згори донизу; спрацьовує перше правило, що збігається. Шаблони: *.example.com (охоплює й example.com), https://example.com/api/* або re:РЕГУЛЯРНИЙ_ВИРАЗ. Для https-сторінок правила бачать лише схему, хост і порт.',
   'settings.proxies.routes.match': 'Шаблон правила {n}',
   'settings.proxies.routes.via': 'Маршрут правила {n}',
   'settings.proxies.routes.up': 'Перемістити правило {n} вгору',
@@ -118,7 +118,7 @@ export default {
   'settings.proxies.via.direct': 'Напряму (без проксі)',
   'settings.proxies.via.pool': 'Пул {name}',
 
-  'settings.proxies.fwd.title': 'Локальні переадресатори',
+  'settings.proxies.fwd.title': 'Локальні переадресувачі',
   'settings.proxies.fwd.lead':
     'Chromium не вміє сам входити в SOCKS5-проксі, тож для кожного проксі з логіном запускається маленький локальний проксі на 127.0.0.1, який додає логін. Рушій бачить лише ці локальні адреси.',
   'settings.proxies.fwd.id': 'Ідентифікатор',

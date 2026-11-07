@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiToolset } from '../api/types-e2-settings';
 import {
+  agentName,
   cdpPortError,
   claudeHttpCommand,
   claudeStdioCommand,
@@ -76,5 +77,13 @@ describe('cdpPortError', () => {
     expect(cdpPortError('47800', 47800)).toBe('settings.connections.cdp.portTaken');
     expect(cdpPortError('47801', 47801)).toBe('settings.connections.cdp.portTaken');
     expect(cdpPortError('47800', null)).toBe('settings.connections.cdp.portTaken');
+  });
+});
+
+describe('tab locks', () => {
+  it('names the agent holding a lock', () => {
+    const agents = [{ id: 'a-1', name: 'Claude Code' }];
+    expect(agentName('a-1', agents)).toBe('Claude Code');
+    expect(agentName('a-9', agents)).toBe('a-9');
   });
 });

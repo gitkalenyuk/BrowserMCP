@@ -275,7 +275,7 @@ export class MockApi implements BrowserApi {
         tabs: (this.#state.get(p.id)?.tabs ?? []).map((t) => t.id),
       })),
     }),
-    'profile.create': ({ id, proxy, identity, accept_language }) => {
+    'profile.create': ({ id, proxy, identity, accept_language, incognito_default, webrtc }) => {
       if (!/^[a-z0-9_-]{1,64}$/.test(id)) throw new RpcError('INVALID_PARAMS', `invalid profile id "${id}": use 1-64 chars of a-z, 0-9, '-' or '_'`);
       const created = !this.#profiles.some((p) => p.id === id);
       if (created) {
@@ -293,7 +293,9 @@ export class MockApi implements BrowserApi {
       }
       if (identity !== undefined) p.identity = identity || null;
       if (accept_language !== undefined) p.accept_language = accept_language.trim() || null;
-      return { id, created };
+      if (incognito_default !== undefined) p.incognito_default = incognito_default;
+      if (webrtc !== undefined) p.webrtc = webrtc;
+      return { id, created, incognito_default: p.incognito_default ?? false, webrtc: p.webrtc ?? 'auto' };
     },
     'profile.update': ({ id, label, color }) => {
       const p = this.#profiles.find((x) => x.id === id);

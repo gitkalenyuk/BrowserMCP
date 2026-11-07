@@ -45,7 +45,7 @@ pub use backend::{CookieTarget, OpenProfile, PermissionPrompt, ProfileBackend, P
 pub use cookies::CookieInfo;
 pub use hooks::{IdentityPreparer, TabPreparer};
 pub use permissions::{PermissionKind, PermissionStore};
-pub use prefs::Prefs;
+pub use prefs::{Prefs, WebrtcPolicy};
 pub use rows::{RowProfiles, RowRequest, RowSetup};
 pub use service::{ProfileConfig, ProfilesService};
 
@@ -79,6 +79,12 @@ pub fn install(
     let service = registry
         .extensions()
         .insert(ProfilesService::new(data_root, launch_profile));
+    // `tabs.open {profile}` asks for the profile's incognito default.
+    registry
+        .extensions()
+        .insert(bmcp_core::commands::tabs::ProfileTabDefaults(
+            service.clone(),
+        ));
     match registry.extensions().get::<bmcp_identity::Services>() {
         Some(identities) => service.set_identities(identities),
         None => tracing::warn!("bmcp_profiles::install before bmcp_identity::install"),

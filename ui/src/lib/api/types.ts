@@ -70,6 +70,9 @@ export interface TabSplit {
   ratio: number;
 }
 
+/** Which addresses WebRTC may use in a profile (crates/profiles/src/prefs.rs). */
+export type WebrtcPolicy = 'auto' | 'normal' | 'public_only' | 'proxy_only';
+
 /** One entry of `profile.list` (crates/profiles/src/commands.rs). */
 export interface ProfileEntry {
   id: string;
@@ -84,6 +87,11 @@ export interface ProfileEntry {
   stored: boolean;
   open: boolean;
   incognito: boolean;
+  /** New tabs of this profile open in memory unless tabs.open says otherwise. */
+  incognito_default?: boolean;
+  /** WebRTC setting (default auto) and the IP handling the browser got (null = not applied). */
+  webrtc?: WebrtcPolicy;
+  webrtc_applied?: string | null;
   tabs: TabId[];
   launch: boolean;
 }
@@ -203,9 +211,9 @@ export interface RpcMethods {
   // ---- profiles = workspaces (crates/profiles) -----------------------------------------------
   'profile.list': { params: void; result: { profiles: ProfileEntry[] } };
   'profile.create': {
-    /** proxy / identity / accept_language: only the fields to change ("" removes). */
-    params: { id: string; proxy?: string; proxy_bypass?: string; identity?: string; accept_language?: string };
-    result: { id: string; created: boolean; warning?: string | null };
+    /** proxy / identity / accept_language / incognito_default: only the fields to change ("" removes). */
+    params: { id: string; proxy?: string; proxy_bypass?: string; identity?: string; accept_language?: string; incognito_default?: boolean; webrtc?: WebrtcPolicy };
+    result: { id: string; created: boolean; incognito_default?: boolean; webrtc?: WebrtcPolicy; warning?: string | null };
   };
   'profile.update': { params: { id: string; label?: string; color?: string }; result: { id: string; label: string; color: string | null } };
   'profile.delete': { params: { id: string; keep_data?: boolean }; result: { id: string; removed: boolean } };

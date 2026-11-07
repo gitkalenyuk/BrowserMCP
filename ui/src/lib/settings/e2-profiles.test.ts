@@ -3,13 +3,15 @@ import type { IdentityPreset } from '../api/types-e2-settings';
 import {
   fitProxyRef,
   identityIdFor,
+  isCustomProxy,
   presetGroups,
   profileForm,
   profileIdError,
   profileIdFromName,
   profileProxyError,
   profileSave,
-  webrtcLimited,
+  webrtcEffect,
+  webrtcWarning,
 } from './e2-profiles';
 import type { ProfileEntry } from '../api/types';
 
@@ -60,6 +62,22 @@ describe('profileSave', () => {
     });
   });
 
+  it('sends the incognito default only when it changed', () => {
+    const plain = profile('work');
+    expect(profileForm(plain).incognitoDefault).toBe(false);
+    expect(profileSave(plain, { ...profileForm(plain), incognitoDefault: true })).toEqual({ create: { incognito_default: true } });
+    const priv = profile('work', { incognito_default: true });
+    expect(profileSave(priv, profileForm(priv))).toEqual({});
+    expect(profileSave(priv, { ...profileForm(priv), incognitoDefault: false })).toEqual({ create: { incognito_default: false } });
+  });
+
+  it('tells a hand-typed proxy from a pool choice (discard keeps the URL field)', () => {
+    const pools = ['pool:de', 'pool:us'];
+    expect(isCustomProxy('', pools)).toBe(false);
+    expect(isCustomProxy('pool:de', pools)).toBe(false);
+    expect(isCustomProxy('socks5://u:***@h:1080', pools)).toBe(true);
+  });
+
   it('treats a label equal to the id as no label', () => {
     const plain = profile('work');
     expect(profileForm(plain).label).toBe('');
@@ -108,8 +126,22 @@ describe('identities', () => {
     expect(fitProxyRef(profile('a', { proxy: 'socks5://u:***@h:1' }), [])).toBeNull();
   });
 
-  it('says when WebRTC is limited', () => {
-    expect(webrtcLimited(profile('a'))).toBe(false);
-    expect(webrtcLimited(profile('a', { proxy: 'pool:de' }))).toBe(true);
+  it('says what the WebRTC choice does with the proxy', () => {
+    expect(webrtcEffect('auto', '')).toBe('normal');
+    expect(webrtcEffect('auto', 'pool:de')).toBe('proxy');
+    expect(webrtcEffect('normal', 'pool:de')).toBe('normal');
+    expect(webrtcEffect('public_only', '')).toBe('public');
+    expect(webrtcEffect('proxy_only', '')).toBe('proxy');
+    expect(webrtcWarning('normal', 'pool:de')).toBe('settings.profiles.edit.webrtcLeak');
+    expect(webrtcWarning('normal', '')).toBe('');
+    expect(webrtcWarning('proxy_only', 'direct')).toBe('settings.profiles.edit.webrtcNoProxy');
+    expect(webrtcWarning('auto', '')).toBe('');
+  });
+
+  it('sends the WebRTC choice only when it changed', () => {
+    const p = profile('a', { webrtc: 'public_only' });
+    expect(profileForm(profile('a')).webrtc).toBe('auto');
+    expect(profileSave(p, profileForm(p))).toEqual({});
+    expect(profileSave(p, { ...profileForm(p), webrtc: 'auto' })).toEqual({ create: { webrtc: 'auto' } });
   });
 });

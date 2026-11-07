@@ -372,7 +372,8 @@ impl Command for Assign {
     fn meta() -> Meta {
         Meta::new(
             "Give a profile a saved identity (stored in identities.json): every new tab and \
-             popup of that profile gets it before its first navigation, workers included.",
+             popup of that profile gets it before its first navigation, workers included. \
+             Refused while the CDP port is open (Settings → Connections & API).",
             Toolset::Stealth,
         )
         .act()
@@ -380,6 +381,10 @@ impl Command for Assign {
 
     async fn run(ctx: Ctx, args: AssignArgs) -> Result<AssignOutput, CmdError> {
         check_name("profile", &args.profile)?;
+        if args.id.is_some() {
+            // Never a stealth identity next to an open debugging port (easy to detect).
+            bmcp_core::CdpLaunch::of(&ctx.extensions).check_stealth_allowed()?;
+        }
         let services = Services::from_ctx(&ctx)?;
         services.identities.update(|f| {
             match &args.id {

@@ -5,7 +5,7 @@ export default {
   'settings.connections.intro':
     'Як до цього браузера під’єднуються ШІ-агенти (Claude Code, Codex, будь-який MCP-клієнт), ваші скрипти й інструменти на кшталт Playwright. Усе працює лише на цьому комп’ютері.',
   'settings.connections.loadError': 'Не вдалося прочитати дані підключення: {error}',
-  'settings.connections.retry': 'Спробувати ще',
+  'settings.connections.retry': 'Спробувати ще раз',
   'settings.connections.copyLabel': 'Копіювати: {what}',
   'settings.connections.copyFailed': 'Не вдалося скопіювати. Виділіть текст і натисніть Ctrl+C.',
 
@@ -33,7 +33,7 @@ export default {
     'Виберіть набори інструментів, які бачитиме агент, скопіюйте команду для свого клієнта й виконайте її в терміналі. У командах уже є цей порт і шлях до браузера.',
   'settings.connections.toolsets.label': 'Набори інструментів',
   'settings.connections.toolsets.help':
-    'Що менше інструментів, то менше займає контекст моделі й то легше їй вибирати. Вибір потрапляє в адресу як ?toolsets=…; вибрано інструментів: {n}.',
+    'Що менше інструментів, то менше місця вони займають у контексті моделі й то легше їй вибирати. Вибір потрапляє в адресу як ?toolsets=…; вибрано інструментів: {n}.',
   'settings.connections.toolsets.defaults': 'Типові',
   'settings.connections.toolsets.all': 'Вибрати всі',
   'settings.connections.toolset.core': 'Вкладки, навігація, знімок сторінки, кліки й введення тексту, скриншоти',
@@ -81,6 +81,10 @@ export default {
   'settings.connections.cdp.closed': 'Закритий.',
   'settings.connections.cdp.refused': 'Закритий: його просили відкрити під час запуску, але один із профілів має стелс-ідентичність.',
   'settings.connections.cdp.restart': 'Потрібен перезапуск',
+  'settings.connections.cdp.flagChip': 'З --cdp-port',
+  'settings.connections.cdp.fromFlag':
+    'Браузер запущено з --cdp-port, і цей прапорець діє щоразу, коли його так запускають. Налаштування вище запрацює, коли браузер запустять без прапорця.',
+  'settings.connections.cdp.configError': 'Не вдалося прочитати connections.json, тому показано типові значення. Виправте або видаліть файл: {error}',
   'settings.connections.cdp.saved': 'Налаштування CDP збережено',
   'settings.connections.cdp.savedRestart': 'Збережено. Перезапустіть браузер, щоб застосувати.',
   'settings.connections.cdp.playwright': 'Playwright',

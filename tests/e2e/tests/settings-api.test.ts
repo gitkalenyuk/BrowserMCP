@@ -26,7 +26,25 @@ describe("settings API", () => {
     expect(core).toMatchObject({ default: true });
     expect(core.commands).toBeGreaterThan(10);
     // The harness opened the CDP port on the command line; nothing is saved.
-    expect(info.cdp).toMatchObject({ active_port: env().cdpPort, enabled: false, refused: false });
+    // The flag decides at every start: no "restart needed" for the saved setting.
+    expect(info.cdp).toMatchObject({ active_port: env().cdpPort, enabled: false, refused: false, from_flag: true, restart_needed: false });
+  });
+
+  it("only the browser UI may turn the CDP port on", async () => {
+    await expect(cmd("api.config", { cdp_enabled: true })).rejects.toThrow(/NEEDS_APPROVAL/);
+    expect((await cmd("api.info")).cdp.enabled).toBe(false);
+  });
+
+  it("no stealth identity is assigned while the CDP port is open", async () => {
+    await cmd("identity.generate", { seed: 3, id: "e2e-cdp-guard", save: true });
+    try {
+      await expect(cmd("identity.assign", { profile: "e2e-cdp-guard", id: "e2e-cdp-guard" })).rejects.toThrow(/CDP port/);
+      await expect(cmd("profile.create", { id: "e2e-cdp-guard", identity: "e2e-cdp-guard" })).rejects.toThrow(/CDP port/);
+      expect((await cmd("identity.list")).profiles["e2e-cdp-guard"]).toBeUndefined();
+    } finally {
+      await cmd("identity.assign", { profile: "e2e-cdp-guard" });
+      await cmd("identity.remove", { id: "e2e-cdp-guard" });
+    }
   });
 
   it("api.config saves the CDP setting without touching the running port", async () => {

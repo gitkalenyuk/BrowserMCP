@@ -10,17 +10,21 @@
   import {
     fitProxyRef,
     identityIdFor,
+    isCustomProxy,
     presetGroups,
     profileForm,
     profileIdError,
     profileIdFromName,
     profileProxyError,
     profileSave,
-    webrtcLimited,
+    WEBRTC_POLICIES,
+    webrtcEffect,
+    webrtcWarning,
     type ProfileForm,
   } from '../lib/settings/e2-profiles';
   import { poolRef } from '../lib/settings/e2-proxies';
   import Dialog from '../library/Dialog.svelte';
+  import Toggle from './Toggle.svelte';
 
   let { api, notify, fail }: { api: BrowserApi; notify: (t: string, e?: boolean) => void; fail: (e: unknown) => void } = $props();
 
@@ -32,6 +36,8 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let busy = $state(false);
+  /** The CDP port open right now: the core then refuses every stealth identity. */
+  let cdpPort = $state<number | null>(null);
 
   // New profile.
   let newName = $state('');
@@ -72,6 +78,12 @@
     } catch (err) {
       loadError = (err as Error).message;
     }
+    // An extra: without api.info the section still works (the core still refuses).
+    try {
+      cdpPort = (await api.call('api.info')).cdp.active_port ?? null;
+    } catch {
+      cdpPort = null;
+    }
   }
 
   $effect(() => {
@@ -105,11 +117,16 @@
       return;
     }
     editing = p.id;
-    form = profileForm(p);
-    customProxy = !!form.proxy && !proxyChoices.includes(form.proxy);
+    discard(p);
     presetPick = '';
     fitResult = null;
     check = null;
+  }
+
+  /** The form back to what is stored (a hand-typed proxy URL keeps its input field). */
+  function discard(p: ProfileEntry) {
+    form = profileForm(p);
+    customProxy = isCustomProxy(form.proxy, proxyChoices);
   }
 
   async function create() {
@@ -298,6 +315,7 @@
             <span class="chips">
               {#if p.launch}<span class="lib-chip">{t('settings.profiles.chip.launch')}</span>{/if}
               {#if p.incognito}<span class="lib-chip warn">{t('settings.profiles.chip.memory')}</span>{/if}
+              {#if p.incognito_default && !p.incognito}<span class="lib-chip">{t('settings.profiles.chip.incognitoDefault')}</span>{/if}
               {#if p.tabs.length}<span class="lib-chip ok">{tp('settings.profiles.chip.tabs', p.tabs.length)}</span>{/if}
               <span class="lib-chip">{p.proxy ? t('settings.profiles.chip.proxy', { proxy: p.proxy }) : t('settings.profiles.chip.direct')}</span>
               {#if p.identity}
@@ -362,22 +380,37 @@
             <div class="set-row">
               <div class="text"><span class="label">{t('settings.profiles.edit.webrtc')}</span><span class="help">{t('settings.profiles.edit.webrtcHelp')}</span></div>
               <div class="ctl">
-                <span class="lib-chip" class:ok={webrtcLimited(p)}>{webrtcLimited(p) ? t('settings.profiles.edit.webrtcLimited') : t('settings.profiles.edit.webrtcNormal')}</span>
+                <span class="lib-chip" class:ok={webrtcEffect(form.webrtc, form.proxy) !== 'normal'}>{t(`settings.profiles.edit.webrtcEffect.${webrtcEffect(form.webrtc, form.proxy)}`)}</span>
+                <select class="lib-input" bind:value={form.webrtc} aria-label={t('settings.profiles.edit.webrtc')}>
+                  {#each WEBRTC_POLICIES as policy (policy)}<option value={policy}>{t(`settings.profiles.webrtc.${policy}`)}</option>{/each}
+                </select>
               </div>
             </div>
+            {#if webrtcWarning(form.webrtc, form.proxy)}<p class="set-err pad">{t(webrtcWarning(form.webrtc, form.proxy))}</p>{/if}
             <div class="set-row">
               <div class="text"><span class="label">{t('settings.profiles.edit.lang')}</span><span class="help">{t('settings.profiles.edit.langHelp')}</span></div>
               <div class="ctl"><input class="lib-input wide mono" bind:value={form.acceptLanguage} placeholder="uk-UA,uk,en-US,en" aria-label={t('settings.profiles.edit.lang')} /></div>
             </div>
+            {#if !p.launch}
+              <div class="set-row">
+                <div class="text"><span class="label">{t('settings.profiles.edit.incognito')}</span><span class="help">{t('settings.profiles.edit.incognitoHelp')}</span></div>
+                <div class="ctl">
+                  <Toggle label={t('settings.profiles.edit.incognito')} checked={form.incognitoDefault} disabled={busy} onchange={(on) => (form!.incognitoDefault = on)} />
+                </div>
+              </div>
+            {/if}
             {#if dirty}
               <div class="set-actions">
                 <button class="btn primary" disabled={busy || !!proxyError} onclick={saveProfile}>{t('common.save')}</button>
-                <button class="btn" disabled={busy} onclick={() => ((form = profileForm(p)), (customProxy = false))}>{t('settings.profiles.edit.discard')}</button>
+                <button class="btn" disabled={busy} onclick={() => discard(p)}>{t('settings.profiles.edit.discard')}</button>
               </div>
             {/if}
 
             <h4>{t('settings.profiles.identity.title')}</h4>
             <p class="sub">{t('settings.profiles.identity.lead')}</p>
+            {#if cdpPort !== null}
+              <p class="sub warnc" role="note">{t('settings.profiles.identity.cdpOpen', { port: cdpPort })}</p>
+            {/if}
             <div class="set-row">
               <div class="text">
                 <span class="label">{t('settings.profiles.identity.use')}</span>
@@ -392,7 +425,7 @@
               <div class="ctl">
                 <select class="lib-input" aria-label={t('settings.profiles.identity.use')} value={p.identity ?? ''} disabled={busy} onchange={(e) => assign(p, e.currentTarget.value)}>
                   <option value="">{t('settings.profiles.identity.none')}</option>
-                  {#each identities as i (i.id)}<option value={i.id}>{i.id} · {i.preset}</option>{/each}
+                  {#each identities as i (i.id)}<option value={i.id} disabled={cdpPort !== null && i.id !== p.identity}>{i.id} · {i.preset}</option>{/each}
                 </select>
               </div>
             </div>
@@ -407,7 +440,7 @@
                     </optgroup>
                   {/each}
                 </select>
-                <button class="btn" disabled={busy || !presetPick} onclick={() => createIdentity(p)}>{t('settings.profiles.identity.create')}</button>
+                <button class="btn" disabled={busy || !presetPick || cdpPort !== null} onclick={() => createIdentity(p)}>{t('settings.profiles.identity.create')}</button>
               </div>
             </div>
             <div class="set-row">
@@ -438,7 +471,7 @@
                 <p>{t('settings.profiles.check.summary', { passed: r.passed, warned: r.warned, failed: r.failed })}</p>
                 <ul>
                   {#each r.checks as c (c.name)}
-                    <li><span class="lib-chip" class:ok={c.status === 'pass'} class:warn={c.status === 'warn'} class:bad={c.status === 'fail'}>{c.status}</span> {c.name} <span class="set-muted">{c.detail}</span></li>
+                    <li><span class="lib-chip" class:ok={c.status === 'pass'} class:warn={c.status === 'warn'} class:bad={c.status === 'fail'}>{t(`settings.profiles.check.status.${c.status}`)}</span> {c.name} <span class="set-muted">{c.detail}</span></li>
                   {/each}
                 </ul>
               </div>

@@ -732,12 +732,20 @@ function e2Matches(pattern: string, url: string): boolean {
 export function createE2SettingsMocks(call: Call): E2SettingsHandlers {
   // ---- connections ----
   let connections = { cdp_enabled: false, cdp_port: 9222 };
-  const cdpLaunch: { port: number | null; refused: boolean } = { port: null, refused: false };
+  const cdpLaunch: { port: number | null; refused: boolean; from_flag: boolean } = { port: null, refused: false, from_flag: false };
   const cdpInfo = (): Result<'api.info'>['cdp'] => {
     const stealth = [...assigned.keys()].sort();
     const wanted = connections.cdp_enabled ? connections.cdp_port : null;
     const effective = stealth.length ? null : wanted;
-    return { active_port: cdpLaunch.port, refused: cdpLaunch.refused, enabled: connections.cdp_enabled, port: connections.cdp_port, stealth_profiles: stealth, restart_needed: effective !== cdpLaunch.port };
+    return {
+      active_port: cdpLaunch.port,
+      refused: cdpLaunch.refused,
+      enabled: connections.cdp_enabled,
+      port: connections.cdp_port,
+      stealth_profiles: stealth,
+      restart_needed: !cdpLaunch.from_flag && effective !== cdpLaunch.port,
+      from_flag: cdpLaunch.from_flag,
+    };
   };
   const TOOLSET_COUNTS: [string, number, boolean][] = [
     ['core', 31, true], ['net', 15, false], ['record', 8, false], ['script', 8, false], ['run', 10, false], ['profile', 12, false],
@@ -896,6 +904,10 @@ export function createE2SettingsMocks(call: Call): E2SettingsHandlers {
     },
     'identity.assign': async ({ profile, id }) => {
       if (id) requireIdentity(id);
+      // Like the core: never a stealth identity next to an open debugging port.
+      if (id && cdpLaunch.port !== null) {
+        throw new RpcError('INVALID_PARAMS', `a stealth identity cannot be used while the CDP port ${cdpLaunch.port} is open`);
+      }
       if (id) assigned.set(profile, id);
       else assigned.delete(profile);
       await call('profile.create', { id: profile, identity: id ?? '' });

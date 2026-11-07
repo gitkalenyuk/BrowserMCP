@@ -726,7 +726,10 @@ export interface AiSessionsListOutput {
 
 /** Arguments of `api.config`. */
 export interface ApiConfigArgs {
-  /** Open the CDP port at the next start (refused while a profile has a stealth identity). */
+  /**
+   * Open the CDP port at the next start (refused while a profile has a stealth identity).
+   * Only the browser UI may turn it on (a person confirms it there); agents may turn it off.
+   */
   cdp_enabled?: boolean | null;
   /** CDP port, 1024-65535 (default 9222). */
   cdp_port?: number | null;
@@ -757,8 +760,18 @@ export interface ApiConfigOutput {
     port: number;
     /** Profiles with a stealth identity: while there are any, the port stays closed. */
     stealth_profiles: string[];
-    /** The saved setting differs from what is running: restart the browser to apply it. */
+    /**
+     * The saved setting differs from what is running: restart the browser to apply it.
+     * Always false when `from_flag` (the flag decides at every start).
+     */
     restart_needed: boolean;
+    /**
+     * The port was asked for with `--cdp-port`: the saved setting is not used while the
+     * browser is started with that flag.
+     */
+    from_flag: boolean;
+    /** connections.json could not be read (the defaults are shown); fix or delete the file. */
+    config_error?: string | null;
   };
 }
 
@@ -820,8 +833,18 @@ export interface ApiInfoOutput {
     port: number;
     /** Profiles with a stealth identity: while there are any, the port stays closed. */
     stealth_profiles: string[];
-    /** The saved setting differs from what is running: restart the browser to apply it. */
+    /**
+     * The saved setting differs from what is running: restart the browser to apply it.
+     * Always false when `from_flag` (the flag decides at every start).
+     */
     restart_needed: boolean;
+    /**
+     * The port was asked for with `--cdp-port`: the saved setting is not used while the
+     * browser is started with that flag.
+     */
+    from_flag: boolean;
+    /** connections.json could not be read (the defaults are shown); fix or delete the file. */
+    config_error?: string | null;
   };
 }
 
@@ -4896,6 +4919,22 @@ export interface ProfileCreateArgs {
   identity?: string | null;
   /** Accept-Language list, e.g. "de-DE,de,en". Default: the identity's. */
   accept_language?: string | null;
+  /**
+   * Open its tabs in memory by default: tabs_open {profile} without `incognito` keeps
+   * nothing on disk (default false).
+   */
+  incognito_default?: boolean | null;
+  /**
+   * Which addresses WebRTC may use: "auto" (default: limited to the proxy when proxied),
+   * "normal" (Chromium's defaults, even with a proxy), "public_only" (no local network
+   * addresses) or "proxy_only" (no UDP outside the proxy).
+   *
+   * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+   * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+   * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+   * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+   */
+  webrtc?: "auto" | "normal" | "public_only" | "proxy_only" | null;
 }
 
 /**
@@ -4917,7 +4956,24 @@ export interface ProfileCreateOutput {
   proxy_mode: string | null;
   /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
   proxy_server: string | null;
+  /**
+   * The WebRTC IP handling Chromium was told, e.g. "disable_non_proxied_udp" (null = not
+   * applied yet).
+   */
+  webrtc_applied: string | null;
   identity: string | null;
+  /** New tabs open in memory unless tabs_open says otherwise. */
+  incognito_default: boolean;
+  /**
+   * Which network addresses WebRTC (calls, peer-to-peer) may use in a profile. Sites can read
+   * the addresses WebRTC finds, so a proxied profile normally limits it to the proxy.
+   *
+   * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+   * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+   * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+   * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+   */
+  webrtc: "auto" | "normal" | "public_only" | "proxy_only";
   /** Folder of its cookies/cache. */
   data_dir: string;
   warning?: string | null;
@@ -4969,6 +5025,11 @@ export interface ProfileListOutput {
     proxy_mode: string | null;
     /** The fixed proxy server Chromium uses: the local forwarder (socks5://127.0.0.1:p). */
     proxy_server: string | null;
+    /**
+     * The WebRTC IP handling Chromium was told, e.g. "disable_non_proxied_udp" (null = not
+     * applied yet).
+     */
+    webrtc_applied: string | null;
     accept_language: string | null;
     /** Identity applied to its new tabs (identity_assign). */
     identity: string | null;
@@ -4978,6 +5039,20 @@ export interface ProfileListOutput {
     open: boolean;
     /** In memory only. */
     incognito: boolean;
+    /**
+     * New tabs of this profile open in memory unless the caller says otherwise
+     * (profile_create incognito_default).
+     */
+    incognito_default: boolean;
+    /**
+     * WebRTC policy setting (profile_create webrtc).
+     *
+     * - `"auto"`: Limited to the proxy when the profile has one, Chromium's defaults otherwise.
+     * - `"normal"`: Chromium's defaults even with a proxy: calls work everywhere, but sites can see the real IP address.
+     * - `"public_only"`: Only the public address of the default route: local network addresses stay hidden.
+     * - `"proxy_only"`: No UDP outside the proxy. Without a proxy, calls that need UDP do not connect.
+     */
+    webrtc: "auto" | "normal" | "public_only" | "proxy_only";
     tabs: number[];
     /** The profile the browser started with. */
     launch: boolean;
@@ -7396,8 +7471,9 @@ export interface TabsOpenArgs {
    */
   profile?: string | null;
   /**
-   * In-memory profile, nothing is written to disk (default false). With `profile`: the
-   * in-memory profile of that name (shared by its tabs, gone when its last tab closes).
+   * In-memory profile, nothing is written to disk. With `profile`: the in-memory profile
+   * of that name (shared by its tabs, gone when its last tab closes). Default: false, or
+   * the profile's `incognito_default` (profile_create) when `profile` is given.
    */
   incognito?: boolean | null;
   /**
@@ -8189,7 +8265,7 @@ export interface Commands {
   "ai.session_transcript": { args: AiSessionTranscriptArgs; output: AiSessionTranscriptOutput };
   /** List AI sessions (agents) with id, provider, color, status and the tabs each touched. */
   "ai.sessions_list": { args: AiSessionsListArgs; output: AiSessionsListOutput };
-  /** Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state. */
+  /** Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state. */
   "api.config": { args: ApiConfigArgs; output: ApiConfigOutput };
   /** How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed). */
   "api.info": { args: ApiInfoArgs; output: ApiInfoOutput };
@@ -8243,7 +8319,7 @@ export interface Commands {
   "history.delete": { args: HistoryDeleteArgs; output: HistoryDeleteOutput };
   /** Search the browsing history by text in URL/title and/or visit time. Returns {entries:[{url,title,visit_count,last_visit}]}, most recent first (times are Unix ms). */
   "history.search": { args: HistorySearchArgs; output: HistorySearchOutput };
-  /** Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. */
+  /** Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API). */
   "identity.assign": { args: IdentityAssignArgs; output: IdentityAssignOutput };
   /** Fit a saved identity to a proxy's exit IP: geo lookup through the proxy, then set timezone, locale + languages (Accept-Language) and geolocation (city with small jitter) to match the country/region; keeps UA, platform and hardware. Reports what changed; re-apply with stealth_fingerprint_set. */
   "identity.fit_to_proxy": { args: IdentityFitToProxyArgs; output: IdentityFitToProxyOutput };
@@ -8383,7 +8459,7 @@ export interface Commands {
   "plugins.reload": { args: PluginsReloadArgs; output: PluginsReloadOutput };
   /** Stop a plugin and delete its folder from data/plugins. */
   "plugins.remove": { args: PluginsRemoveArgs; output: PluginsRemoveOutput };
-  /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}. */
+  /** Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}. */
   "profile.create": { args: ProfileCreateArgs; output: ProfileCreateOutput };
   /** Delete a profile: its settings, proxy routing (and pool leases), identity assignment and (unless keep_data) its cookies/cache folder. Close its tabs first. */
   "profile.delete": { args: ProfileDeleteArgs; output: ProfileDeleteOutput };
@@ -8734,7 +8810,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "api.config": {
     wireName: "api_config",
-    description: "Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.",
+    description: "Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.",
     toolset: "system",
     sensitivity: "act",
     mutatesTab: false,
@@ -8977,7 +9053,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "identity.assign": {
     wireName: "identity_assign",
-    description: "Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included.",
+    description: "Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API).",
     toolset: "stealth",
     sensitivity: "act",
     mutatesTab: false,
@@ -9607,7 +9683,7 @@ export const COMMANDS: { readonly [N in CommandName]: CommandMeta } = {
   },
   "profile.create": {
     wireName: "profile_create",
-    description: "Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.",
+    description: "Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}.",
     toolset: "profile",
     sensitivity: "act",
     mutatesTab: false,
@@ -10543,7 +10619,7 @@ export interface Browser {
   /** Commands `api.*`. */
   api: {
     /**
-     * Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.
+     * Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Turning the port on is only allowed from the browser UI (Settings → Connections & API) and is refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.
      *
      * `api.config` (MCP: `api_config`): toolset `system`, act.
      */
@@ -10738,7 +10814,7 @@ export interface Browser {
   /** Commands `identity.*`. */
   identity: {
     /**
-     * Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included.
+     * Give a profile a saved identity (stored in identities.json): every new tab and popup of that profile gets it before its first navigation, workers included. Refused while the CDP port is open (Settings → Connections & API).
      *
      * `identity.assign` (MCP: `identity_assign`): toolset `stealth`, act.
      */
@@ -11189,7 +11265,7 @@ export interface Browser {
   /** Commands `profile.*`. */
   profile: {
     /**
-     * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language. Open tabs in it with tabs_open {profile}.
+     * Create (or update) a browser profile: own cookies/cache folder, optional proxy (through a local forwarder; WebRTC is then limited to the proxy unless `webrtc` says otherwise; same setting as the default of proxy_rules_set), identity applied to each new tab, Accept-Language, incognito_default (its tabs keep nothing on disk). Open tabs in it with tabs_open {profile}.
      *
      * `profile.create` (MCP: `profile_create`): toolset `profile`, act.
      */

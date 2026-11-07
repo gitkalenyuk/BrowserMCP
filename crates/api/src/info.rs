@@ -3,19 +3,25 @@
 //!
 //! * [`ApiEndpoint`] — where the API listens and how many commands each toolset has; put into
 //!   the registry extensions by [`crate::serve_on`] once the socket is bound.
-//! * [`CdpLaunch`] — what the app did with Chromium's remote debugging port at launch.
+//! * [`CdpLaunch`] (from bmcp-core) — what the app did with Chromium's remote debugging port
+//!   at launch.
 //! * [`ConnectionsConfig`] — `data/config/connections.json`: the CDP port setting the app reads
 //!   at the next start (`--cdp-port` on the command line wins).
 //!
 //! The CDP port and a stealth identity are never combined: an open debugging port is easy for
 //! sites and local software to detect. `api.config` refuses to turn the port on while a
-//! profile has an identity, and the app refuses to open it at startup in that case.
+//! profile has an identity, the app refuses to open it at startup in that case, and while it
+//! is open the identity commands refuse to assign one ([`CdpLaunch::check_stealth_allowed`]).
+//!
+//! Only a person in the browser UI may turn the port on (`api.config` from an MCP agent or a
+//! script is refused): the UI asks for confirmation first, an agent would not.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+pub use bmcp_core::CdpLaunch;
 use bmcp_core::command::Empty;
-use bmcp_core::{CmdError, Command, Ctx, DataDir, ErrorCode, Meta, Registry, Toolset};
+use bmcp_core::{Caller, CmdError, Command, Ctx, DataDir, ErrorCode, Meta, Registry, Toolset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -50,15 +56,6 @@ impl ApiEndpoint {
             .collect();
         ApiEndpoint { addr, toolsets }
     }
-}
-
-/// What the app did with the CDP port at launch. Inserted by the app; absent = closed.
-#[derive(Debug, Clone, Default)]
-pub struct CdpLaunch {
-    /// The port Chromium listens on, if any.
-    pub port: Option<u16>,
-    /// A port was asked for (flag or setting) but refused because of a stealth identity.
-    pub refused: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -175,7 +172,14 @@ pub struct CdpInfo {
     /// Profiles with a stealth identity: while there are any, the port stays closed.
     pub stealth_profiles: Vec<String>,
     /// The saved setting differs from what is running: restart the browser to apply it.
+    /// Always false when `from_flag` (the flag decides at every start).
     pub restart_needed: bool,
+    /// The port was asked for with `--cdp-port`: the saved setting is not used while the
+    /// browser is started with that flag.
+    pub from_flag: bool,
+    /// connections.json could not be read (the defaults are shown); fix or delete the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_error: Option<String>,
 }
 
 impl CdpInfo {
@@ -187,8 +191,12 @@ impl CdpInfo {
             refused: launch.refused,
             enabled: config.cdp_enabled,
             port: config.cdp_port,
-            restart_needed: effective != launch.port,
+            // With `--cdp-port` the next start (with the same flag) opens the same port again,
+            // so the saved setting changes nothing a restart would show.
+            restart_needed: !launch.from_cli && effective != launch.port,
+            from_flag: launch.from_cli,
             stealth_profiles: stealth,
+            config_error: None,
         }
     }
 }
@@ -240,15 +248,18 @@ impl Command for ApiInfo {
     async fn run(ctx: Ctx, _args: Empty) -> Result<ApiInfoOutput, CmdError> {
         let endpoint = ctx.extensions.get::<ApiEndpoint>();
         let data = ctx.extensions.get::<DataDir>();
-        let launch = ctx
-            .extensions
-            .get::<CdpLaunch>()
-            .map(|l| (*l).clone())
-            .unwrap_or_default();
-        let config = match &data {
-            Some(data) => ConnectionsConfig::load(&data.config())?,
-            None => ConnectionsConfig::default(),
+        let launch = CdpLaunch::of(&ctx.extensions);
+        // A broken connections.json must not hide the URLs and commands: show the defaults
+        // and say what is wrong.
+        let (config, config_error) = match &data {
+            Some(data) => match ConnectionsConfig::load(&data.config()) {
+                Ok(config) => (config, None),
+                Err(err) => (ConnectionsConfig::default(), Some(err.message)),
+            },
+            None => (ConnectionsConfig::default(), None),
         };
+        let mut cdp = CdpInfo::new(&config, &launch, stealth_profiles(&ctx)?);
+        cdp.config_error = config_error;
         let endpoint_file = data.as_ref().map(|d| d.runtime().join("endpoint.json"));
         Ok(ApiInfoOutput {
             version: env!("CARGO_PKG_VERSION").into(),
@@ -262,7 +273,7 @@ impl Command for ApiInfo {
                 .map(|p| p.display().to_string()),
             data_dir: data.as_ref().map(|d| d.root().display().to_string()),
             toolsets: toolsets(endpoint.as_deref()),
-            cdp: CdpInfo::new(&config, &launch, stealth_profiles(&ctx)?),
+            cdp,
         })
     }
 }
@@ -303,6 +314,7 @@ pub struct ApiConfig;
 #[serde(deny_unknown_fields)]
 pub struct ApiConfigArgs {
     /// Open the CDP port at the next start (refused while a profile has a stealth identity).
+    /// Only the browser UI may turn it on (a person confirms it there); agents may turn it off.
     pub cdp_enabled: Option<bool>,
     /// CDP port, 1024-65535 (default 9222).
     pub cdp_port: Option<u16>,
@@ -323,9 +335,10 @@ impl Command for ApiConfig {
     fn meta() -> Meta {
         Meta::new(
             "Change the connection settings (data/config/connections.json): open the CDP \
-             port for Playwright/Puppeteer at the next start, and its port. Refused while a \
-             profile has a stealth identity. Takes effect after a restart; returns the saved \
-             settings and the CDP state.",
+             port for Playwright/Puppeteer at the next start, and its port. Turning the port \
+             on is only allowed from the browser UI (Settings → Connections & API) and is \
+             refused while a profile has a stealth identity. Takes effect after a restart; \
+             returns the saved settings and the CDP state.",
             Toolset::System,
         )
         .act()
@@ -340,6 +353,9 @@ impl Command for ApiConfig {
         }
         let stealth = stealth_profiles(&ctx)?;
         if let Some(enabled) = args.cdp_enabled {
+            if enabled && !config.cdp_enabled {
+                check_may_open_port(&ctx.caller)?;
+            }
             if enabled && !stealth.is_empty() {
                 return Err(CmdError::new(
                     ErrorCode::InvalidParams,
@@ -354,16 +370,25 @@ impl Command for ApiConfig {
             config.cdp_enabled = enabled;
         }
         config.save(&dir)?;
-        let launch = ctx
-            .extensions
-            .get::<CdpLaunch>()
-            .map(|l| (*l).clone())
-            .unwrap_or_default();
+        let launch = CdpLaunch::of(&ctx.extensions);
         Ok(ApiConfigOutput {
             cdp: CdpInfo::new(&config, &launch, stealth),
             config,
         })
     }
+}
+
+/// Opening the debugging port gives any local program full control of the browser, so a
+/// person decides it in the UI (after a warning); agents and scripts may only close it.
+fn check_may_open_port(caller: &Caller) -> Result<(), CmdError> {
+    if matches!(caller, Caller::Ui) {
+        return Ok(());
+    }
+    Err(CmdError::new(
+        ErrorCode::NeedsApproval,
+        "only a person in the browser UI may turn the CDP port on",
+    )
+    .with_hint("Ask the user to turn it on in Settings → Connections & API (it needs a restart)."))
 }
 
 #[cfg(test)]
@@ -406,7 +431,7 @@ mod tests {
         let closed = CdpLaunch::default();
         let open = CdpLaunch {
             port: Some(9222),
-            refused: false,
+            ..Default::default()
         };
         assert!(CdpInfo::new(&on, &closed, vec![]).restart_needed);
         assert!(!CdpInfo::new(&on, &open, vec![]).restart_needed);
@@ -415,11 +440,46 @@ mod tests {
         assert!(!CdpInfo::new(&on, &closed, vec!["shop".into()]).restart_needed);
         // Refused at launch, identity removed since: a restart opens it.
         let refused = CdpLaunch {
-            port: None,
             refused: true,
+            ..Default::default()
         };
         assert!(CdpInfo::new(&on, &refused, vec![]).restart_needed);
         assert!(!CdpInfo::new(&on, &refused, vec!["shop".into()]).restart_needed);
+    }
+
+    #[test]
+    fn a_port_from_the_flag_never_needs_a_restart() {
+        // `--cdp-port` with the setting off (the e2e harness): the same flag reopens it.
+        let flag = CdpLaunch {
+            port: Some(9333),
+            from_cli: true,
+            ..Default::default()
+        };
+        let info = CdpInfo::new(&ConnectionsConfig::default(), &flag, vec![]);
+        assert!(!info.restart_needed);
+        assert!(info.from_flag);
+        let on = ConnectionsConfig {
+            cdp_enabled: true,
+            cdp_port: 9222,
+        };
+        assert!(!CdpInfo::new(&on, &flag, vec![]).restart_needed);
+    }
+
+    #[test]
+    fn only_the_ui_may_open_the_port() {
+        assert!(check_may_open_port(&Caller::Ui).is_ok());
+        for caller in [
+            Caller::Rest,
+            Caller::Ws { conn: 1 },
+            Caller::Mcp {
+                session: "s".into(),
+                agent: None,
+            },
+            Caller::Keymap,
+        ] {
+            let err = check_may_open_port(&caller).unwrap_err();
+            assert_eq!(err.code, ErrorCode::NeedsApproval, "{caller:?}");
+        }
     }
 
     #[test]
@@ -430,17 +490,27 @@ mod tests {
         assert!(list.iter().any(|t| t.name == "net" && !t.default));
     }
 
+    async fn call_as(
+        registry: &Registry,
+        caller: Caller,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, CmdError> {
+        let ctx = Ctx::new(
+            caller,
+            bmcp_core::testing::FakeBackend::new(),
+            bmcp_core::EventBus::new(),
+        );
+        registry.call(ctx, name, args).await
+    }
+
+    /// A call from Settings (the browser UI).
     async fn call(
         registry: &Registry,
         name: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, CmdError> {
-        let ctx = Ctx::new(
-            bmcp_core::Caller::Rest,
-            bmcp_core::testing::FakeBackend::new(),
-            bmcp_core::EventBus::new(),
-        );
-        registry.call(ctx, name, args).await
+        call_as(registry, Caller::Ui, name, args).await
     }
 
     #[tokio::test]
@@ -488,6 +558,18 @@ mod tests {
             .unwrap();
         assert_eq!(system["commands"], 2, "api.info + api.config");
 
+        // An agent may not open the port (no confirmation dialog for it), only a person may.
+        let err = call_as(
+            &registry,
+            Caller::Rest,
+            "api.config",
+            serde_json::json!({ "cdp_enabled": true }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NeedsApproval);
+        assert!(!ConnectionsConfig::load(&data.config()).unwrap().cdp_enabled);
+
         let saved = call(
             &registry,
             "api.config",
@@ -510,9 +592,19 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
 
-        // A profile with a stealth identity: the port cannot be turned on.
-        call(
+        // Agents may close it again, and repeat "on" once it is on.
+        call_as(
             &registry,
+            Caller::Rest,
+            "api.config",
+            serde_json::json!({ "cdp_enabled": true }),
+        )
+        .await
+        .unwrap();
+        // A profile with a stealth identity: the port cannot be turned on.
+        call_as(
+            &registry,
+            Caller::Rest,
             "api.config",
             serde_json::json!({ "cdp_enabled": false }),
         )
@@ -541,6 +633,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(info["cdp"]["stealth_profiles"], serde_json::json!(["shop"]));
+    }
+
+    #[tokio::test]
+    async fn a_broken_settings_file_still_shows_the_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = DataDir::from_root(dir.path());
+        std::fs::create_dir_all(data.config()).unwrap();
+        std::fs::write(ConnectionsConfig::path(&data.config()), "{not json").unwrap();
+        let mut registry = Registry::new();
+        register(&mut registry);
+        registry.extensions().insert(data.clone());
+        let addr: SocketAddr = "127.0.0.1:47812".parse().unwrap();
+        registry
+            .extensions()
+            .insert(ApiEndpoint::new(addr, &registry));
+        let info = call(&registry, "api.info", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(info["urls"]["mcp"], "http://127.0.0.1:47812/mcp");
+        assert_eq!(info["cdp"]["enabled"], false);
+        let error = info["cdp"]["config_error"].as_str().unwrap();
+        assert!(error.contains("connections.json"), "{error}");
+        // Saving still refuses to overwrite what the user wrote.
+        assert!(
+            call(
+                &registry,
+                "api.config",
+                serde_json::json!({ "cdp_port": 9333 })
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[test]

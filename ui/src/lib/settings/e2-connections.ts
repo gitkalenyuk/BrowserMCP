@@ -107,3 +107,8 @@ export function cdpPortError(text: string, apiPort: number | null): string {
   if (n === (apiPort ?? DEFAULT_PORT)) return 'settings.connections.cdp.portTaken';
   return '';
 }
+
+/** The name of the agent holding a tab lock (its id when the agent is not listed). */
+export function agentName(owner: string, agents: readonly { id: string; name: string }[]): string {
+  return agents.find((a) => a.id === owner)?.name ?? owner;
+}

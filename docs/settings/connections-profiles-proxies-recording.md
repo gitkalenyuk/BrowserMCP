@@ -14,17 +14,22 @@ logic in `ui/src/lib/settings/e2-*.ts` (vitest next to it), strings in
   `claude mcp add --transport http browsermcp <url>`, the stdio variant with the real exe path
   (`browsermcp.exe mcp-stdio`), `codex mcp add`, Codex `config.toml` (stdio and HTTP) and an
   `mcpServers` JSON; the CDP port for Playwright / Puppeteer (on/off with a confirmation, port,
-  what runs now, "restart to apply", refused while a profile has a stealth identity, snippets);
+  what runs now, "restart to apply" (never for a port opened with `--cdp-port`), refused while
+  a profile has a stealth identity, snippets; a broken `connections.json` is reported while the
+  URLs and commands still show);
   connected agents and locked tabs (every 4 s); the security model (127.0.0.1, Host / Origin
   guard, no tokens by the user's choice).
 * **Profiles & identity** (`profile.*`, `identity.*`, `stealth.check`, `proxy.pool_list`,
   `proxy.forward_list`): create (name → id), rename, delete with confirmation (keep data
   optional; the launch profile and profiles with tabs cannot be deleted), per profile: proxy
   (direct / a pool / a URL; a masked URL is never sent back), Accept-Language, WebRTC policy
-  (shown: automatic, limited to the proxy when proxied), identity (assign a saved one, or create
+  (automatic = limited to the proxy when proxied, normal, public address only, only through the
+  proxy; warnings for a leak or a direct profile without UDP), *Open tabs in memory*
+  (incognito default; not offered for the launch profile), identity (assign a saved one, or create
   one from a preset: desktop / mobile stealth or device emulation), *Fit to the proxy*
   (`identity.fit_to_proxy` through the profile's pool or local forwarder; shows what changed),
   a fingerprint check of the profile's first tab; saved identities with who uses them, delete.
+  While the CDP port is open the section says so and offers no identity (the core refuses it).
 * **Proxies** (`proxy.pool_*`, `proxy.rules_get/set/test`, `proxy.forward_list`, `geo.lookup`):
   pools with health summary (working / down / not checked, median latency, last check), rotation
   (in turn / random / sticky), health check, per-proxy table, which profiles use a pool, delete
@@ -43,15 +48,21 @@ logic in `ui/src/lib/settings/e2-*.ts` (vitest next to it), strings in
 | Command | Crate | What |
 |---|---|---|
 | `api.info` | api (`src/info.rs`) | port, URLs, endpoint.json, exe path, data folder, toolsets with command counts, CDP state |
-| `api.config` | api | CDP port on/off + port in `data/config/connections.json`; refused while a profile has an identity |
+| `api.config` | api | CDP port on/off + port in `data/config/connections.json`; refused while a profile has an identity; only the browser UI (`Caller::Ui`) may turn it on, agents and scripts get `NEEDS_APPROVAL` |
 | `record.settings` | record (`src/settings.rs`) | video defaults in `data/config/recording.json` (used by `record.video_start` and `record.start {video}` when they leave values out; the recording's video now gets the right extension), ffmpeg status, folders |
 | `script.settings` | jobs (`src/settings.rs`) | defaults of `script.run` (and cron triggers) timeout, `run.start` timeout / parallel / retries in `data/config/scripts.json`, script host status, recommended parallelism |
 | `proxy.rules_get` | identity | a profile's routing with passwords masked |
+| `profile.create {incognito_default, webrtc}` | profiles | stored in `profiles.json`; `tabs.open {profile}` without `incognito` uses the profile's default (core asks bmcp-profiles through the `ProfileTabDefaults` extension); `webrtc` overrides the three WebRTC prefs; `profile.list` reports both plus `webrtc_applied` |
 
 `proxy.rules_set` now keeps the stored password when it gets a masked URL (`user:***@`) back, so a
 UI can send back what `proxy.rules_get` showed. The app reads `connections.json` at startup:
 `--cdp-port` wins, otherwise the saved setting; both are refused while a profile has a stealth
-identity (as before). `bmcp_core::config_file` holds the small atomic JSON load/save these use.
+identity (as before). While the port is open (`bmcp_core::CdpLaunch` in the registry
+extensions), `identity.assign`, `profile.create {identity}` and mass runs with `fit_identity`
+refuse to give a profile a stealth identity, so the two are never combined at runtime either.
+`bmcp_core::config_file` holds the small atomic JSON load/save these use. ffmpeg is started
+without a console window (`CREATE_NO_WINDOW`), so opening the Recording section does not flash
+one in release builds.
 
 ## Verified
 
@@ -77,8 +88,10 @@ identity (as before). `bmcp_core::config_file` holds the small atomic JSON load/
 * Not clicked through inside the browser's own settings tab (only the dev UI against the core).
 * *Fit to the proxy* and *Test* call the IP lookup service (ip-api.com) through the proxy, so
   they were only exercised with the mock.
-* "Incognito by default" per profile does not exist in the core; in-memory profiles are listed
-  while they have tabs. Device emulation per profile is an identity with a device-emulation
-  preset (per tab: `device.emulate`).
+* Device emulation per profile is an identity with a device-emulation preset (per tab:
+  `device.emulate`).
+* HTTPS (TLS to the proxy) and SOCKS4 upstream proxies are refused by the core's proxy parser
+  (`crates/identity/src/proxy/config.rs`); supporting HTTPS would need TLS in the local
+  forwarder (`forward.rs`), so the forms offer HTTP and SOCKS5 only.
 * The stdio MCP variant always lists the default toolsets (the picker applies to HTTP).
 * Video size is the tab's page size (not configurable; headless: `--window-size`).

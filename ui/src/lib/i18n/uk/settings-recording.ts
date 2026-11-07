@@ -39,7 +39,7 @@ export default {
   'settings.recording.video.resetDone': 'Налаштування відео повернуто до типових',
 
   'settings.recording.scripts.title': 'Скрипти й масові запуски',
-  'settings.recording.host.label': 'Хост скриптів',
+  'settings.recording.host.label': 'Виконавець скриптів (bmcp-script-host)',
   'settings.recording.host.found': 'Знайдено',
   'settings.recording.host.missing': 'Не знайдено',
   'settings.recording.host.foundHelp': 'bmcp-script-host виконує збережені скрипти, масові запуски й налагоджувач:',
