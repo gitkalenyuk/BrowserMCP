@@ -1,12 +1,36 @@
 import type { BrowserApi } from '../api/client';
-import type { AiProvider, AiProviderSet, AiProviderTest, AiSession, AiSessionStatus } from '../api/types';
+import type {
+  AiAgentAccess,
+  AiAgentAccessSet,
+  AiCodexSandbox,
+  AiPermission,
+  AiPermissionDecision,
+  AiPermissionMode,
+  AiProvider,
+  AiProviderSet,
+  AiProviderTest,
+  AiSession,
+  AiSessionStart,
+  AiSessionStatus,
+} from '../api/types';
 import { load, save } from '../storage';
-import { applyAiEvent, threadFromTranscript, type AiEvent, type ChatItem } from './thread';
+import { afterClose, applyPermission, finishedIds, sendTarget } from './sessions';
+import { applyAiEvent, threadFromTranscript, withPending, type AiEvent, type ChatItem } from './thread';
+
+/** Overrides for the next new chat of a CLI provider (null / "" = the provider's default). */
+export interface NewChatAccess {
+  permission_mode: AiPermissionMode | null;
+  sandbox: AiCodexSandbox | null;
+  cwd: string;
+}
+
+const NO_OVERRIDES: NewChatAccess = { permission_mode: null, sandbox: null, cwd: '' };
 
 /**
- * AI sessions as the chrome sees them: providers, sessions (agents) and one chat thread per
- * session, folded from ai.* events. Lives as long as the chrome (events keep arriving while
- * the panel is closed) and is shared by every component through ChromeController.ai.
+ * AI sessions as the chrome sees them: providers, sessions (agents), one chat thread per
+ * session folded from ai.* events, and the approval requests waiting for an answer. Lives as
+ * long as the chrome (events keep arriving while the panel is closed) and is shared by every
+ * component through ChromeController.ai.
  */
 export class AiStore {
   readonly api: BrowserApi;
@@ -14,12 +38,18 @@ export class AiStore {
   providersError = $state<string | null>(null);
   sessions = $state<AiSession[]>([]);
   threads = $state<Record<string, ChatItem[]>>({});
+  /** Approval requests of CLI agents waiting for an answer (all sessions), oldest first. */
+  pending = $state<AiPermission[]>([]);
+  /** CLI providers' defaults for new chats (`ai.agent_access`), by provider id. */
+  access = $state<Record<string, AiAgentAccess>>({});
   /** Session shown in the panel; null = a new chat. */
   activeId = $state<string | null>(null);
   /** Text in the panel's input (kept here so "Ask AI about this" can fill it). */
   draft = $state('');
   /** Provider used for the next new chat. */
   provider = $state(load('ai.provider', 'claude-code'));
+  /** Per-chat overrides of the next new chat (reset once it starts). */
+  newChat = $state<NewChatAccess>({ ...NO_OVERRIDES });
   #unsubs: Array<() => void> = [];
   #loaded = new Set<string>();
   #refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -41,7 +71,13 @@ export class AiStore {
       this.api.on('ai.tool_call', (p) => fold(p.session, { type: 'ai.tool_call', payload: p })),
       this.api.on('ai.tool_result', (p) => fold(p.session, { type: 'ai.tool_result', payload: p })),
       this.api.on('ai.done', (p) => fold(p.session, { type: 'ai.done', payload: p })),
+      this.api.on('ai.permission', (p) => {
+        this.pending = applyPermission(this.pending, p);
+        this.#countPending(p.session);
+        fold(p.session, { type: 'ai.permission', payload: p });
+      }),
       this.api.on('ai.session', (p) => this.#setStatus(p.session, p.status)),
+      this.api.on('ai.session_closed', (p) => this.#forget(p.session)),
       this.api.onStatus((s) => {
         if (s === 'open') void this.refreshSessions();
       }),
@@ -56,6 +92,7 @@ export class AiStore {
   setProvider(id: string): void {
     this.provider = id;
     save('ai.provider', id);
+    this.newChat = { ...NO_OVERRIDES };
   }
 
   async refreshProviders(): Promise<void> {
@@ -69,12 +106,21 @@ export class AiStore {
     }
   }
 
+  /** Sessions and the approval requests still waiting (a reloaded UI shows their cards again). */
   async refreshSessions(): Promise<void> {
     try {
       const { sessions } = await this.api.call('ai.sessions_list');
       this.sessions = sessions.sort((a, b) => b.created_ms - a.created_ms);
     } catch {
       // No AI service in this core: the panel still works for providers.
+      return;
+    }
+    try {
+      const { permissions } = await this.api.call('ai.permissions_list', {});
+      this.pending = permissions;
+      for (const id of Object.keys(this.threads)) this.#mergePending(id);
+    } catch {
+      // An older core without approvals.
     }
   }
 
@@ -86,28 +132,76 @@ export class AiStore {
     try {
       const { entries } = await this.api.call('ai.session_transcript', { id });
       if ((this.threads[id]?.length ?? 0) === 0) this.threads[id] = threadFromTranscript(entries);
+      this.#mergePending(id);
     } catch {
       this.#loaded.delete(id);
     }
   }
 
-  /** New chat with the selected provider, or the next message of the active session. */
+  /**
+   * The next message of the shown chat (a stopped or failed chat continues with its history),
+   * or a new chat with the selected provider when none is shown.
+   */
   async send(text: string): Promise<void> {
     const prompt = text.trim();
     if (!prompt) return;
-    const s = this.active;
-    if (s && (s.status === 'idle' || s.status === 'running')) {
-      this.#upsert(await this.api.call('ai.session_send', { id: s.id, text: prompt }));
+    const target = sendTarget(this.active);
+    if (target.kind === 'continue') {
+      this.#upsert(await this.api.call('ai.session_send', { id: target.id, text: prompt }));
       return;
     }
-    const session = await this.api.call('ai.session_start', { provider: this.provider, prompt });
+    const session = await this.api.call('ai.session_start', { provider: this.provider, prompt, ...this.#newChatArgs() });
     this.#loaded.add(session.id);
     this.#upsert(session);
     this.activeId = session.id;
+    this.newChat = { ...NO_OVERRIDES };
   }
 
   async stopSession(id: string): Promise<void> {
     this.#upsert(await this.api.call('ai.session_stop', { id }));
+  }
+
+  /** Close a chat (stops it if needed); the neighbour, or the new-chat page, is shown next. */
+  async closeSession(id: string, deleteTranscript = false): Promise<void> {
+    await this.api.call('ai.session_close', { id, delete_transcript: deleteTranscript });
+    this.#forget(id);
+  }
+
+  /** Close every chat that is not working (see `finishedIds`). Returns how many closed. */
+  async closeFinished(): Promise<number> {
+    const ids = finishedIds(this.sessions, this.pending);
+    for (const id of ids) await this.closeSession(id);
+    return ids.length;
+  }
+
+  async answerPermission(id: string, decision: AiPermissionDecision, reason?: string): Promise<void> {
+    const { resolved } = await this.api.call('ai.permission_answer', { id, decision, reason: reason?.trim() || undefined });
+    // The ai.permission events do the same; this keeps the card from lingering if they are late.
+    for (const r of resolved) {
+      this.pending = applyPermission(this.pending, r);
+      this.threads[r.session] = applyAiEvent(this.threads[r.session] ?? [], { type: 'ai.permission', payload: r });
+      this.#countPending(r.session);
+    }
+  }
+
+  pendingFor(session: string): AiPermission[] {
+    return this.pending.filter((p) => p.session === session);
+  }
+
+  async loadAccess(provider: string): Promise<AiAgentAccess | null> {
+    try {
+      const access = await this.api.call('ai.agent_access', { id: provider });
+      this.access[provider] = access;
+      return access;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveAccess(args: AiAgentAccessSet): Promise<AiAgentAccess> {
+    const access = await this.api.call('ai.agent_access_set', args);
+    this.access[args.id] = access;
+    return access;
   }
 
   async saveProvider(args: AiProviderSet): Promise<AiProvider> {
@@ -125,6 +219,36 @@ export class AiStore {
 
   providerName(id: string): string {
     return this.providers.find((p) => p.id === id)?.name ?? id;
+  }
+
+  /** ai.session_start fields for the overrides the user picked for this chat. */
+  #newChatArgs(): Partial<AiSessionStart> {
+    const kind = this.currentProvider?.protocol;
+    const args: Partial<AiSessionStart> = {};
+    if (kind !== 'claude-code' && kind !== 'codex') return args;
+    if (kind === 'claude-code' && this.newChat.permission_mode) args.permission_mode = this.newChat.permission_mode;
+    if (kind === 'codex' && this.newChat.sandbox) args.sandbox = this.newChat.sandbox;
+    if (this.newChat.cwd.trim()) args.cwd = this.newChat.cwd.trim();
+    return args;
+  }
+
+  #mergePending(id: string): void {
+    const pending = this.pendingFor(id);
+    if (pending.length && this.threads[id]) this.threads[id] = withPending(this.threads[id], pending);
+  }
+
+  #countPending(id: string): void {
+    const s = this.sessions.find((x) => x.id === id);
+    if (s) s.pending_permissions = this.pendingFor(id).length;
+  }
+
+  #forget(id: string): void {
+    const order = this.sessions.map((s) => s.id);
+    this.activeId = afterClose(order, id, this.activeId);
+    this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.pending = this.pending.filter((p) => p.session !== id);
+    delete this.threads[id];
+    this.#loaded.delete(id);
   }
 
   #upsert(session: AiSession): void {

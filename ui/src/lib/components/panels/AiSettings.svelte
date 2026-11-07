@@ -4,6 +4,7 @@
   import { providerHint } from '../../providers';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
+  import AgentAccess from './AgentAccess.svelte';
 
   /**
    * `store`: the settings page has no chrome controller and passes its own AiStore; the side
@@ -196,6 +197,7 @@
     {:else}
       {#if !ai.providersError}<p class="muted">Loading providers…</p>{/if}
     {/each}
+    <AgentAccess store={ai} />
   </div>
 </div>
 

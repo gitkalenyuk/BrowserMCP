@@ -88,8 +88,9 @@ impl AiService {
         let session = self.session(id)?;
         session.cancel();
         session.cancel_permissions();
-        // Give the task a moment to report `stopped`.
-        for _ in 0..50 {
+        // Give the task a moment to report `stopped` (returns as soon as it has; a CLI agent
+        // may need a few seconds to be killed on a busy machine).
+        for _ in 0..250 {
             if session.status().ended() {
                 break;
             }

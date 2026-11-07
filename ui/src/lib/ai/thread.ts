@@ -1,23 +1,30 @@
 // Pure chat-thread reducer for one AI session: folds ai.* events (or a saved transcript)
-// into the rows the AI panel renders. No Svelte, no I/O: unit-tested in thread.test.ts.
+// into the rows the AI panel renders. No I/O (labels go through t()): unit-tested in
+// thread.test.ts.
 //
 // Streaming contract of the core (crates/ai/src/session.rs): an assistant message arrives as
 // `text_delta` chunks and is then repeated whole as `text` (one `text` per text block). So a
 // `text` replaces the text streamed so far and closes it; deltas after that start a new row.
+//
+// Approval requests (`ai.permission`) are rows too: a `pending` one is the approval card, the
+// same id answered later turns it into a one-line note in place.
 
-import type { AiMessageEvent, AiTranscriptEntry, ApiEvents } from '../api/types';
+import type { AiMessageEvent, AiPermission, AiTranscriptEntry, ApiEvents } from '../api/types';
+import { t } from '../i18n/index.svelte';
 
 export type ChatItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
   | { kind: 'system'; text: string }
   | { kind: 'tool'; name: string; args: unknown; pending: boolean; ok: boolean | null; summary: string | null }
+  | { kind: 'permission'; request: AiPermission }
   | { kind: 'done'; reason: string };
 
 export type AiEvent =
   | { type: 'ai.message'; payload: AiMessageEvent }
   | { type: 'ai.tool_call'; payload: ApiEvents['ai.tool_call'] }
   | { type: 'ai.tool_result'; payload: ApiEvents['ai.tool_result'] }
+  | { type: 'ai.permission'; payload: AiPermission }
   | { type: 'ai.done'; payload: ApiEvents['ai.done'] };
 
 function closeStreaming(items: ChatItem[]): ChatItem[] {
@@ -59,6 +66,15 @@ export function applyAiEvent(items: ChatItem[], event: AiEvent): ChatItem[] {
       }
       return [...items, { kind: 'tool', name, args: null, pending: false, ok, summary }];
     }
+    case 'ai.permission': {
+      // An answer replaces its pending card in place; anything else is a new row.
+      const request = event.payload;
+      const at = items.findIndex((i) => i.kind === 'permission' && i.request.id === request.id);
+      if (at < 0) return [...closeStreaming(items), { kind: 'permission', request }];
+      const next = items.slice();
+      next[at] = { kind: 'permission', request };
+      return next;
+    }
     case 'ai.done': {
       // Calls that never reported (stopped mid-way) stop spinning.
       const settled = closeStreaming(items).map((i) =>
@@ -95,18 +111,44 @@ export function threadFromTranscript(entries: AiTranscriptEntry[]): ChatItem[] {
       case 'done':
         items = applyAiEvent(items, { type: 'ai.done', payload: { session: '', reason: e.reason } });
         break;
+      case 'permission': {
+        const { type: _type, ts_ms: _ts, ...request } = e;
+        items = applyAiEvent(items, { type: 'ai.permission', payload: request });
+        break;
+      }
     }
   }
   return items;
 }
 
+/** Add the still-pending approval requests (`ai.permissions_list`) that the thread lacks. */
+export function withPending(items: ChatItem[], pending: AiPermission[]): ChatItem[] {
+  return pending.reduce(
+    (acc, request) =>
+      acc.some((i) => i.kind === 'permission' && i.request.id === request.id)
+        ? acc
+        : applyAiEvent(acc, { type: 'ai.permission', payload: request }),
+    items,
+  );
+}
+
 /** `done` rows worth showing: anything but a normal end of turn. */
 export function doneLabel(reason: string): string | null {
   if (reason === 'end_turn') return null;
-  if (reason === 'stopped') return 'Stopped';
-  if (reason === 'max_steps') return 'Stopped after the step limit';
-  if (reason.startsWith('error')) return reason.replace(/^error:\s*/, 'Error: ');
+  if (reason === 'stopped') return t('aiChat.done.stopped');
+  if (reason === 'max_steps') return t('aiChat.done.maxSteps');
+  if (reason.startsWith('error')) return t('aiChat.done.error', { message: reason.replace(/^error:\s*/, '') });
   return reason;
+}
+
+/**
+ * Why a tool call failed, for the line under its row: the error text, or a note when there is
+ * none. `null` for calls that did not fail.
+ */
+export function failureReason(item: Extract<ChatItem, { kind: 'tool' }>): string | null {
+  if (item.ok !== false) return null;
+  const text = item.summary?.trim();
+  return text ? text : t('aiChat.tool.noReason');
 }
 
 /** Short one-line preview of tool arguments: `{url: "https://…", tab: 3}`. */
