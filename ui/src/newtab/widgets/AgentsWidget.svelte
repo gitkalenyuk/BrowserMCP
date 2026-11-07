@@ -1,36 +1,86 @@
 <script lang="ts">
   import { t } from '../../lib/i18n/index.svelte';
-  import type { Agent, BrowserApi, Patch, Run } from '../../lib/api';
+  import type { Agent, BrowserApi, HealProposal, RunInfo } from '../../lib/api';
   import Icon from '../../lib/components/Icon.svelte';
+  import { confidencePct } from '../../lib/runs/heal';
 
   let { api }: { api: BrowserApi } = $props();
 
+  /** Runs shown: the active ones first, then the latest finished ones. */
+  const MAX_RUNS = 4;
+
   let agents = $state<Agent[]>([]);
-  let runs = $state<Run[]>([]);
-  let patches = $state<Patch[]>([]);
+  let runs = $state<RunInfo[]>([]);
+  let proposals = $state<HealProposal[]>([]);
   let loaded = $state(false);
   let error = $state<string | null>(null);
+  /** Proposal ids being accepted / rejected (buttons disabled meanwhile). */
+  let busy = $state<Record<string, boolean>>({});
+  let actionError = $state<string | null>(null);
+
+  const ACTIVE = new Set(['running', 'paused']);
+  const shown = $derived(
+    [...runs]
+      .sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)) || b.created_ms - a.created_ms)
+      .slice(0, MAX_RUNS),
+  );
+  const pending = $derived(proposals.filter((p) => p.status === 'pending'));
+
+  async function loadRuns(): Promise<void> {
+    // Runs and heal proposals are optional: a core without the jobs / heal service still shows agents.
+    const [r, h] = await Promise.allSettled([api.call('run.list', { limit: 20 }), api.call('run.heal_proposals', {})]);
+    if (r.status === 'fulfilled') runs = r.value.runs;
+    if (h.status === 'fulfilled') proposals = h.value.proposals;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  /** Progress events come in bursts: re-read at most every 500 ms. */
+  function refreshSoon(): void {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void loadRuns();
+    }, 500);
+  }
 
   $effect(() => {
     const offs = [
       api.on('agents.updated', (p) => (agents = p.agents)),
-      api.on('runs.updated', (p) => {
-        runs = p.runs;
-        patches = p.patches;
-      }),
+      api.on('run.started', refreshSoon),
+      api.on('run.progress', refreshSoon),
+      api.on('run.finished', refreshSoon),
+      api.on('run.heal_needed', refreshSoon),
+      api.on('run.heal_proposed', refreshSoon),
+      api.on('run.heal_applied', refreshSoon),
+      api.on('run.heal_failed', refreshSoon),
     ];
-    Promise.all([api.call('agents.list'), api.call('runs.list')])
-      .then(([a, r]) => {
+    Promise.all([api.call('agents.list'), loadRuns()])
+      .then(([a]) => {
         agents = a.agents;
-        runs = r.runs;
-        patches = r.patches;
         loaded = true;
       })
       .catch((err: Error) => (error = err.message));
-    return () => offs.forEach((off) => off());
+    return () => {
+      offs.forEach((off) => off());
+      if (timer) clearTimeout(timer);
+    };
   });
 
-  const runName = (id: string) => runs.find((r) => r.id === id)?.name ?? id;
+  async function decide(p: HealProposal, accept: boolean): Promise<void> {
+    busy = { ...busy, [p.proposal_id]: true };
+    actionError = null;
+    try {
+      if (accept) await api.call('run.heal_accept', { proposal_id: p.proposal_id });
+      else await api.call('run.heal_reject', { proposal_id: p.proposal_id });
+      await loadRuns();
+    } catch (err) {
+      actionError = (err as Error).message;
+    } finally {
+      const rest = { ...busy };
+      delete rest[p.proposal_id];
+      busy = rest;
+    }
+  }
   // Status labels: `newtab.run.<status>` and `newtab.agent.<status>`.
 </script>
 
@@ -42,22 +92,23 @@
   {:else if !loaded}
     <p class="muted">{t('common.loading')}</p>
   {:else}
-    {#each patches as p (p.id)}
+    {#each pending as p (p.proposal_id)}
       <div class="patch" role="group" aria-label={t('newtab.patch.label')}>
         <div class="patch-head">
           <Icon name="patch" size={15} />
           <span class="patch-title">{t('newtab.patch.for')} <strong>{p.script}</strong></span>
-          <span class="muted small">{runName(p.runId)}</span>
+          <span class="muted small">{t('newtab.patch.confidence', { pct: confidencePct(p.confidence) })}</span>
         </div>
-        <p class="patch-summary">{p.summary}</p>
+        <p class="patch-summary">{p.explanation}</p>
         <div class="patch-actions">
-          <button class="btn primary" onclick={() => api.call('runs.patch.approve', { id: p.id })}>
+          <button class="btn primary" disabled={busy[p.proposal_id]} onclick={() => void decide(p, true)}>
             <Icon name="check" size={14} stroke={2.25} /> {t('newtab.patch.approve')}
           </button>
-          <button class="btn" onclick={() => api.call('runs.patch.reject', { id: p.id })}>{t('newtab.patch.reject')}</button>
+          <button class="btn" disabled={busy[p.proposal_id]} onclick={() => void decide(p, false)}>{t('newtab.patch.reject')}</button>
         </div>
       </div>
     {/each}
+    {#if actionError}<p class="fail small" role="alert">{actionError}</p>{/if}
 
     <ul class="list">
       {#each agents as a (a.id)}
@@ -74,14 +125,15 @@
       {/each}
     </ul>
 
-    {#if runs.length}
+    {#if shown.length}
       <ul class="list runs">
-        {#each runs as r (r.id)}
+        {#each shown as r (r.id)}
           {@const pct = r.total ? Math.round((r.done / r.total) * 100) : 0}
+          {@const healing = r.status === 'paused' && r.heal != null}
           <li class="run">
             <div class="run-head">
-              <span class="name ellipsis">{r.name}</span>
-              <span class="pill {r.status}">{t(`newtab.run.${r.status}`)}</span>
+              <span class="name ellipsis">{r.script}</span>
+              <span class="pill {r.status}" class:heal={healing}>{healing ? t('newtab.run.needsFix') : t(`newtab.run.${r.status}`)}</span>
             </div>
             <div
               class="bar {r.status}"
@@ -89,13 +141,13 @@
               aria-valuenow={pct}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={t('newtab.run.progress', { name: r.name })}
+              aria-label={t('newtab.run.progress', { name: r.script })}
             >
               <span style:transform="scaleX({pct / 100})"></span>
             </div>
             <div class="muted small nums">
               <span>{r.done} / {r.total}</span>
-              {#if r.failed}<span class="fail">{t('newtab.run.failedCount', { n: r.failed })}</span>{/if}
+              {#if r.counts.failed}<span class="fail">{t('newtab.run.failedCount', { n: r.counts.failed })}</span>{/if}
             </div>
           </li>
         {/each}
@@ -195,7 +247,7 @@
     background: color-mix(in oklab, var(--warn) 16%, transparent);
     color: var(--warn);
   }
-  .pill.done {
+  .pill.finished {
     color: var(--ok);
   }
   .pill.failed {
@@ -219,11 +271,14 @@
   .bar.paused span {
     background: var(--warn);
   }
-  .bar.done span {
+  .bar.finished span {
     background: var(--ok);
   }
   .bar.failed span {
     background: var(--danger);
+  }
+  .bar.cancelled span {
+    background: var(--fg-subtle);
   }
   .nums {
     display: flex;

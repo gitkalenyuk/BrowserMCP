@@ -6,6 +6,7 @@ import { createRecordRunsMocks } from './mock-record-runs';
 import { createScriptMocks } from './mock-scripts';
 import { createSettingsMocks } from './mock-settings';
 import { createE1Mocks } from './mock-e1';
+import { createModelMocks } from './mock-ai-models';
 import type {
   Agent,
   ApiEvents,
@@ -14,11 +15,8 @@ import type {
   EventName,
   Method,
   Params,
-  Patch,
   ProfileEntry,
   Result,
-  Run,
-  Script,
   TabGroup,
   TabId,
   TabInfo,
@@ -110,9 +108,6 @@ export class MockApi implements BrowserApi {
   #zoomHosts = new Map<string, number>();
   #state = new Map<WorkspaceId, WorkspaceState>();
   #agents: Agent[];
-  #runs: Run[];
-  #patches: Patch[];
-  #scripts: Script[];
   #timers: ReturnType<typeof setInterval>[] = [];
   #tourStep: Record<string, number> = { claude: 0, codex: 0 };
   #latency: number;
@@ -151,26 +146,6 @@ export class MockApi implements BrowserApi {
       },
       { id: 'codex', name: 'Codex', color: 'green', status: 'running', task: 'Triaging new GitHub issues', groupId: 'g-codex' },
     ];
-    this.#runs = [
-      { id: 'run-1', name: 'Price watch · laptops.csv', status: 'running', done: 132, total: 500, failed: 3 },
-      { id: 'run-2', name: 'Lead enrichment · 8 profiles', status: 'paused', done: 61, total: 240, failed: 0 },
-      { id: 'run-3', name: 'Nightly screenshot diff', status: 'done', done: 48, total: 48, failed: 0 },
-    ];
-    this.#patches = [
-      {
-        id: 'patch-1',
-        runId: 'run-2',
-        script: 'enrich-leads.ts',
-        summary: 'Selector "button.apply" not found — use getByRole("button", { name: "Apply filters" })',
-      },
-    ];
-    this.#scripts = [
-      { id: 's-login', name: 'Log in to staging', description: 'Fills credentials from vault, waits for dashboard', lastRun: '2h ago' },
-      { id: 's-invoices', name: 'Download invoices', description: 'All PDFs from the billing page into runs/', lastRun: 'yesterday' },
-      { id: 's-prices', name: 'Price watch', description: 'Checks 500 product URLs and exports CSV', lastRun: '10m ago' },
-      { id: 's-clean', name: 'Clear site data', description: 'Cookies + storage for the current site', lastRun: null },
-    ];
-
     this.#state.set('default', this.#seedPersonal());
     this.#state.set('work', this.#seed('work', [
       'https://github.com/browsermcp/browsermcp/pulls',
@@ -435,30 +410,7 @@ export class MockApi implements BrowserApi {
     },
     'hints.show': () => ({ count: 0 }), // the mock has no page to label
     'agents.list': () => ({ agents: this.#agents }),
-    'runs.list': () => ({ runs: this.#runs, patches: this.#patches }),
-    'runs.patch.approve': ({ id }) => {
-      const patch = this.#patches.find((p) => p.id === id);
-      if (!patch) throw new RpcError('NOT_FOUND', `No patch ${id}`);
-      this.#patches = this.#patches.filter((p) => p.id !== id);
-      this.#runs = this.#runs.map((r) => (r.id === patch.runId ? { ...r, status: 'running' } : r));
-      this.#emitRuns();
-    },
-    'runs.patch.reject': ({ id }) => {
-      const patch = this.#patches.find((p) => p.id === id);
-      this.#patches = this.#patches.filter((p) => p.id !== id);
-      if (patch) this.#runs = this.#runs.map((r) => (r.id === patch.runId ? { ...r, status: 'failed' } : r));
-      this.#emitRuns();
-    },
-    'scripts.list': () => this.#scripts,
-    'scripts.run': ({ id }) => {
-      const script = this.#scripts.find((s) => s.id === id);
-      if (!script) throw new RpcError('NOT_FOUND', `No script ${id}`);
-      const runId = `run-${Date.now().toString(36)}`;
-      this.#runs = [{ id: runId, name: script.name, status: 'running', done: 0, total: 20, failed: 0 }, ...this.#runs];
-      this.#scripts = this.#scripts.map((s) => (s.id === id ? { ...s, lastRun: 'just now' } : s));
-      this.#emitRuns();
-      return { runId };
-    },
+    ...createModelMocks(async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
     ...createDataMocks({
       empty: import.meta.env.VITE_BMCP_EMPTY_DATA === '1',
       emit: (event, payload) => this.#emit(event, payload),
@@ -491,10 +443,6 @@ export class MockApi implements BrowserApi {
   #emit<E extends EventName>(event: E, payload: ApiEvents[E]): void {
     // Deliver asynchronously, like the real wire would.
     queueMicrotask(() => this.#events.emit(event, payload));
-  }
-
-  #emitRuns(): void {
-    this.#emit('runs.updated', structuredClone({ runs: this.#runs, patches: this.#patches }));
   }
 
   /** Every workspace's tabs (the chrome filters them by profile), the shown one active. */
@@ -635,19 +583,6 @@ export class MockApi implements BrowserApi {
         }
       }, 6000),
     );
-    // Runs make progress.
-    this.#timers.push(
-      setInterval(() => {
-        let changed = false;
-        this.#runs = this.#runs.map((r) => {
-          if (r.status !== 'running') return r;
-          changed = true;
-          const done = Math.min(r.total, r.done + 1 + Math.floor(Math.random() * 4));
-          const failed = r.failed + (Math.random() < 0.05 ? 1 : 0);
-          return { ...r, done, failed, status: done >= r.total ? 'done' : 'running' };
-        });
-        if (changed) this.#emitRuns();
-      }, 1200),
-    );
+    // Runs (run.*) make progress in mock-record-runs.ts.
   }
 }

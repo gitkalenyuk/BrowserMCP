@@ -154,29 +154,6 @@ export interface Workspace {
   launch?: boolean;
 }
 
-export interface Run {
-  id: string;
-  name: string;
-  status: 'queued' | 'running' | 'paused' | 'done' | 'failed';
-  done: number;
-  total: number;
-  failed: number;
-}
-
-export interface Patch {
-  id: string;
-  runId: string;
-  script: string;
-  summary: string;
-}
-
-export interface Script {
-  id: string;
-  name: string;
-  description: string;
-  lastRun: string | null;
-}
-
 export interface Bookmark {
   title: string;
   /** Null for folders. */
@@ -242,11 +219,6 @@ export interface RpcMethods {
   'agents.list': { params: void; result: { agents: Agent[] } };
   /** Unlock the agent's tabs and drop its group. */
   'agents.forget': { params: { id: AgentId }; result: { released: TabId[] } };
-  'runs.list': { params: void; result: { runs: Run[]; patches: Patch[] } };
-  'runs.patch.approve': { params: { id: string }; result: void };
-  'runs.patch.reject': { params: { id: string }; result: void };
-  'scripts.list': { params: void; result: Script[] };
-  'scripts.run': { params: { id: string }; result: { runId: string } };
   // ---- built-in AI (crates/ai/src/commands.rs) --------------------------------------------
   'ai.providers': { params: void; result: { providers: AiProvider[] } };
   /** Omitted fields stay unchanged; "" clears one. Returns the provider. */
@@ -254,6 +226,8 @@ export interface RpcMethods {
   /** Free check: API providers list their models, CLI providers run --version. */
   'ai.provider_test': { params: { id: string }; result: AiProviderTest };
   'ai.session_start': { params: AiSessionStart; result: AiSession };
+  /** Models a provider offers for a new chat (CLI aliases, or the API's model list). */
+  'ai.models': { params: { provider: string }; result: AiModels };
   'ai.session_send': { params: { id: string; text: string }; result: AiSession };
   'ai.session_stop': { params: { id: string }; result: AiSession };
   'ai.sessions_list': { params: void; result: { sessions: AiSession[] } };
@@ -324,7 +298,6 @@ export interface ApiEvents {
   'permission.prompt_closed': { id: number; allow: boolean | null };
   /** Page context menu "Ask AI about this". */
   'ui.ask_ai': AskAi;
-  'runs.updated': { runs: Run[]; patches: Patch[] };
   // ai.* / term.* / net.* (WsApi subscribes to them with events.subscribe on connect)
   'ai.message': AiMessageEvent;
   'ai.tool_call': { session: string; name: string; args: unknown };
@@ -412,6 +385,20 @@ export interface AiSession {
   status: AiSessionStatus;
   tabs: number[];
   created_ms: number;
+}
+
+/** One model of `ai.models`. */
+export interface AiModel {
+  id: string;
+  name: string;
+  /** Short note ("most capable", "fast"), as the core sends it. */
+  hint?: string;
+}
+
+export interface AiModels {
+  models: AiModel[];
+  /** The model the provider uses when none is given. */
+  default?: string;
 }
 
 export interface AiSessionStart {
