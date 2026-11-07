@@ -1,5 +1,6 @@
 import { Emitter, RpcError, type BrowserApi } from './client';
 import { createDataMocks } from './mock-data';
+import { createLanguageMocks } from './mock-languages';
 import { createPanelMocks } from './mock-panels';
 import { createRecordRunsMocks } from './mock-record-runs';
 import { createScriptMocks } from './mock-scripts';
@@ -412,6 +413,7 @@ export class MockApi implements BrowserApi {
     ),
     ...createRecordRunsMocks((event, payload) => this.#emit(event, payload), () => this.#ws.activeId),
     ...createSettingsMocks((e, p) => this.#emit(e, p), (e, h) => this.on(e, h), async (m, p) => (this.#handlers[m] as (x: unknown) => never)(p)),
+    ...createLanguageMocks(),
     'ui.layout': (rect) => {
       console.info('[mock] ui.layout', rect);
     },

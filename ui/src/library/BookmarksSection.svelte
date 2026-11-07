@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { BrowserApi } from '../lib/api';
-  import { BOOKMARKS_BAR, type DataBookmark } from '../lib/api/types-data';
+  import { BOOKMARKS_BAR, OTHER_BOOKMARKS, type DataBookmark } from '../lib/api/types-data';
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import { t, tp } from '../lib/i18n/index.svelte';
   import { editBookmark, renameFolder } from '../lib/data/edit';
   import { onDataChanged, onReconnect } from '../lib/data/library';
   import {
@@ -32,7 +33,12 @@
     fail: (err: unknown) => void;
   } = $props();
 
-  let tree = $state<FolderNode[]>([]);
+  /** As loaded; `tree` is the same with the two roots named in the interface language. */
+  let rawTree = $state<FolderNode[]>([]);
+  // lib/data/tree.ts names the roots in English (ROOT_TITLES); the names are UI text, so they
+  // are swapped here, reactively, and follow a change of the interface language.
+  const rootTitle = (id: number) => (id === BOOKMARKS_BAR ? t('library.bm.root.bar') : id === OTHER_BOOKMARKS ? t('library.bm.root.other') : null);
+  const tree = $derived(rawTree.map((root) => ({ ...root, title: rootTitle(root.id) ?? root.title })));
   let loaded = $state(false);
   let expanded = $state<Record<number, boolean>>({});
   let query = $state('');
@@ -45,7 +51,7 @@
 
   async function reload() {
     try {
-      tree = await loadTree(api);
+      rawTree = await loadTree(api);
       loaded = true;
       if (!findFolder(tree, folder)) folder = BOOKMARKS_BAR;
       for (const p of folderPath(tree, folder)) expanded[p.id] = true;
@@ -75,13 +81,13 @@
       results = null;
       return;
     }
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       api
         .call('bookmarks.search', { q, limit: 200 })
         .then((r) => q === query.trim() && (results = r.bookmarks))
         .catch(fail);
     }, 180);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   });
 
   async function mutate(work: () => Promise<unknown>, done?: string) {
@@ -195,25 +201,25 @@
     let url: string | null = null;
     if (e.mode === 'add-url' || e.mode === 'edit-url') {
       url = validUrl(e.url);
-      if (!url) return void (editError = 'Enter a full address, e.g. https://example.com/');
+      if (!url) return void (editError = t('library.bm.err.url'));
     } else if (!title) {
-      return void (editError = 'A folder needs a name.');
+      return void (editError = t('library.bm.err.folderName'));
     }
     dialogOpen = false;
     switch (e.mode) {
       case 'add-url':
-        return mutate(() => api.call('bookmarks.add', { folder: e.folder, title: title || null, url: url! }), 'Bookmark added');
+        return mutate(() => api.call('bookmarks.add', { folder: e.folder, title: title || null, url: url! }), t('library.bm.added'));
       case 'add-folder':
         return mutate(async () => {
           const f = await api.call('bookmarks.add_folder', { parent: e.folder, title });
           expanded[e.folder] = true;
           return f;
-        }, 'Folder added');
+        }, t('library.bm.folderAdded'));
       case 'edit-url':
-        return mutate(() => editBookmark(api, e.node.id, title || url!, url!), 'Bookmark saved');
+        return mutate(() => editBookmark(api, e.node.id, title || url!, url!), t('library.bm.saved'));
       case 'edit-folder': {
         if (title === e.node.title) return;
-        return mutate(() => renameFolder(api, e.node.id, title), 'Folder renamed');
+        return mutate(() => renameFolder(api, e.node.id, title), t('library.bm.renamed'));
       }
     }
   }
@@ -234,38 +240,36 @@
         return;
       }
     }
-    const name = node.title || ('url' in node ? node.url : 'folder');
-    void mutate(() => api.call('bookmarks.remove', { id: node.id }), `Removed “${name}”`);
+    const name = node.title || ('url' in node ? node.url : t('library.bm.folder'));
+    void mutate(() => api.call('bookmarks.remove', { id: node.id }), t('library.bm.removed', { name }));
   }
   function confirmRemoveFolder() {
     const n = confirmRemove;
     confirmOpen = false;
     if (!n) return;
     if (folder === n.id) folder = n.parent ?? BOOKMARKS_BAR;
-    void mutate(() => api.call('bookmarks.remove', { id: n.id }), `Removed folder “${n.title}”`);
+    void mutate(() => api.call('bookmarks.remove', { id: n.id }), t('library.bm.removedFolder', { name: n.title }));
   }
 
   const countLabel = (n: FolderNode) => {
     const folders = n.children.filter((c) => c.kind === 'folder').length;
     const urls = n.children.length - folders;
-    return [urls && `${urls} bookmark${urls === 1 ? '' : 's'}`, folders && `${folders} folder${folders === 1 ? '' : 's'}`]
-      .filter(Boolean)
-      .join(', ') || 'Empty';
+    return [urls && tp('library.bm.count', urls), folders && tp('library.bm.folders', folders)].filter(Boolean).join(', ') || t('library.bm.empty');
   };
 </script>
 
 <header class="head">
-  <h2>Bookmarks</h2>
+  <h2>{t('library.nav.bookmarks')}</h2>
   <label class="lib-search">
     <Icon name="search" size={14} />
-    <input class="lib-input" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks" bind:value={query} />
+    <input class="lib-input" type="search" placeholder={t('library.bm.search')} aria-label={t('library.bm.search')} bind:value={query} />
   </label>
   <div class="spacer"></div>
   <button class="btn" onclick={() => open({ mode: 'add-folder', title: '', folder: current?.id ?? BOOKMARKS_BAR })}>
-    <Icon name="folder-plus" size={14} /> Add folder
+    <Icon name="folder-plus" size={14} /> {t('library.bm.addFolder')}
   </button>
   <button class="btn primary" onclick={() => open({ mode: 'add-url', title: '', url: '', folder: current?.id ?? BOOKMARKS_BAR })}>
-    <Icon name="plus" size={14} stroke={2.25} /> Add bookmark
+    <Icon name="plus" size={14} stroke={2.25} /> {t('library.bm.add')}
   </button>
 </header>
 
@@ -288,9 +292,9 @@
     />
   </aside>
 
-  <section class="list" aria-label="Bookmarks">
+  <section class="list" aria-label={t('library.nav.bookmarks')}>
     {#if results}
-      <p class="crumbs">{results.length} result{results.length === 1 ? '' : 's'} for “{query.trim()}”</p>
+      <p class="crumbs">{tp('library.bm.results', results.length, { query: query.trim() })}</p>
       {#each results as b (b.id)}
         <div class="lib-row">
           <Favicon url={b.url} size={16} />
@@ -300,18 +304,18 @@
             {:else}
               <span class="title">{b.title || b.url}</span>
             {/if}
-            <span class="sub">{hostOf(b.url) || b.url} · in {folderTitles.get(b.folder) ?? 'a folder'}</span>
+            <span class="sub">{hostOf(b.url) || b.url} · {t('library.bm.inFolder', { folder: folderTitles.get(b.folder) ?? t('library.bm.aFolder') })}</span>
           </div>
           <div class="actions">
-            <button class="icon-btn" aria-label="Show in folder" title="Show in folder" onclick={() => ((folder = b.folder), (query = ''))}>
+            <button class="icon-btn" aria-label={t('library.bm.showInFolder')} title={t('library.bm.showInFolder')} onclick={() => ((folder = b.folder), (query = ''))}>
               <Icon name="folder" size={15} />
             </button>
-            <button class="icon-btn" aria-label="Edit {b.title}" title="Edit" onclick={() => editFound(b)}><Icon name="pencil" size={15} /></button>
-            <button class="icon-btn" aria-label="Delete {b.title}" title="Delete" onclick={() => remove(b)}><Icon name="trash" size={15} /></button>
+            <button class="icon-btn" aria-label={t('library.editName', { name: b.title })} title={t('common.edit')} onclick={() => editFound(b)}><Icon name="pencil" size={15} /></button>
+            <button class="icon-btn" aria-label={t('library.deleteName', { name: b.title })} title={t('common.delete')} onclick={() => remove(b)}><Icon name="trash" size={15} /></button>
           </div>
         </div>
       {:else}
-        <div class="lib-empty"><h3>No bookmarks match</h3></div>
+        <div class="lib-empty"><h3>{t('library.bm.noMatch')}</h3></div>
       {/each}
     {:else if current}
       <p class="crumbs">
@@ -348,49 +352,49 @@
                 {#if isSafeLinkUrl(node.url)}
                   <a class="title" href={node.url} draggable="false">{node.title || node.url}</a>
                 {:else}
-                  <span class="title" title="Only http(s) addresses open from here">{node.title || node.url}</span>
+                  <span class="title" title={t('library.bm.onlyHttp')}>{node.title || node.url}</span>
                 {/if}
                 <span class="sub">{node.url}</span>
               </div>
             {/if}
             <div class="actions">
-              <button class="icon-btn" aria-label="Edit {node.title}" title="Edit" onclick={() => edit(node)}><Icon name="pencil" size={15} /></button>
-              <button class="icon-btn" aria-label="Delete {node.title}" title="Delete" onclick={() => remove(node)}><Icon name="trash" size={15} /></button>
+              <button class="icon-btn" aria-label={t('library.editName', { name: node.title })} title={t('common.edit')} onclick={() => edit(node)}><Icon name="pencil" size={15} /></button>
+              <button class="icon-btn" aria-label={t('library.deleteName', { name: node.title })} title={t('common.delete')} onclick={() => remove(node)}><Icon name="trash" size={15} /></button>
             </div>
           </li>
         {:else}
           <li class="lib-empty">
-            <h3>This folder is empty</h3>
-            <p>Add a bookmark here, star a page in the address bar, or drag bookmarks in from another folder.</p>
+            <h3>{t('library.bm.folderEmpty')}</h3>
+            <p>{t('library.bm.folderEmptyHelp')}</p>
           </li>
         {/each}
       </ul>
     {:else if loaded}
-      <div class="lib-empty"><h3>No bookmark folders</h3></div>
+      <div class="lib-empty"><h3>{t('library.bm.noFolders')}</h3></div>
     {/if}
   </section>
 </div>
 
 <Dialog
   bind:open={dialogOpen}
-  title={editing?.mode === 'add-url' ? 'Add bookmark' : editing?.mode === 'add-folder' ? 'Add folder' : editing?.mode === 'edit-folder' ? 'Rename folder' : 'Edit bookmark'}
+  title={editing?.mode === 'add-url' ? t('library.bm.add') : editing?.mode === 'add-folder' ? t('library.bm.addFolder') : editing?.mode === 'edit-folder' ? t('library.bm.rename') : t('library.bm.edit')}
   onsubmit={submit}
 >
   {#if editing}
     <label class="lib-field">
-      {editing.mode === 'add-folder' || editing.mode === 'edit-folder' ? 'Folder name' : 'Name'}
+      {editing.mode === 'add-folder' || editing.mode === 'edit-folder' ? t('library.bm.folderName') : t('library.bm.name')}
       <!-- svelte-ignore a11y_autofocus -->
       <input class="lib-input" bind:value={editing.title} autofocus />
     </label>
     {#if editing.mode === 'add-url' || editing.mode === 'edit-url'}
       <label class="lib-field">
-        Address
+        {t('library.bm.address')}
         <input class="lib-input mono" bind:value={editing.url} placeholder="https://" spellcheck="false" />
       </label>
     {/if}
     {#if editing.mode === 'add-url' || editing.mode === 'add-folder'}
       <label class="lib-field">
-        In folder
+        {t('library.bm.folderPick')}
         <select class="lib-input" bind:value={editing.folder}>
           {#each flattenFolders(tree) as { node, depth } (node.id)}
             <option value={node.id}>{'   '.repeat(depth)}{node.title}</option>
@@ -401,16 +405,16 @@
     {#if editError}<p class="lib-error">{editError}</p>{/if}
   {/if}
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (dialogOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary">Save</button>
+    <button type="button" class="btn" onclick={() => (dialogOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary">{t('common.save')}</button>
   {/snippet}
 </Dialog>
 
-<Dialog bind:open={confirmOpen} title="Delete folder?" onsubmit={confirmRemoveFolder}>
-  <p>“{confirmRemove?.title}” and everything inside it ({confirmRemove ? countLabel(confirmRemove) : ''}) will be deleted.</p>
+<Dialog bind:open={confirmOpen} title={t('library.bm.deleteFolderTitle')} onsubmit={confirmRemoveFolder}>
+  <p>{t('library.bm.deleteFolderText', { name: confirmRemove?.title ?? '', count: confirmRemove ? countLabel(confirmRemove) : '' })}</p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (confirmOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary danger">Delete</button>
+    <button type="button" class="btn" onclick={() => (confirmOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary danger">{t('common.delete')}</button>
   {/snippet}
 </Dialog>
 

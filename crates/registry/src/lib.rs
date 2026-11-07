@@ -30,6 +30,7 @@ pub fn build_registry() -> Registry {
     bmcp_notify::register(&mut registry);
     bmcp_hints::register(&mut registry);
     bmcp_system::register(&mut registry);
+    bmcp_languages::register(&mut registry);
     // New command crates go here, one line each (e.g. `bmcp_net::register(&mut registry);`).
     registry
 }
@@ -54,6 +55,7 @@ mod tests {
             "hints.show",
             "bookmarks.update",
             "system.reveal_path",
+            "browser.languages_set",
         ] {
             assert!(registry.get(name).is_some(), "{name} missing");
         }

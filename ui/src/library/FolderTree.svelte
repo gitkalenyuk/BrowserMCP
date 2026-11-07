@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../lib/components/Icon.svelte';
+  import { t } from '../lib/i18n/index.svelte';
   import type { FolderNode } from '../lib/data/tree';
   import FolderTree from './FolderTree.svelte';
 
@@ -34,7 +35,7 @@
   const subfolders = (n: FolderNode) => n.children.filter((c): c is FolderNode => c.kind === 'folder');
 </script>
 
-<ul role={depth === 0 ? 'tree' : 'group'} aria-label={depth === 0 ? 'Bookmark folders' : undefined}>
+<ul role={depth === 0 ? 'tree' : 'group'} aria-label={depth === 0 ? t('library.bm.folderTree') : undefined}>
   {#each nodes as n (n.id)}
     {@const subs = subfolders(n)}
     {@const open = expanded[n.id] ?? depth === 0}
@@ -55,7 +56,7 @@
           class="twisty"
           class:hidden={!subs.length}
           tabindex="-1"
-          aria-label={open ? 'Collapse' : 'Expand'}
+          aria-label={open ? t('library.collapse') : t('library.expand')}
           onclick={() => ontoggle(n.id)}
         >
           <Icon name={open ? 'chevron-down' : 'chevron-right'} size={13} stroke={2} />

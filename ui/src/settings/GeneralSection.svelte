@@ -1,30 +1,35 @@
+<script lang="ts" module>
+  import { createApi, type BrowserApi } from '../lib/api';
+
+  // Fallback while Settings.svelte renders <GeneralSection /> without `api`: one connection per
+  // page, shared by every visit to this section (a new one per mount would leak a WebSocket and,
+  // in mock mode, reset the card's state each time the section is opened).
+  let ownApi: BrowserApi | undefined;
+  const sharedApi = () => (ownApi ??= createApi());
+</script>
+
 <script lang="ts">
   import { LOCALES, systemLocale, t } from '../lib/i18n/index.svelte';
   import { ACCENTS, settings, type Density, type ThemePref, type WidgetId } from '../lib/settings.svelte';
   import Toggle from './Toggle.svelte';
+  import WebLanguages from './WebLanguages.svelte';
 
-  const THEMES: { id: ThemePref; label: string }[] = [
-    { id: 'system', label: 'System' },
-    { id: 'light', label: 'Light' },
-    { id: 'dark', label: 'Dark' },
-  ];
-  const DENSITIES: { id: Density; label: string }[] = [
-    { id: 'comfortable', label: 'Comfortable' },
-    { id: 'compact', label: 'Compact' },
-  ];
-  const WIDGETS: { id: WidgetId; label: string }[] = [
-    { id: 'prompt', label: 'Ask the AI' },
-    { id: 'agents', label: 'Agents & runs' },
-    { id: 'scripts', label: 'Quick launch scripts' },
-    { id: 'sites', label: 'Top sites' },
-  ];
+  // `api` / `notify` come from the settings page; without them (an older Settings.svelte) the
+  // language card uses the page-wide fallback connection and shows its messages inline.
+  let { api, notify }: { api?: BrowserApi; notify?: (text: string, error?: boolean) => void } = $props();
+  const languagesApi = $derived(api ?? sharedApi());
+
+  // Labels are looked up in markup (t() follows the interface language).
+  const THEMES: ThemePref[] = ['system', 'light', 'dark'];
+  const DENSITIES: Density[] = ['comfortable', 'compact'];
+  const WIDGETS: WidgetId[] = ['prompt', 'agents', 'scripts', 'sites'];
   const s = $derived(settings.value);
 </script>
 
 <div class="set-page">
   <header>
-    <h2>General</h2>
-    <p>How the browser looks. Saved on this computer and applied to every window right away.</p>
+    <h2>{t('settings.general.title')}</h2>
+    <p>{t('settings.general.intro')}</p>
   </header>
 
   <section class="set-card" aria-labelledby="g-lang">
@@ -42,44 +47,45 @@
         </div>
       </div>
     </div>
+    <WebLanguages api={languagesApi} {notify} />
   </section>
 
   <section class="set-card" aria-labelledby="g-look">
-    <h3 id="g-look">Appearance</h3>
+    <h3 id="g-look">{t('settings.general.appearance')}</h3>
     <div class="set-row">
-      <div class="text"><span class="label">Theme</span><span class="help">System follows the Windows light / dark setting.</span></div>
+      <div class="text"><span class="label">{t('settings.general.theme')}</span><span class="help">{t('settings.general.themeHelp')}</span></div>
       <div class="ctl">
-        <div class="set-seg" role="radiogroup" aria-label="Theme">
-          {#each THEMES as t (t.id)}
-            <button role="radio" aria-checked={s.theme === t.id} onclick={() => settings.update({ theme: t.id })}>{t.label}</button>
+        <div class="set-seg" role="radiogroup" aria-label={t('settings.general.theme')}>
+          {#each THEMES as theme (theme)}
+            <button role="radio" aria-checked={s.theme === theme} onclick={() => settings.update({ theme })}>{t(`settings.general.theme.${theme}`)}</button>
           {/each}
         </div>
       </div>
     </div>
     <div class="set-row">
-      <div class="text"><span class="label">Accent color</span><span class="help">Buttons, the selected tab and focus rings.</span></div>
-      <div class="ctl swatches" role="radiogroup" aria-label="Accent color">
+      <div class="text"><span class="label">{t('settings.general.accent')}</span><span class="help">{t('settings.general.accentHelp')}</span></div>
+      <div class="ctl swatches" role="radiogroup" aria-label={t('settings.general.accent')}>
         {#each ACCENTS as c (c)}
           <button
             class="sw"
             role="radio"
             aria-checked={s.accent === c}
-            aria-label="Accent {c}"
+            aria-label={t('settings.general.accentN', { color: c })}
             style:--c={c}
             onclick={() => settings.update({ accent: c })}
           ></button>
         {/each}
-        <label class="custom" title="Custom color">
-          <input type="color" value={s.accent} oninput={(e) => settings.update({ accent: e.currentTarget.value })} aria-label="Custom accent color" />
+        <label class="custom" title={t('settings.general.customColor')}>
+          <input type="color" value={s.accent} oninput={(e) => settings.update({ accent: e.currentTarget.value })} aria-label={t('settings.general.customAccent')} />
         </label>
       </div>
     </div>
     <div class="set-row">
-      <div class="text"><span class="label">Density</span><span class="help">Compact makes the tab strip, toolbar and tabs shorter.</span></div>
+      <div class="text"><span class="label">{t('settings.general.density')}</span><span class="help">{t('settings.general.densityHelp')}</span></div>
       <div class="ctl">
-        <div class="set-seg" role="radiogroup" aria-label="Density">
-          {#each DENSITIES as d (d.id)}
-            <button role="radio" aria-checked={(s.density ?? 'comfortable') === d.id} onclick={() => settings.update({ density: d.id })}>{d.label}</button>
+        <div class="set-seg" role="radiogroup" aria-label={t('settings.general.density')}>
+          {#each DENSITIES as density (density)}
+            <button role="radio" aria-checked={(s.density ?? 'comfortable') === density} onclick={() => settings.update({ density })}>{t(`settings.general.density.${density}`)}</button>
           {/each}
         </div>
       </div>
@@ -87,24 +93,24 @@
   </section>
 
   <section class="set-card" aria-labelledby="g-tabs">
-    <h3 id="g-tabs">Tabs and toolbar</h3>
+    <h3 id="g-tabs">{t('settings.general.tabs')}</h3>
     <div class="set-row">
-      <div class="text"><span class="label">Vertical tabs</span><span class="help">Tabs in a sidebar on the left instead of a strip on top.</span></div>
-      <div class="ctl"><Toggle label="Vertical tabs" checked={s.verticalTabs} onchange={(on) => settings.update({ verticalTabs: on })} /></div>
+      <div class="text"><span class="label">{t('settings.general.vertical')}</span><span class="help">{t('settings.general.verticalHelp')}</span></div>
+      <div class="ctl"><Toggle label={t('settings.general.vertical')} checked={s.verticalTabs} onchange={(on) => settings.update({ verticalTabs: on })} /></div>
     </div>
     <div class="set-row">
-      <div class="text"><span class="label">Bookmarks bar</span><span class="help">The bar under the toolbar with the bookmarks bar folder.</span></div>
-      <div class="ctl"><Toggle label="Bookmarks bar" checked={s.bookmarksBar} onchange={(on) => settings.update({ bookmarksBar: on })} /></div>
+      <div class="text"><span class="label">{t('settings.general.bookmarksBar')}</span><span class="help">{t('settings.general.bookmarksBarHelp')}</span></div>
+      <div class="ctl"><Toggle label={t('settings.general.bookmarksBar')} checked={s.bookmarksBar} onchange={(on) => settings.update({ bookmarksBar: on })} /></div>
     </div>
   </section>
 
   <section class="set-card" aria-labelledby="g-ntp">
-    <h3 id="g-ntp">New tab page</h3>
-    {#each WIDGETS as w (w.id)}
+    <h3 id="g-ntp">{t('settings.general.newTab')}</h3>
+    {#each WIDGETS as w (w)}
       <div class="set-row">
-        <div class="text"><span class="label">{w.label}</span></div>
+        <div class="text"><span class="label">{t(`settings.general.widget.${w}`)}</span></div>
         <div class="ctl">
-          <Toggle label={w.label} checked={s.widgets[w.id]} onchange={(on) => settings.update({ widgets: { ...s.widgets, [w.id]: on } })} />
+          <Toggle label={t(`settings.general.widget.${w}`)} checked={s.widgets[w]} onchange={(on) => settings.update({ widgets: { ...s.widgets, [w]: on } })} />
         </div>
       </div>
     {/each}

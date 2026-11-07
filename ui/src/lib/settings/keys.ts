@@ -4,6 +4,7 @@
 // parseKeymapOverrides and follows changes through the storage event.
 
 import { COMMANDS } from '../commands';
+import { t } from '../i18n/index.svelte';
 import {
   COMMAND_IDS,
   DEFAULT_KEYMAP,
@@ -116,18 +117,34 @@ export function conflicts(keymap: Keymap): Map<string, CommandId[]> {
 
 export interface KeymapRow {
   id: CommandId;
+  /** In the interface language. */
   title: string;
+  /** The English title (lib/commands.ts), also searched so "history" works in any language. */
+  english: string;
   keys: string[];
   custom: boolean;
 }
 
 const TITLES = new Map(COMMANDS.map((c) => [c.id, c.title]));
 
+/**
+ * A command's title in the interface language: `settings.keyboard.cmd.<id>` (the eight
+ * "Select tab N" commands share `cmd.tab.selectN`), else the English title from lib/commands.ts
+ * (a command added there before its translation still shows up).
+ */
+export function commandTitle(id: CommandId): string {
+  const n = /^tab\.select(\d)$/.exec(id)?.[1];
+  const key = n ? 'settings.keyboard.cmd.tab.selectN' : `settings.keyboard.cmd.${id}`;
+  const text = t(key, n ? { n } : undefined);
+  return text === key ? (TITLES.get(id) ?? id) : text;
+}
+
 /** Every command with its title and current keys. */
 export function keymapRows(keymap: Keymap, o: KeymapOverrides): KeymapRow[] {
   return COMMAND_IDS.map((id) => ({
     id,
-    title: TITLES.get(id) ?? id,
+    title: commandTitle(id),
+    english: TITLES.get(id) ?? id,
     keys: keymap[id] ?? [],
     custom: id in o,
   }));
@@ -147,7 +164,7 @@ export function filterRows(rows: KeymapRow[], query: string): KeymapRow[] {
   const words = query.toLowerCase().split(/[\s+]+/).filter(Boolean);
   if (!words.length) return rows;
   return rows.filter((r) => {
-    const hay = `${r.title} ${r.id} ${r.keys.join(' ')}`.toLowerCase().replace(/\+/g, ' ');
+    const hay = `${r.title} ${r.english} ${r.id} ${r.keys.join(' ')}`.toLowerCase().replace(/\+/g, ' ');
     return words.every((w) => hay.includes(w));
   });
 }

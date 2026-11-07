@@ -4,10 +4,12 @@
   import type { HistoryDeleteArgs, HistoryEntry } from '../lib/api/types-data';
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import { locale, t, tp } from '../lib/i18n/index.svelte';
   import { onDataChanged, onReconnect } from '../lib/data/library';
   import {
     CLEAR_RANGES,
     clearPlan,
+    dayLabel,
     groupByDay,
     timeOfDay,
     type ClearRange,
@@ -31,7 +33,7 @@
     const q = query.trim();
     const n = limit;
     void tick;
-    const t = setTimeout(
+    const timer = setTimeout(
       () => {
         api
           .call('history.search', { q: q || null, limit: n })
@@ -44,15 +46,23 @@
       },
       untrack(() => loaded) ? 180 : 0,
     );
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   });
   $effect(() => onReconnect(api, () => tick++));
   // Deletes and imports by anyone (an agent, another library tab) arrive as history.changed.
   $effect(() => onDataChanged(api, 'history.changed', () => tick++));
 
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const deletedText = (r: { deleted_visits: number; deleted_urls: number }) =>
-    `Deleted ${plural(r.deleted_visits, 'visit')}` + (r.deleted_urls ? `; ${plural(r.deleted_urls, 'page')} left history` : '');
+    tp('library.hist.deleted', r.deleted_visits) + (r.deleted_urls ? `; ${tp('library.hist.pagesLeft', r.deleted_urls)}` : '');
+
+  /** The day heading in the interface language (lib/data/history names only "Today" and
+   * "Yesterday" itself, in English; other days are dates in the given locale). */
+  function dayTitle(g: DayGroup): string {
+    const label = dayLabel(g.start, Date.now(), locale());
+    if (label === 'Today') return t('library.hist.today');
+    if (label === 'Yesterday') return t('library.hist.yesterday');
+    return label;
+  }
 
   /** One `history.delete`, then re-read the list. */
   async function remove(args: HistoryDeleteArgs, done?: boolean) {
@@ -93,26 +103,26 @@
 </script>
 
 <header class="head">
-  <h2>History</h2>
+  <h2>{t('library.nav.history')}</h2>
   <label class="lib-search">
     <Icon name="search" size={14} />
-    <input class="lib-input" type="search" placeholder="Search history" aria-label="Search history" bind:value={query} />
+    <input class="lib-input" type="search" placeholder={t('library.hist.search')} aria-label={t('library.hist.search')} bind:value={query} />
   </label>
   <div class="spacer"></div>
-  <button class="btn" onclick={() => (clearOpen = true)}><Icon name="trash" size={14} /> Clear browsing history…</button>
+  <button class="btn" onclick={() => (clearOpen = true)}><Icon name="trash" size={14} /> {t('library.hist.clearOpen')}</button>
 </header>
 
 <div class="days">
   {#each groups as g (g.key)}
     <section class="day" aria-labelledby="day-{g.key}">
       <div class="day-head">
-        <h3 id="day-{g.key}">{g.label}</h3>
-        <span class="n">{g.entries.length} page{g.entries.length === 1 ? '' : 's'}</span>
-        <button class="btn ghost" onclick={() => ((dayToRemove = g), (dayOpen = true))}>Remove day</button>
+        <h3 id="day-{g.key}">{dayTitle(g)}</h3>
+        <span class="n">{tp('library.hist.pages', g.entries.length)}</span>
+        <button class="btn ghost" onclick={() => ((dayToRemove = g), (dayOpen = true))}>{t('library.hist.removeDay')}</button>
       </div>
       {#each g.entries as e (e.url)}
         <div class="lib-row">
-          <time class="time" datetime={new Date(e.last_visit).toISOString()}>{timeOfDay(e.last_visit)}</time>
+          <time class="time" datetime={new Date(e.last_visit).toISOString()}>{timeOfDay(e.last_visit, locale())}</time>
           <Favicon url={e.url} size={16} />
           <div class="grow">
             {#if isSafeLinkUrl(e.url)}
@@ -120,10 +130,10 @@
             {:else}
               <span class="title" title={e.url}>{e.title || e.url}</span>
             {/if}
-            <span class="sub">{hostOf(e.url) || e.url}{e.visit_count > 1 ? ` · ${e.visit_count} visits` : ''}</span>
+            <span class="sub">{hostOf(e.url) || e.url}{e.visit_count > 1 ? ` · ${tp('library.hist.visits', e.visit_count)}` : ''}</span>
           </div>
           <div class="actions">
-            <button class="icon-btn" aria-label="Remove {e.title || e.url} from history" title="Remove from history" onclick={() => removeEntry(e)}>
+            <button class="icon-btn" aria-label={t('library.hist.removeEntry', { name: e.title || e.url })} title={t('library.hist.removeEntryHint')} onclick={() => removeEntry(e)}>
               <Icon name="x" size={15} />
             </button>
           </div>
@@ -133,45 +143,42 @@
   {:else}
     {#if loaded}
       <div class="lib-empty">
-        <h3>{query.trim() ? 'Nothing in history matches' : 'No history yet'}</h3>
-        <p>{query.trim() ? 'Try a different word or part of the address.' : 'Pages you visit show up here, grouped by day.'}</p>
+        <h3>{query.trim() ? t('library.hist.noMatch') : t('library.hist.none')}</h3>
+        <p>{query.trim() ? t('library.hist.noMatchHelp') : t('library.hist.noneHelp')}</p>
       </div>
     {/if}
   {/each}
   {#if entries.length >= limit && limit < 5000}
-    <div class="more"><button class="btn" onclick={() => (limit = Math.min(5000, limit + PAGE))}>Show more</button></div>
+    <div class="more"><button class="btn" onclick={() => (limit = Math.min(5000, limit + PAGE))}>{t('library.hist.more')}</button></div>
   {/if}
 </div>
 
-<Dialog bind:open={dayOpen} title="Remove {dayToRemove?.label ?? 'this day'}?" onsubmit={removeDay}>
-  <p>
-    The visits of this day are deleted ({dayToRemove?.entries.length} page{dayToRemove?.entries.length === 1 ? '' : 's'}). Visits
-    on other days stay.
-  </p>
+<Dialog bind:open={dayOpen} title={t('library.hist.removeDayTitle', { day: dayToRemove ? dayTitle(dayToRemove) : t('library.hist.thisDay') })} onsubmit={removeDay}>
+  <p>{t('library.hist.removeDayText', { pages: tp('library.hist.pages', dayToRemove?.entries.length ?? 0) })}</p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (dayOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary danger">Remove</button>
+    <button type="button" class="btn" onclick={() => (dayOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary danger">{t('library.hist.remove')}</button>
   {/snippet}
 </Dialog>
 
-<Dialog bind:open={clearOpen} title="Clear browsing history" onsubmit={clear}>
+<Dialog bind:open={clearOpen} title={t('library.hist.clearTitle')} onsubmit={clear}>
   <label class="lib-field">
-    Time range
+    {t('library.hist.range')}
     <select class="lib-input" bind:value={range}>
-      {#each CLEAR_RANGES as r (r.id)}<option value={r.id}>{r.label}</option>{/each}
+      {#each CLEAR_RANGES as r (r.id)}<option value={r.id}>{t(`library.hist.range.${r.id}`)}</option>{/each}
     </select>
   </label>
   <p class="hint">
     {#if 'before' in plan}
-      {range === 'all' ? 'Every visit is deleted.' : 'Visits older than four weeks are deleted; newer ones stay.'}
+      {range === 'all' ? t('library.hist.clearAll') : t('library.hist.clearOlder')}
     {:else}
-      Visits in this range are deleted; older visits of the same pages stay.
+      {t('library.hist.clearRange')}
     {/if}
-    Bookmarks, passwords and cookies are not touched.
+    {t('library.hist.untouched')}
   </p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (clearOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary danger" disabled={clearing}>{clearing ? 'Clearing…' : 'Clear history'}</button>
+    <button type="button" class="btn" onclick={() => (clearOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary danger" disabled={clearing}>{clearing ? t('library.hist.clearing') : t('library.hist.clear')}</button>
   {/snippet}
 </Dialog>
 

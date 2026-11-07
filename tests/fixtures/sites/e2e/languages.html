@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Languages</title>
+  </head>
+  <body>
+    <!-- What the page sees of the browser's website languages (browser.languages_set): the
+         JS list and the Accept-Language header of a request (echoed by the fixture server). -->
+    <p id="js">languages=</p>
+    <p id="header">header=</p>
+    <script>
+      document.getElementById("js").textContent = "languages=" + navigator.languages.join(",");
+      fetch("/echo/accept-language")
+        .then((r) => r.json())
+        .then((j) => (document.getElementById("header").textContent = "header=" + j.accept_language + " done"));
+    </script>
+  </body>
+</html>

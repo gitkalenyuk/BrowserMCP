@@ -243,6 +243,9 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
     // Profiles (profile.*, cookies.*, permissions.*) talk to the CEF backend.
     let profiles = bmcp_profiles::install(&registry, data.root(), &profile, permissions);
     profiles.set_backend(Arc::new(bmcp_cef::CefBackend));
+    // Website languages, Chromium's locale, spellcheck (data/config/languages.json; the CEF
+    // layer read the same file before Chromium started).
+    bmcp_languages::install(&registry, data.config()).set_backend(Arc::new(bmcp_cef::CefBackend));
     // Bookmarks, history, passwords… in data/db/browsermcp.sqlite (used by the data commands).
     let store = match bmcp_data::DataStore::open_in(&data) {
         Ok(store) => {

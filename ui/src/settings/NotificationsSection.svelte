@@ -2,6 +2,7 @@
   import type { BrowserApi } from '../lib/api';
   import type { NotifyChannel, NotifyConfig } from '../lib/api/types-settings';
   import Icon from '../lib/components/Icon.svelte';
+  import { t, tp } from '../lib/i18n/index.svelte';
   import {
     CHANNELS,
     KNOWN_TOPICS,
@@ -18,6 +19,7 @@
     toggleChannel,
     updateRule,
   } from '../lib/settings/notify';
+  import { richParts } from '../lib/settings/rich';
   import Toggle from './Toggle.svelte';
 
   let { api, notify, fail }: { api: BrowserApi; notify: (t: string, e?: boolean) => void; fail: (e: unknown) => void } = $props();
@@ -60,7 +62,7 @@
       const c = await api.call('notify.config_set', patch);
       saved = c;
       draft = structuredClone(c);
-      notify('Notification settings saved');
+      notify(t('settings.notify.saved'));
       return true;
     } catch (err) {
       fail(err);
@@ -76,7 +78,7 @@
     results = { ...results, [channel]: undefined };
     try {
       const r = await api.call('notify.test', { channel });
-      results = { ...results, [channel]: { ok: r.ok, text: r.ok ? 'Sent. Check that it arrived.' : (r.error ?? 'Failed') } };
+      results = { ...results, [channel]: { ok: r.ok, text: r.ok ? t('settings.notify.testSent') : (r.error ?? t('settings.notify.testFailed')) } };
     } catch (err) {
       results = { ...results, [channel]: { ok: false, text: (err as Error).message } };
     } finally {
@@ -89,8 +91,8 @@
 </script>
 
 {#snippet testButton(channel: NotifyChannel)}
-  <button class="btn" disabled={testing !== null || saving || (dirty && invalid)} onclick={() => test(channel)} title={dirty ? 'Saves your changes, then sends a test' : 'Send a test notification'}>
-    {testing === channel ? 'Sending…' : dirty ? 'Save & test' : 'Test'}
+  <button class="btn" disabled={testing !== null || saving || (dirty && invalid)} onclick={() => test(channel)} title={dirty ? t('settings.notify.saveTestHint') : t('settings.notify.testHint')}>
+    {testing === channel ? t('settings.notify.sending') : dirty ? t('settings.notify.saveTest') : t('common.test')}
   </button>
 {/snippet}
 {#snippet result(channel: NotifyChannel)}
@@ -101,63 +103,62 @@
 
 <div class="set-page">
   <header>
-    <h2>Notifications</h2>
+    <h2>{t('settings.notify.title')}</h2>
     <p>
-      Where finished runs, patch proposals, agents and downloads tell you about themselves. Questions (a run waiting for a
-      patch) come with buttons, in the browser and on Telegram; the first answer wins. Saved in
+      {t('settings.notify.intro')}
       <span class="set-mono">data/config/notify.json</span>.
     </p>
   </header>
 
   {#if loadError}
-    <p class="lib-error" role="alert">Could not load the notification settings: {loadError}</p>
-    <button class="btn" onclick={load}>Retry</button>
+    <p class="lib-error" role="alert">{t('settings.notify.loadError', { error: loadError })}</p>
+    <button class="btn" onclick={load}>{t('settings.hints.retry')}</button>
   {:else if !draft || !tg || !wh}
-    <p class="set-muted">Loading…</p>
+    <p class="set-muted">{t('common.loading')}</p>
   {:else}
     <section class="set-card" aria-labelledby="n-ch">
-      <h3 id="n-ch">Channels</h3>
+      <h3 id="n-ch">{t('settings.notify.channels')}</h3>
       <div class="set-row">
         <div class="text">
-          <span class="label">Browser</span>
-          <span class="help">A toast in the browser window.</span>
+          <span class="label">{t('settings.notify.channel.ui')}</span>
+          <span class="help">{t('settings.notify.uiHelp')}</span>
           {@render result('ui')}
         </div>
         <div class="ctl">
           {@render testButton('ui')}
-          <Toggle label="Browser notifications" checked={draft.channels.ui} onchange={(on) => (draft!.channels.ui = on)} />
+          <Toggle label={t('settings.notify.uiToggle')} checked={draft.channels.ui} onchange={(on) => (draft!.channels.ui = on)} />
         </div>
       </div>
       <div class="set-row">
         <div class="text">
-          <span class="label">Windows</span>
-          <span class="help">A Windows notification, also when the browser is in the background.</span>
+          <span class="label">{t('settings.notify.channel.os')}</span>
+          <span class="help">{t('settings.notify.osHelp')}</span>
           {@render result('os')}
         </div>
         <div class="ctl">
           {@render testButton('os')}
-          <Toggle label="Windows notifications" checked={draft.channels.os} onchange={(on) => (draft!.channels.os = on)} />
+          <Toggle label={t('settings.notify.osToggle')} checked={draft.channels.os} onchange={(on) => (draft!.channels.os = on)} />
         </div>
       </div>
 
       <div class="set-row stack">
         <div class="head">
           <div class="text">
-            <span class="label">Telegram</span>
+            <span class="label">{t('settings.notify.channel.telegram')}</span>
             <span class="help">
-              A bot messages you, with Accept / Reject / Skip buttons for questions. Create one with
-              <span class="set-mono">@BotFather</span> (<span class="set-mono">/newbot</span>), send it any message, then use your chat id
-              (for example from <span class="set-mono">@userinfobot</span>). Presses from other chats are ignored.
+              {t('settings.notify.tgHelp1')}
+              <span class="set-mono">@BotFather</span> (<span class="set-mono">/newbot</span>){t('settings.notify.tgHelp2')}
+              <span class="set-mono">@userinfobot</span>{t('settings.notify.tgHelp3')}
             </span>
           </div>
           <div class="ctl">
             {@render testButton('telegram')}
-            <Toggle label="Telegram notifications" checked={tg.enabled} onchange={(on) => (tg.enabled = on)} />
+            <Toggle label={t('settings.notify.tgToggle')} checked={tg.enabled} onchange={(on) => (tg.enabled = on)} />
           </div>
         </div>
         <div class="grid">
           <label class="lib-field">
-            Bot token
+            {t('settings.notify.botToken')}
             <span class="pw">
               <input
                 class="lib-input mono"
@@ -169,15 +170,15 @@
                 aria-invalid={!!errors['telegram.bot_token']}
                 onfocus={(e) => isMaskedToken(e.currentTarget.value) && e.currentTarget.select()}
               />
-              <button class="icon-btn" type="button" aria-label={showToken ? 'Hide token' : 'Show token'} onclick={() => (showToken = !showToken)}>
+              <button class="icon-btn" type="button" aria-label={showToken ? t('settings.notify.hideToken') : t('settings.notify.showToken')} onclick={() => (showToken = !showToken)}>
                 <Icon name={showToken ? 'eye-off' : 'eye'} size={14} />
               </button>
             </span>
             {#if errors['telegram.bot_token']}<span class="set-err">{errors['telegram.bot_token']}</span>
-            {:else if isMaskedToken(tg.bot_token)}<span class="set-muted">A token is stored (only its end is shown). Type a new one to replace it.</span>{/if}
+            {:else if isMaskedToken(tg.bot_token)}<span class="set-muted">{t('settings.notify.tokenStored')}</span>{/if}
           </label>
           <label class="lib-field">
-            Chat id
+            {t('settings.notify.chatId')}
             <input class="lib-input mono" spellcheck="false" bind:value={tg.chat_id} placeholder="123456789" aria-invalid={!!errors['telegram.chat_id']} />
             {#if errors['telegram.chat_id']}<span class="set-err">{errors['telegram.chat_id']}</span>{/if}
           </label>
@@ -188,15 +189,14 @@
       <div class="set-row stack">
         <div class="head">
           <div class="text">
-            <span class="label">Webhook</span>
+            <span class="label">{t('settings.notify.channel.webhook')}</span>
             <span class="help">
-              <span class="set-mono">POST</span> with <span class="set-mono">{'{id, title, body, level, topic, data, actions, ts_ms}'}</span>
-              for each notification (Slack-style relays, n8n, your own server).
+              {#each richParts(t('settings.notify.whHelp')) as p, i (i)}{#if p.slot === 'method'}<span class="set-mono">POST</span>{:else if p.slot === 'body'}<span class="set-mono">{'{id, title, body, level, topic, data, actions, ts_ms}'}</span>{:else}{p.text}{/if}{/each}
             </span>
           </div>
           <div class="ctl">
             {@render testButton('webhook')}
-            <Toggle label="Webhook notifications" checked={wh.enabled} onchange={(on) => (wh.enabled = on)} />
+            <Toggle label={t('settings.notify.whToggle')} checked={wh.enabled} onchange={(on) => (wh.enabled = on)} />
           </div>
         </div>
         <label class="lib-field">
@@ -209,21 +209,20 @@
     </section>
 
     <section class="set-card" aria-labelledby="n-rules">
-      <h3 id="n-rules"><span class="grow">Rules</span></h3>
+      <h3 id="n-rules"><span class="grow">{t('settings.notify.rules')}</span></h3>
       <p class="lead">
-        Which events go where. The first rule whose topic matches (and whose condition holds) wins; channels switched off above are
-        skipped. <b>Bundle</b> collects bursts (failed rows of a 1000-row run) into one message per minute.
+        {t('settings.notify.rulesLead')} <b>{t('settings.notify.bundle')}</b> {t('settings.notify.bundleLead')}
       </p>
       <div class="set-table-wrap">
         <table class="set-table rules">
           <thead>
             <tr>
               <th class="r">#</th>
-              <th>Event topic</th>
+              <th>{t('settings.notify.topic')}</th>
               {#each CHANNELS as c (c.id)}<th class="c">{c.label}</th>{/each}
-              <th>When</th>
-              <th class="c" title="Collect bursts into one summary">Bundle</th>
-              <th><span class="sr">Order and delete</span></th>
+              <th>{t('settings.notify.when')}</th>
+              <th class="c" title={t('settings.notify.bundleHint')}>{t('settings.notify.bundle')}</th>
+              <th><span class="sr">{t('settings.notify.orderDelete')}</span></th>
             </tr>
           </thead>
           <tbody>
@@ -236,7 +235,7 @@
                     value={rule.topic}
                     list="notify-topics"
                     spellcheck="false"
-                    aria-label="Event topic of rule {i + 1}"
+                    aria-label={t('settings.notify.topicOf', { n: i + 1 })}
                     aria-invalid={!!errors[`rule.${i}`]}
                     oninput={(e) => (draft!.rules = updateRule(draft!.rules, i, { topic: e.currentTarget.value }))}
                   />
@@ -246,68 +245,68 @@
                     <input
                       type="checkbox"
                       checked={rule.channels.includes(c.id)}
-                      aria-label="{c.label} for {rule.topic || `rule ${i + 1}`}"
+                      aria-label={t('settings.notify.channelFor', { channel: c.label, rule: rule.topic || t('settings.notify.ruleN', { n: i + 1 }) })}
                       onchange={() => (draft!.rules = toggleChannel(draft!.rules, i, c.id))}
                     />
                   </td>
                 {/each}
                 <td>
-                  <select class="lib-input when" value={rule.when} aria-label="Condition of rule {i + 1}" onchange={(e) => (draft!.rules = updateRule(draft!.rules, i, { when: e.currentTarget.value as typeof rule.when }))}>
+                  <select class="lib-input when" value={rule.when} aria-label={t('settings.notify.conditionOf', { n: i + 1 })} onchange={(e) => (draft!.rules = updateRule(draft!.rules, i, { when: e.currentTarget.value as typeof rule.when }))}>
                     {#each WHEN as w (w.id)}<option value={w.id}>{w.label}</option>{/each}
                   </select>
                 </td>
                 <td class="c">
-                  <input type="checkbox" checked={rule.aggregate} aria-label="Bundle bursts of rule {i + 1}" onchange={(e) => (draft!.rules = updateRule(draft!.rules, i, { aggregate: e.currentTarget.checked }))} />
+                  <input type="checkbox" checked={rule.aggregate} aria-label={t('settings.notify.bundleOf', { n: i + 1 })} onchange={(e) => (draft!.rules = updateRule(draft!.rules, i, { aggregate: e.currentTarget.checked }))} />
                 </td>
                 <td class="acts">
-                  <button class="icon-btn" aria-label="Move rule {i + 1} up" disabled={i === 0} onclick={() => (draft!.rules = moveRule(draft!.rules, i, -1))}><Icon name="chevron-down" size={13} class="up" /></button>
-                  <button class="icon-btn" aria-label="Move rule {i + 1} down" disabled={i === draft.rules.length - 1} onclick={() => (draft!.rules = moveRule(draft!.rules, i, 1))}><Icon name="chevron-down" size={13} /></button>
-                  <button class="icon-btn" aria-label="Delete rule {i + 1}" onclick={() => (draft!.rules = removeRule(draft!.rules, i))}><Icon name="trash" size={13} /></button>
+                  <button class="icon-btn" aria-label={t('settings.notify.moveUp', { n: i + 1 })} disabled={i === 0} onclick={() => (draft!.rules = moveRule(draft!.rules, i, -1))}><Icon name="chevron-down" size={13} class="up" /></button>
+                  <button class="icon-btn" aria-label={t('settings.notify.moveDown', { n: i + 1 })} disabled={i === draft.rules.length - 1} onclick={() => (draft!.rules = moveRule(draft!.rules, i, 1))}><Icon name="chevron-down" size={13} /></button>
+                  <button class="icon-btn" aria-label={t('settings.notify.deleteRule', { n: i + 1 })} onclick={() => (draft!.rules = removeRule(draft!.rules, i))}><Icon name="trash" size={13} /></button>
                 </td>
               </tr>
               {#if errors[`rule.${i}`]}
                 <tr class="errrow"><td></td><td colspan={CHANNELS.length + 4}><span class="set-err">{errors[`rule.${i}`]}</span></td></tr>
               {/if}
             {:else}
-              <tr><td colspan={CHANNELS.length + 5} class="set-muted">No rules: nothing is sent except tests and questions asked by agents.</td></tr>
+              <tr><td colspan={CHANNELS.length + 5} class="set-muted">{t('settings.notify.noRules')}</td></tr>
             {/each}
           </tbody>
         </table>
-        <datalist id="notify-topics">{#each KNOWN_TOPICS as t (t)}<option value={t}></option>{/each}</datalist>
+        <datalist id="notify-topics">{#each KNOWN_TOPICS as topic (topic)}<option value={topic}></option>{/each}</datalist>
       </div>
       <div class="set-actions">
-        <button class="btn" onclick={() => (draft!.rules = addRule(draft!.rules))}><Icon name="plus" size={13} /> Add rule</button>
+        <button class="btn" onclick={() => (draft!.rules = addRule(draft!.rules))}><Icon name="plus" size={13} /> {t('settings.notify.addRule')}</button>
         {#if missing.length}
           <button class="btn" onclick={() => (draft!.rules = [...draft!.rules, ...missing])} title={missing.map((r) => r.topic).join(', ')}>
-            Add {missing.length} missing default rule{missing.length === 1 ? '' : 's'}
+            {tp('settings.notify.addMissing', missing.length)}
           </button>
         {/if}
         <span class="probe">
-          <label for="probe" class="set-muted">Which rule handles</label>
+          <label for="probe" class="set-muted">{t('settings.notify.probe')}</label>
           <input id="probe" class="lib-input mono" bind:value={probe} list="notify-topics" spellcheck="false" />
-          <span class="set-muted" role="status">{probe.trim() ? (probeHit >= 0 ? `→ rule ${probeHit + 1}` : '→ none (not sent)') : ''}</span>
+          <span class="set-muted" role="status">{probe.trim() ? (probeHit >= 0 ? t('settings.notify.probeHit', { n: probeHit + 1 }) : t('settings.notify.probeNone')) : ''}</span>
         </span>
       </div>
     </section>
 
     <section class="set-card" aria-labelledby="n-lim">
-      <h3 id="n-lim">Anti-spam</h3>
+      <h3 id="n-lim">{t('settings.notify.antispam')}</h3>
       <div class="set-row">
-        <div class="text"><span class="label">Drop repeats</span><span class="help">The same title and text again within this many seconds is not sent.</span></div>
+        <div class="text"><span class="label">{t('settings.notify.dedup')}</span><span class="help">{t('settings.notify.dedupHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="0" max="3600" bind:value={draft.limits.dedup_secs} aria-label="Drop repeats, seconds" aria-invalid={!!errors['limits.dedup_secs']} /> s
+          <input class="lib-input narrow" type="number" min="0" max="3600" bind:value={draft.limits.dedup_secs} aria-label={t('settings.notify.dedupLabel')} aria-invalid={!!errors['limits.dedup_secs']} /> {t('settings.notify.secs')}
         </div>
       </div>
       <div class="set-row">
-        <div class="text"><span class="label">Bundle window</span><span class="help">How long bundled rules collect before sending a summary.</span></div>
+        <div class="text"><span class="label">{t('settings.notify.window')}</span><span class="help">{t('settings.notify.windowHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="1" max="3600" bind:value={draft.limits.aggregate_secs} aria-label="Bundle window, seconds" aria-invalid={!!errors['limits.aggregate_secs']} /> s
+          <input class="lib-input narrow" type="number" min="1" max="3600" bind:value={draft.limits.aggregate_secs} aria-label={t('settings.notify.windowLabel')} aria-invalid={!!errors['limits.aggregate_secs']} /> {t('settings.notify.secs')}
         </div>
       </div>
       <div class="set-row">
-        <div class="text"><span class="label">At most per minute</span><span class="help">Per channel. Extra ones are counted (“+3 more suppressed”); questions always go through.</span></div>
+        <div class="text"><span class="label">{t('settings.notify.perMinute')}</span><span class="help">{t('settings.notify.perMinuteHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="1" max="600" bind:value={draft.limits.max_per_minute} aria-label="At most per minute" aria-invalid={!!errors['limits.max_per_minute']} /> /min
+          <input class="lib-input narrow" type="number" min="1" max="600" bind:value={draft.limits.max_per_minute} aria-label={t('settings.notify.perMinute')} aria-invalid={!!errors['limits.max_per_minute']} /> {t('settings.notify.perMin')}
         </div>
       </div>
       {#each ['limits.dedup_secs', 'limits.aggregate_secs', 'limits.max_per_minute'] as k (k)}
@@ -316,10 +315,10 @@
     </section>
 
     {#if dirty}
-      <div class="set-savebar" role="region" aria-label="Unsaved changes">
-        <span>{invalid ? `Fix ${Object.keys(errors).length} problem${Object.keys(errors).length === 1 ? '' : 's'} to save` : 'Unsaved changes'}</span>
-        <button class="btn" disabled={saving} onclick={() => (draft = structuredClone($state.snapshot(saved)))}>Discard</button>
-        <button class="btn primary" disabled={saving || invalid} onclick={save}>{saving ? 'Saving…' : 'Save'}</button>
+      <div class="set-savebar" role="region" aria-label={t('settings.general.unsaved')}>
+        <span>{invalid ? tp('settings.general.fixProblems', Object.keys(errors).length) : t('settings.general.unsaved')}</span>
+        <button class="btn" disabled={saving} onclick={() => (draft = structuredClone($state.snapshot(saved)))}>{t('settings.general.discard')}</button>
+        <button class="btn primary" disabled={saving || invalid} onclick={save}>{saving ? t('settings.general.saving') : t('common.save')}</button>
       </div>
     {/if}
   {/if}

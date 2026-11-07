@@ -2,17 +2,14 @@
   import type { BrowserApi } from '../lib/api';
   import type { GovernorLimits, GovernorProfile, GovernorStatus } from '../lib/api/types-settings';
   import Favicon from '../lib/components/Favicon.svelte';
-  import { governorErrors, governorForm, governorPatch, idleLabel, mbLabel, withProfile, type GovernorForm } from '../lib/settings/forms';
+  import { locale, t } from '../lib/i18n/index.svelte';
+  import { governorAction, governorErrors, governorForm, governorPatch, governorReason, idleLabel, mbLabel, withProfile, type GovernorForm } from '../lib/settings/forms';
   import { isEmptyPatch } from '../lib/settings/notify';
   import Toggle from './Toggle.svelte';
 
   let { api, notify, fail }: { api: BrowserApi; notify: (t: string, e?: boolean) => void; fail: (e: unknown) => void } = $props();
 
-  const PROFILES: { id: GovernorProfile; label: string; help: string }[] = [
-    { id: 'low', label: 'Low', help: '≤ 8 GB RAM: freeze after 2 min, discard after 10 min, 8 live tabs' },
-    { id: 'normal', label: 'Normal', help: 'About 16 GB: freeze after 5 min, discard after 30 min, 20 live tabs' },
-    { id: 'high', label: 'High', help: '≥ 32 GB: freeze after 10 min, discard after 60 min, 40 live tabs' },
-  ];
+  const PROFILES: GovernorProfile[] = ['low', 'normal', 'high'];
 
   let status = $state<GovernorStatus | null>(null);
   let limits = $state<GovernorLimits | null>(null);
@@ -53,7 +50,7 @@
       const r = await api.call('governor.config', patch);
       limits = r.limits;
       form = governorForm(r.limits);
-      notify('Performance settings saved');
+      notify(t('settings.perf.saved'));
       void refresh();
     } catch (err) {
       fail(err);
@@ -68,7 +65,7 @@
       const r = await api.call('governor.config', { reset: true });
       limits = r.limits;
       form = governorForm(r.limits);
-      notify(`Back to the ${r.limits.profile} profile defaults`);
+      notify(t('settings.perf.resetDone', { profile: t(`settings.perf.profile.${r.limits.profile}`) }));
     } catch (err) {
       fail(err);
     } finally {
@@ -82,112 +79,109 @@
     for (const t of status?.tabs ?? []) c[t.state]++;
     return c;
   });
-  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+  const timeFmt = $derived(new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }));
 </script>
 
 <div class="set-page">
   <header>
-    <h2>Performance</h2>
-    <p>
-      Background tabs are frozen (paused, memory kept) and later discarded (unloaded; the address, title and scroll position come
-      back when you open them). The active tab, tabs an agent works in and pages playing audio are never touched.
-    </p>
+    <h2>{t('settings.perf.title')}</h2>
+    <p>{t('settings.perf.intro')}</p>
   </header>
 
   {#if loadError && !status}
-    <p class="lib-error" role="alert">Could not read the tab governor: {loadError}</p>
-    <button class="btn" onclick={() => refresh(true)}>Retry</button>
+    <p class="lib-error" role="alert">{t('settings.perf.loadError', { error: loadError })}</p>
+    <button class="btn" onclick={() => refresh(true)}>{t('settings.hints.retry')}</button>
   {:else if !form || !status}
-    <p class="set-muted">Loading…</p>
+    <p class="set-muted">{t('common.loading')}</p>
   {:else}
     <section class="set-card" aria-labelledby="p-pol">
-      <h3 id="p-pol">Policy</h3>
+      <h3 id="p-pol">{t('settings.perf.policy')}</h3>
       <div class="set-row">
-        <div class="text"><span class="label">Freeze and discard idle tabs</span><span class="help">Off: tabs stay loaded until you close them (agents can still freeze tabs on purpose).</span></div>
-        <div class="ctl"><Toggle label="Freeze and discard idle tabs" checked={form.enabled} onchange={(on) => (form!.enabled = on)} /></div>
+        <div class="text"><span class="label">{t('settings.perf.enabled')}</span><span class="help">{t('settings.perf.enabledHelp')}</span></div>
+        <div class="ctl"><Toggle label={t('settings.perf.enabled')} checked={form.enabled} onchange={(on) => (form!.enabled = on)} /></div>
       </div>
       <div class="set-row">
         <div class="text">
-          <span class="label">Profile</span>
-          <span class="help">{PROFILES.find((p) => p.id === form!.profile)?.help} (picked from your RAM; choosing one fills in its times below)</span>
+          <span class="label">{t('settings.perf.profile')}</span>
+          <span class="help">{t(`settings.perf.profileHelp.${form.profile}`)} {t('settings.perf.profileHint')}</span>
         </div>
         <div class="ctl">
-          <div class="set-seg" role="radiogroup" aria-label="Profile">
-            {#each PROFILES as p (p.id)}
-              <button role="radio" aria-checked={form.profile === p.id} onclick={() => (form = withProfile(form!, p.id))}>{p.label}</button>
+          <div class="set-seg" role="radiogroup" aria-label={t('settings.perf.profile')}>
+            {#each PROFILES as p (p)}
+              <button role="radio" aria-checked={form.profile === p} onclick={() => (form = withProfile(form!, p))}>{t(`settings.perf.profile.${p}`)}</button>
             {/each}
           </div>
         </div>
       </div>
       <div class="set-row">
-        <div class="text"><span class="label">Freeze after</span><span class="help">Minutes in the background. 0 = never freeze.</span></div>
+        <div class="text"><span class="label">{t('settings.perf.freeze')}</span><span class="help">{t('settings.perf.freezeHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="0" max="1440" step="0.5" bind:value={form.freezeMin} disabled={!form.enabled} aria-label="Freeze after, minutes" aria-invalid={!!errors.freezeMin} /> min
+          <input class="lib-input narrow" type="number" min="0" max="1440" step="0.5" bind:value={form.freezeMin} disabled={!form.enabled} aria-label={t('settings.perf.freezeLabel')} aria-invalid={!!errors.freezeMin} /> {t('settings.perf.minShort')}
         </div>
       </div>
       {#if errors.freezeMin}<p class="set-err pad">{errors.freezeMin}</p>{/if}
       <div class="set-row">
-        <div class="text"><span class="label">Discard after</span><span class="help">Minutes in the background. 0 = never discard.</span></div>
+        <div class="text"><span class="label">{t('settings.perf.discard')}</span><span class="help">{t('settings.perf.discardHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="0" max="1440" step="1" bind:value={form.discardMin} disabled={!form.enabled} aria-label="Discard after, minutes" aria-invalid={!!errors.discardMin} /> min
+          <input class="lib-input narrow" type="number" min="0" max="1440" step="1" bind:value={form.discardMin} disabled={!form.enabled} aria-label={t('settings.perf.discardLabel')} aria-invalid={!!errors.discardMin} /> {t('settings.perf.minShort')}
         </div>
       </div>
       {#if errors.discardMin}<p class="set-err pad">{errors.discardMin}</p>{/if}
       <div class="set-row">
-        <div class="text"><span class="label">Most live tabs</span><span class="help">Above this, the longest-idle tabs are discarded first. 0 = no limit.</span></div>
+        <div class="text"><span class="label">{t('settings.perf.maxTabs')}</span><span class="help">{t('settings.perf.maxTabsHelp')}</span></div>
         <div class="ctl">
-          <input class="lib-input narrow" type="number" min="0" max="500" step="1" bind:value={form.maxLiveTabs} disabled={!form.enabled} aria-label="Most live tabs" aria-invalid={!!errors.maxLiveTabs} />
+          <input class="lib-input narrow" type="number" min="0" max="500" step="1" bind:value={form.maxLiveTabs} disabled={!form.enabled} aria-label={t('settings.perf.maxTabs')} aria-invalid={!!errors.maxLiveTabs} />
         </div>
       </div>
       {#if errors.maxLiveTabs}<p class="set-err pad">{errors.maxLiveTabs}</p>{/if}
       {#if hasOverrides}
         <div class="set-actions">
-          <button class="btn" disabled={saving} onclick={resetAll}>Reset to profile defaults</button>
-          <span class="set-muted">Changed: {Object.entries(status.overrides).filter(([, v]) => v !== null && v !== undefined).map(([k]) => k.replace(/_/g, ' ')).join(', ')}</span>
+          <button class="btn" disabled={saving} onclick={resetAll}>{t('settings.perf.reset')}</button>
+          <span class="set-muted">{t('settings.perf.changed')} {Object.entries(status.overrides).filter(([, v]) => v !== null && v !== undefined).map(([k]) => k.replace(/_/g, ' ')).join(', ')}</span>
         </div>
       {/if}
     </section>
 
     <section class="set-card" aria-labelledby="p-mem">
-      <h3 id="p-mem"><span class="grow">Right now</span><span class="set-muted live" aria-hidden="true">updates every 3 s</span></h3>
+      <h3 id="p-mem"><span class="grow">{t('settings.perf.now')}</span><span class="set-muted live" aria-hidden="true">{t('settings.perf.updates')}</span></h3>
       <div class="stats">
-        <div><b>{mbLabel(status.memory.browser_mb)}</b><span>used by the browser</span></div>
+        <div><b>{mbLabel(status.memory.browser_mb)}</b><span>{t('settings.perf.usedByBrowser')}</span></div>
         <div class:warn={status.memory.pressure}>
-          <b>{mbLabel(status.memory.available_mb)}</b><span>free of {mbLabel(status.memory.total_mb)} ({status.memory.free_pct}%){status.memory.pressure ? ' · low memory' : ''}</span>
+          <b>{mbLabel(status.memory.available_mb)}</b><span>{t('settings.perf.freeOf', { total: mbLabel(status.memory.total_mb), pct: status.memory.free_pct })}{status.memory.pressure ? ` · ${t('settings.perf.lowMemory')}` : ''}</span>
         </div>
-        <div><b>{counts.live}</b><span>live tabs{status.limits.max_live_tabs ? ` (limit ${status.limits.max_live_tabs})` : ''}</span></div>
-        <div><b>{counts.frozen} / {counts.discarded}</b><span>frozen / discarded</span></div>
+        <div><b>{counts.live}</b><span>{t('settings.perf.liveTabs')}{status.limits.max_live_tabs ? ` ${t('settings.perf.limit', { n: status.limits.max_live_tabs })}` : ''}</span></div>
+        <div><b>{counts.frozen} / {counts.discarded}</b><span>{t('settings.perf.frozenDiscarded')}</span></div>
       </div>
       <div class="set-table-wrap">
         <table class="set-table">
-          <thead><tr><th>Tab</th><th>State</th><th class="r">Idle</th><th class="r">JS heap</th><th>Left alone because</th></tr></thead>
+          <thead><tr><th>{t('settings.perf.colTab')}</th><th>{t('settings.perf.colState')}</th><th class="r">{t('settings.perf.colIdle')}</th><th class="r">{t('settings.perf.colHeap')}</th><th>{t('settings.perf.colProtected')}</th></tr></thead>
           <tbody>
-            {#each status.tabs as t (t.id)}
+            {#each status.tabs as tab (tab.id)}
               <tr>
                 <td class="tab">
-                  <Favicon url={t.url} />
-                  <span class="t" title={t.url}>{t.title || t.url}</span>
+                  <Favicon url={tab.url} />
+                  <span class="t" title={tab.url}>{tab.title || tab.url}</span>
                 </td>
-                <td><span class="lib-chip state-{t.state}">{t.state}</span></td>
-                <td class="r">{t.idle_secs ? idleLabel(t.idle_secs) : 'active'}</td>
-                <td class="r">{mbLabel(t.js_heap_mb)}</td>
-                <td class="set-muted">{t.protected ?? '—'}</td>
+                <td><span class="lib-chip state-{tab.state}">{t(`settings.perf.state.${tab.state}`)}</span></td>
+                <td class="r">{tab.idle_secs ? idleLabel(tab.idle_secs) : t('settings.perf.active')}</td>
+                <td class="r">{mbLabel(tab.js_heap_mb)}</td>
+                <td class="set-muted">{tab.protected ? governorReason(tab.protected) : '—'}</td>
               </tr>
             {:else}
-              <tr><td colspan="5" class="set-muted">No tabs.</td></tr>
+              <tr><td colspan="5" class="set-muted">{t('settings.perf.noTabs')}</td></tr>
             {/each}
           </tbody>
         </table>
       </div>
       {#if status.decisions.length}
         <div class="dec">
-          <h4>Recent decisions</h4>
+          <h4>{t('settings.perf.decisions')}</h4>
           <ul>
             {#each status.decisions.slice(-6).reverse() as d, i (i)}
               <li>
                 <span class="set-mono">{timeFmt.format(d.ts_ms)}</span>
-                <span class="lib-chip">{d.action}</span>
-                tab {d.tab}: {d.reason}{d.error ? ` — ${d.error}` : ''}
+                <span class="lib-chip">{governorAction(d.action)}</span>
+                {t('settings.perf.decisionTab', { tab: d.tab })} {governorReason(d.reason)}{d.error ? ` — ${d.error}` : ''}
               </li>
             {/each}
           </ul>
@@ -196,10 +190,10 @@
     </section>
 
     {#if dirty}
-      <div class="set-savebar" role="region" aria-label="Unsaved changes">
-        <span>{invalid ? 'Fix the highlighted values to save' : 'Unsaved changes'}</span>
-        <button class="btn" disabled={saving} onclick={() => limits && (form = governorForm(limits))}>Discard</button>
-        <button class="btn primary" disabled={saving || invalid} onclick={save}>{saving ? 'Saving…' : 'Save'}</button>
+      <div class="set-savebar" role="region" aria-label={t('settings.general.unsaved')}>
+        <span>{invalid ? t('settings.general.fixToSave') : t('settings.general.unsaved')}</span>
+        <button class="btn" disabled={saving} onclick={() => limits && (form = governorForm(limits))}>{t('settings.general.discard')}</button>
+        <button class="btn primary" disabled={saving || invalid} onclick={save}>{saving ? t('settings.general.saving') : t('common.save')}</button>
       </div>
     {/if}
   {/if}

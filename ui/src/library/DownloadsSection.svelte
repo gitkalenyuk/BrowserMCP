@@ -3,6 +3,7 @@
   import type { Download } from '../lib/api/types-data';
   import Icon from '../lib/components/Icon.svelte';
   import { fileName, formatBytes, stateLabel } from '../lib/data/format';
+  import { locale, t } from '../lib/i18n/index.svelte';
   import { onReconnect } from '../lib/data/library';
   import { isSafeLinkUrl } from '../lib/safeurl';
   import { hostOf } from '../lib/urls';
@@ -28,13 +29,17 @@
   $effect(() => {
     void refresh();
     // Poll while something is still downloading.
-    const t = setInterval(() => downloads.some((d) => d.state === 'in_progress') && void refresh(), 1500);
+    const timer = setInterval(() => downloads.some((d) => d.state === 'in_progress') && void refresh(), 1500);
     const off = onReconnect(api, () => void refresh());
     return () => {
-      clearInterval(t);
+      clearInterval(timer);
       off();
     };
   });
+
+  const STATES = ['in_progress', 'complete', 'cancelled', 'interrupted'];
+  /** A download's state in the interface language (unknown states as the core names them). */
+  const stateText = (state: string) => (STATES.includes(state) ? t(`library.dl.state.${state}`) : stateLabel(state));
 
   /** Open Explorer with the file selected (the core allows the data and Downloads folders). */
   async function showInFolder(d: Download) {
@@ -47,10 +52,10 @@
 </script>
 
 <header class="head">
-  <h2>Downloads</h2>
+  <h2>{t('library.nav.downloads')}</h2>
   <label class="lib-search">
     <Icon name="search" size={14} />
-    <input class="lib-input" type="search" placeholder="Search downloads" aria-label="Search downloads" bind:value={query} />
+    <input class="lib-input" type="search" placeholder={t('library.dl.search')} aria-label={t('library.dl.search')} bind:value={query} />
   </label>
 </header>
 
@@ -64,9 +69,9 @@
         <span class="sub">
           {#if isSafeLinkUrl(d.url)}<a href={d.url} title={d.url}>{hostOf(d.url)}</a>{:else}{d.url}{/if}
           · {d.state === 'in_progress'
-            ? `${formatBytes(d.received_bytes)} of ${d.total_bytes ? formatBytes(d.total_bytes) : '?'}`
+            ? t('library.dl.progress', { done: formatBytes(d.received_bytes), total: d.total_bytes ? formatBytes(d.total_bytes) : '?' })
             : formatBytes(d.total_bytes ?? d.received_bytes)}
-          · {new Date(d.started).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+          · {new Date(d.started).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' })}
         </span>
         {#if d.state === 'in_progress'}
           <span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct ?? undefined}>
@@ -75,17 +80,17 @@
         {/if}
       </div>
       <span class="lib-chip" class:ok={d.state === 'complete'} class:bad={d.state === 'cancelled' || d.state === 'interrupted'}>
-        {stateLabel(d.state)}
+        {stateText(d.state)}
       </span>
-      <button class="btn" onclick={() => showInFolder(d)} title="Show {d.path} in Explorer" disabled={!d.path}>
-        <Icon name="folder" size={14} /> Show in folder
+      <button class="btn" onclick={() => showInFolder(d)} title={t('library.dl.showHint', { path: d.path })} disabled={!d.path}>
+        <Icon name="folder" size={14} /> {t('library.dl.show')}
       </button>
     </div>
   {:else}
     {#if loaded}
       <div class="lib-empty">
-        <h3>{query.trim() ? 'No downloads match' : 'No downloads yet'}</h3>
-        <p>Files you download appear here.</p>
+        <h3>{query.trim() ? t('library.dl.noMatch') : t('library.dl.none')}</h3>
+        <p>{t('library.dl.noneHelp')}</p>
       </div>
     {/if}
   {/each}

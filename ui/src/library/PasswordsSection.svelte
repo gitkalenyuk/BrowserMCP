@@ -3,6 +3,7 @@
   import type { PasswordEntry } from '../lib/api/types-data';
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import { t } from '../lib/i18n/index.svelte';
   import { editPassword } from '../lib/data/edit';
   import { matchesLogin } from '../lib/data/format';
   import { onReconnect } from '../lib/data/library';
@@ -67,7 +68,7 @@
     try {
       const { entries: found } = await api.call('passwords.list', { origin: e.origin, reveal: true });
       const pw = found.find((x) => x.id === e.id)?.password;
-      if (pw === null || pw === undefined) throw new Error('This login no longer exists.');
+      if (pw === null || pw === undefined) throw new Error(t('library.pw.gone'));
       revealed = { ...revealed, [e.id]: pw };
       clearTimeout(timers.get(e.id));
       timers.set(e.id, setTimeout(() => hide(e.id), REVEAL_MS));
@@ -76,12 +77,12 @@
     }
   }
 
-  async function copy(text: string, what: string) {
+  async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      notify(`${what} copied`);
+      notify(t('library.pw.copied'));
     } catch {
-      fail(new Error('Copying is not available here'));
+      fail(new Error(t('library.pw.noCopy')));
     }
   }
 
@@ -107,17 +108,17 @@
   }
   async function submit() {
     const origin = form.origin.trim();
-    if (!origin) return void (formError = 'Enter the site, e.g. https://github.com');
-    if (!editingEntry && !form.password) return void (formError = 'Enter the password.');
+    if (!origin) return void (formError = t('library.pw.err.site'));
+    if (!editingEntry && !form.password) return void (formError = t('library.pw.err.password'));
     try {
       const next = { origin, username: form.username.trim(), password: form.password, note: form.note.trim() };
       if (editingEntry) {
         hide(editingEntry.id);
         await editPassword(api, editingEntry, next);
-        notify('Password saved');
+        notify(t('library.pw.saved'));
       } else {
         const r = await api.call('passwords.save', { ...next, note: next.note || null });
-        notify(r.created ? 'Password added' : 'Existing login updated');
+        notify(r.created ? t('library.pw.added') : t('library.pw.updated'));
       }
       formOpen = false;
       await refresh();
@@ -135,7 +136,7 @@
     try {
       await api.call('passwords.delete', { id: e.id });
       hide(e.id);
-      notify(`Deleted the login for ${e.origin}`);
+      notify(t('library.pw.deleted', { origin: e.origin }));
       await refresh();
     } catch (err) {
       fail(err);
@@ -144,19 +145,18 @@
 </script>
 
 <header class="head">
-  <h2>Passwords</h2>
+  <h2>{t('library.nav.passwords')}</h2>
   <label class="lib-search">
     <Icon name="search" size={14} />
-    <input class="lib-input" type="search" placeholder="Search by site or username" aria-label="Search passwords" bind:value={query} />
+    <input class="lib-input" type="search" placeholder={t('library.pw.search')} aria-label={t('library.pw.searchLabel')} bind:value={query} />
   </label>
   <div class="spacer"></div>
-  <button class="btn primary" onclick={openAdd}><Icon name="plus" size={14} stroke={2.25} /> Add password</button>
+  <button class="btn primary" onclick={openAdd}><Icon name="plus" size={14} stroke={2.25} /> {t('library.pw.add')}</button>
 </header>
 
 <div class="list">
   <p class="note">
-    <Icon name="info" size={14} /> Saved logins are stored in this browser's data folder without encryption. Agents can read them
-    with the Secret-level passwords commands.
+    <Icon name="info" size={14} /> {t('library.pw.note')}
   </p>
   {#each shown as e (e.id)}
     {@const pw = revealed[e.id]}
@@ -170,21 +170,21 @@
         {/if}
         {#if e.note}<span class="sub">{e.note}</span>{/if}
       </div>
-      <span class="user" title={e.username}>{e.username || '(no username)'}</span>
+      <span class="user" title={e.username}>{e.username || t('library.pw.noUser')}</span>
       <span class="pw" class:shown={pw !== undefined}>
-        {#if pw !== undefined}<code>{pw}</code>{:else}<span aria-label="hidden password">••••••••••</span>{/if}
+        {#if pw !== undefined}<code>{pw}</code>{:else}<span aria-label={t('library.pw.hidden')}>••••••••••</span>{/if}
       </span>
       <div class="actions keep">
         {#if pw !== undefined}
-          <button class="icon-btn" aria-label="Hide password" title="Hide" onclick={() => hide(e.id)}><Icon name="eye-off" size={15} /></button>
-          <button class="icon-btn" aria-label="Copy password" title="Copy password" onclick={() => copy(pw, 'Password')}><Icon name="copy" size={15} /></button>
+          <button class="icon-btn" aria-label={t('library.pw.hide')} title={t('library.pw.hideShort')} onclick={() => hide(e.id)}><Icon name="eye-off" size={15} /></button>
+          <button class="icon-btn" aria-label={t('library.pw.copy')} title={t('library.pw.copy')} onclick={() => copy(pw)}><Icon name="copy" size={15} /></button>
         {:else}
-          <button class="icon-btn" aria-label="Show password for {e.username} at {e.origin}" title="Show password" onclick={() => askReveal(e)}>
+          <button class="icon-btn" aria-label={t('library.pw.showFor', { user: e.username, origin: e.origin })} title={t('library.pw.show')} onclick={() => askReveal(e)}>
             <Icon name="eye" size={15} />
           </button>
         {/if}
-        <button class="icon-btn" aria-label="Edit login for {e.origin}" title="Edit" onclick={() => openEdit(e)}><Icon name="pencil" size={15} /></button>
-        <button class="icon-btn" aria-label="Delete login for {e.origin}" title="Delete" onclick={() => ((toDelete = e), (deleteOpen = true))}>
+        <button class="icon-btn" aria-label={t('library.pw.editFor', { origin: e.origin })} title={t('common.edit')} onclick={() => openEdit(e)}><Icon name="pencil" size={15} /></button>
+        <button class="icon-btn" aria-label={t('library.pw.deleteFor', { origin: e.origin })} title={t('common.delete')} onclick={() => ((toDelete = e), (deleteOpen = true))}>
           <Icon name="trash" size={15} />
         </button>
       </div>
@@ -192,48 +192,48 @@
   {:else}
     {#if loaded}
       <div class="lib-empty">
-        <h3>{query.trim() ? 'No saved logins match' : 'No saved passwords'}</h3>
-        <p>{query.trim() ? 'Search looks at the site, the username and the note.' : 'Add one here, or import the CSV Chrome exports (Import from Chrome).'}</p>
+        <h3>{query.trim() ? t('library.pw.noMatch') : t('library.pw.none')}</h3>
+        <p>{query.trim() ? t('library.pw.noMatchHelp') : t('library.pw.noneHelp')}</p>
       </div>
     {/if}
   {/each}
 </div>
 
-<Dialog bind:open={revealOpen} title="Show password?" onsubmit={reveal}>
+<Dialog bind:open={revealOpen} title={t('library.pw.revealTitle')} onsubmit={reveal}>
   <p>
-    The password for <strong>{toReveal?.username || '(no username)'}</strong> at <strong>{toReveal?.origin}</strong> will be shown on
-    screen for 30 seconds.
+    {t('library.pw.reveal1')} <strong>{toReveal?.username || t('library.pw.noUser')}</strong> {t('library.pw.reveal2')}
+    <strong>{toReveal?.origin}</strong> {t('library.pw.reveal3')}
   </p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (revealOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary">Show password</button>
+    <button type="button" class="btn" onclick={() => (revealOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary">{t('library.pw.show')}</button>
   {/snippet}
 </Dialog>
 
-<Dialog bind:open={formOpen} title={editingEntry ? 'Edit login' : 'Add password'} onsubmit={submit}>
+<Dialog bind:open={formOpen} title={editingEntry ? t('library.pw.edit') : t('library.pw.add')} onsubmit={submit}>
   <label class="lib-field">
-    Site
+    {t('library.pw.site')}
     <!-- svelte-ignore a11y_autofocus -->
     <input class="lib-input mono" bind:value={form.origin} placeholder="https://example.com" spellcheck="false" autofocus={!editingEntry} />
   </label>
   <label class="lib-field">
-    Username
+    {t('library.pw.username')}
     <input class="lib-input" bind:value={form.username} autocomplete="off" spellcheck="false" />
   </label>
   <label class="lib-field">
-    Password
+    {t('library.pw.password')}
     <span class="pw-field">
       <input
         class="lib-input mono"
         type={form.showPw ? 'text' : 'password'}
         bind:value={form.password}
         autocomplete="new-password"
-        placeholder={editingEntry ? 'Leave empty to keep the current password' : ''}
+        placeholder={editingEntry ? t('library.pw.keepCurrent') : ''}
       />
       <button
         type="button"
         class="icon-btn"
-        aria-label={form.showPw ? 'Hide what you typed' : 'Show what you typed'}
+        aria-label={form.showPw ? t('library.pw.hideTyped') : t('library.pw.showTyped')}
         onclick={() => (form.showPw = !form.showPw)}
       >
         <Icon name={form.showPw ? 'eye-off' : 'eye'} size={15} />
@@ -241,21 +241,24 @@
     </span>
   </label>
   <label class="lib-field">
-    Note
+    {t('library.pw.noteField')}
     <input class="lib-input" bind:value={form.note} />
   </label>
   {#if formError}<p class="lib-error">{formError}</p>{/if}
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (formOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary">Save</button>
+    <button type="button" class="btn" onclick={() => (formOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary">{t('common.save')}</button>
   {/snippet}
 </Dialog>
 
-<Dialog bind:open={deleteOpen} title="Delete saved login?" onsubmit={remove}>
-  <p>The login <strong>{toDelete?.username || '(no username)'}</strong> for <strong>{toDelete?.origin}</strong> will be deleted.</p>
+<Dialog bind:open={deleteOpen} title={t('library.pw.deleteTitle')} onsubmit={remove}>
+  <p>
+    {t('library.pw.delete1')} <strong>{toDelete?.username || t('library.pw.noUser')}</strong> {t('library.pw.delete2')}
+    <strong>{toDelete?.origin}</strong> {t('library.pw.delete3')}
+  </p>
   {#snippet actions()}
-    <button type="button" class="btn" onclick={() => (deleteOpen = false)}>Cancel</button>
-    <button type="submit" class="btn primary danger">Delete</button>
+    <button type="button" class="btn" onclick={() => (deleteOpen = false)}>{t('common.cancel')}</button>
+    <button type="submit" class="btn primary danger">{t('common.delete')}</button>
   {/snippet}
 </Dialog>
 
