@@ -1,0 +1,20 @@
+// UI strings: chrome. Conventions: ../index.svelte.ts.
+export default {
+  'chrome.dismiss': 'Dismiss',
+  'chrome.proxy.direct': 'Direct',
+  'chrome.ask.selection': 'About this text from {page}:',
+  'chrome.ask.link': 'About this link on {page}: {text}',
+  'chrome.ask.image': 'About this image on {page}: {text}',
+  'chrome.ask.page': 'About the page {page}:',
+  'chrome.perm.geolocation': 'know your location',
+  'chrome.perm.notifications': 'show notifications',
+  'chrome.perm.camera': 'use your camera',
+  'chrome.perm.microphone': 'use your microphone',
+  'chrome.perm.screen_capture': 'see your screen',
+  'chrome.perm.clipboard': 'see text and images copied to the clipboard',
+  'chrome.perm.midi': 'use MIDI devices',
+  'chrome.perm.local_network': 'reach devices on your local network',
+  'chrome.perm.sensors': 'use motion sensors',
+  'chrome.perm.storage_access': 'use cookies of other sites',
+  'chrome.perm.unknown': 'use a browser feature',
+};

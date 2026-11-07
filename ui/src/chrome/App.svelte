@@ -11,6 +11,7 @@
   import TabSidebar from '../lib/components/TabSidebar.svelte';
   import TabStrip from '../lib/components/TabStrip.svelte';
   import Toolbar from '../lib/components/Toolbar.svelte';
+  import { applyLang, t } from '../lib/i18n/index.svelte';
   import { editorOwnsKey } from '../lib/scripts/logic';
   import { applyTheme, settings } from '../lib/settings.svelte';
   import { provideChrome, type ChromeController } from '../lib/state/chrome.svelte';
@@ -20,12 +21,13 @@
   provideChrome(chrome);
 
   $effect(() => applyTheme(document.documentElement, settings.value));
+  $effect(() => applyLang(document.documentElement));
   $effect(() => {
     document.body.classList.toggle('embedded', chrome.api.kind === 'ws');
   });
   $effect(() => {
-    const t = chrome.active?.title;
-    document.title = t ? `${t} — BrowserMCP` : 'BrowserMCP';
+    const title = chrome.active?.title;
+    document.title = title ? `${title} — BrowserMCP` : 'BrowserMCP';
   });
 
   function onKeydown(e: KeyboardEvent) {
@@ -65,7 +67,7 @@
   {#if chrome.lastError}
     <div class="toast" role="alert">
       {chrome.lastError}
-      <button class="icon-btn" aria-label="Dismiss" onclick={() => (chrome.lastError = null)}><Icon name="x" size={14} /></button>
+      <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (chrome.lastError = null)}><Icon name="x" size={14} /></button>
     </div>
   {/if}
   {#if !chrome.host}

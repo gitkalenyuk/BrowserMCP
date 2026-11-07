@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { load, save } from '../../storage';
   import { settings } from '../../settings.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -6,11 +7,9 @@
   import XTermView from './XTermView.svelte';
 
   const terms = useChrome().terms;
-  const SHELLS = [
-    { id: 'pwsh', name: 'PowerShell' },
-    { id: 'cmd', name: 'Command Prompt' },
-    { id: 'bash', name: 'Bash' },
-  ];
+  // Shell names: `term.shell.<id>` (Windows calls cmd "Command Prompt" / "Командний рядок").
+  const SHELLS = ['pwsh', 'cmd', 'bash'];
+  const shellName = (id: string) => (SHELLS.includes(id) ? t(`term.shell.${id}`) : id);
   let shell = $state(load('term.shell', 'pwsh'));
   let starting = $state(false);
   let ready = $state(false);
@@ -39,33 +38,33 @@
 </script>
 
 <div class="term" class:dark={settings.effectiveTheme === 'dark'}>
-  <div class="tabs" role="tablist" aria-label="Terminals">
-    {#each terms.tabs as t (t.id)}
-      <div class="tab" class:active={terms.activeId === t.id} class:exited={t.exited}>
+  <div class="tabs" role="tablist" aria-label={t('term.list')}>
+    {#each terms.tabs as tab (tab.id)}
+      <div class="tab" class:active={terms.activeId === tab.id} class:exited={tab.exited}>
         <button
           class="pick"
           role="tab"
-          aria-selected={terms.activeId === t.id}
-          title="{t.shell} · {t.id}{t.exited ? ` · exited${t.exitCode === null ? '' : ` (${t.exitCode})`}` : ''}"
-          onclick={() => (terms.activeId = t.id)}
+          aria-selected={terms.activeId === tab.id}
+          title="{tab.shell} · {tab.id}{tab.exited ? ` · ${tab.exitCode === null ? t('term.exited') : t('term.exitedCode', { code: tab.exitCode })}` : ''}"
+          onclick={() => (terms.activeId = tab.id)}
         >
           <Icon name="terminal" size={12} stroke={2} />
-          <span>{t.label}</span>
+          <span>{tab.label}</span>
         </button>
-        <button class="x" aria-label="Close {t.label} terminal" title={t.exited ? 'Remove' : 'Close (kills the shell)'} onclick={() => terms.close(t.id)}>
+        <button class="x" aria-label={t('term.closeLabel', { name: tab.label })} title={tab.exited ? t('term.remove') : t('term.closeHint')} onclick={() => terms.close(tab.id)}>
           <Icon name="x" size={11} stroke={2.25} />
         </button>
       </div>
     {/each}
     <div class="new">
-      <button class="icon-btn add" aria-label="New terminal" title="New {SHELLS.find((s) => s.id === shell)?.name ?? shell} terminal" disabled={starting} onclick={() => open()}>
+      <button class="icon-btn add" aria-label={t('term.new')} title={t('term.newHint', { shell: shellName(shell) })} disabled={starting} onclick={() => open()}>
         <Icon name="plus" size={14} stroke={2} />
       </button>
-      <label class="select" title="Shell for new terminals">
-        <span class="sr-only">Shell</span>
+      <label class="select" title={t('term.shellHint')}>
+        <span class="sr-only">{t('term.shell')}</span>
         <select bind:value={shell} onchange={() => save('term.shell', shell)}>
-          {#each SHELLS as s (s.id)}
-            <option value={s.id}>{s.name}{terms.unavailable.includes(s.id) ? ' (not found)' : ''}</option>
+          {#each SHELLS as s (s)}
+            <option value={s}>{shellName(s)}{terms.unavailable.includes(s) ? ` (${t('term.notFound')})` : ''}</option>
           {/each}
         </select>
         <Icon name="chevron-down" size={11} stroke={2.25} />
@@ -74,16 +73,16 @@
   </div>
 
   <div class="screens">
-    {#each terms.tabs as t (t.id)}
-      <XTermView id={t.id} store={terms} active={terms.activeId === t.id} />
+    {#each terms.tabs as tab (tab.id)}
+      <XTermView id={tab.id} store={terms} active={terms.activeId === tab.id} />
     {/each}
     {#if ready && terms.tabs.length === 0}
       <div class="empty">
         <Icon name="terminal" size={20} />
-        <p>No terminal open. Start a shell — it runs in a real PTY on this computer.</p>
+        <p>{t('term.empty')}</p>
         <div class="choices">
-          {#each SHELLS as s (s.id)}
-            <button class="btn" disabled={starting} onclick={() => open(s.id)}>{s.name}</button>
+          {#each SHELLS as s (s)}
+            <button class="btn" disabled={starting} onclick={() => open(s)}>{shellName(s)}</button>
           {/each}
         </div>
       </div>
@@ -93,7 +92,7 @@
   {#if terms.error}
     <div class="error" role="alert">
       <span>{terms.error}</span>
-      <button class="icon-btn" aria-label="Dismiss" onclick={() => (terms.error = null)}><Icon name="x" size={12} /></button>
+      <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (terms.error = null)}><Icon name="x" size={12} /></button>
     </div>
   {/if}
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp } from '../../i18n/index.svelte';
   import type { HealMode } from '../../api/types-settings';
   import { dataFromPath, parseRows, upsertRun, type RunData } from '../../runs/logic';
   import { runsStore } from '../../runs/store.svelte';
@@ -34,13 +35,13 @@
       if (source === 'file') {
         if (!path.trim()) return null;
         const d = dataFromPath(path);
-        const kind = d.csv_path ? 'CSV' : d.json_path ? 'JSON' : 'Excel (first sheet)';
-        return { ok: true, data: d, summary: `${kind}, read by the core` };
+        const kind = d.csv_path ? 'CSV' : d.json_path ? 'JSON' : t('runs.form.excel');
+        return { ok: true, data: d, summary: t('runs.form.readByCore', { kind }) };
       }
       if (!pasted.trim()) return null;
       const rows = parseRows(pasted);
       const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-      return { ok: true, data: { rows }, summary: `${rows.length} rows · columns ${cols.join(', ')}` };
+      return { ok: true, data: { rows }, summary: `${tp('runs.form.rows', rows.length)} · ${t('runs.form.columns', { cols: cols.join(', ') })}` };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }
@@ -49,11 +50,11 @@
   async function start(e: SubmitEvent) {
     e.preventDefault();
     if (!data || !data.ok) {
-      error = data && !data.ok ? data.error : source === 'file' ? 'Enter a data file path' : 'Paste some rows';
+      error = data && !data.ok ? data.error : source === 'file' ? t('runs.form.needFile') : t('runs.form.needRows');
       return;
     }
     if (!script) {
-      error = 'Pick a script (save one from the Recording panel first)';
+      error = t('runs.form.needScript');
       return;
     }
     busy = true;
@@ -80,57 +81,57 @@
 
 <form class="rr-section rr-form new" onsubmit={start}>
   <label class="rr-field">
-    Script
+    {t('record.detail.script')}
     <select bind:value={script} disabled={store.scripts.length === 0}>
-      {#if store.scripts.length === 0}<option value="">No saved scripts</option>{/if}
+      {#if store.scripts.length === 0}<option value="">{t('runs.form.noScripts')}</option>{/if}
       {#each store.scripts as s (s.name)}<option value={s.name}>{s.name}</option>{/each}
     </select>
   </label>
 
   <div class="rr-field">
-    Data
-    <div class="rr-chips" role="group" aria-label="Data source">
-      <button type="button" class="rr-chip" aria-pressed={source === 'file'} onclick={() => (source = 'file')}>File</button>
-      <button type="button" class="rr-chip" aria-pressed={source === 'paste'} onclick={() => (source = 'paste')}>Paste rows</button>
+    {t('runs.form.data')}
+    <div class="rr-chips" role="group" aria-label={t('runs.form.source')}>
+      <button type="button" class="rr-chip" aria-pressed={source === 'file'} onclick={() => (source = 'file')}>{t('runs.form.file')}</button>
+      <button type="button" class="rr-chip" aria-pressed={source === 'paste'} onclick={() => (source = 'paste')}>{t('runs.form.paste')}</button>
     </div>
   </div>
   {#if source === 'file'}
     <label class="rr-field">
-      <span class="sr-only">Data file path</span>
+      <span class="sr-only">{t('runs.form.filePath')}</span>
       <input class="mono" bind:value={path} placeholder="C:\data\leads.csv (.csv, .json, .xlsx)" spellcheck="false" aria-invalid={data?.ok === false} />
     </label>
   {:else}
     <label class="rr-field">
-      <span class="sr-only">Rows</span>
-      <textarea bind:value={pasted} rows="5" spellcheck="false" placeholder={'email,name\nann@example.test,Ann\n\nor [{"email": "ann@example.test"}]'}></textarea>
+      <span class="sr-only">{t('runs.form.rowsLabel')}</span>
+      <textarea bind:value={pasted} rows="5" spellcheck="false" placeholder={t('runs.form.pastePlaceholder')}></textarea>
     </label>
   {/if}
   {#if data}
     <p class="rr-hint" class:bad={!data.ok}>{data.ok ? data.summary : data.error}</p>
   {:else}
-    <p class="rr-hint">Each column becomes <span class="rr-mono">inputs.&lt;column&gt;</span> for one run of the script.</p>
+    <p class="rr-hint">{t('runs.form.columnsHintBefore')} <span class="rr-mono">inputs.&lt;column&gt;</span> {t('runs.form.columnsHintAfter')}</p>
   {/if}
 
   <div class="rr-row nums">
-    <label class="rr-field">Parallel <input type="number" min="1" max="32" bind:value={parallel} /></label>
-    <label class="rr-field">Retries <input type="number" min="0" max="10" bind:value={retries} /></label>
-    <label class="rr-field">Timeout, s <input type="number" min="1" max="86400" bind:value={timeout} /></label>
+    <label class="rr-field">{t('runs.form.parallel')} <input type="number" min="1" max="32" bind:value={parallel} /></label>
+    <label class="rr-field">{t('runs.form.retries')} <input type="number" min="0" max="10" bind:value={retries} /></label>
+    <label class="rr-field">{t('runs.form.timeout')} <input type="number" min="1" max="86400" bind:value={timeout} /></label>
   </div>
   <div class="rr-row">
-    <label class="rr-field heal-mode" title="What happens when a row breaks on a selector error (element not found, not clickable, …)">
-      On selector errors
+    <label class="rr-field heal-mode" title={t('runs.form.healHint')}>
+      {t('runs.form.heal')}
       <select bind:value={heal}>
-        <option value="ask">Pause, AI proposes a patch, I accept it</option>
-        <option value="auto">AI patches by itself when confident</option>
-        <option value="off">Just fail the row</option>
+        <option value="ask">{t('runs.form.heal.ask')}</option>
+        <option value="auto">{t('runs.form.heal.auto')}</option>
+        <option value="off">{t('runs.form.heal.off')}</option>
       </select>
     </label>
-    <label class="rr-check"><input type="checkbox" bind:checked={stopOnError} /> Stop at the first failure</label>
+    <label class="rr-check"><input type="checkbox" bind:checked={stopOnError} /> {t('runs.form.stopOnError')}</label>
   </div>
   {#if error}<p class="rr-hint bad" role="alert">{error}</p>{/if}
   <div class="rr-row">
-    <button class="btn primary" type="submit" disabled={busy}><Icon name="play" size={12} /> {busy ? 'Starting…' : 'Start run'}</button>
-    <span class="rr-hint">Parallel is capped by the core (CPUs / 2, free RAM / 400 MB).</span>
+    <button class="btn primary" type="submit" disabled={busy}><Icon name="play" size={12} /> {busy ? t('runs.form.starting') : t('runs.form.start')}</button>
+    <span class="rr-hint">{t('runs.form.cap')}</span>
   </div>
 </form>
 

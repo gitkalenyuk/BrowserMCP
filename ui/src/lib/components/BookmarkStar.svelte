@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { untrack } from 'svelte';
   import { chromeBookmarks, isStarrable } from '../data/chrome-bookmarks.svelte';
   import { useChrome } from '../state/chrome.svelte';
@@ -22,8 +23,8 @@
     class="star icon-btn"
     class:on={marked}
     aria-pressed={marked}
-    aria-label={marked ? 'Remove bookmark' : 'Bookmark this page'}
-    title={(marked ? 'Remove bookmark' : 'Bookmark this page') + (key ? ` (${key})` : '')}
+    aria-label={marked ? t('components.bookmark.remove') : t('components.bookmark.add')}
+    title={(marked ? t('components.bookmark.remove') : t('components.bookmark.add')) + (key ? ` (${key})` : '')}
     disabled={store.busy}
     onmousedown={(e) => e.preventDefault()}
     onclick={() => store.toggle(chrome.active?.url, chrome.active?.title)}

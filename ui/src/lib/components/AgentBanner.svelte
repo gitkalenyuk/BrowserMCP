@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import { lockState } from '../state/tabs';
   import Icon from './Icon.svelte';
@@ -13,29 +14,29 @@
 {#if tab && agent && state === 'handoff'}
   <div class="banner handoff" role="alert" style:--agent="var(--g-{agent.color})">
     <Icon name="hand" size={14} stroke={2} />
-    <span class="who">{agent.name} needs you</span>
-    <span class="task">{tab.lock?.reason ?? 'Finish this step in the page.'}</span>
-    <span class="note">Click Done when you are finished; {agent.name} continues.</span>
-    <button class="btn takeover" onclick={() => chrome.finishHandoff(tab.id)}>Done</button>
+    <span class="who">{t('components.agent.needsYou', { name: agent.name })}</span>
+    <span class="task">{tab.lock?.reason ?? t('components.agent.finishStep')}</span>
+    <span class="note">{t('components.agent.clickDone', { name: agent.name })}</span>
+    <button class="btn takeover" onclick={() => chrome.finishHandoff(tab.id)}>{t('components.agent.done')}</button>
   </div>
 {:else if tab && agent && state === 'active'}
   <div class="banner" role="status" style:--agent="var(--g-{agent.color})">
     <span class="live" aria-hidden="true"></span>
-    <span class="who">{agent.name} is controlling this tab</span>
+    <span class="who">{t('components.agent.controlling', { name: agent.name })}</span>
     {#if agent.task}
       <span class="task">{agent.task}</span>
     {/if}
-    <span class="note">Other agents are locked out. Take over to pause it.</span>
+    <span class="note">{t('components.agent.lockedOut')}</span>
     <button class="btn takeover" onclick={() => chrome.takeOver(tab.id)}>
       <Icon name="hand" size={14} stroke={2} />
-      Take over
+      {t('components.agent.takeOver')}
     </button>
   </div>
 {:else if tab && agent && state === 'paused'}
   <div class="banner paused" role="status" style:--agent="var(--g-{agent.color})">
-    <span class="who">You took over from {agent.name}</span>
-    <span class="note">{agent.name} cannot change this tab until you give it back.</span>
-    <button class="btn takeover" onclick={() => chrome.giveBack(tab.id)}>Give back</button>
+    <span class="who">{t('components.agent.tookOver', { name: agent.name })}</span>
+    <span class="note">{t('components.agent.cannotChange', { name: agent.name })}</span>
+    <button class="btn takeover" onclick={() => chrome.giveBack(tab.id)}>{t('components.agent.giveBack')}</button>
   </div>
 {/if}
 

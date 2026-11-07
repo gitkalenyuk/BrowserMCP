@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { diffStats, parseDiff } from '../../runs/heal';
 
   let { diff, maxHeight = 260 }: { diff: string; maxHeight?: number } = $props();
@@ -7,13 +8,13 @@
   const stats = $derived(diffStats(lines));
 </script>
 
-<div class="diff" role="region" aria-label="Patch diff, {stats.added} lines added, {stats.removed} removed">
+<div class="diff" role="region" aria-label={t('panels.diff.label', { added: stats.added, removed: stats.removed })}>
   <div class="head">
     <span class="add">+{stats.added}</span>
     <span class="del">−{stats.removed}</span>
   </div>
   <pre style:max-height="{maxHeight}px">{#each lines as l, i (i)}<span class="l {l.kind}"><i>{l.old ?? ''}</i><i>{l.new ?? ''}</i><b aria-hidden="true">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</b>{l.text}
-</span>{:else}<span class="l meta"><i></i><i></i><b></b>(empty diff)
+</span>{:else}<span class="l meta"><i></i><i></i><b></b>{t('panels.diff.empty')}
 </span>{/each}</pre>
 </div>
 

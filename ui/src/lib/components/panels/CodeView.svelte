@@ -1,6 +1,8 @@
 <script lang="ts">
   // Read-only TypeScript view with line numbers; Prism is loaded on first use.
-  let { code, label = 'Code', maxHeight = 320 }: { code: string; label?: string; maxHeight?: number } = $props();
+  import { t } from '../../i18n/index.svelte';
+
+  let { code, label, maxHeight = 320 }: { code: string; label?: string; maxHeight?: number } = $props();
 
   let html = $state<string | null>(null);
   const lines = $derived(code.split('\n').length - (code.endsWith('\n') ? 1 : 0));
@@ -32,8 +34,8 @@
 </script>
 
 <div class="code-view" style:max-height="{maxHeight}px">
-  <button class="copy" onclick={copy} title="Copy to the clipboard">{copied ? 'Copied' : 'Copy'}</button>
-  <div class="scroll" role="region" aria-label={label} tabindex="-1">
+  <button class="copy" onclick={copy} title={t('panels.code.copyHint')}>{copied ? t('common.copied') : t('common.copy')}</button>
+  <div class="scroll" role="region" aria-label={label ?? t('panels.code.label')} tabindex="-1">
     <div class="gutter" aria-hidden="true">
       {#each { length: lines } as _, i (i)}<span>{i + 1}</span>{/each}
     </div>

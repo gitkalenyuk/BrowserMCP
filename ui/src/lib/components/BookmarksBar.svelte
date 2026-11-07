@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { untrack } from 'svelte';
   import { OTHER_BOOKMARKS } from '../api/types-data';
   import { chromeBookmarks, type BarItem } from '../data/chrome-bookmarks.svelte';
@@ -27,12 +28,12 @@
   }
 </script>
 
-<div class="bar" role="toolbar" aria-label="Bookmarks bar">
+<div class="bar" role="toolbar" aria-label={t('components.bookmarksBar')}>
   <div class="items">
     {#each items as b (b.id)}
       <button
         class="item"
-        title={b.kind === 'url' ? `${b.title}\n${b.url}` : `${b.title} — open in the library`}
+        title={b.kind === 'url' ? `${b.title}\n${b.url}` : t('components.bookmarksBar.folderHint', { title: b.title })}
         onclick={(e) => open(e, b)}
         onauxclick={(e) => e.button === 1 && open(e, b)}
       >
@@ -41,18 +42,18 @@
         {:else}
           <Favicon url={b.url} size={14} />
         {/if}
-        <span>{b.title || (b.kind === 'url' ? b.url : 'Folder')}</span>
+        <span>{b.title || (b.kind === 'url' ? b.url : t('components.bookmarksBar.folder'))}</span>
       </button>
     {:else}
       <span class="hint">
-        Star <Icon name="star" size={12} /> a page to keep it here.
-        <button class="link" onclick={() => openLibrary(chrome, 'import')}>Import from Chrome</button>
+        {t('components.bookmarksBar.hintBefore')} <Icon name="star" size={12} /> {t('components.bookmarksBar.hintAfter')}
+        <button class="link" onclick={() => openLibrary(chrome, 'import')}>{t('components.bookmarksBar.import')}</button>
       </span>
     {/each}
   </div>
-  <button class="item other" title="Other bookmarks" onclick={() => openLibrary(chrome, 'bookmarks', OTHER_BOOKMARKS)}>
+  <button class="item other" title={t('components.bookmarksBar.other')} onclick={() => openLibrary(chrome, 'bookmarks', OTHER_BOOKMARKS)}>
     <Icon name="folder" size={14} />
-    <span>Other bookmarks</span>
+    <span>{t('components.bookmarksBar.other')}</span>
   </button>
 </div>
 

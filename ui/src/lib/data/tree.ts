@@ -5,6 +5,7 @@
 // the folders level by level, `buildTree` turns the listings into nested nodes (pure, tested).
 
 import type { BrowserApi } from '../api/client';
+import { t } from '../i18n/index.svelte';
 import {
   BOOKMARKS_BAR,
   OTHER_BOOKMARKS,
@@ -14,9 +15,14 @@ import {
 } from '../api/types-data';
 
 export const ROOT_IDS = [BOOKMARKS_BAR, OTHER_BOOKMARKS] as const;
+/** Titles of the root folders, in the UI language (getters). */
 export const ROOT_TITLES: Record<number, string> = {
-  [BOOKMARKS_BAR]: 'Bookmarks bar',
-  [OTHER_BOOKMARKS]: 'Other bookmarks',
+  get [BOOKMARKS_BAR]() {
+    return t('components.bookmarksBar');
+  },
+  get [OTHER_BOOKMARKS]() {
+    return t('components.bookmarksBar.other');
+  },
 };
 
 export interface BookmarkNode {
@@ -73,7 +79,7 @@ export function buildTree(
     );
     return node;
   };
-  return roots.map((id, i) => folder(id, rootTitles[id] ?? `Folder ${id}`, null, i));
+  return roots.map((id, i) => folder(id, rootTitles[id] ?? t('components.folderN', { id }), null, i));
 }
 
 /** Fetch every folder below the roots (one `data.bookmarks` per folder, a level at a time). */

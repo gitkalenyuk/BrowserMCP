@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PluginPaletteEntry, TabInfo, Workspace } from '../api/types';
   import { COMMANDS, type CommandMeta } from '../commands';
+  import { t } from '../i18n/index.svelte';
   import { fuzzyFilter, highlight, type FuzzyMatch } from '../fuzzy';
   import { chordLabels } from '../keymap';
   import { useChrome } from '../state/chrome.svelte';
@@ -47,7 +48,7 @@
     })),
     ...chrome.workspaces
       .filter((w) => w.id !== chrome.workspaceId)
-      .map((ws) => ({ kind: 'workspace' as const, key: `ws-${ws.id}`, text: `Switch to workspace ${ws.name}`, ws })),
+      .map((ws) => ({ kind: 'workspace' as const, key: `ws-${ws.id}`, text: t('palette.switchWorkspace', { name: ws.name }), ws })),
   ]);
 
   const results = $derived.by<{ item: Item; match: FuzzyMatch }[]>(() => {
@@ -89,7 +90,7 @@
   async function runPlugin(entry: PluginPaletteEntry) {
     try {
       const { delivered } = await chrome.api.call('plugins.palette_run', { plugin: entry.plugin, id: entry.id });
-      if (!delivered) chrome.lastError = `Plugin ${entry.plugin} is not running`;
+      if (!delivered) chrome.lastError = t('palette.pluginNotRunning', { plugin: entry.plugin });
     } catch (err) {
       chrome.lastError = (err as Error).message;
     }
@@ -143,7 +144,6 @@
     }
   }
 
-  const KIND_LABEL = { tab: 'Tab', command: 'Command', workspace: 'Workspace', plugin: 'Plugin' } as const;
 </script>
 
 {#if chrome.paletteOpen}
@@ -155,7 +155,7 @@
     class:standalone
     role="dialog"
     aria-modal="true"
-    aria-label="Command palette"
+    aria-label={t('palette.title')}
   >
     <div class="search">
       <Icon name="search" size={16} stroke={2} />
@@ -163,8 +163,8 @@
         bind:this={input}
         bind:value={query}
         onkeydown={onKey}
-        placeholder="Search commands and open tabs"
-        aria-label="Search commands and tabs"
+        placeholder={t('palette.placeholder')}
+        aria-label={t('palette.searchLabel')}
         role="combobox"
         aria-expanded="true"
         aria-controls="palette-list"
@@ -216,16 +216,16 @@
               {#each chordLabels(chrome.keymap[item.cmd.id][0]) as k (k)}<kbd>{k}</kbd>{/each}
             </span>
           {:else}
-            <span class="kind">{KIND_LABEL[item.kind]}</span>
+            <span class="kind">{t(`palette.kind.${item.kind}`)}</span>
           {/if}
         </div>
       {:else}
-        <div class="none">No commands or tabs match “{query}”.</div>
+        <div class="none">{t('palette.none', { query })}</div>
       {/each}
     </div>
     <div class="foot">
-      <span><kbd>↑</kbd><kbd>↓</kbd> to move</span>
-      <span><kbd>Enter</kbd> to run</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd> {t('palette.hintMove')}</span>
+      <span><kbd>Enter</kbd> {t('palette.hintRun')}</span>
     </div>
   </div>
 {/if}

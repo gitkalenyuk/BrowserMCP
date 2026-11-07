@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { settings, type PanelId } from '../settings.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import type { CommandId } from '../keymap';
@@ -13,36 +14,36 @@
     return k ? `${label} (${k})` : label;
   };
 
-  const PANELS: { id: PanelId; icon: IconName; label: string }[] = [
-    { id: 'traffic', icon: 'traffic', label: 'Traffic' },
-    { id: 'recording', icon: 'record', label: 'Recording' },
-    { id: 'ai', icon: 'sparkles', label: 'AI' },
-    { id: 'terminal', icon: 'terminal', label: 'Terminal' },
-    { id: 'scripts', icon: 'code', label: 'Scripts' },
-    { id: 'runs', icon: 'runs', label: 'Runs' },
+  const PANELS: { id: PanelId; icon: IconName }[] = [
+    { id: 'traffic', icon: 'traffic' },
+    { id: 'recording', icon: 'record' },
+    { id: 'ai', icon: 'sparkles' },
+    { id: 'terminal', icon: 'terminal' },
+    { id: 'scripts', icon: 'code' },
+    { id: 'runs', icon: 'runs' },
   ];
 </script>
 
 <div class="toolbar">
   <div class="nav">
-    <button class="icon-btn" aria-label="Back" title="Back (Alt+Left)" disabled={!tab?.canGoBack} onclick={chrome.back}>
+    <button class="icon-btn" aria-label={t('components.back')} title="{t('components.back')} (Alt+Left)" disabled={!tab?.canGoBack} onclick={chrome.back}>
       <Icon name="arrow-left" size={17} />
     </button>
     <button
       class="icon-btn"
-      aria-label="Forward"
-      title="Forward (Alt+Right)"
+      aria-label={t('components.forward')}
+      title="{t('components.forward')} (Alt+Right)"
       disabled={!tab?.canGoForward}
       onclick={chrome.forward}
     >
       <Icon name="arrow-right" size={17} />
     </button>
     {#if tab?.loading}
-      <button class="icon-btn" aria-label="Stop loading" title="Stop loading" onclick={chrome.stopLoading}>
+      <button class="icon-btn" aria-label={t('components.stop')} title={t('components.stop')} onclick={chrome.stopLoading}>
         <Icon name="x" size={17} />
       </button>
     {:else}
-      <button class="icon-btn" aria-label="Reload" title="Reload (Ctrl+R)" disabled={!tab} onclick={chrome.reload}>
+      <button class="icon-btn" aria-label={t('components.reload')} title="{t('components.reload')} (Ctrl+R)" disabled={!tab} onclick={chrome.reload}>
         <Icon name="reload" size={16} />
       </button>
     {/if}
@@ -50,12 +51,12 @@
 
   <Omnibox />
 
-  <div class="panels" role="group" aria-label="Side panels">
+  <div class="panels" role="group" aria-label={t('components.sidePanels')}>
     {#each PANELS as p (p.id)}
       <button
         class="icon-btn"
-        aria-label="{p.label} panel"
-        title={keyHint(p.label, `panel.${p.id}`)}
+        aria-label={t('components.panelLabel', { name: t(`components.panel.${p.id}`) })}
+        title={keyHint(t(`components.panel.${p.id}`), `panel.${p.id}`)}
         aria-pressed={settings.value.panel === p.id}
         onclick={() => settings.togglePanel(p.id)}
       >
@@ -64,20 +65,20 @@
     {/each}
   </div>
 
-  <button class="icon-btn" aria-label="Library" title={keyHint('Bookmarks, history and passwords', 'library.bookmarks')} onclick={() => chrome.run('library.bookmarks')}>
+  <button class="icon-btn" aria-label={t('components.library')} title={keyHint(t('components.libraryHint'), 'library.bookmarks')} onclick={() => chrome.run('library.bookmarks')}>
     <Icon name="folder" size={16} />
   </button>
   <span class="divider" aria-hidden="true"></span>
 
   <button
     class="icon-btn"
-    aria-label={settings.value.verticalTabs ? 'Use horizontal tabs' : 'Use vertical tabs'}
-    title={settings.value.verticalTabs ? 'Horizontal tabs (Ctrl+Shift+E)' : 'Vertical tabs (Ctrl+Shift+E)'}
+    aria-label={settings.value.verticalTabs ? t('components.useHorizontalTabs') : t('components.useVerticalTabs')}
+    title="{settings.value.verticalTabs ? t('components.horizontalTabs') : t('components.verticalTabs')} (Ctrl+Shift+E)"
     onclick={() => chrome.run('ui.toggleVerticalTabs')}
   >
     <Icon name={settings.value.verticalTabs ? 'tabs-horizontal' : 'tabs-vertical'} size={16} />
   </button>
-  <button class="icon-btn" aria-label="Command palette" title="Command palette (Ctrl+K)" onclick={() => chrome.run('palette.open')}>
+  <button class="icon-btn" aria-label={t('palette.title')} title="{t('palette.title')} (Ctrl+K)" onclick={() => chrome.run('palette.open')}>
     <Icon name="command" size={15} />
   </button>
   <SettingsMenu />

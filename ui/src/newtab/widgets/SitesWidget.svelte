@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../lib/i18n/index.svelte';
   import type { Bookmark, BrowserApi } from '../../lib/api';
   import Favicon from '../../lib/components/Favicon.svelte';
   import { isSafeLinkUrl } from '../../lib/safeurl';
@@ -21,7 +22,7 @@
 </script>
 
 <section aria-labelledby="sites-title">
-  <h2 id="sites-title">Top sites</h2>
+  <h2 id="sites-title">{t('newtab.sites.top')}</h2>
   <div class="grid">
     {#each top as s (s.url)}
       <a class="site" href={s.url} onclick={(e) => go(e, s.url)}>
@@ -32,7 +33,7 @@
   </div>
 
   {#if marks.length}
-    <h2 class="sub">Bookmarks</h2>
+    <h2 class="sub">{t('newtab.sites.bookmarks')}</h2>
     <div class="marks">
       {#each marks as b (b.url)}
         <a class="mark" href={b.url} onclick={(e) => go(e, b.url)}>

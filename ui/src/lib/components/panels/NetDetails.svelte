@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../../i18n/index.svelte';
   import { parseNetGet, parseWsFrames, type NetBody, type NetDetail, type NetRow, type WsFrame } from '../../net/parse';
   import { useChrome } from '../../state/chrome.svelte';
   import Icon from '../Icon.svelte';
@@ -55,10 +56,10 @@
 
   /** Pretty-print JSON bodies; anything else as is. */
   function pretty(text: string): string {
-    const t = text.trim();
-    if (!(t.startsWith('{') || t.startsWith('['))) return text;
+    const s = text.trim();
+    if (!(s.startsWith('{') || s.startsWith('['))) return text;
     try {
-      return JSON.stringify(JSON.parse(t), null, 2);
+      return JSON.stringify(JSON.parse(s), null, 2);
     } catch {
       return text;
     }
@@ -73,19 +74,19 @@
   }
 </script>
 
-<section class="details" aria-label="Request #{row.id}">
+<section class="details" aria-label={t('net.detail.label', { id: row.id })}>
   <div class="head">
     <div class="tabs" role="tablist">
-      <button role="tab" aria-selected={pane === 'headers'} onclick={() => (pane = 'headers')}>Headers</button>
+      <button role="tab" aria-selected={pane === 'headers'} onclick={() => (pane = 'headers')}>{t('net.detail.headers')}</button>
       {#if isWs}
-        <button role="tab" aria-selected={pane === 'frames'} onclick={() => (pane = 'frames')}>Frames{row.frames ? ` (${row.frames})` : ''}</button>
+        <button role="tab" aria-selected={pane === 'frames'} onclick={() => (pane = 'frames')}>{t('net.detail.frames')}{row.frames ? ` (${row.frames})` : ''}</button>
       {:else}
-        <button role="tab" aria-selected={pane === 'request'} onclick={() => (pane = 'request')}>Request</button>
-        <button role="tab" aria-selected={pane === 'response'} onclick={() => (pane = 'response')}>Response</button>
+        <button role="tab" aria-selected={pane === 'request'} onclick={() => (pane = 'request')}>{t('net.stage.request')}</button>
+        <button role="tab" aria-selected={pane === 'response'} onclick={() => (pane = 'response')}>{t('net.stage.response')}</button>
       {/if}
     </div>
     <span class="id">#{row.id}</span>
-    <button class="icon-btn" aria-label="Close details" title="Close" onclick={onclose}><Icon name="x" size={13} /></button>
+    <button class="icon-btn" aria-label={t('net.detail.close')} title={t('common.close')} onclick={onclose}><Icon name="x" size={13} /></button>
   </div>
   <div class="content">
     {#if error}
@@ -95,8 +96,8 @@
         <div class="url">{detail.title.replace(/^#\d+ /, '')}</div>
         <div class="facts">{detail.facts}</div>
         {#each detail.extra as line (line)}<div class="facts">{line}</div>{/each}
-        {#each [['Request headers', detail.reqHeaders], ['Response headers', detail.resHeaders]] as const as [title, headers] (title)}
-          <h4>{title} <span>{headers?.length ?? 0}</span></h4>
+        {#each [['req', detail.reqHeaders], ['res', detail.resHeaders]] as const as [side, headers] (side)}
+          <h4>{t(`net.detail.headers.${side}`)} <span>{headers?.length ?? 0}</span></h4>
           {#if headers?.length}
             <dl>
               {#each headers as [n, v], i (i)}
@@ -105,35 +106,35 @@
               {/each}
             </dl>
           {:else}
-            <p class="muted">None</p>
+            <p class="muted">{t('net.detail.none')}</p>
           {/if}
         {/each}
       {:else if loading}
-        <p class="muted">Loading…</p>
+        <p class="muted">{t('common.loading')}</p>
       {/if}
     {:else if pane === 'request' || pane === 'response'}
       {@const body = pane === 'request' ? reqBody : resBody}
       {#if body}
         {#if body.info === null}
-          <p class="muted">{body.text === 'none' ? 'No body.' : body.text}</p>
+          <p class="muted">{body.text === 'none' ? t('net.detail.noBody') : body.text}</p>
         {:else}
           <div class="body-head">
             <span>{body.info}</span>
-            <button class="btn" onclick={() => copy(body.text)}>Copy</button>
+            <button class="btn" onclick={() => copy(body.text)}>{t('common.copy')}</button>
           </div>
           <pre>{pretty(body.text)}</pre>
         {/if}
       {:else if loading}
-        <p class="muted">Loading…</p>
+        <p class="muted">{t('common.loading')}</p>
       {/if}
     {:else if frames}
       {#if frames.length === 0}
-        <p class="muted">No frames yet.</p>
+        <p class="muted">{t('net.detail.noFrames')}</p>
       {:else}
         <ol class="frames">
           {#each frames as f (f.n)}
             <li class:sent={f.sent}>
-              <span class="dir" title={f.sent ? 'sent' : 'received'}>{f.sent ? '↑' : '↓'}</span>
+              <span class="dir" title={f.sent ? t('net.detail.sent') : t('net.detail.received')}>{f.sent ? '↑' : '↓'}</span>
               <span class="kind">{f.kind}</span>
               <span class="data">{f.data || '·'}</span>
               <span class="meta">{f.size} · +{f.at.toFixed(2)}s</span>
@@ -142,7 +143,7 @@
         </ol>
       {/if}
     {:else if loading}
-      <p class="muted">Loading…</p>
+      <p class="muted">{t('common.loading')}</p>
     {/if}
   </div>
 </section>

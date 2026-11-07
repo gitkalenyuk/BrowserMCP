@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   let {
     edge,
     value,
@@ -58,7 +59,7 @@
   aria-valuenow={value}
   aria-valuemin={min}
   aria-valuemax={max}
-  aria-label="Resize"
+  aria-label={t('components.resize')}
   tabindex="0"
   onpointerdown={down}
   onkeydown={key}

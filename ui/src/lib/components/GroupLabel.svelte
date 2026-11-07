@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp } from '../i18n/index.svelte';
   import type { TabGroup, TabInfo } from '../api/types';
   import { useChrome } from '../state/chrome.svelte';
   import Icon from './Icon.svelte';
@@ -21,8 +22,10 @@
   const agent = $derived(chrome.agent(group.agentId));
   const locked = $derived(!!agent && tabs.some((t) => t.lockedBy === agent.id));
   const label = $derived(
-    `${group.name} · ${tabs.length} tab${tabs.length === 1 ? '' : 's'}` +
-      (locked && agent ? ` · controlled by ${agent.name}${agent.task ? `: ${agent.task}` : ''}` : ''),
+    `${group.name} · ${tp('components.group.tabs', tabs.length)}` +
+      (locked && agent
+        ? ` · ${agent.task ? t('components.group.controlledTask', { name: agent.name, task: agent.task }) : t('components.group.controlled', { name: agent.name })}`
+        : ''),
   );
 </script>
 
@@ -43,9 +46,9 @@
     {/if}
   </button>
   {#if locked && agent && vertical}
-    <button class="takeover" onclick={() => chrome.takeOverAgent(agent.id)} title="Take control of {agent.name}'s tabs">
+    <button class="takeover" onclick={() => chrome.takeOverAgent(agent.id)} title={t('components.group.takeControl', { name: agent.name })}>
       <Icon name="hand" size={12} stroke={2} />
-      Take over
+      {t('components.agent.takeOver')}
     </button>
   {/if}
 </div>

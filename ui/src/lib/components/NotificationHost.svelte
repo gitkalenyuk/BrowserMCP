@@ -4,6 +4,7 @@
   // `ui.answer`. Rendered as bars in the chrome's own layout (between toolbar and page), because
   // the page is a separate native view that would cover anything floating above it.
   import { onDestroy } from 'svelte';
+  import { t, tp } from '../i18n/index.svelte';
   import { addToast, expire, removeToast, visibleToasts, type Toast } from '../notifications';
   import { useChrome } from '../state/chrome.svelte';
   import Icon from './Icon.svelte';
@@ -23,41 +24,41 @@
     clearInterval(timer);
   });
 
-  async function answer(t: Toast, choice: string) {
-    busy = t.id;
+  async function answer(toast: Toast, choice: string) {
+    busy = toast.id;
     try {
-      await chrome.api.call('ui.answer', { id: t.id, choice });
+      await chrome.api.call('ui.answer', { id: toast.id, choice });
     } catch (err) {
       // Already answered elsewhere / expired: just drop the toast.
       console.warn('[notify] answer failed', err);
     } finally {
       busy = null;
-      toasts = removeToast(toasts, t.id);
+      toasts = removeToast(toasts, toast.id);
     }
   }
 </script>
 
 {#if view.shown.length}
-  <div class="host" role="region" aria-label="Notifications">
-    {#each view.shown as t (t.id)}
-      <div class="note {t.level}" role={t.actions.length ? 'alertdialog' : 'status'}>
+  <div class="host" role="region" aria-label={t('components.notifications')}>
+    {#each view.shown as n (n.id)}
+      <div class="note {n.level}" role={n.actions.length ? 'alertdialog' : 'status'}>
         <span class="dot" aria-hidden="true"></span>
         <span class="text">
-          <span class="title">{t.title}</span>
-          {#if t.body}<span class="body">{t.body}</span>{/if}
+          <span class="title">{n.title}</span>
+          {#if n.body}<span class="body">{n.body}</span>{/if}
         </span>
-        {#each t.actions as a (a.id)}
-          <button class="btn" disabled={busy === t.id} onclick={() => answer(t, a.id)}>{a.label}</button>
+        {#each n.actions as a (a.id)}
+          <button class="btn" disabled={busy === n.id} onclick={() => answer(n, a.id)}>{a.label}</button>
         {/each}
-        {#if !t.actions.length}
-          <button class="icon-btn" aria-label="Dismiss" onclick={() => (toasts = removeToast(toasts, t.id))}>
+        {#if !n.actions.length}
+          <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (toasts = removeToast(toasts, n.id))}>
             <Icon name="x" size={14} />
           </button>
         {/if}
       </div>
     {/each}
     {#if view.hidden}
-      <div class="more">+{view.hidden} more</div>
+      <div class="more">{tp('components.notifications.more', view.hidden)}</div>
     {/if}
   </div>
 {/if}

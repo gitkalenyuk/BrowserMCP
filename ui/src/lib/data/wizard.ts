@@ -12,6 +12,7 @@
 //   cookies   -> `cookies_json` (a JSON export from a cookie extension)
 
 import type { ChromeProfile, ImportChromeArgs, ImportPart, ImportPartResult } from '../api/types-data';
+import { t } from '../i18n/index.svelte';
 
 export type WizardPart = 'browsing' | 'passwords' | 'cookies';
 export type WizardStep = 'detecting' | 'choose' | 'running' | 'done' | 'skipped';
@@ -67,23 +68,23 @@ export function selectedProfile(s: WizardState): ChromeProfile | null {
 
 /** Windows "Copy as path" wraps the path in quotes; people paste it like that. */
 export function cleanPath(raw: string): string {
-  const t = raw.trim();
-  const m = t.match(/^"(.*)"$/) ?? t.match(/^'(.*)'$/);
-  return (m ? m[1] : t).trim();
+  const s = raw.trim();
+  const m = s.match(/^"(.*)"$/) ?? s.match(/^'(.*)'$/);
+  return (m ? m[1] : s).trim();
 }
 
 /** Why the wizard cannot start yet (empty = ready). */
 export function problems(s: WizardState): string[] {
   const out: string[] = [];
   const any = s.parts.browsing || s.parts.passwords || s.parts.cookies;
-  if (!any) out.push('Pick at least one thing to import.');
+  if (!any) out.push(t('components.wizard.pickPart'));
   if (s.parts.browsing) {
     const p = selectedProfile(s);
-    if (!p) out.push('Pick a Chrome profile.');
-    else if (!hasData(p)) out.push(`Profile “${p.name}” has no bookmarks or history.`);
+    if (!p) out.push(t('components.wizard.pickProfile'));
+    else if (!hasData(p)) out.push(t('components.wizard.emptyProfile', { name: p.name }));
   }
-  if (s.parts.passwords && !cleanPath(s.passwordsCsv)) out.push('Enter the path of the exported passwords CSV.');
-  if (s.parts.cookies && !cleanPath(s.cookiesJson)) out.push('Enter the path of the cookies JSON file.');
+  if (s.parts.passwords && !cleanPath(s.passwordsCsv)) out.push(t('components.wizard.passwordsPath'));
+  if (s.parts.cookies && !cleanPath(s.cookiesJson)) out.push(t('components.wizard.cookiesPath'));
   return out;
 }
 
@@ -152,16 +153,25 @@ export function wizardReducer(s: WizardState, e: WizardEvent): WizardState {
   }
 }
 
+/** Import parts by name, in the UI language (getters). */
 export const PART_LABELS: Record<ImportPart, string> = {
-  bookmarks: 'Bookmarks',
-  history: 'History',
-  passwords_csv: 'Passwords',
-  cookies_json: 'Cookies',
+  get bookmarks() {
+    return t('components.wizard.part.bookmarks');
+  },
+  get history() {
+    return t('components.wizard.part.history');
+  },
+  get passwords_csv() {
+    return t('components.wizard.part.passwords');
+  },
+  get cookies_json() {
+    return t('components.wizard.part.cookies');
+  },
 };
 
 /** "12 imported, 3 skipped" for one result row. */
 export function resultSummary(r: ImportPartResult): string {
-  if (!r.ok) return r.error ?? 'failed';
-  const skipped = r.skipped ? `, ${r.skipped} skipped` : '';
-  return `${r.imported} imported${skipped}`;
+  if (!r.ok) return r.error ?? t('components.wizard.failed');
+  const imported = t('components.wizard.imported', { n: r.imported });
+  return r.skipped ? `${imported}, ${t('components.wizard.skipped', { n: r.skipped })}` : imported;
 }

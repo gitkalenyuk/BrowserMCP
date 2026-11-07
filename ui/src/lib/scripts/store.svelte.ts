@@ -1,4 +1,5 @@
 import type { BrowserApi } from '../api/client';
+import { t } from '../i18n/index.svelte';
 import type {
   DebugAction,
   DebugEnded,
@@ -94,7 +95,7 @@ export class ScriptsStore {
   // ---- library ----------------------------------------------------------------------------
 
   async refresh(): Promise<void> {
-    const res = await this.#call('Listing scripts', () => this.api.call('script.list'));
+    const res = await this.#call(t('scripts.op.list'), () => this.api.call('script.list'));
     if (res) this.scripts = res.scripts;
     this.loaded = true;
     if (this.current === null && this.scripts.length > 0) await this.open(this.scripts[0].name);
@@ -108,7 +109,7 @@ export class ScriptsStore {
       this.#show(name, draft.code, draft.saved);
       return;
     }
-    const res = await this.#call(`Opening ${name}`, () => this.api.call('script.get', { name }));
+    const res = await this.#call(t('scripts.op.open', { name }), () => this.api.call('script.get', { name }));
     if (res) this.#show(name, res.code, res.code);
   }
 
@@ -134,15 +135,15 @@ export class ScriptsStore {
 
   async create(name: string): Promise<boolean> {
     if (!validName(name)) {
-      this.error = `"${name}" is not a valid name: use letters, digits, - and _ (max 64)`;
+      this.error = t('scripts.badName', { name });
       return false;
     }
     if (this.scripts.some((s) => s.name === name)) {
-      this.error = `A script named "${name}" already exists`;
+      this.error = t('scripts.exists', { name });
       return false;
     }
     const code = newScriptTemplate(name);
-    const ok = await this.#call(`Creating ${name}`, () => this.api.call('script.save', { name, code }));
+    const ok = await this.#call(t('scripts.op.create', { name }), () => this.api.call('script.save', { name, code }));
     if (!ok) return false;
     await this.refresh();
     await this.open(name);
@@ -152,11 +153,11 @@ export class ScriptsStore {
   async rename(from: string, to: string): Promise<boolean> {
     if (from === to) return true;
     if (!validName(to)) {
-      this.error = `"${to}" is not a valid name: use letters, digits, - and _ (max 64)`;
+      this.error = t('scripts.badName', { name: to });
       return false;
     }
     if (this.scripts.some((s) => s.name === to)) {
-      this.error = `A script named "${to}" already exists`;
+      this.error = t('scripts.exists', { name: to });
       return false;
     }
     // Saved text goes to the new name; unsaved edits stay unsaved (as a draft of the new name).
@@ -165,7 +166,7 @@ export class ScriptsStore {
         ? this.saved
         : (this.#drafts.get(from)?.saved ?? (await this.api.call('script.get', { name: from }).catch(() => null))?.code);
     if (saved === undefined || saved === null) return false;
-    const ok = await this.#call(`Renaming ${from}`, async () => {
+    const ok = await this.#call(t('scripts.op.rename', { name: from }), async () => {
       await this.api.call('script.save', { name: to, code: saved });
       await this.api.call('script.delete', { name: from });
       return true;
@@ -184,7 +185,7 @@ export class ScriptsStore {
   }
 
   async remove(name: string): Promise<void> {
-    const ok = await this.#call(`Deleting ${name}`, () => this.api.call('script.delete', { name }));
+    const ok = await this.#call(t('scripts.op.delete', { name }), () => this.api.call('script.delete', { name }));
     if (!ok) return;
     this.#drafts.delete(name);
     if (this.current === name) {
@@ -199,11 +200,11 @@ export class ScriptsStore {
     const name = this.current;
     if (name === null) return;
     const code = this.code;
-    const ok = await this.#call(`Saving ${name}`, () => this.api.call('script.save', { name, code }));
+    const ok = await this.#call(t('scripts.op.save', { name }), () => this.api.call('script.save', { name, code }));
     if (!ok) return;
     if (this.current === name) this.saved = code;
     this.#drafts.delete(name);
-    const res = await this.#call('Listing scripts', () => this.api.call('script.list'));
+    const res = await this.#call(t('scripts.op.list'), () => this.api.call('script.list'));
     if (res) this.scripts = res.scripts;
   }
 
@@ -237,7 +238,7 @@ export class ScriptsStore {
     if (this.running || this.debug || this.current === null) return;
     this.running = true;
     this.errorLine = null;
-    this.console = [{ kind: 'info', text: `▶ ${this.current}${this.dirty ? ' (unsaved)' : ''}` }];
+    this.console = [{ kind: 'info', text: `▶ ${this.current}${this.dirty ? ` (${t('scripts.unsaved').toLowerCase()})` : ''}` }];
     try {
       const outcome = await this.api.call('script.run', { ...this.#source(), inputs: this.#inputs() });
       this.console = [...this.console, ...outcomeEntries(outcome)];
@@ -257,7 +258,7 @@ export class ScriptsStore {
     this.errorLine = null;
     this.verified = null;
     this.#early = [];
-    this.console = [{ kind: 'info', text: `🐞 ${this.current}${this.dirty ? ' (unsaved)' : ''}` }];
+    this.console = [{ kind: 'info', text: `🐞 ${this.current}${this.dirty ? ` (${t('scripts.unsaved').toLowerCase()})` : ''}` }];
     try {
       const res = await this.api.call('script.debug_start', {
         ...this.#source(),
@@ -285,7 +286,7 @@ export class ScriptsStore {
   async debugCmd(action: Exclude<DebugAction, 'set_breakpoints'>): Promise<void> {
     const id = this.debug?.id;
     if (!id) return;
-    await this.#call('Debugger', () => this.api.call('script.debug_cmd', { id, action }));
+    await this.#call(t('scripts.op.debugger'), () => this.api.call('script.debug_cmd', { id, action }));
   }
 
   /** F5: continue when debugging, else start the debugger. */
@@ -305,7 +306,7 @@ export class ScriptsStore {
     this.breakpoints = { ...this.breakpoints, [name]: lines };
     const id = this.debug?.id;
     if (!id) return;
-    const res = await this.#call('Breakpoints', () =>
+    const res = await this.#call(t('scripts.op.breakpoints'), () =>
       this.api.call('script.debug_cmd', { id, action: 'set_breakpoints', lines }),
     );
     if (res?.breakpoints && this.current === name) this.#moveBreakpoints(res.breakpoints);

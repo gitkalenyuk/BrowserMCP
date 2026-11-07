@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import type { Agent, TabGroup, TabInfo } from '../api/types';
   import { useChrome } from '../state/chrome.svelte';
   import { fallbackTitle } from '../urls';
@@ -15,7 +16,7 @@
   const chrome = useChrome();
   const agent: Agent | undefined = $derived(chrome.agent(tab.lockedBy));
   const title = $derived(tab.title || fallbackTitle(tab.url));
-  const tooltip = $derived(agent ? `${title}\nControlled by ${agent.name}` : `${title}\n${tab.url}`);
+  const tooltip = $derived(agent ? `${title}\n${t('components.tab.controlledBy', { name: agent.name })}` : `${title}\n${tab.url}`);
 
   function onAux(e: MouseEvent) {
     if (e.button === 1) {
@@ -46,19 +47,19 @@
   <Favicon url={tab.url} src={tab.favicon} loading={tab.loading} />
   <span class="title">{title}</span>
   {#if tab.split}
-    <span class="split-badge" title="Split view ({tab.split.side} half)" aria-label="Split view, {tab.split.side} half">
+    <span class="split-badge" title={t(`components.tab.split.${tab.split.side}`)} aria-label={t(`components.tab.split.${tab.split.side}`)}>
       {tab.split.side === 'left' ? '◧' : '◨'}
     </span>
   {/if}
   {#if agent}
-    <span class="lock" title="Locked by {agent.name}" style:--agent="var(--g-{agent.color})">
+    <span class="lock" title={t('components.tab.lockedBy', { name: agent.name })} style:--agent="var(--g-{agent.color})">
       <Icon name="lock" size={12} stroke={2} />
     </span>
   {/if}
   <button
     class="close"
-    aria-label="Close tab"
-    title="Close tab (Ctrl+W)"
+    aria-label={t('components.tab.close')}
+    title="{t('components.tab.close')} (Ctrl+W)"
     onclick={(e) => {
       e.stopPropagation();
       chrome.closeTab(tab.id);

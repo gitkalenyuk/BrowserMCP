@@ -2,7 +2,8 @@ import type { BrowserApi } from '../api/client';
 import type { RunInfo, ScriptEntry, TriggerInfo } from '../api/types-record-runs';
 import type { HealProposal } from '../api/types-settings';
 import { applyApplied, applyFailed, applyProposed, emptyHeal, upsertProposal, withProposals, type HealState } from './heal';
-import { applyFinished, applyHeal, applyProgress, upsertRun } from './logic';
+import { t as tr } from '../i18n/index.svelte';
+import { applyFinished, applyHeal, applyProgress, formatDuration, upsertRun } from './logic';
 
 /**
  * Runs, scripts and triggers, kept current from run.* / trigger.* events (also for runs
@@ -56,8 +57,8 @@ export class RunsStore {
       }),
       api.on('trigger.fired', (t) => {
         this.notice = t.ok
-          ? `Trigger ${t.id} ran ${t.script} (${Math.round(t.duration_ms / 100) / 10} s)`
-          : `Trigger ${t.id} failed: ${t.error?.code ?? 'error'} ${t.error?.message ?? ''}`.trim();
+          ? tr('runs.trigger.ran', { id: t.id, script: t.script, time: formatDuration(t.duration_ms) })
+          : tr('runs.trigger.failed', { id: t.id, error: `${t.error?.code ?? 'error'} ${t.error?.message ?? ''}`.trim() });
         void this.refreshTriggers();
       }),
       api.onStatus((s) => {

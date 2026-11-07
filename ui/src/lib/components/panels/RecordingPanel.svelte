@@ -1,5 +1,7 @@
 <script lang="ts">
   import './record-runs.css';
+  import { t, tp } from '../../i18n/index.svelte';
+  import { formatWhen } from '../../i18n/intl';
   import { recordStore } from '../../record/store.svelte';
   import { useChrome } from '../../state/chrome.svelte';
   import { hostOf } from '../../urls';
@@ -32,8 +34,8 @@
   // Elapsed time while recording.
   $effect(() => {
     if (!active) return;
-    const t = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
   });
 
   function elapsed(from: number): string {
@@ -48,10 +50,10 @@
     try {
       if (active) {
         const id = await rec.stopRecording();
-        notice = 'Recording saved.';
+        notice = t('record.saved');
         if (id) openId = id;
       } else {
-        if (tab === null) throw new Error('No tab to record');
+        if (tab === null) throw new Error(t('record.noTab'));
         await rec.start({ tab, name: name.trim(), video, traffic });
         now = Date.now();
       }
@@ -62,13 +64,6 @@
     }
   }
 
-  function when(ms: number): string {
-    const d = new Date(ms);
-    const today = new Date();
-    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    if (d.toDateString() === today.toDateString()) return time;
-    return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${time}`;
-  }
 </script>
 
 <div class="rr">
@@ -83,21 +78,21 @@
         class:on={!!active}
         disabled={busy || (!active && tab === null)}
         aria-pressed={!!active}
-        title={active ? 'Stop and save the recording' : 'Record what happens in the current tab'}
+        title={active ? t('record.stopHint') : t('record.recordHint')}
         onclick={toggle}
       >
         <span class="dot" aria-hidden="true"></span>
-        {active ? 'Stop' : 'Record'}
+        {active ? t('record.stop') : t('record.record')}
       </button>
       {#if active}
         <span class="rr-pill rec">REC {elapsed(active.startedMs)}</span>
-        <span class="count">{active.steps.length} steps</span>
+        <span class="count">{tp('record.stepsCount', active.steps.length)}</span>
       {:else}
-        <input class="rr-input name" bind:value={name} placeholder="Name (e.g. login)" aria-label="Recording name" spellcheck="false" />
+        <input class="rr-input name" bind:value={name} placeholder={t('record.namePlaceholder')} aria-label={t('record.nameLabel')} spellcheck="false" />
       {/if}
       <span class="rr-spacer"></span>
       {#if !active}
-        <button class="icon-btn" aria-label="Recording options" title="Video and traffic options" aria-pressed={showOptions} onclick={() => (showOptions = !showOptions)}>
+        <button class="icon-btn" aria-label={t('record.options')} title={t('record.optionsHint')} aria-pressed={showOptions} onclick={() => (showOptions = !showOptions)}>
           <Icon name="settings" size={15} />
         </button>
       {/if}
@@ -106,41 +101,41 @@
     {#if showOptions && !active}
       <div class="rr-section options">
         <div class="rr-row">
-          <label class="rr-check"><input type="checkbox" bind:checked={video} /> Video</label>
-          <label class="rr-check"><input type="checkbox" bind:checked={traffic} /> Network traffic</label>
+          <label class="rr-check"><input type="checkbox" bind:checked={video} /> {t('record.video')}</label>
+          <label class="rr-check"><input type="checkbox" bind:checked={traffic} /> {t('record.traffic')}</label>
         </div>
-        <p class="rr-hint">Video needs ffmpeg (winget install Gyan.FFmpeg). Traffic goes to traffic.jsonl in the recording folder.</p>
+        <p class="rr-hint">{t('record.optionsNote')}</p>
       </div>
     {/if}
 
     {#if error || rec.error || notice}
       <div class="rr-note" class:err={!!(error || rec.error)} role="status">
         <span>{error ?? rec.error ?? notice}</span>
-        <button class="icon-btn" aria-label="Dismiss" onclick={() => (error ? (error = null) : rec.error ? (rec.error = null) : (notice = null))}><Icon name="x" size={12} /></button>
+        <button class="icon-btn" aria-label={t('chrome.dismiss')} onclick={() => (error ? (error = null) : rec.error ? (rec.error = null) : (notice = null))}><Icon name="x" size={12} /></button>
       </div>
     {/if}
 
     {#if active}
       <div class="live">
         <div class="live-head">
-          <span class="rr-h">Recording “{active.name}”</span>
-          <span class="where" title={active.startUrl}>tab {active.tab}{activeTab && activeTab.id === active.tab ? ` · ${activeTab.title}` : ''}</span>
+          <span class="rr-h">{t('record.recordingName', { name: active.name })}</span>
+          <span class="where" title={active.startUrl}>{t('record.tabN', { id: active.tab })}{activeTab && activeTab.id === active.tab ? ` · ${activeTab.title}` : ''}</span>
         </div>
         <StepList steps={active.steps} follow startMs={active.startedMs} />
-        {#if active.video}<p class="rr-hint vid">Video: <span class="rr-mono">{active.video}</span></p>{/if}
+        {#if active.video}<p class="rr-hint vid">{t('record.videoLabel')} <span class="rr-mono">{active.video}</span></p>{/if}
       </div>
     {/if}
 
     <div class="rr-scroll" class:shrink={!!active}>
       <div class="list-head">
-        <span class="rr-h">Recordings</span>
+        <span class="rr-h">{t('record.recordings')}</span>
         <span class="rr-spacer"></span>
-        <button class="icon-btn sm" aria-label="Refresh recordings" title="Refresh" onclick={() => rec.refresh()}><Icon name="reload" size={13} /></button>
+        <button class="icon-btn sm" aria-label={t('record.refresh')} title={t('record.refreshShort')} onclick={() => rec.refresh()}><Icon name="reload" size={13} /></button>
       </div>
       {#if past.length === 0}
         <div class="rr-empty">
           <Icon name="record" size={20} />
-          <p>Record clicks, typing and navigation in this tab (optionally with video). A recording turns into a TypeScript script you can replay with other data.</p>
+          <p>{t('record.empty')}</p>
         </div>
       {:else}
         <ul class="recs">
@@ -148,7 +143,7 @@
             <li>
               <button class="rec" onclick={() => (openId = r.id)} title={r.id}>
                 <span class="nm">{r.name}</span>
-                <span class="meta">{when(r.started_ms)} · {r.steps} steps · {hostOf(r.start_url) || r.start_url}</span>
+                <span class="meta">{formatWhen(r.started_ms)} · {tp('record.stepsCount', r.steps)} · {hostOf(r.start_url) || r.start_url}</span>
                 <Icon name="chevron-right" size={14} />
               </button>
             </li>

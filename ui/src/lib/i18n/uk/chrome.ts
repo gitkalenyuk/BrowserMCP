@@ -1,0 +1,20 @@
+// Рядки інтерфейсу: chrome. Правила: ../index.svelte.ts.
+export default {
+  'chrome.dismiss': 'Закрити',
+  'chrome.proxy.direct': 'Без проксі',
+  'chrome.ask.selection': 'Про цей текст зі сторінки {page}:',
+  'chrome.ask.link': 'Про це посилання на сторінці {page}: {text}',
+  'chrome.ask.image': 'Про це зображення на сторінці {page}: {text}',
+  'chrome.ask.page': 'Про сторінку {page}:',
+  'chrome.perm.geolocation': 'знати ваше місцезнаходження',
+  'chrome.perm.notifications': 'показувати сповіщення',
+  'chrome.perm.camera': 'користуватися камерою',
+  'chrome.perm.microphone': 'користуватися мікрофоном',
+  'chrome.perm.screen_capture': 'бачити ваш екран',
+  'chrome.perm.clipboard': 'бачити текст і зображення, скопійовані в буфер обміну',
+  'chrome.perm.midi': 'користуватися MIDI-пристроями',
+  'chrome.perm.local_network': 'звертатися до пристроїв у вашій локальній мережі',
+  'chrome.perm.sensors': 'користуватися датчиками руху',
+  'chrome.perm.storage_access': 'користуватися кукі інших сайтів',
+  'chrome.perm.unknown': 'скористатися функцією браузера',
+};

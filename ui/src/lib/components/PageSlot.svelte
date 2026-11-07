@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import type { Rect } from '../api/types';
   import type { KeyLike } from '../keymap';
   import { useChrome } from '../state/chrome.svelte';
@@ -104,7 +105,7 @@
       style:width="{SPLIT_GAP}px"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Split view divider"
+      aria-label={t('components.split.divider')}
       aria-valuenow={Math.round(ratio * 100)}
       onpointerdown={onDividerDown}
       onpointermove={onDividerMove}
@@ -114,17 +115,17 @@
   {/if}
   {#if mock && tab}
     {#if isNewTab(tab.url)}
-      <iframe class="newtab" src="./newtab.html" title="New tab"></iframe>
+      <iframe class="newtab" src="./newtab.html" title={t('components.newTab')}></iframe>
     {:else if isLibraryUrl(tab.url)}
-      <iframe class="newtab" src="./library.html" title="Library"></iframe>
+      <iframe class="newtab" src="./library.html" title={t('components.library')}></iframe>
     {:else}
       <div class="placeholder">
         <Favicon url={tab.url} src={tab.favicon} loading={tab.loading} size={28} />
         <div class="title">{tab.title || fallbackTitle(tab.url)}</div>
         <div class="url">{tab.url}</div>
         <p class="note">
-          The page renders here in the real browser. Reported bounds:
-          <span class="mono">{rect.w}×{rect.h} at {rect.x},{rect.y}</span>
+          {t('components.mock.note')}
+          <span class="mono">{rect.w}×{rect.h} @ {rect.x},{rect.y}</span>
         </p>
       </div>
     {/if}

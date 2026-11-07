@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n/index.svelte';
   import { useChrome } from '../state/chrome.svelte';
   import { displayUrl, isNewTab, omniboxIntent } from '../urls';
   import BookmarkStar from './BookmarkStar.svelte';
@@ -24,7 +25,7 @@
     return 'info';
   });
   const iconLabel = $derived(
-    icon === 'lock' ? 'Connection is secure' : icon === 'info' ? 'Connection is not secure' : 'Search or type URL',
+    icon === 'lock' ? t('components.omnibox.secure') : icon === 'info' ? t('components.omnibox.insecure') : t('components.omnibox.searchOrUrl'),
   );
 
   // Let commands (Ctrl+L, new tab) focus the field.
@@ -76,17 +77,17 @@
     spellcheck="false"
     autocomplete="off"
     autocapitalize="off"
-    placeholder="Search or enter address"
-    aria-label="Address and search bar"
+    placeholder={t('components.omnibox.placeholder')}
+    aria-label={t('components.omnibox.label')}
   />
   {#if intent}
     <span class="hint" aria-hidden="true">
-      {intent === 'search' ? 'Search Google' : 'Open'} <kbd>Enter</kbd>
+      {intent === 'search' ? t('components.omnibox.searchGoogle') : t('components.omnibox.open')} <kbd>Enter</kbd>
     </span>
   {:else}
     {#if chrome.active?.zoom}
       <!-- Like Chrome: the zoom shows only when it is not 100 %; a click resets it. -->
-      <button class="zoom" title="Zoom {chrome.active.zoom}% — click to reset (Ctrl+0)" onclick={() => chrome.zoom(0)}>
+      <button class="zoom" title="{t('components.omnibox.zoom', { zoom: chrome.active.zoom })} (Ctrl+0)" onclick={() => chrome.zoom(0)}>
         {chrome.active.zoom}%
       </button>
     {/if}

@@ -106,8 +106,8 @@ export class ScriptEditor {
       opts.onBreakpoints(this.breakpointLines());
     });
     this.editor.onMouseDown((e) => {
-      const t = e.target.type;
-      const gutter = t === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || t === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS;
+      const target = e.target.type;
+      const gutter = target === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || target === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS;
       if (gutter && e.target.position) this.#toggle(e.target.position.lineNumber);
     });
 
@@ -145,7 +145,11 @@ export class ScriptEditor {
     monaco.editor.setTheme(theme === 'dark' ? 'bmcp-dark' : 'bmcp-light');
   }
 
-  setBreakpoints(lines: number[], verified: number[] | null): void {
+  /**
+   * `hover`: the glyph tooltip. The caller passes it from its `$effect`, so a language switch
+   * re-applies the decorations (Monaco keeps the text it was given, it is not reactive).
+   */
+  setBreakpoints(lines: number[], verified: number[] | null, hover: string): void {
     this.#breakpoints.set(
       lines.map((line) => ({
         range: new monaco.Range(line, 1, line, 1),
@@ -153,7 +157,7 @@ export class ScriptEditor {
           isWholeLine: true,
           stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
           glyphMarginClassName: verified && !verified.includes(line) ? 'bmcp-bp bmcp-bp-unverified' : 'bmcp-bp',
-          glyphMarginHoverMessage: { value: 'Breakpoint (F9 / click to remove)' },
+          glyphMarginHoverMessage: { value: hover },
         },
       })),
     );

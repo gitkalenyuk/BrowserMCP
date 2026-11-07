@@ -49,5 +49,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    // Pins the UI language to English (the default follows the OS language).
+    setupFiles: ['src/test-setup.ts'],
   },
 });
