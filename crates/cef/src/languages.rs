@@ -17,8 +17,11 @@
 //!     set — for identity profiles too, or a new tab would fall back to the default list;
 //!   - the global list must NOT go into `CefSettings.accept_language_list` /
 //!     `RequestContextSettings.accept_language_list`: CEF prefers those and writes them back
-//!     into the prefs, so a list set there can never change at runtime. Only a profile's own
-//!     (identity) language is passed at context creation ([`own_accept`]), as before;
+//!     into the prefs, so the global list set there never changed at runtime. Only a
+//!     profile's own (identity) language is passed at context creation ([`own_accept`]), as
+//!     before; the two prefs [`apply`] sets afterwards do win over it: re-fitting or removing
+//!     a profile's language reaches its next tab without a restart (e2e "keeps a profile's own
+//!     language and follows changes to it live");
 //!   - an empty `CefSettings.locale` means en-US in CEF, not the Windows language: "system"
 //!     is resolved to a shipped locale here ([`bmcp_languages::startup_locale`]).
 //! * Spellcheck: `spellcheck.dictionaries` + `browser.enable_spellchecking` on every context,

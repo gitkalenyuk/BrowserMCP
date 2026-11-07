@@ -3,9 +3,11 @@ import { settings } from '../settings.svelte';
 import type { GovernorLimits, HintsConfig } from '../api/types-settings';
 import {
   addSite,
+  governorAction,
   governorErrors,
   governorForm,
   governorPatch,
+  governorReason,
   hintKeyLabel,
   hintsErrors,
   hintsForm,
@@ -77,6 +79,27 @@ describe('performance form', () => {
     expect(mbLabel(null)).toBe('—');
     expect(mbLabel(312.4)).toBe('312 MB');
     expect(mbLabel(16_303)).toBe('15.9 GB');
+  });
+});
+
+describe('governor reasons', () => {
+  it('translates the reasons the governor builds and keeps the rest', () => {
+    expect(governorReason('active tab')).toBe('active tab');
+    expect(governorReason('more than 8 live tabs')).toBe('more live tabs than the limit (8)');
+    expect(governorReason('background 5m')).toBe('in the background for 5 min');
+    expect(governorReason('memory pressure (9% RAM free)')).toBe('low memory (9% RAM free)');
+    expect(governorReason('in use (last command 12s ago)')).toBe('in use (last command 12 s ago)');
+    expect(governorReason('a guard said so')).toBe('a guard said so');
+    expect(governorAction('discard')).toBe('discard');
+    expect(governorAction('explode')).toBe('explode');
+    settings.update({ language: 'uk' });
+    try {
+      expect(governorReason('locked by agent-1')).toBe('зайнята: agent-1');
+      expect(governorReason('background 90s')).toBe('у фоні вже 1 хв');
+      expect(governorAction('freeze')).toBe('заморожено');
+    } finally {
+      settings.update({ language: 'en' });
+    }
   });
 });
 

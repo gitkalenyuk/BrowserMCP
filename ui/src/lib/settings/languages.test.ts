@@ -8,6 +8,7 @@ import {
   normalizeTag,
   removeLanguage,
   resolveLanguage,
+  spellExtras,
   toggleSpellcheck,
 } from './languages';
 
@@ -58,6 +59,13 @@ describe('list editing', () => {
     expect(toggleSpellcheck(['en'], 'uk', web)).toEqual(['uk', 'en']);
     expect(toggleSpellcheck(['uk', 'en'], 'UK', web)).toEqual(['en']);
     expect(toggleSpellcheck(['fr'], 'de', web)).toEqual(['de', 'fr']);
+  });
+
+  it('lists dictionaries that have no row in the website list', () => {
+    expect(spellExtras(['en-US'], ['uk', 'en'])).toEqual(['en-US']);
+    expect(spellExtras(['UK', 'en-US'], ['uk', 'en-US'])).toEqual([]);
+    // Turning an extra off is the same toggle as a row's checkbox.
+    expect(toggleSpellcheck(['uk', 'en-US'], 'en-US', ['uk', 'en'])).toEqual(['uk']);
   });
 
   it('offers only languages not in the list', () => {

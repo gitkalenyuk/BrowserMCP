@@ -3,7 +3,7 @@
   import type { GovernorLimits, GovernorProfile, GovernorStatus } from '../lib/api/types-settings';
   import Favicon from '../lib/components/Favicon.svelte';
   import { locale, t } from '../lib/i18n/index.svelte';
-  import { governorErrors, governorForm, governorPatch, idleLabel, mbLabel, withProfile, type GovernorForm } from '../lib/settings/forms';
+  import { governorAction, governorErrors, governorForm, governorPatch, governorReason, idleLabel, mbLabel, withProfile, type GovernorForm } from '../lib/settings/forms';
   import { isEmptyPatch } from '../lib/settings/notify';
   import Toggle from './Toggle.svelte';
 
@@ -165,7 +165,7 @@
                 <td><span class="lib-chip state-{tab.state}">{t(`settings.perf.state.${tab.state}`)}</span></td>
                 <td class="r">{tab.idle_secs ? idleLabel(tab.idle_secs) : t('settings.perf.active')}</td>
                 <td class="r">{mbLabel(tab.js_heap_mb)}</td>
-                <td class="set-muted">{tab.protected ?? '—'}</td>
+                <td class="set-muted">{tab.protected ? governorReason(tab.protected) : '—'}</td>
               </tr>
             {:else}
               <tr><td colspan="5" class="set-muted">{t('settings.perf.noTabs')}</td></tr>
@@ -180,8 +180,8 @@
             {#each status.decisions.slice(-6).reverse() as d, i (i)}
               <li>
                 <span class="set-mono">{timeFmt.format(d.ts_ms)}</span>
-                <span class="lib-chip">{d.action}</span>
-                {t('settings.perf.decisionTab', { tab: d.tab })} {d.reason}{d.error ? ` — ${d.error}` : ''}
+                <span class="lib-chip">{governorAction(d.action)}</span>
+                {t('settings.perf.decisionTab', { tab: d.tab })} {governorReason(d.reason)}{d.error ? ` — ${d.error}` : ''}
               </li>
             {/each}
           </ul>

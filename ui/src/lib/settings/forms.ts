@@ -96,6 +96,40 @@ export function mbLabel(mb: number | null | undefined): string {
   return t('settings.perf.unit.mb', { n: Math.round(mb) });
 }
 
+// The governor (crates/governor) reports its reasons as English text. The ones it builds
+// itself are translated here; anything else (a site guard's reason, a future wording) is shown
+// as sent. Keep in sync with governor/src/policy.rs `decide` and service.rs (`protection`,
+// the thaw reasons passed to `spawn_apply`, commands.rs "manual").
+const GOVERNOR_REASONS: [RegExp, (m: RegExpExecArray) => string][] = [
+  [/^active tab$/, () => t('settings.perf.why.active')],
+  [/^locked by (.+)$/, (m) => t('settings.perf.why.locked', { holder: m[1] })],
+  [/^being recorded$/, () => t('settings.perf.why.recording')],
+  [/^in use \(last command (\d+)s ago\)$/, (m) => t('settings.perf.why.inUse', { time: idleLabel(Number(m[1])) })],
+  [/^playing audio$/, () => t('settings.perf.why.audio')],
+  [/^manual$/, () => t('settings.perf.why.manual')],
+  [/^activated$/, () => t('settings.perf.why.activated')],
+  [/^command (.+)$/, (m) => t('settings.perf.why.command', { name: m[1] })],
+  [/^background (\d+)([ms])$/, (m) => t('settings.perf.why.background', { time: idleLabel(Number(m[1]) * (m[2] === 'm' ? 60 : 1)) })],
+  [/^more than (\d+) live tabs$/, (m) => t('settings.perf.why.tooMany', { n: m[1] })],
+  [/^memory pressure \((\d+)% RAM free\)$/, (m) => t('settings.perf.why.pressure', { pct: m[1] })],
+];
+
+/** A governor reason ("active tab", "more than 8 live tabs"…) in the interface language. */
+export function governorReason(reason: string): string {
+  for (const [re, label] of GOVERNOR_REASONS) {
+    const m = re.exec(reason);
+    if (m) return label(m);
+  }
+  return reason;
+}
+
+/** "freeze" / "discard" / "thaw" in the interface language (unknown actions as sent). */
+export function governorAction(action: string): string {
+  const key = `settings.perf.action.${action}`;
+  const text = t(key);
+  return text === key ? action : text;
+}
+
 // ---- sites (adblock allowlist, site policies, hint-disabled sites) ---------------------------
 
 /** "https://www.example.com/a" or "Example.com" → "example.com"; "*" stays; invalid → null. */

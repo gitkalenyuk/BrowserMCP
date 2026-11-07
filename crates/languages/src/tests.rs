@@ -1,9 +1,14 @@
 //! The commands with a fake browser: persistence, validation, when the browser is told.
 
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bmcp_core::testing::{FakeBackend, ctx};
-use bmcp_core::{BackendResult, BoxFuture, Caller, CmdError, Ctx, ErrorCode, Registry};
+use bmcp_core::{
+    BackendError, BackendResult, BoxFuture, Caller, CmdError, Ctx, ErrorCode, Registry,
+};
 use serde_json::{Value, json};
 
 use super::*;
@@ -11,10 +16,13 @@ use super::*;
 /// One `apply_languages` call: (website languages, spellcheck dictionaries).
 type Applied = (Vec<String>, Option<Vec<String>>);
 
-/// Records `apply_languages` calls; reports one stealth profile with its own language.
+/// Records `apply_languages` calls (when they finish); reports one stealth profile with its
+/// own language. `fail_next` makes the next call fail; `delays` slow the next calls down.
 #[derive(Default)]
 struct FakeLanguages {
     applied: Mutex<Vec<Applied>>,
+    fail_next: AtomicBool,
+    delays: Mutex<VecDeque<Duration>>,
 }
 
 impl FakeLanguages {
@@ -36,8 +44,17 @@ impl LanguageBackend for FakeLanguages {
         web: Vec<String>,
         spellcheck: Option<Vec<String>>,
     ) -> BoxFuture<'_, BackendResult<BackendLanguages>> {
-        self.applied.lock().unwrap().push((web, spellcheck));
-        Box::pin(async { Ok(FakeLanguages::report()) })
+        let delay = self.delays.lock().unwrap().pop_front();
+        Box::pin(async move {
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                return Err(BackendError::Cdp("the browser went away".into()));
+            }
+            self.applied.lock().unwrap().push((web, spellcheck));
+            Ok(FakeLanguages::report())
+        })
     }
 
     fn languages(&self) -> BoxFuture<'_, BackendResult<BackendLanguages>> {
@@ -260,4 +277,58 @@ async fn works_without_a_browser() {
     assert_eq!(out["web"], json!(["pl"]));
     assert_eq!(out["spellcheck_supported"], Value::Null);
     assert!(tmp.path().join("config").join(config::FILE).exists());
+}
+
+#[tokio::test]
+async fn a_failed_apply_is_retried_by_the_same_call() {
+    let s = Setup::new(None);
+    s.browser.fail_next.store(true, Ordering::SeqCst);
+    let err = s
+        .call("browser.languages_set", json!({"web": ["fr"]}))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("went away"), "{err:?}");
+    // Saved already, but the browser does not have it yet.
+    assert_eq!(s.stored()["web"], json!(["fr"]));
+    assert!(s.applied().is_empty());
+
+    // The retry changes nothing in the file, yet must still reach the browser.
+    s.call("browser.languages_set", json!({"web": ["fr"]}))
+        .await
+        .unwrap();
+    assert_eq!(s.applied(), [(vec!["fr".to_string()], None)]);
+    // In sync again: the same call is a no-op once more.
+    s.call("browser.languages_set", json!({"web": ["fr"]}))
+        .await
+        .unwrap();
+    assert_eq!(s.applied().len(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_sets_reach_the_browser_in_order() {
+    let s = Setup::new(None);
+    // The first call is slow in the browser; without the write lock the second one would be
+    // applied first and then overwritten by the older list.
+    s.browser
+        .delays
+        .lock()
+        .unwrap()
+        .extend([Duration::from_millis(50), Duration::ZERO]);
+    let (a, b) = tokio::join!(
+        s.call("browser.languages_set", json!({"web": ["de"]})),
+        s.call(
+            "browser.languages_set",
+            json!({"web": ["pl"], "spellcheck": ["pl"]})
+        ),
+    );
+    a.unwrap();
+    b.unwrap();
+    let applied = s.applied();
+    assert_eq!(applied.len(), 2);
+    assert_eq!(
+        applied[1],
+        (vec!["pl".to_string()], Some(vec!["pl".to_string()]))
+    );
+    assert_eq!(s.stored()["web"], json!(["pl"]));
+    assert_eq!(s.stored()["spellcheck"], json!(["pl"]));
 }

@@ -12,7 +12,7 @@
   import type { LanguagesInfo, LanguagesSetArgs } from '../lib/api/types-languages';
   import Icon from '../lib/components/Icon.svelte';
   import { locale, t } from '../lib/i18n/index.svelte';
-  import { addLanguage, addable, localName, moveLanguage, nativeName, removeLanguage, resolveLanguage, toggleSpellcheck } from '../lib/settings/languages';
+  import { addLanguage, addable, localName, moveLanguage, nativeName, removeLanguage, resolveLanguage, spellExtras, toggleSpellcheck } from '../lib/settings/languages';
 
   let { api, notify }: { api: BrowserApi; notify?: (text: string, error?: boolean) => void } = $props();
 
@@ -22,6 +22,8 @@
   let busy = $state(false);
   let addInput = $state('');
   let addError = $state<string | null>(null);
+  /** The last success message, shown inline when the page passes no `notify` (no toasts). */
+  let saved = $state<string | null>(null);
 
   async function load() {
     try {
@@ -40,10 +42,12 @@
     try {
       info = await api.call('browser.languages_set', args);
       error = null;
+      saved = done && !notify ? done : null;
       if (done) notify?.(done);
       return true;
     } catch (err) {
       error = (err as Error).message;
+      saved = null;
       notify?.(error, true);
       return false;
     } finally {
@@ -53,14 +57,22 @@
 
   // The automatic website list starts with the interface language: tell the browser which one
   // is shown (only when it differs from what it knows, so opening the page writes nothing).
+  // Each language is reported once: after a failure `info` is unchanged, and retrying on every
+  // re-run would loop (and toast) for as long as the browser keeps failing. Not reactive on
+  // purpose; switching the interface language again reports the new one.
+  let reportedUi: string | null = null;
   $effect(() => {
     const ui = locale();
-    if (info && !busy && info.ui_language !== ui) void apply({ ui_language: ui });
+    if (!info || info.ui_language === ui || reportedUi === ui) return;
+    reportedUi = ui;
+    void apply({ ui_language: ui });
   });
 
   const web = $derived(info?.web ?? []);
   const spellOn = $derived(info?.spellcheck_supported !== false);
   const options = $derived(addable(web));
+  /** Spellcheck dictionaries on but not in the website list (e.g. Chromium's default en-US). */
+  const extraSpell = $derived(info ? spellExtras(info.spellcheck, web) : []);
 
   const setWeb = (list: string[]) => apply({ web: list }, t('languages.saved'));
 
@@ -162,6 +174,26 @@
     </form>
     {#if addError}<p class="set-err">{addError}</p>{/if}
     {#if error}<p class="set-err" role="alert">{error}</p>{/if}
+    {#if saved}<p class="set-muted" role="status">{saved}</p>{/if}
+
+    {#if spellOn && extraSpell.length}
+      <p class="set-muted note extras">
+        {t('languages.spellExtra')}
+        {#each extraSpell as tag (tag)}
+          <span class="lib-chip" lang={tag}>
+            {nativeName(tag)} ({tag})
+            <button
+              class="icon-btn"
+              aria-label={t('languages.spellOff', { name: nativeName(tag) })}
+              disabled={busy}
+              onclick={() => apply({ spellcheck: toggleSpellcheck(info!.spellcheck, tag, web) }, t('languages.spellSaved'))}
+            >
+              <Icon name="x" size={11} />
+            </button>
+          </span>
+        {/each}
+      </p>
+    {/if}
 
     <p class="set-muted note">
       <Icon name="alert" size={12} />
@@ -253,6 +285,17 @@
     margin: 8px 0 0;
     font-size: var(--fs-xs);
     line-height: 1.5;
+  }
+  .extras {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .extras .lib-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
   }
   .note :global(svg) {
     margin-right: 4px;

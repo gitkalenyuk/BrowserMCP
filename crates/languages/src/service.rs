@@ -2,6 +2,7 @@
 //! registry's extensions.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use bmcp_core::{BackendResult, BoxFuture, CmdError, Ctx, DataDir, ErrorCode};
@@ -55,6 +56,13 @@ pub struct LanguagesService {
     /// `browser_locale` as it was when the browser started (Chromium reads it only then).
     started_locale: Option<String>,
     backend: RwLock<Option<Arc<dyn LanguageBackend>>>,
+    /// Held by `browser.languages_set` from reading the settings to the browser applying
+    /// them, so concurrent calls (the UI and an agent) neither lose an update nor reach CEF
+    /// out of order. Async: it is held across the browser call.
+    writes: tokio::sync::Mutex<()>,
+    /// The last `apply_languages` failed after the settings were stored: the browser may not
+    /// match them, so the next set applies again even when it changes nothing.
+    out_of_sync: AtomicBool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -72,7 +80,23 @@ impl LanguagesService {
             locales_dir: locales_dir.into(),
             settings: Mutex::new(settings),
             backend: RwLock::new(None),
+            writes: tokio::sync::Mutex::new(()),
+            out_of_sync: AtomicBool::new(false),
         }
+    }
+
+    /// One change at a time (see the `writes` field); hold the guard until the browser applied.
+    pub async fn write_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.writes.lock().await
+    }
+
+    /// Did the last attempt to apply the stored settings to the browser fail?
+    pub fn out_of_sync(&self) -> bool {
+        self.out_of_sync.load(Ordering::SeqCst)
+    }
+
+    pub fn set_out_of_sync(&self, failed: bool) {
+        self.out_of_sync.store(failed, Ordering::SeqCst);
     }
 
     /// The service of the registry; created on first use from the data folder when the app

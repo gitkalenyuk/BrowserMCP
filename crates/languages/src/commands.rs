@@ -148,20 +148,29 @@ impl Command for LanguagesSet {
 
     async fn run(ctx: Ctx, args: LanguagesSetArgs) -> Result<LanguagesInfo, CmdError> {
         let service = LanguagesService::from_ctx(&ctx)?;
+        // Read → store → apply as one step (see LanguagesService::write_lock).
+        let _write = service.write_lock().await;
         let before = service.settings();
         let mut next = before.clone();
         apply(&mut next, args, &service.available_locales())?;
-        if next == before {
+        // After a failed apply the file is ahead of the browser: apply again even when this
+        // call changes nothing, or a retry with the same arguments would never reach CEF.
+        let resync = service.out_of_sync();
+        if next == before && !resync {
             return info(&service).await;
         }
         let web_before = service.effective_web();
-        service.store(next.clone())?;
+        if next != before {
+            service.store(next.clone())?;
+        }
         let web = service.effective_web();
         let report = match service.backend() {
-            Some(backend) if web != web_before || next.spellcheck != before.spellcheck => {
-                backend
-                    .apply_languages(web, next.spellcheck.clone())
-                    .await?
+            Some(backend)
+                if resync || web != web_before || next.spellcheck != before.spellcheck =>
+            {
+                let applied = backend.apply_languages(web, next.spellcheck.clone()).await;
+                service.set_out_of_sync(applied.is_err());
+                applied?
             }
             Some(backend) => backend.languages().await?,
             None => Default::default(),

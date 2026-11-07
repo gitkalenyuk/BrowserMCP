@@ -19,6 +19,7 @@
     toggleChannel,
     updateRule,
   } from '../lib/settings/notify';
+  import { richParts } from '../lib/settings/rich';
   import Toggle from './Toggle.svelte';
 
   let { api, notify, fail }: { api: BrowserApi; notify: (t: string, e?: boolean) => void; fail: (e: unknown) => void } = $props();
@@ -190,8 +191,7 @@
           <div class="text">
             <span class="label">{t('settings.notify.channel.webhook')}</span>
             <span class="help">
-              <span class="set-mono">POST</span> {t('settings.notify.whHelp1')} <span class="set-mono">{'{id, title, body, level, topic, data, actions, ts_ms}'}</span>
-              {t('settings.notify.whHelp2')}
+              {#each richParts(t('settings.notify.whHelp')) as p, i (i)}{#if p.slot === 'method'}<span class="set-mono">POST</span>{:else if p.slot === 'body'}<span class="set-mono">{'{id, title, body, level, topic, data, actions, ts_ms}'}</span>{:else}{p.text}{/if}{/each}
             </span>
           </div>
           <div class="ctl">

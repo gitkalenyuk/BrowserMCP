@@ -6,7 +6,7 @@ export default {
     'Сайти бачать ці мови в порядку пріоритету (заголовок Accept-Language і navigator.languages) і за ними вибирають, якою мовою показати сторінку. Зміни одразу діють у всіх вкладках; перезавантажте сторінку, щоб побачити її новою мовою.',
   'languages.automatic': 'автоматично',
   'languages.automaticHint': 'Мова інтерфейсу, потім англійська',
-  'languages.useAutomatic': 'Автоматично',
+  'languages.useAutomatic': 'Повернути автоматичні',
   'languages.automaticBack': 'Сайти отримують мову інтерфейсу, потім англійську',
   'languages.loadError': 'Не вдалося прочитати мовні налаштування: {error}',
   'languages.saved': 'Мови для сайтів збережено',
@@ -14,6 +14,8 @@ export default {
   'languages.spellHint': 'Перевіряти правопис цією мовою в текстових полях',
   'languages.spellFor': 'Перевірка правопису: {name}',
   'languages.spellSaved': 'Мови перевірки правопису збережено',
+  'languages.spellExtra': 'Правопис також перевіряється для:',
+  'languages.spellOff': 'Вимкнути перевірку правопису: {name}',
   'languages.spellUnsupported': 'У цій збірці браузера перевірку правопису налаштувати не можна.',
   'languages.moveUp': 'Перемістити «{name}» вище',
   'languages.moveDown': 'Перемістити «{name}» нижче',
@@ -24,7 +26,7 @@ export default {
   'languages.err.unknown': '«{text}» — не мова: виберіть зі списку або введіть код на кшталт de чи pt-BR',
   'languages.err.listed': '{name} уже є в списку',
   'languages.precedence':
-    'Профілі зі стелс-ідентичністю зберігають власні мови, підібрані під країну свого проксі: сайт має бачити мову, що відповідає IP-адресі.',
+    'Стелс-профілі (з маскуванням під країну проксі) зберігають власні мови: сайт має бачити мову, що відповідає IP-адресі.',
   'languages.ownProfiles': 'Зараз зберігають власні:',
   'languages.browser': 'Мова браузера',
   'languages.browserHelp':

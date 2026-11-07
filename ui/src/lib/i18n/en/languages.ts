@@ -14,6 +14,8 @@ export default {
   'languages.spellHint': 'Check spelling in this language in text fields',
   'languages.spellFor': 'Spellcheck in {name}',
   'languages.spellSaved': 'Spellcheck languages saved',
+  'languages.spellExtra': 'Spellcheck is also on for:',
+  'languages.spellOff': 'Turn off spellcheck in {name}',
   'languages.spellUnsupported': 'Spellcheck cannot be set up in this build of the browser.',
   'languages.moveUp': 'Move {name} up',
   'languages.moveDown': 'Move {name} down',

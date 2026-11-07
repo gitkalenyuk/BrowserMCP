@@ -1,14 +1,23 @@
-<script lang="ts">
+<script lang="ts" module>
   import { createApi, type BrowserApi } from '../lib/api';
+
+  // Fallback while Settings.svelte renders <GeneralSection /> without `api`: one connection per
+  // page, shared by every visit to this section (a new one per mount would leak a WebSocket and,
+  // in mock mode, reset the card's state each time the section is opened).
+  let ownApi: BrowserApi | undefined;
+  const sharedApi = () => (ownApi ??= createApi());
+</script>
+
+<script lang="ts">
   import { LOCALES, systemLocale, t } from '../lib/i18n/index.svelte';
   import { ACCENTS, settings, type Density, type ThemePref, type WidgetId } from '../lib/settings.svelte';
   import Toggle from './Toggle.svelte';
   import WebLanguages from './WebLanguages.svelte';
 
   // `api` / `notify` come from the settings page; without them (an older Settings.svelte) the
-  // language card opens its own connection and shows its errors inline.
+  // language card uses the page-wide fallback connection and shows its messages inline.
   let { api, notify }: { api?: BrowserApi; notify?: (text: string, error?: boolean) => void } = $props();
-  const languagesApi = $derived(api ?? createApi());
+  const languagesApi = $derived(api ?? sharedApi());
 
   // Labels are looked up in markup (t() follows the interface language).
   const THEMES: ThemePref[] = ['system', 'light', 'dark'];

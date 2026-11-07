@@ -44,6 +44,34 @@ describe("website languages", () => {
     expect(after).toContain("header=pl,en;q=0.9");
   });
 
+  it("keeps a profile's own language and follows changes to it live", async () => {
+    // A profile's own list (as a stealth identity sets it) wins over the global one, and a
+    // change of it (re-fitting the identity) applies to the profile's next tab, no restart.
+    const profile = "e2e-lang";
+    const inProfile = async () => {
+      const { id } = await browser.tabs.open({ url: fixture("e2e/languages.html"), profile });
+      tabs.push(id);
+      await browser.nav.wait({ tab: id, for: "load", timeout_secs: 30 });
+      return untilText(browser, id, " done");
+    };
+    try {
+      await browser.call("profile.create", { id: profile, accept_language: "fr-FR,fr" });
+      expect(await inProfile()).toContain("languages=fr-FR,fr");
+
+      await browser.call("profile.create", { id: profile, accept_language: "it-IT,it" });
+      const changed = await inProfile();
+      expect(changed).toContain("languages=it-IT,it");
+      expect(changed).toContain("header=it-IT,it;q=0.9");
+
+      // Without its own language the profile follows the global list (set by the test above).
+      await browser.call("profile.create", { id: profile, accept_language: "" });
+      expect(await inProfile()).toContain("languages=pl,en");
+    } finally {
+      await closeTabs(browser, tabs.splice(0));
+      await browser.call("profile.delete", { id: profile }).catch(() => {});
+    }
+  });
+
   it("refuses what is not a language and keeps the list", async () => {
     await expect(browser.call("browser.languages_set", { web: ["de;q=0.5"] })).rejects.toThrow(/language tag/);
     const now = await browser.call("browser.languages_get");

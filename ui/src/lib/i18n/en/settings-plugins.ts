@@ -1,10 +1,8 @@
 // Settings → Plugins & userscripts (settings/PluginsSection.svelte). Conventions: ../index.svelte.ts.
 export default {
   'settings.plugins.title': 'Plugins & userscripts',
-  'settings.plugins.intro1': 'Plugins are folders in',
-  'settings.plugins.intro2': 'with a',
-  'settings.plugins.intro3':
-    ': a script that reacts to browser events, may add Ctrl+K entries and userscripts, and can only call the commands its manifest names. Userscripts run on matching page loads.',
+  'settings.plugins.intro':
+    'Plugins are folders in {dir} with a {manifest}: a script that reacts to browser events, may add Ctrl+K entries and userscripts, and can only call the commands its manifest names. Userscripts run on matching page loads.',
   'settings.plugins.loadError': 'Could not read plugins: {error}',
   'settings.plugins.plugins': 'Plugins',
   'settings.plugins.rescan': 'Rescan',

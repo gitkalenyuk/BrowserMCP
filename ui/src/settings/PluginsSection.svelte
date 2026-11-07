@@ -4,6 +4,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import { locale, t, tp } from '../lib/i18n/index.svelte';
   import Dialog from '../library/Dialog.svelte';
+  import { richParts } from '../lib/settings/rich';
   import Toggle from './Toggle.svelte';
 
   let { api, notify, fail }: { api: BrowserApi; notify: (t: string, e?: boolean) => void; fail: (e: unknown) => void } = $props();
@@ -176,7 +177,7 @@ await browser.userscripts.inject({
   <header>
     <h2>{t('settings.plugins.title')}</h2>
     <p>
-      {t('settings.plugins.intro1')} <span class="set-mono">data/plugins</span> {t('settings.plugins.intro2')} <span class="set-mono">plugin.json</span>{t('settings.plugins.intro3')}
+      {#each richParts(t('settings.plugins.intro')) as p, i (i)}{#if p.slot === 'dir'}<span class="set-mono">data/plugins</span>{:else if p.slot === 'manifest'}<span class="set-mono">plugin.json</span>{:else}{p.text}{/if}{/each}
     </p>
   </header>
 

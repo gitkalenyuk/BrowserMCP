@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BrowserApi } from '../lib/api';
-  import { BOOKMARKS_BAR, type DataBookmark } from '../lib/api/types-data';
+  import { BOOKMARKS_BAR, OTHER_BOOKMARKS, type DataBookmark } from '../lib/api/types-data';
   import Favicon from '../lib/components/Favicon.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { t, tp } from '../lib/i18n/index.svelte';
@@ -33,7 +33,12 @@
     fail: (err: unknown) => void;
   } = $props();
 
-  let tree = $state<FolderNode[]>([]);
+  /** As loaded; `tree` is the same with the two roots named in the interface language. */
+  let rawTree = $state<FolderNode[]>([]);
+  // lib/data/tree.ts names the roots in English (ROOT_TITLES); the names are UI text, so they
+  // are swapped here, reactively, and follow a change of the interface language.
+  const rootTitle = (id: number) => (id === BOOKMARKS_BAR ? t('library.bm.root.bar') : id === OTHER_BOOKMARKS ? t('library.bm.root.other') : null);
+  const tree = $derived(rawTree.map((root) => ({ ...root, title: rootTitle(root.id) ?? root.title })));
   let loaded = $state(false);
   let expanded = $state<Record<number, boolean>>({});
   let query = $state('');
@@ -46,7 +51,7 @@
 
   async function reload() {
     try {
-      tree = await loadTree(api);
+      rawTree = await loadTree(api);
       loaded = true;
       if (!findFolder(tree, folder)) folder = BOOKMARKS_BAR;
       for (const p of folderPath(tree, folder)) expanded[p.id] = true;

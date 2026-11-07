@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_KEYMAP } from '../keymap';
+import { DICTS } from '../i18n/index.svelte';
+import { COMMAND_IDS, DEFAULT_KEYMAP } from '../keymap';
+import { settings } from '../settings.svelte';
 import { chordText, conflicts, effectiveKeymap, filterRows, keymapRows, recordChord, resetBinding, setBinding } from './keys';
+
+// Titles are checked in English unless a test says otherwise (the machine's language may differ).
+settings.update({ language: 'en' });
 
 const key = (code: string, k: string, mods: Partial<Record<'ctrlKey' | 'shiftKey' | 'altKey' | 'metaKey', boolean>> = {}) => ({
   code,
@@ -52,5 +57,26 @@ describe('keymap overrides', () => {
     expect(filterRows(rows, 'Ctrl ,').map((r) => r.id)).toEqual(['settings.open']);
     expect(filterRows(rows, '').length).toBe(rows.length);
     expect(rows.find((r) => r.id === 'settings.open')?.title).toBe('Settings');
+  });
+
+  it('shows titles in the interface language and searches both languages', () => {
+    settings.update({ language: 'uk' });
+    try {
+      const rows = keymapRows(DEFAULT_KEYMAP, {});
+      expect(rows.find((r) => r.id === 'library.history')?.title).toBe('Історія');
+      expect(rows.find((r) => r.id === 'tab.select3')?.title).toBe('Перейти до вкладки 3');
+      expect(filterRows(rows, 'історія').map((r) => r.id)).toContain('library.history');
+      expect(filterRows(rows, 'history').map((r) => r.id)).toContain('library.history');
+    } finally {
+      settings.update({ language: 'en' });
+    }
+  });
+
+  it('has a translation for every command', () => {
+    const missing = COMMAND_IDS.filter((id) => {
+      const key = /^tab\.select\d$/.test(id) ? 'settings.keyboard.cmd.tab.selectN' : `settings.keyboard.cmd.${id}`;
+      return !(key in DICTS.en) || !(key in DICTS.uk);
+    });
+    expect(missing).toEqual([]);
   });
 });

@@ -98,6 +98,14 @@ export function toggleSpellcheck(spellcheck: string[], tag: string, web: string[
   return [...next].sort((a, b) => rank(a) - rank(b));
 }
 
+/**
+ * Spellcheck dictionaries that are on but have no row in the website list (exact tags: Chromium
+ * keeps "en-US" and "en" apart). Listed separately in the card so they can still be turned off.
+ */
+export function spellExtras(spellcheck: string[], web: string[]): string[] {
+  return spellcheck.filter((l) => !web.some((w) => same(w, l)));
+}
+
 /** The automatic list for an interface language (mirror of crates/languages `automatic_web`). */
 export function automaticWeb(uiLanguage: string): string[] {
   const tag = normalizeTag(uiLanguage) ?? 'en';

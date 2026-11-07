@@ -4,6 +4,7 @@
   import type { ImportPartResult } from '../lib/api/types-data';
   import Icon from '../lib/components/Icon.svelte';
   import { markImportOffered } from '../lib/data/library';
+  import { richParts } from '../lib/settings/rich';
   import {
     canStart,
     cleanPath,
@@ -160,7 +161,7 @@
       {#if s.parts.passwords}
         <div class="sub">
           <ol class="steps">
-            <li>{t('library.imp.step1a')} <code>chrome://password-manager/settings</code> {t('library.imp.step1b')}</li>
+            <li>{#each richParts(t('library.imp.step1')) as p, i (i)}{#if p.slot === 'url'}<code>chrome://password-manager/settings</code>{:else}{p.text}{/if}{/each}</li>
             <li>{t('library.imp.step2a')} <em>{t('library.imp.chromeExport')}</em> {t('library.imp.step2b')} <em>{t('library.imp.chromeDownload')}</em> {t('library.imp.step2c')}</li>
             <li>{t('library.imp.step3a')} <code>.csv</code> {t('library.imp.step3b')} <em>{t('library.imp.copyAsPath')}</em>{t('library.imp.step3c')}</li>
           </ol>
@@ -193,7 +194,7 @@
               class="lib-input mono"
               value={s.cookiesJson}
               oninput={(e) => send({ type: 'set_path', part: 'cookies', path: e.currentTarget.value })}
-              placeholder="C:\Users\you\Downloads\cookies.json"
+              placeholder={t('library.imp.cookiesPlaceholder')}
               spellcheck="false"
             />
           </label>
