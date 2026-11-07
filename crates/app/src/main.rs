@@ -92,7 +92,14 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
     adblock.gate.set_native(true); // adblock.apply then skips its CDP Fetch interception
     let gate: Arc<dyn bmcp_adblock::ResourceGate> = adblock.gate.clone();
     let permissions = bmcp_profiles::PermissionStore::load(data.config().join("permissions.json"));
-    let cdp_port = checked_cdp_port(cli.cdp_port, &data);
+    // `--cdp-port`, else Settings → Connections & API (data/config/connections.json).
+    let connections =
+        bmcp_api::info::ConnectionsConfig::load(&data.config()).unwrap_or_else(|err| {
+            tracing::warn!(%err, "connections.json ignored");
+            Default::default()
+        });
+    let cdp_launch = checked_cdp_port(connections.startup_cdp_port(cli.cdp_port), &data);
+    let cdp_port = cdp_launch.port;
 
     let on_ready: bmcp_cef::ReadyCallback = {
         let shutdown = shutdown.clone();
@@ -101,6 +108,7 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
         let data = data.clone();
         let permissions = permissions.clone();
         let profile = profile.to_string();
+        let cdp_launch = cdp_launch.clone();
         Box::new(move |backend: Arc<dyn BrowserBackend>| match api_listener {
             None => {
                 handle.spawn(dump_ax_and_quit(backend));
@@ -117,6 +125,7 @@ fn run(browser: bmcp_cef::Browser) -> anyhow::Result<()> {
                         adblock,
                         permissions,
                         profile,
+                        cdp_launch,
                     },
                 ));
             }
@@ -179,25 +188,33 @@ fn bind_api(port: u16, data: &DataDir) -> anyhow::Result<std::net::TcpListener> 
     })
 }
 
-/// `--cdp-port`, unless a profile has a stealth identity: an open debugging port is easy for
-/// sites and local software to detect, so the two are never combined.
-fn checked_cdp_port(port: Option<u16>, data: &DataDir) -> Option<u16> {
-    let port = port?;
+/// The CDP port asked for (`--cdp-port` or the saved setting), unless a profile has a stealth
+/// identity: an open debugging port is easy for sites and local software to detect, so the
+/// two are never combined.
+fn checked_cdp_port(port: Option<u16>, data: &DataDir) -> bmcp_api::info::CdpLaunch {
+    let Some(port) = port else {
+        return Default::default();
+    };
     let identities = bmcp_identity::Services::new(data.config())
         .identities
         .read()
         .map(|f| f.profiles)
         .unwrap_or_default();
     if identities.is_empty() {
-        Some(port)
+        bmcp_api::info::CdpLaunch {
+            port: Some(port),
+            refused: false,
+        }
     } else {
         let profiles: Vec<&String> = identities.keys().collect();
         tracing::error!(
             ?profiles,
-            "--cdp-port refused: these profiles use a stealth identity (identity_assign); \
-             remove the assignment to use the CDP port"
+            "CDP port refused: these profiles use a stealth identity (identity_assign);              remove the assignment to use the CDP port"
         );
-        None
+        bmcp_api::info::CdpLaunch {
+            port: None,
+            refused: true,
+        }
     }
 }
 
@@ -212,6 +229,8 @@ struct ApiServices {
     permissions: bmcp_profiles::PermissionStore,
     /// The profile the browser runs with (`--profile`).
     profile: String,
+    /// What happened to the CDP port at launch (for `api.info`).
+    cdp_launch: bmcp_api::info::CdpLaunch,
 }
 
 async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
@@ -224,12 +243,14 @@ async fn start_api(backend: Arc<dyn BrowserBackend>, services: ApiServices) {
         adblock,
         permissions,
         profile,
+        cdp_launch,
     } = services;
     let port = listener.local_addr().map_or(0, |addr| addr.port());
     // One registry for every API surface; command crates are registered in `bmcp-registry`.
     let registry = bmcp_registry::build_registry();
     // Command crates that keep files (filter lists, site policies…) find the data folder here.
     registry.extensions().insert(data.clone());
+    registry.extensions().insert(cdp_launch);
     // Identities and proxy pools in data/config.
     bmcp_identity::install(&registry, data.config());
     // The adblock service whose gate the browser already asks for every request; load the

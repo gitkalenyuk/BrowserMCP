@@ -6,6 +6,7 @@
 //! * [`backend`] — the `BrowserBackend` trait the CEF crate implements;
 //! * [`command`] — the `Command` trait and the `Registry` every API surface is generated from;
 //! * [`commands`] — the built-in commands (`tabs.list`, `nav.goto`, …);
+//! * [`config_file`] — small JSON settings files in `data/config/` (atomic writes);
 //! * [`events`] — the `EventBus` (command started/finished, `tab.*`, later page and network events);
 //! * [`extensions`] — typed map of shared services that outlive one call (per-tab state, …);
 //! * [`paths`] — portable data directory layout;
@@ -15,6 +16,7 @@ pub mod agents;
 pub mod backend;
 pub mod command;
 pub mod commands;
+pub mod config_file;
 pub mod events;
 pub mod extensions;
 pub mod paths;

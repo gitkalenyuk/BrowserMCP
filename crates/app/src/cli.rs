@@ -80,8 +80,9 @@ Options:
   --ui-dev <URL>       Load the UI from a Vite dev server, e.g. http://localhost:5173
                        (hot reload; also set BMCP_DEV_UI=1 so the API accepts it)
   --cdp-port <PORT>    Open the Chrome DevTools Protocol port for Playwright/Puppeteer
-                       (connectOverCDP http://127.0.0.1:<PORT>). Off by default; refused
-                       while any profile has a stealth identity
+                       (connectOverCDP http://127.0.0.1:<PORT>). Off by default (or as
+                       saved in Settings > Connections & API); refused while any
+                       profile has a stealth identity
   --no-restore         Do not re-open the last session's tabs (data/runtime/session.json)
   --headless           No window at all: the first tab and every later tab are
                        off-screen pages (screenshots, video, CDP input work); the

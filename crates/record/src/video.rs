@@ -452,22 +452,28 @@ fn exe_name() -> &'static str {
 
 /// `BMCP_FFMPEG`, then `ffmpeg(.exe)` next to the browser executable, then `PATH`.
 pub fn find_ffmpeg() -> Option<PathBuf> {
+    locate_ffmpeg().map(|(path, _)| path)
+}
+
+/// [`find_ffmpeg`] plus where it was found (shown in Settings → Recording & scripts).
+pub fn locate_ffmpeg() -> Option<(PathBuf, crate::settings::FfmpegSource)> {
+    use crate::settings::FfmpegSource;
     if let Some(path) = std::env::var_os("BMCP_FFMPEG").map(PathBuf::from)
         && path.is_file()
     {
-        return Some(path);
+        return Some((path, FfmpegSource::Env));
     }
     if let Ok(exe) = std::env::current_exe() {
         let next_to_exe = exe.with_file_name(exe_name());
         if next_to_exe.is_file() {
-            return Some(next_to_exe);
+            return Some((next_to_exe, FfmpegSource::NextToExe));
         }
     }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(exe_name()))
         .find(|p| p.is_file())
-        .map(|p| resolve_shim(&p).unwrap_or(p))
+        .map(|p| (resolve_shim(&p).unwrap_or(p), FfmpegSource::Path))
 }
 
 /// Scoop installs `ffmpeg.exe` as a small launcher ("shim") with an `ffmpeg.shim` file next to

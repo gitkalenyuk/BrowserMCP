@@ -11,6 +11,7 @@
 //! | `run.export` | csv/xlsx/json/sqlite/webhook |
 //! | `run.heal_apply` | continue a run paused by `run.heal_needed` with a patched script |
 //! | `trigger.set/list/remove` | cron triggers that run a script |
+//! | `script.settings` | defaults of the above + script host status (see [`crate::settings`]) |
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,13 +26,13 @@ use crate::data::{DataArgs, load_rows, object_to_row};
 use crate::debug::{DebugCmdArgs, DebugCmdOutput, DebugStartArgs, DebugStartOutput};
 use crate::export::{ExportArgs, ExportOutput};
 use crate::host::HostOutcome;
-use crate::runner::{DEFAULT_TIMEOUT_SECS, ScriptSource, StartRequest};
+use crate::runner::{ScriptSource, StartRequest};
 use crate::scripts::ScriptInfo;
 use crate::store::{Counts, HealMode, RowRecord, RowStatus, RunRecord};
 use crate::triggers::{TriggerInfo, TriggerKind};
 use crate::{Inner, JobsService};
 
-fn service(ctx: &Ctx) -> Result<Arc<Inner>, CmdError> {
+pub(crate) fn service(ctx: &Ctx) -> Result<Arc<Inner>, CmdError> {
     ctx.extensions
         .get::<JobsService>()
         .map(|s| s.inner.clone())
@@ -166,7 +167,8 @@ pub struct ScriptRunArgs {
     pub code: Option<String>,
     /// Values the script reads as inputs.<key> (passed as strings).
     pub inputs: Option<Map<String, Value>>,
-    /// Kill the script after this many seconds (default 300).
+    /// Kill the script after this many seconds (default: script_settings script_timeout_secs,
+    /// 300 out of the box).
     pub timeout_secs: Option<u64>,
 }
 
@@ -197,7 +199,10 @@ impl Command for ScriptRun {
             }
         };
         let inputs = object_to_row(args.inputs.unwrap_or_default())?;
-        let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1));
+        let timeout = args
+            .timeout_secs
+            .unwrap_or_else(|| inner.settings().script_timeout_secs);
+        let timeout = Duration::from_secs(timeout.max(1));
         // A shutdown of the browser also stops a script started by a call.
         let cancel: CancellationToken = inner.shutdown.child_token();
         inner
@@ -302,11 +307,13 @@ pub struct RunStartArgs {
     pub script: String,
     /// The rows: exactly one of csv_path, json_path, xlsx_path or rows.
     pub data: DataArgs,
-    /// Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB).
+    /// Rows at once (default: script_settings run_parallel, 4 out of the box; limited to CPU
+    /// count / 2 and free RAM / 400 MB).
     pub parallel: Option<usize>,
-    /// Extra attempts for a failed row, with exponential backoff (default 1).
+    /// Extra attempts for a failed row, with exponential backoff (default: script_settings
+    /// run_retries, 1).
     pub retries: Option<u32>,
-    /// Per-row timeout in seconds (default 300).
+    /// Per-row timeout in seconds (default: script_settings run_timeout_secs, 300).
     pub timeout_secs: Option<u64>,
     /// Stop the run at the first failed row (default false).
     pub stop_on_error: Option<bool>,

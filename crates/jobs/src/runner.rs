@@ -44,7 +44,7 @@ use crate::topics;
 /// Default per-row / per-call script timeout.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 /// Assumed memory per parallel row (script host + its share of browser tabs).
-const RAM_PER_SLOT: u64 = 400 * 1024 * 1024;
+pub(crate) const RAM_PER_SLOT: u64 = 400 * 1024 * 1024;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 /// Control handle of a live driver.
@@ -256,12 +256,14 @@ impl Inner {
             })?;
             hook.check(req.proxy_pool.as_deref(), req.fit_identity)?;
         }
-        let requested = req.parallel.unwrap_or(4).max(1);
+        // Left-out values come from Settings → Recording & scripts (scripts.json).
+        let defaults = self.settings();
+        let requested = req.parallel.unwrap_or(defaults.run_parallel).max(1);
         let options = RunOptions {
             parallel: self.effective_parallel(requested),
             parallel_requested: requested,
-            retries: req.retries.unwrap_or(1),
-            timeout_secs: req.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).max(1),
+            retries: req.retries.unwrap_or(defaults.run_retries),
+            timeout_secs: req.timeout_secs.unwrap_or(defaults.run_timeout_secs).max(1),
             stop_on_error: req.stop_on_error,
             heal: req.heal != HealMode::Off,
             heal_mode: Some(req.heal),

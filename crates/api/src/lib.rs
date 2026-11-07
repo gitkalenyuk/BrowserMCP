@@ -21,6 +21,7 @@ pub mod access;
 mod ax;
 pub mod commands;
 pub mod guard;
+pub mod info;
 mod mcp;
 pub mod openapi;
 pub mod rest;
@@ -105,6 +106,7 @@ pub async fn serve_on(
     listener: std::net::TcpListener,
     shutdown: CancellationToken,
 ) -> Result<Server, ServeError> {
+    let registry_for_info = registry.clone();
     let api = api_router(
         ApiState::new(
             registry.clone(),
@@ -133,6 +135,10 @@ pub async fn serve_on(
 
     let fallback = SocketAddr::from(([127, 0, 0, 1], 0));
     let addr = listener.local_addr().unwrap_or(fallback);
+    // `api.info` reports the real address (also with `--api-port 0`).
+    registry_for_info
+        .extensions()
+        .insert(info::ApiEndpoint::new(addr, &registry_for_info));
     let listener = listener
         .set_nonblocking(true)
         .and_then(|()| tokio::net::TcpListener::from_std(listener))

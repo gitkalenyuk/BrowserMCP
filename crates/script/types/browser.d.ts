@@ -728,6 +728,109 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- api.config ----
+
+  /** Arguments of `api.config`. */
+  export interface ApiConfigArgs {
+    /** Open the CDP port at the next start (refused while a profile has a stealth identity). */
+    cdp_enabled?: boolean | null;
+    /** CDP port, 1024-65535 (default 9222). */
+    cdp_port?: number | null;
+  }
+
+  /** Result of `api.config`. */
+  export interface ApiConfigOutput {
+    /** The saved settings. */
+    config: {
+      /**
+       * Open Chromium's remote debugging (CDP) port at startup, for Playwright / Puppeteer.
+       * @default false
+       */
+      cdp_enabled: boolean;
+      /**
+       * The CDP port (1024-65535, default 9222).
+       * @default 9222
+       */
+      cdp_port: number;
+    };
+    cdp: {
+      /** The port Chromium listens on now (null = closed). */
+      active_port: number | null;
+      /** A port was asked for at launch but refused because a profile has a stealth identity. */
+      refused: boolean;
+      /** The saved setting (connections.json) used at the next start. */
+      enabled: boolean;
+      port: number;
+      /** Profiles with a stealth identity: while there are any, the port stays closed. */
+      stealth_profiles: string[];
+      /** The saved setting differs from what is running: restart the browser to apply it. */
+      restart_needed: boolean;
+    };
+  }
+
+  // ---- api.info ----
+
+  /**
+   * Arguments of `api.info`.
+   * Arguments/output for commands that take or return nothing: `{}`.
+   */
+  export type ApiInfoArgs = Record<string, never>;
+
+  /** Result of `api.info`. */
+  export interface ApiInfoOutput {
+    /** BrowserMCP version. */
+    version: string;
+    /** The API server is listening (false only while starting). */
+    listening: boolean;
+    /** The API port (default 47800, `--api-port`). */
+    port: number | null;
+    urls: {
+      /**
+       * MCP over Streamable HTTP, e.g. "http://127.0.0.1:47800/mcp". Add `?toolsets=core,net`
+       * to list more toolsets.
+       */
+      mcp: string;
+      /** REST base, e.g. "http://127.0.0.1:47800/v1" (POST /v1/cmd/{name}). */
+      rest: string;
+      /** JSON-RPC 2.0 over WebSocket + events. */
+      ws: string;
+      /** OpenAPI 3.1 description of the REST API. */
+      openapi: string;
+      /** GET → {ok, name, version}. */
+      health: string;
+    } | null;
+    /** `data/runtime/endpoint.json`: how tools (and `browsermcp mcp-stdio`) find this instance. */
+    endpoint_file: string | null;
+    /** The file exists (written once the API listens, removed on exit). */
+    endpoint_present: boolean;
+    /** Full path of browsermcp.exe (for the stdio MCP command). */
+    exe: string | null;
+    /** The portable data folder. */
+    data_dir: string | null;
+    /** MCP toolsets with their command counts. */
+    toolsets: {
+      /** Name for `?toolsets=`, e.g. "net". */
+      name: string;
+      /** Commands in it. */
+      commands: number;
+      /** Listed by MCP when the URL names no toolsets. */
+      default: boolean;
+    }[];
+    cdp: {
+      /** The port Chromium listens on now (null = closed). */
+      active_port: number | null;
+      /** A port was asked for at launch but refused because a profile has a stealth identity. */
+      refused: boolean;
+      /** The saved setting (connections.json) used at the next start. */
+      enabled: boolean;
+      port: number;
+      /** Profiles with a stealth identity: while there are any, the port stays closed. */
+      stealth_profiles: string[];
+      /** The saved setting differs from what is running: restart the browser to apply it. */
+      restart_needed: boolean;
+    };
+  }
+
   // ---- bookmarks.add ----
 
   /** Arguments of `bookmarks.add`. */
@@ -5126,6 +5229,31 @@ declare namespace BrowserMCP {
     released: number;
   }
 
+  // ---- proxy.rules_get ----
+
+  /** Arguments of `proxy.rules_get`. */
+  export interface ProxyRulesGetArgs {
+    /** One profile; omit for every profile that has routing. */
+    profile?: string | null;
+  }
+
+  /** Result of `proxy.rules_get`. */
+  export interface ProxyRulesGetOutput {
+    /** Profiles with a proxy or split routing (a profile without any is direct). */
+    routes: {
+      profile: string;
+      /** Checked in order (passwords masked). */
+      rules: {
+        /** Host glob (`*.example.com`), URL glob (`https://example.com/*`) or `re:REGEX`. */
+        match: string;
+        /** `direct`, `fwd-N`, `pool:NAME`, `lease:POOL/RUN/ROW` or a proxy URL. */
+        via: string;
+      }[];
+      /** Where everything else goes (the profile's proxy; "direct" = none). */
+      default: string;
+    }[];
+  }
+
   // ---- proxy.rules_set ----
 
   /** Arguments of `proxy.rules_set`. */
@@ -5304,6 +5432,94 @@ declare namespace BrowserMCP {
     }[];
   }
 
+  // ---- record.settings ----
+
+  /** Arguments of `record.settings`. */
+  export interface RecordSettingsArgs {
+    /** Back to the defaults first (the other fields then apply on top). */
+    reset?: boolean | null;
+    /** Default frames per second of videos, 1-60. */
+    video_fps?: number | null;
+    /**
+     * Default format: webm or mp4.
+     *
+     * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+     * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+     */
+    video_format?: "webm" | "mp4" | null;
+    /** Default quality, 1-100. */
+    video_quality?: number | null;
+  }
+
+  /** Result of `record.settings`. */
+  export interface RecordSettingsOutput {
+    /** The settings in force (saved in data/config/recording.json). */
+    settings: {
+      /**
+       * Frames per second of videos, 1-60 (default 10). More = smoother and bigger files.
+       * @default 10
+       */
+      video_fps: number;
+      /**
+       * webm (VP9, default) or mp4 (H.264, plays everywhere).
+       *
+       * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+       * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+       * @default "webm"
+       */
+      video_format: "webm" | "mp4";
+      /**
+       * 1-100 (default 80): JPEG quality of the frames and encoder quality.
+       * @default 80
+       */
+      video_quality: number;
+    };
+    /** The built-in defaults. */
+    defaults: {
+      /**
+       * Frames per second of videos, 1-60 (default 10). More = smoother and bigger files.
+       * @default 10
+       */
+      video_fps: number;
+      /**
+       * webm (VP9, default) or mp4 (H.264, plays everywhere).
+       *
+       * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
+       * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
+       * @default "webm"
+       */
+      video_format: "webm" | "mp4";
+      /**
+       * 1-100 (default 80): JPEG quality of the frames and encoder quality.
+       * @default 80
+       */
+      video_quality: number;
+    };
+    ffmpeg: {
+      found: boolean;
+      /** The program that will be run. */
+      path: string | null;
+      /**
+       * - `"env"`: The `BMCP_FFMPEG` environment variable.
+       * - `"next_to_exe"`: `ffmpeg.exe` next to browsermcp.exe.
+       * - `"path"`: A folder on `PATH` (e.g. installed with winget).
+       */
+      source: "env" | "next_to_exe" | "path" | null;
+      /** First line of `ffmpeg -version`, e.g. "ffmpeg version 7.1-full_build-www.gyan.dev". */
+      version: string | null;
+      /** The value of `BMCP_FFMPEG`, when set (even when it points nowhere). */
+      env: string | null;
+      /** The folder to put ffmpeg.exe in (next to browsermcp.exe). */
+      exe_dir: string | null;
+      /** The install command for Windows. */
+      install: string;
+    };
+    /** `data/recordings` (one folder per recording). */
+    recordings_dir: string;
+    /** `data/videos` (record_video_start without a recording). */
+    videos_dir: string;
+  }
+
   // ---- record.start ----
 
   /** Arguments of `record.start`. */
@@ -5360,16 +5576,19 @@ declare namespace BrowserMCP {
   export interface RecordVideoStartArgs {
     /** Tab id from tabs_list. Default: the most recently opened tab. */
     tab?: number | null;
-    /** Frames per second, 1–60 (default 10). */
+    /** Frames per second, 1–60 (default: record_settings video_fps, 10 out of the box). */
     fps?: number | null;
     /**
-     * webm (VP9, default) or mp4 (H.264).
+     * webm (VP9) or mp4 (H.264) (default: record_settings video_format, webm).
      *
      * - `"webm"`: VP9 in WebM (`libvpx-vp9`).
      * - `"mp4"`: H.264 in MP4 (`libx264`, else `h264_mf` on Windows).
      */
     format?: "webm" | "mp4" | null;
-    /** 1–100 (default 80): JPEG quality of the frames and encoder quality. */
+    /**
+     * 1–100: JPEG quality of the frames and encoder quality (default: record_settings
+     * video_quality, 80).
+     */
     quality?: number | null;
   }
 
@@ -6006,11 +6225,17 @@ declare namespace BrowserMCP {
       /** Inline rows: an array of objects. */
       rows?: Record<string, unknown>[] | null;
     };
-    /** Rows at once (default 4; limited to CPU count / 2 and free RAM / 400 MB). */
+    /**
+     * Rows at once (default: script_settings run_parallel, 4 out of the box; limited to CPU
+     * count / 2 and free RAM / 400 MB).
+     */
     parallel?: number | null;
-    /** Extra attempts for a failed row, with exponential backoff (default 1). */
+    /**
+     * Extra attempts for a failed row, with exponential backoff (default: script_settings
+     * run_retries, 1).
+     */
     retries?: number | null;
-    /** Per-row timeout in seconds (default 300). */
+    /** Per-row timeout in seconds (default: script_settings run_timeout_secs, 300). */
     timeout_secs?: number | null;
     /** Stop the run at the first failed row (default false). */
     stop_on_error?: boolean | null;
@@ -6311,7 +6536,10 @@ declare namespace BrowserMCP {
     code?: string | null;
     /** Values the script reads as inputs.<key> (passed as strings). */
     inputs?: Record<string, unknown> | null;
-    /** Kill the script after this many seconds (default 300). */
+    /**
+     * Kill the script after this many seconds (default: script_settings script_timeout_secs,
+     * 300 out of the box).
+     */
     timeout_secs?: number | null;
   }
 
@@ -6374,6 +6602,89 @@ declare namespace BrowserMCP {
     size: number;
     /** Last change, milliseconds since the Unix epoch. */
     modified_ms: number;
+  }
+
+  // ---- script.settings ----
+
+  /** Arguments of `script.settings`. */
+  export interface ScriptSettingsArgs {
+    /** Back to the defaults first (the other fields then apply on top). */
+    reset?: boolean | null;
+    /** Default timeout of script_run, seconds (1-86400). */
+    script_timeout_secs?: number | null;
+    /** Default per-row timeout of run_start, seconds (1-86400). */
+    run_timeout_secs?: number | null;
+    /** Default rows at once of run_start (1 to the hard limit). */
+    run_parallel?: number | null;
+    /** Default extra attempts of a failed row (0-10). */
+    run_retries?: number | null;
+  }
+
+  /** Result of `script.settings`. */
+  export interface ScriptSettingsOutput {
+    /** The settings in force (saved in data/config/scripts.json). */
+    settings: {
+      /**
+       * Seconds before `script.run` (and a cron trigger's script) is stopped (default 300).
+       * @default 300
+       */
+      script_timeout_secs: number;
+      /**
+       * Seconds per row of a mass run before the row is stopped (default 300).
+       * @default 300
+       */
+      run_timeout_secs: number;
+      /**
+       * Rows of a mass run at once (default 4; still capped by CPUs and free RAM).
+       * @default 4
+       */
+      run_parallel: number;
+      /**
+       * Extra attempts for a failed row (default 1).
+       * @default 1
+       */
+      run_retries: number;
+    };
+    /** The built-in defaults. */
+    defaults: {
+      /**
+       * Seconds before `script.run` (and a cron trigger's script) is stopped (default 300).
+       * @default 300
+       */
+      script_timeout_secs: number;
+      /**
+       * Seconds per row of a mass run before the row is stopped (default 300).
+       * @default 300
+       */
+      run_timeout_secs: number;
+      /**
+       * Rows of a mass run at once (default 4; still capped by CPUs and free RAM).
+       * @default 4
+       */
+      run_parallel: number;
+      /**
+       * Extra attempts for a failed row (default 1).
+       * @default 1
+       */
+      run_retries: number;
+    };
+    host: {
+      /** bmcp-script-host(.exe) was found: scripts and mass runs can start. */
+      found: boolean;
+      path: string | null;
+      /** Why it was not found. */
+      error: string | null;
+      /** How to fix it. */
+      hint: string | null;
+    };
+    /** `data/scripts` (saved scripts). */
+    scripts_dir: string;
+    /** `data/runs` (exports of mass runs). */
+    runs_dir: string;
+    /** Hard upper limit of rows at once. */
+    max_parallel: number;
+    /** What this machine can run at once right now (CPUs / 2, free RAM / 400 MB). */
+    recommended_parallel: number;
   }
 
   // ---- simplify.get ----
@@ -7884,6 +8195,10 @@ declare namespace BrowserMCP {
     "ai.session_transcript": { args: AiSessionTranscriptArgs; output: AiSessionTranscriptOutput };
     /** List AI sessions (agents) with id, provider, color, status and the tabs each touched. */
     "ai.sessions_list": { args: AiSessionsListArgs; output: AiSessionsListOutput };
+    /** Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state. */
+    "api.config": { args: ApiConfigArgs; output: ApiConfigOutput };
+    /** How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed). */
+    "api.info": { args: ApiInfoArgs; output: ApiInfoOutput };
     /** Bookmark a URL at the end of a folder (default: the bookmarks bar). Returns the new bookmark. */
     "bookmarks.add": { args: BookmarksAddArgs; output: BookmarksAddOutput };
     /** Create a bookmark folder at the end of a parent folder (default: the bookmarks bar). Returns the new folder. */
@@ -8102,7 +8417,9 @@ declare namespace BrowserMCP {
     "proxy.pool_remove": { args: ProxyPoolRemoveArgs; output: ProxyPoolRemoveOutput };
     /** Release proxy leases of a mass run (one row, or the whole run). */
     "proxy.release": { args: ProxyReleaseArgs; output: ProxyReleaseOutput };
-    /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test. */
+    /** Read the proxy routing of one profile or of all: the split rules (proxy_rules_set) in order and the default route (its proxy), passwords masked. */
+    "proxy.rules_get": { args: ProxyRulesGetArgs; output: ProxyRulesGetOutput };
+    /** Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get keep their stored password. Test a URL with proxy_rules_test. */
     "proxy.rules_set": { args: ProxyRulesSetArgs; output: ProxyRulesSetOutput };
     /** Show which route a URL takes under a profile's proxy rules (proxy_rules_set): the matching rule and the proxy, evaluated like the PAC script does. */
     "proxy.rules_test": { args: ProxyRulesTestArgs; output: ProxyRulesTestOutput };
@@ -8112,6 +8429,8 @@ declare namespace BrowserMCP {
     "record.get": { args: RecordGetArgs; output: RecordGetOutput };
     /** List recordings (running and saved), newest first. */
     "record.list": { args: RecordListArgs; output: RecordListOutput };
+    /** Read or change the video defaults (fps, format, quality; saved in data/config/recording.json; used when record_video_start / record_start video=true leave them out). Also reports where ffmpeg was found (BMCP_FFMPEG, next to browsermcp.exe, PATH) and the recordings / videos folders. No arguments = just read. */
+    "record.settings": { args: RecordSettingsArgs; output: RecordSettingsOutput };
     /** Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id. */
     "record.start": { args: RecordStartArgs; output: RecordStartOutput };
     /** Stop a recording and write its files. Returns the paths of actions.jsonl, meta.json and the optional video / traffic log. */
@@ -8160,6 +8479,8 @@ declare namespace BrowserMCP {
     "script.run": { args: ScriptRunArgs; output: ScriptRunOutput };
     /** Create or overwrite a saved TypeScript script in data/scripts/<name>.ts. */
     "script.save": { args: ScriptSaveArgs; output: ScriptSaveOutput };
+    /** Read or change the defaults of script_run (timeout) and run_start (timeout per row, rows at once, retries), saved in data/config/scripts.json and used when a call leaves them out. Also reports whether bmcp-script-host was found, the folders, and how many rows this machine can run at once. No arguments = just read. */
+    "script.settings": { args: ScriptSettingsArgs; output: ScriptSettingsOutput };
     /** Effective simplification policy of a host (merged from matching patterns), its CEF content settings and whether ad blocking applies there. */
     "simplify.get": { args: SimplifyGetArgs; output: SimplifyGetOutput };
     /** All stored site simplification policies, plus the adblock settings (on/off, allowlist, lists). */
@@ -8368,6 +8689,21 @@ declare namespace BrowserMCP {
        * `ai.sessions_list` (MCP: `ai_sessions_list`): toolset `ai`, read.
        */
       sessions_list(args?: AiSessionsListArgs): Promise<AiSessionsListOutput>;
+    };
+    /** Commands `api.*`. */
+    api: {
+      /**
+       * Change the connection settings (data/config/connections.json): open the CDP port for Playwright/Puppeteer at the next start, and its port. Refused while a profile has a stealth identity. Takes effect after a restart; returns the saved settings and the CDP state.
+       *
+       * `api.config` (MCP: `api_config`): toolset `system`, act.
+       */
+      config(args?: ApiConfigArgs): Promise<ApiConfigOutput>;
+      /**
+       * How to connect to this browser: API port, MCP / REST / WebSocket / OpenAPI URLs, endpoint.json, the exe path (for MCP over stdio), MCP toolsets with command counts, and the CDP port for Playwright/Puppeteer (running now, saved setting, profiles whose stealth identity keeps it closed).
+       *
+       * `api.info` (MCP: `api_info`): toolset `system`, read.
+       */
+      info(args?: ApiInfoArgs): Promise<ApiInfoOutput>;
     };
     /** Commands `bookmarks.*`. */
     bookmarks: {
@@ -9090,7 +9426,13 @@ declare namespace BrowserMCP {
        */
       release(args: ProxyReleaseArgs): Promise<ProxyReleaseOutput>;
       /**
-       * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Test a URL with proxy_rules_test.
+       * Read the proxy routing of one profile or of all: the split rules (proxy_rules_set) in order and the default route (its proxy), passwords masked.
+       *
+       * `proxy.rules_get` (MCP: `proxy_rules_get`): toolset `stealth`, read.
+       */
+      rules_get(args?: ProxyRulesGetArgs): Promise<ProxyRulesGetOutput>;
+      /**
+       * Split routing for a profile: send matching sites through given proxies (or direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and the browser proxy preference; proxies go through local forwarders, never with a fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get keep their stored password. Test a URL with proxy_rules_test.
        *
        * `proxy.rules_set` (MCP: `proxy_rules_set`): toolset `stealth`, secret.
        */
@@ -9122,6 +9464,12 @@ declare namespace BrowserMCP {
        * `record.list` (MCP: `record_list`): toolset `record`, read.
        */
       list(args?: RecordListArgs): Promise<RecordListOutput>;
+      /**
+       * Read or change the video defaults (fps, format, quality; saved in data/config/recording.json; used when record_video_start / record_start video=true leave them out). Also reports where ffmpeg was found (BMCP_FFMPEG, next to browsermcp.exe, PATH) and the recordings / videos folders. No arguments = just read.
+       *
+       * `record.settings` (MCP: `record_settings`): toolset `record`, act.
+       */
+      settings(args?: RecordSettingsArgs): Promise<RecordSettingsOutput>;
       /**
        * Start recording a tab: every page/nav/input/tabs command and what a person does in the page (clicks, typing, keys, selects, navigations) go to an action log. Optional video and network log. Returns the recording id.
        *
@@ -9272,6 +9620,12 @@ declare namespace BrowserMCP {
        * `script.save` (MCP: `script_save`): toolset `script`, act.
        */
       save(args: ScriptSaveArgs): Promise<ScriptSaveOutput>;
+      /**
+       * Read or change the defaults of script_run (timeout) and run_start (timeout per row, rows at once, retries), saved in data/config/scripts.json and used when a call leaves them out. Also reports whether bmcp-script-host was found, the folders, and how many rows this machine can run at once. No arguments = just read.
+       *
+       * `script.settings` (MCP: `script_settings`): toolset `script`, act.
+       */
+      settings(args?: ScriptSettingsArgs): Promise<ScriptSettingsOutput>;
     };
     /** Commands `simplify.*`. */
     simplify: {

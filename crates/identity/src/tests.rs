@@ -942,3 +942,46 @@ async fn patch_and_probe_cover_the_available_screen() {
     assert_eq!(crate::stealth::available_screen(&id), None);
     assert!(crate::stealth::patch_script(&id, false).contains("\"availHeight\":null"));
 }
+
+#[tokio::test]
+async fn rules_get_masks_and_masked_urls_keep_their_password() {
+    let h = Harness::new();
+    let none = h.ok("proxy.rules_get", json!({})).await;
+    assert_eq!(none["routes"], json!([]));
+    h.ok(
+        "proxy.rules_set",
+        json!({
+            "profile": "work",
+            "rules": [{ "match": "*.example.com", "via": "socks5://u:secret@127.0.0.1:1081" }],
+            "default": "http://bob:pw@127.0.0.1:3128",
+        }),
+    )
+    .await;
+    let got = h.ok("proxy.rules_get", json!({ "profile": "work" })).await;
+    let text = got.to_string();
+    assert!(!text.contains("secret") && !text.contains(":pw@"), "{text}");
+    let route = &got["routes"][0];
+    assert_eq!(route["profile"], "work");
+    assert_eq!(route["default"], "http://bob:***@127.0.0.1:3128");
+    assert_eq!(route["rules"][0]["match"], "*.example.com");
+    assert_eq!(
+        h.ok("proxy.rules_get", json!({ "profile": "other" })).await["routes"],
+        json!([])
+    );
+
+    // Sending the masked routes back (plus a new rule) keeps both stored passwords.
+    h.ok(
+        "proxy.rules_set",
+        json!({
+            "profile": "work",
+            "rules": [route["rules"][0].clone(), { "match": "*.ru", "via": "direct" }],
+            "default": route["default"].clone(),
+        }),
+    )
+    .await;
+    let file = h.services().proxies.read().unwrap();
+    let stored = &file.routes["work"];
+    assert_eq!(stored.default, "http://bob:pw@127.0.0.1:3128");
+    assert_eq!(stored.rules[0].via, "socks5://u:secret@127.0.0.1:1081");
+    assert_eq!(stored.rules[1].via, "direct");
+}

@@ -1344,7 +1344,8 @@ impl Command for RulesSet {
             "Split routing for a profile: send matching sites through given proxies (or \
              direct) and the rest to a default. Generates a PAC script (FindProxyForURL) and \
              the browser proxy preference; proxies go through local forwarders, never with a \
-             fallback to direct. Test a URL with proxy_rules_test.",
+             fallback to direct. Masked proxy URLs (user:***@) as returned by proxy_rules_get \
+             keep their stored password. Test a URL with proxy_rules_test.",
             Toolset::Stealth,
         )
         .act()
@@ -1354,9 +1355,15 @@ impl Command for RulesSet {
     async fn run(ctx: Ctx, args: RulesSetArgs) -> Result<RulesSetOutput, CmdError> {
         check_name("profile", &args.profile)?;
         let services = Services::from_ctx(&ctx)?;
+        let stored = services.proxies.read()?.routes.get(&args.profile).cloned();
         let set = RuleSet {
             rules: args.rules,
             default: args.default.unwrap_or_else(|| "direct".into()),
+        };
+        // Masked proxy URLs from proxy_rules_get / profile_list keep the stored password.
+        let set = match &stored {
+            Some(stored) => keep_stored_passwords(set, stored),
+            None => set,
         };
         // Resolves first: nothing is stored when a route cannot work (e.g. an empty pool).
         let (set, proxy) = services.set_routes(&args.profile, set).await?;
@@ -1373,6 +1380,89 @@ impl Command for RulesSet {
             pac_script: proxy.pac_script,
             forwarders: proxy.forwarders,
         })
+    }
+}
+
+/// Put the stored URL back for every route that is the masked form (`user:***@`) of a stored
+/// one, so a UI can send back what `proxy.rules_get` showed without knowing the passwords.
+fn keep_stored_passwords(mut set: RuleSet, stored: &RuleSet) -> RuleSet {
+    let stored_vias = stored
+        .rules
+        .iter()
+        .map(|r| r.via.as_str())
+        .chain([stored.default.as_str()]);
+    let real: BTreeMap<String, String> = stored_vias
+        .filter_map(|via| {
+            let masked = ProxyRef::parse(via).ok()?.to_string();
+            (masked != via).then(|| (masked, via.to_string()))
+        })
+        .collect();
+    let restore = |via: &mut String| {
+        if let Some(original) = real.get(via.as_str()) {
+            *via = original.clone();
+        }
+    };
+    for rule in &mut set.rules {
+        restore(&mut rule.via);
+    }
+    restore(&mut set.default);
+    set
+}
+
+pub struct RulesGet;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RulesGetArgs {
+    /// One profile; omit for every profile that has routing.
+    pub profile: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProfileRoutes {
+    pub profile: String,
+    /// Checked in order (passwords masked).
+    pub rules: Vec<Rule>,
+    /// Where everything else goes (the profile's proxy; "direct" = none).
+    pub default: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RulesGetOutput {
+    /// Profiles with a proxy or split routing (a profile without any is direct).
+    pub routes: Vec<ProfileRoutes>,
+}
+
+impl Command for RulesGet {
+    const NAME: &'static str = "proxy.rules_get";
+    type Args = RulesGetArgs;
+    type Output = RulesGetOutput;
+
+    fn meta() -> Meta {
+        Meta::new(
+            "Read the proxy routing of one profile or of all: the split rules \
+             (proxy_rules_set) in order and the default route (its proxy), passwords masked.",
+            Toolset::Stealth,
+        )
+    }
+
+    async fn run(ctx: Ctx, args: RulesGetArgs) -> Result<RulesGetOutput, CmdError> {
+        let services = Services::from_ctx(&ctx)?;
+        let file = services.proxies.read()?;
+        let routes = file
+            .routes
+            .iter()
+            .filter(|(profile, _)| args.profile.as_ref().is_none_or(|p| p == *profile))
+            .map(|(profile, set)| {
+                let masked = set.masked();
+                ProfileRoutes {
+                    profile: profile.clone(),
+                    rules: masked.rules,
+                    default: masked.default,
+                }
+            })
+            .collect();
+        Ok(RulesGetOutput { routes })
     }
 }
 

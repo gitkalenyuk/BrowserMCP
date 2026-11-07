@@ -159,9 +159,10 @@ impl Command for Start {
                 None
             };
             let video = if args.video.unwrap_or(false) {
-                let path = dir.join("video.webm");
-                let recorder =
-                    start_video(&ctx, tab, VideoOptions::default(), path.clone()).await?;
+                // Settings → Recording & scripts (data/config/recording.json).
+                let options = crate::settings::current(&ctx).video_options();
+                let path = dir.join(format!("video.{}", options.format.extension()));
+                let recorder = start_video(&ctx, tab, options, path.clone()).await?;
                 meta.video = Some(path.display().to_string());
                 Some(recorder)
             } else {
@@ -504,11 +505,12 @@ pub struct VideoStart;
 pub struct VideoStartArgs {
     /// Tab id from tabs_list. Default: the most recently opened tab.
     pub tab: Option<TabId>,
-    /// Frames per second, 1–60 (default 10).
+    /// Frames per second, 1–60 (default: record_settings video_fps, 10 out of the box).
     pub fps: Option<u32>,
-    /// webm (VP9, default) or mp4 (H.264).
+    /// webm (VP9) or mp4 (H.264) (default: record_settings video_format, webm).
     pub format: Option<Format>,
-    /// 1–100 (default 80): JPEG quality of the frames and encoder quality.
+    /// 1–100: JPEG quality of the frames and encoder quality (default: record_settings
+    /// video_quality, 80).
     pub quality: Option<u8>,
 }
 
@@ -537,7 +539,8 @@ impl Command for VideoStart {
 
     async fn run(ctx: Ctx, args: VideoStartArgs) -> Result<VideoStartOutput, CmdError> {
         let tab = ctx.resolve_tab(args.tab).await?;
-        let defaults = VideoOptions::default();
+        // Left-out values come from Settings → Recording & scripts.
+        let defaults = crate::settings::current(&ctx).video_options();
         let options = VideoOptions {
             fps: args.fps.unwrap_or(defaults.fps),
             format: args.format.unwrap_or(defaults.format),

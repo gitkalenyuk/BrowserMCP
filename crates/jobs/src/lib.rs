@@ -12,6 +12,7 @@
 //! * [`triggers`] — cron triggers that fire `script.run` (`trigger.*`);
 //! * [`debug`] — the step debugger: a `bmcp-script-host --inspect pipe` process per session
 //!   (`script.debug_start`, `script.debug_cmd`, events `script.debug_*`);
+//! * [`settings`] — defaults of script runs and mass runs, script host status (`script.settings`);
 //! * [`commands`] — the registry commands (toolsets `script` and `run`).
 //!
 //! The app creates one [`JobsService`], puts it into the registry's `Extensions` and calls
@@ -34,6 +35,7 @@ pub mod export;
 pub mod host;
 pub mod runner;
 pub mod scripts;
+pub mod settings;
 pub mod store;
 pub mod triggers;
 
@@ -92,6 +94,9 @@ pub struct JobsConfig {
     /// Extra time after a script's timeout before its host process is killed (the host
     /// normally stops on its own and exits with 124). Default [`host::DEFAULT_KILL_GRACE`].
     pub kill_grace: Duration,
+    /// `data/config/scripts.json`: defaults of timeouts, parallelism and retries
+    /// (`script.settings`). `None` = the built-in defaults, not changeable (tests).
+    pub settings_path: Option<PathBuf>,
 }
 
 impl JobsConfig {
@@ -108,6 +113,7 @@ impl JobsConfig {
             auto_limit: true,
             max_parallel: 32,
             kill_grace: host::DEFAULT_KILL_GRACE,
+            settings_path: Some(data.config().join(settings::SCRIPTS_FILE)),
         }
     }
 }
@@ -258,5 +264,6 @@ pub fn register(registry: &mut Registry) {
         .add::<RunHealApply>()
         .add::<TriggerSet>()
         .add::<TriggerList>()
-        .add::<TriggerRemove>();
+        .add::<TriggerRemove>()
+        .add::<settings::Settings>();
 }

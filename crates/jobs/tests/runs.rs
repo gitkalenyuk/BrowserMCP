@@ -782,3 +782,55 @@ async fn isolated_rows_lease_a_proxy_per_row_and_rotate_on_retry() {
         ]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn script_settings_are_saved_and_used_as_defaults() {
+    let env = Env::new();
+    let read = env.ok("script.settings", json!({})).await;
+    assert_eq!(read["settings"]["run_parallel"], 4);
+    assert_eq!(read["host"]["found"], true, "{read:#}");
+    assert!(read["recommended_parallel"].as_u64().unwrap() >= 1);
+    // A read writes nothing.
+    assert!(!env.root().join("config/scripts.json").exists());
+
+    let saved = env
+        .ok(
+            "script.settings",
+            json!({"script_timeout_secs": 9, "run_parallel": 2, "run_retries": 0}),
+        )
+        .await;
+    assert_eq!(saved["settings"]["run_parallel"], 2);
+    assert_eq!(saved["defaults"]["run_parallel"], 4);
+    assert!(env.root().join("config/scripts.json").is_file());
+    let err = env
+        .call("script.settings", json!({"run_parallel": 0}))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidParams);
+
+    // script.run without a timeout gets the saved one (the fake host echoes it).
+    env.save(
+        "echo",
+        "args
+result {}",
+    )
+    .await;
+    let out = env.ok("script.run", json!({"name": "echo"})).await;
+    assert_eq!(out["result"]["timeout_secs"].as_f64(), Some(9.0), "{out:#}");
+    // run.start without parallel / retries gets the saved ones; explicit values still win.
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "echo", "data": {"rows": id_rows(1)}}),
+        )
+        .await;
+    assert_eq!(run["options"]["parallel_requested"], 2);
+    assert_eq!(run["options"]["retries"], 0);
+    let run = env
+        .ok(
+            "run.start",
+            json!({"script": "echo", "data": {"rows": id_rows(1)}, "parallel": 3}),
+        )
+        .await;
+    assert_eq!(run["options"]["parallel_requested"], 3);
+}
