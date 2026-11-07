@@ -36,7 +36,7 @@ export default {
   'net.filter': 'Фільтр запитів',
   'net.filterPlaceholder': 'Фільтр: текст, method:post, status:4xx, -слово',
   'net.types': 'Типи запитів',
-  'net.ctrlClick': 'Ctrl+клац — поєднати',
+  'net.ctrlClick': 'Ctrl+клік — вибрати кілька',
   'net.col.status': 'Статус',
   'net.col.method': 'Метод',
   'net.col.type': 'Тип',

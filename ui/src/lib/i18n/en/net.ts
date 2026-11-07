@@ -36,7 +36,7 @@ export default {
   'net.filter': 'Filter requests',
   'net.filterPlaceholder': 'Filter: text, method:post, status:4xx, -word',
   'net.types': 'Request types',
-  'net.ctrlClick': 'Ctrl+click to combine',
+  'net.ctrlClick': 'Ctrl+click to select several',
   'net.col.status': 'Status',
   'net.col.method': 'Method',
   'net.col.type': 'Type',

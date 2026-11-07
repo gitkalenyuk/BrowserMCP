@@ -2,7 +2,7 @@
   // Scripts panel: library (script.list/save/delete), Monaco editor with IntelliSense from the
   // generated browser.d.ts, Run with an inputs form (script.run), and the step debugger
   // (script.debug_start/debug_cmd + script.debug_* events). State lives in scripts/store.
-  import { t } from '../../i18n/index.svelte';
+  import { t, tp } from '../../i18n/index.svelte';
   import { formatDate, relativeTime } from '../../i18n/intl';
   import { settings } from '../../settings.svelte';
   import { useChrome } from '../../state/chrome.svelte';
@@ -173,7 +173,7 @@
                 use:focusOnMount
               />
             {:else}
-              <button class="pick" onclick={() => void store.open(s.name)} title="{s.name}.ts · {t('scripts.bytes', { n: s.size })}">
+              <button class="pick" onclick={() => void store.open(s.name)} title="{s.name}.ts · {tp('scripts.bytes', s.size)}">
                 <Icon name="code" size={13} stroke={2} />
                 <span class="name">{s.name}</span>
                 {#if store.isDirty(s.name)}<span class="dot" title={t('scripts.unsavedChanges')}></span>{/if}

@@ -7,6 +7,8 @@ export default {
   'term.list': 'Термінали',
   'term.exited': 'завершено',
   'term.exitedCode': 'завершено ({code})',
+  'term.processExited': '[процес завершився]',
+  'term.processExitedCode': '[процес завершився з кодом {code}]',
   'term.closeLabel': 'Закрити термінал {name}',
   'term.remove': 'Прибрати',
   'term.closeHint': 'Закрити (завершить оболонку)',

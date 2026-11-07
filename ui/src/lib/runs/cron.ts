@@ -11,7 +11,7 @@
 // The description and the errors are in the UI language (`runs.cron.*` in lib/i18n).
 
 import { t } from '../i18n/index.svelte';
-import { intlLocale } from '../i18n/intl';
+import { formatList, intlLocale } from '../i18n/intl';
 
 export interface CronField {
   values: number[];
@@ -82,6 +82,7 @@ function fieldError(def: FieldDef, what: string, params: Record<string, string |
 // Ukrainian needs ("у середу", "у січні"); in English they are the same words.
 const dowName = (v: number) => t(`runs.cron.dow.${v}`);
 const dowOn = (v: number) => t(`runs.cron.dowOn.${v}`);
+const dowFrom = (v: number) => t(`runs.cron.dowFrom.${v}`);
 const dowShort = (v: number) => t(`runs.cron.dowShort.${v}`);
 const monthIn = (v: number) => t(`runs.cron.monthIn.${v}`);
 
@@ -259,7 +260,9 @@ function describeTime(s: CronSchedule): Phrase {
   if (mi.values.length === 1 && h.values.length <= 6 && !h.all) {
     const oneSec = sec.values.length === 1;
     const times = joinList(h.values.map((x) => `${pad(x)}:${pad(mi.values[0])}${oneSec && !secOnly0 ? ':' + pad(sec.values[0]) : ''}`));
-    if (oneSec || !secPhrase) return { text: t('runs.cron.at', { times }), periodic: false };
+    // Ukrainian says «об 11:00» but «о 09:00»; the key differs so the dictionary decides.
+    const at = times.startsWith('11') ? 'runs.cron.at11' : 'runs.cron.at';
+    if (oneSec || !secPhrase) return { text: t(at, { times }), periodic: false };
     return { text: t('runs.cron.during', { what: secPhrase.text, times }), periodic: secPhrase.periodic };
   }
 
@@ -295,10 +298,14 @@ function describeDays(s: CronSchedule): { text: string; everyDay: boolean } {
   const dowText = (vals: number[]) => {
     if (vals.length === 5 && vals.join() === '2,3,4,5,6') return t('runs.cron.onWeekdays');
     if (vals.length === 2 && vals.join() === '1,7') return t('runs.cron.onWeekends');
-    return t('runs.cron.onDays', { days: runs(vals, dowOn) });
+    // One span reads "Monday–Wednesday" / «з понеділка по середу»; anything else lists each
+    // day (at most seven), since Ukrainian has no single case for «у понеділок–середу».
+    const span = vals.length >= 3 && vals.every((v, i) => i === 0 || v === vals[i - 1] + 1);
+    if (span) return t('runs.cron.onDayRange', { from: dowFrom(vals[0]), to: dowOn(vals[vals.length - 1]) });
+    return t('runs.cron.onDays', { days: joinList(vals.map(dowOn)) });
   };
   if (!s.dom.all && !s.dow.all) {
-    parts.push(t('runs.cron.onDomIf', { days: runs(s.dom.values), dows: joinList(s.dow.values.map(dowName)) }));
+    parts.push(t('runs.cron.onDomIf', { days: runs(s.dom.values), dows: formatList(s.dow.values.map(dowName), 'disjunction') }));
   } else if (!s.dom.all) {
     parts.push(t('runs.cron.onDom', { days: runs(s.dom.values) }));
   } else if (!s.dow.all) {

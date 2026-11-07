@@ -10,7 +10,6 @@ import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import browserTypes from '../../../../crates/script/types/browser.d.ts?raw';
-import { t } from '../i18n/index.svelte';
 
 // Workers: once MonacoEnvironment.getWorker exists Monaco asks it for EVERY worker, so the
 // TypeScript language service must get its own (Vite bundles each `?worker` import).
@@ -146,7 +145,11 @@ export class ScriptEditor {
     monaco.editor.setTheme(theme === 'dark' ? 'bmcp-dark' : 'bmcp-light');
   }
 
-  setBreakpoints(lines: number[], verified: number[] | null): void {
+  /**
+   * `hover`: the glyph tooltip. The caller passes it from its `$effect`, so a language switch
+   * re-applies the decorations (Monaco keeps the text it was given, it is not reactive).
+   */
+  setBreakpoints(lines: number[], verified: number[] | null, hover: string): void {
     this.#breakpoints.set(
       lines.map((line) => ({
         range: new monaco.Range(line, 1, line, 1),
@@ -154,7 +157,7 @@ export class ScriptEditor {
           isWholeLine: true,
           stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
           glyphMarginClassName: verified && !verified.includes(line) ? 'bmcp-bp bmcp-bp-unverified' : 'bmcp-bp',
-          glyphMarginHoverMessage: { value: t('scripts.breakpointHover') },
+          glyphMarginHoverMessage: { value: hover },
         },
       })),
     );

@@ -25,7 +25,7 @@ export default {
   'newtab.prompt.example3': 'Стеж за дописами про CEF на Hacker News',
   'newtab.agents.loadFailed': 'Не вдалося завантажити агентів: {error}',
   'newtab.agents.noTask': 'Без завдання',
-  'newtab.agents.none': 'Жоден агент не підключений. Додайте BrowserMCP до Claude Code або Codex, щоб побачити їх тут.',
+  'newtab.agents.none': 'Жодного агента не підключено. Додайте BrowserMCP до Claude Code або Codex, щоб побачити їх тут.',
   'newtab.agent.idle': 'Очікує',
   'newtab.agent.running': 'Працює',
   'newtab.agent.waiting': 'Чекає на вас',

@@ -7,6 +7,8 @@ export default {
   'term.list': 'Terminals',
   'term.exited': 'exited',
   'term.exitedCode': 'exited ({code})',
+  'term.processExited': '[process exited]',
+  'term.processExitedCode': '[process exited with code {code}]',
   'term.closeLabel': 'Close {name} terminal',
   'term.remove': 'Remove',
   'term.closeHint': 'Close (kills the shell)',

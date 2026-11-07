@@ -133,7 +133,7 @@
       });
       notice = r.path
         ? t('runs.detail.exported', { rows: tp('runs.form.rows', r.rows), path: r.path })
-        : t('runs.detail.sent', { rows: tp('runs.form.rows', r.rows), n: r.batches ?? 0 });
+        : tp('runs.detail.sent', r.batches ?? 0, { rows: tp('runs.form.rows', r.rows) });
       exportOpen = false;
     } catch (err) {
       error = (err as Error).message;
@@ -224,7 +224,7 @@
 
 <div class="rr-scroll">
   <div class="rr-section head">
-    <div class="bar" aria-label={t('runs.detail.progress', { done: run.done, total: run.total })}>
+    <div class="bar" aria-label={tp('runs.detail.progress', run.total, { done: run.done })}>
       {#each progressSegments(run) as s (s.kind)}<span class="seg {s.kind}" style:width="{s.pct}%"></span>{/each}
     </div>
     <div class="nums">

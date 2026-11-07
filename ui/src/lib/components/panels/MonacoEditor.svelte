@@ -65,7 +65,8 @@
   // Another script (or its reloaded text) -> swap the model; typing round-trips as a no-op.
   $effect(() => editor?.open(path, value));
   $effect(() => editor?.setTheme(theme));
-  $effect(() => editor?.setBreakpoints(breakpoints, verified));
+  // The hover text is read here, so the effect also re-runs when the language changes.
+  $effect(() => editor?.setBreakpoints(breakpoints, verified, t('scripts.breakpointHover')));
   $effect(() => editor?.setMarkedLine(markedLine, markKind));
 </script>
 

@@ -15,7 +15,7 @@ import { endEntry } from '../scripts/logic';
 import { settings } from '../settings.svelte';
 import { permissionText, proxyLabel } from '../state/workspaces';
 import { fallbackTitle } from '../urls';
-import { DICTS } from './index.svelte';
+import { DICTS, tp } from './index.svelte';
 
 const lang = (language: 'en' | 'uk' | 'system') => settings.update({ language });
 afterEach(() => lang('system'));
@@ -77,6 +77,14 @@ describe('cron in Ukrainian', () => {
     expect(d('@yearly')).toBe('О 00:00 1 числа кожного місяця у січні');
   });
 
+  it('weekday spans, «об 11:00» and day-of-month-or-weekday', () => {
+    lang('uk');
+    expect(d('0 9 * * Mon-Wed')).toBe('О 09:00 з понеділка по середу');
+    expect(d('0 9 * * Mon-Wed,Sat')).toBe('О 09:00 у понеділок, вівторок, середу і суботу');
+    expect(d('0 11 * * *')).toBe('Об 11:00 щодня');
+    expect(d('0 9 13 * Mon,Fri')).toBe('О 09:00 13 числа кожного місяця, але лише якщо це понеділок або п’ятниця');
+  });
+
   it('errors and hints', () => {
     lang('uk');
     expect(() => parseCron('61 * * * *')).toThrow('хвилини: 61 поза межами 0-59');
@@ -89,6 +97,9 @@ describe('cron in Ukrainian', () => {
 
   it('English stays the default', () => {
     expect(d('0 7 * * Mon,Wed,Fri')).toBe('At 07:00 on Monday, Wednesday and Friday');
+    expect(d('0 9 * * Mon-Wed')).toBe('At 09:00 on Monday–Wednesday');
+    expect(d('0 11 * * *')).toBe('At 11:00 every day');
+    expect(d('0 9 13 * Mon,Fri')).toBe('At 09:00 on day 13 of the month, only if it is a Monday or Friday');
   });
 });
 
@@ -109,5 +120,23 @@ describe('every literal key used by the UI exists', () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe('counted strings agree with the number', () => {
+  it('in English', () => {
+    expect(tp('scripts.bytes', 1)).toBe('1 byte');
+    expect(tp('scripts.bytes', 2)).toBe('2 bytes');
+    expect(tp('runs.detail.progress', 1, { done: 0 })).toBe('0 of 1 row done');
+    expect(tp('runs.detail.sent', 1, { rows: '3 rows' })).toBe('Sent 3 rows in 1 webhook request');
+  });
+
+  it('in Ukrainian', () => {
+    lang('uk');
+    expect(['1', '3', '5', '21'].map((n) => tp('scripts.bytes', Number(n)))).toEqual(['1 байт', '3 байти', '5 байтів', '21 байт']);
+    expect(tp('runs.detail.progress', 1, { done: 0 })).toBe('Виконано 0 з 1 рядка даних');
+    expect(tp('runs.detail.progress', 5, { done: 2 })).toBe('Виконано 2 з 5 рядків даних');
+    expect(tp('runs.detail.sent', 1, { rows: '3 рядки' })).toBe('Надіслано 3 рядки в 1 запиті до вебхука');
+    expect(tp('runs.detail.sent', 4, { rows: '3 рядки' })).toBe('Надіслано 3 рядки у 4 запитах до вебхука');
   });
 });

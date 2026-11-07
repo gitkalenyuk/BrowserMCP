@@ -62,12 +62,14 @@ export class TerminalStore {
         if (!this.tabs.some((t) => t.id === id)) this.#refreshSoon();
       }),
       this.api.on('term.exit', ({ id, code }) => {
-        const t = this.tabs.find((x) => x.id === id);
-        if (t) {
-          t.exited = true;
-          t.exitCode = code;
+        const tab = this.tabs.find((x) => x.id === id);
+        if (tab) {
+          tab.exited = true;
+          tab.exitCode = code;
         }
-        const note = `\r\n\x1b[2m[process exited${code === null ? '' : ` with code ${code}`}]\x1b[0m\r\n`;
+        // Written into the scrollback, so it keeps the language it was written in.
+        const text = code === null ? t('term.processExited') : t('term.processExitedCode', { code });
+        const note = `\r\n\x1b[2m${text}\x1b[0m\r\n`;
         this.#append(id, note);
         this.#sinks.get(id)?.(note);
       }),
