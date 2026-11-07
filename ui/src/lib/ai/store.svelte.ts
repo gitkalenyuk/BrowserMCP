@@ -20,11 +20,13 @@ import { load, save } from '../storage';
 import { afterClose, applyPermission, chatTitle, finishedIds, pickModel, sendTarget } from './sessions';
 import {
   applyAiEvent,
+  openAnswer,
   queuedCount,
   settleQueued,
   threadFromTranscript,
   threadMarkdown,
   truncateAtUser,
+  userIndexAt,
   withPending,
   type AiEvent,
   type ChatItem,
@@ -50,6 +52,12 @@ export function folderLines(text: string): string[] {
     .map((d) => d.trim())
     .filter(Boolean);
 }
+
+/** One change to a thread, kept while its transcript loads so it can be replayed on top. */
+type ThreadStep = (items: ChatItem[]) => ChatItem[];
+
+/** Chat statuses in which no agent runs: queued messages wait for the next message. */
+const isEnded = (status: string | undefined): boolean => status === 'stopped' || status === 'failed';
 
 const NO_OVERRIDES: NewChatAccess = { permission_mode: null, sandbox: null, approval_policy: null, cwd: '', add_dirs: null };
 
@@ -90,7 +98,12 @@ export class AiStore {
   newChatModel = $state<Record<string, string>>(load('ai.newChatModel', {}));
   #unsubs: Array<() => void> = [];
   #models = new Map<string, Promise<AiModels | null>>();
+  /** Threads that hold the whole chat (loaded from its transcript, or seen from its start). */
   #loaded = new Set<string>();
+  /** Transcript loads in flight, by session. */
+  #loading = new Map<string, Promise<void>>();
+  /** Live changes that arrived while a session's transcript loads (replayed on top of it). */
+  #buffers = new Map<string, ThreadStep[]>();
   #refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   active = $derived(this.sessions.find((s) => s.id === this.activeId) ?? null);
@@ -104,7 +117,8 @@ export class AiStore {
 
   start(): void {
     const fold = (session: string, event: AiEvent) => {
-      this.threads[session] = applyAiEvent(this.threads[session] ?? [], event, Date.now());
+      const ts = Date.now();
+      this.#step(session, (items) => applyAiEvent(items, event, ts));
       if (!this.sessions.some((s) => s.id === session)) this.#refreshSoon();
     };
     this.#unsubs.push(
@@ -123,9 +137,7 @@ export class AiStore {
         fold(p.session, { type: 'ai.message', payload: { session: p.session, role: 'user', taken: true, index: p.index } }),
       ),
       // An edit (here or in another window) cut the chat before user message `index`.
-      this.api.on('ai.session_rewound', (p) => {
-        this.threads[p.session] = truncateAtUser(this.threads[p.session] ?? [], p.index);
-      }),
+      this.api.on('ai.session_rewound', (p) => this.#step(p.session, (items) => truncateAtUser(items, p.index))),
       this.api.on('ai.session_closed', (p) => {
         this.#forget(p.session);
         if (this.historyLoaded) void this.loadHistory();
@@ -194,17 +206,69 @@ export class AiStore {
     return threadMarkdown(this.threads[id] ?? [], s ? this.title(s) : '');
   }
 
-  /** Load a session's transcript once if no events were seen for it (e.g. after a reload). */
-  async ensureThread(id: string): Promise<void> {
-    if (this.#loaded.has(id) || (this.threads[id]?.length ?? 0) > 0) return;
-    this.#loaded.add(id);
+  /**
+   * Load a session's transcript once, unless this window saw the chat from its start. Live
+   * events seen before (after a reload, in a second window) only hold the newest part of the
+   * chat: the thread is rebuilt from the transcript, keeping the answer streaming now (deltas
+   * are not in the transcript) and replaying what arrived while it loaded.
+   */
+  ensureThread(id: string): Promise<void> {
+    if (this.#loaded.has(id)) return Promise.resolve();
+    let job = this.#loading.get(id);
+    if (!job) {
+      job = this.#loadThread(id);
+      this.#loading.set(id, job);
+    }
+    return job;
+  }
+
+  async #loadThread(id: string): Promise<void> {
+    const buffer: ThreadStep[] = [];
+    this.#buffers.set(id, buffer);
+    const open = openAnswer(this.threads[id] ?? []);
     try {
       const { entries } = await this.api.call('ai.session_transcript', { id });
-      if ((this.threads[id]?.length ?? 0) === 0) this.threads[id] = threadFromTranscript(entries);
+      if (this.#buffers.get(id) !== buffer) return; // forgotten or reset meanwhile
+      let items = threadFromTranscript(entries);
+      if (open) {
+        items = applyAiEvent(items, { type: 'ai.message', payload: { session: id, role: 'assistant', text_delta: open.text } }, open.ts);
+      }
+      for (const step of buffer) items = step(items);
+      this.threads[id] = items;
+      this.#loaded.add(id);
       this.#mergePending(id);
     } catch {
-      this.#loaded.delete(id);
+      // The live rows stay; the next open tries again.
+    } finally {
+      if (this.#buffers.get(id) === buffer) {
+        this.#buffers.delete(id);
+        this.#loading.delete(id);
+      }
     }
+  }
+
+  /**
+   * The core's number of the user message at row `row` of a chat (what `ai.session_edit`
+   * takes), or null when it cannot be told. A row without its number in a thread that holds
+   * only part of the chat is looked up again in the freshly loaded transcript.
+   */
+  async userIndex(id: string, row: number): Promise<number | null> {
+    const items = this.threads[id] ?? [];
+    const item = items[row];
+    if (item?.kind !== 'user' || item.queued) return null;
+    if (item.index !== undefined) return item.index;
+    if (this.#loaded.has(id)) return userIndexAt(items, row);
+    const isUser = (i: ChatItem) => i.kind === 'user' && !i.queued;
+    const fromEnd = items.slice(row + 1).filter(isUser).length;
+    await this.ensureThread(id);
+    if (!this.#loaded.has(id)) return null;
+    const fresh = this.threads[id] ?? [];
+    const users = fresh.flatMap((i, at) => (isUser(i) ? [at] : []));
+    const at = users[users.length - 1 - fromEnd];
+    const match = at === undefined ? undefined : fresh[at];
+    if (match?.kind !== 'user' || match.text !== item.text) return null;
+    const index = userIndexAt(fresh, at);
+    return index < 0 ? null : index;
   }
 
   /**
@@ -248,18 +312,21 @@ export class AiStore {
   }
 
   /**
-   * Replace user message number `ordinal` (0-based) with `text` and resend it: the thread is
-   * cut to just before it at once; the new message and answer arrive as events.
+   * Replace user message number `index` (the core's number, see `userIndex`) with `text` and
+   * resend it: the thread is cut to just before it at once; the new message and answer
+   * arrive as events.
    */
-  async edit(id: string, ordinal: number, text: string): Promise<void> {
+  async edit(id: string, index: number, text: string): Promise<void> {
     const prompt = text.trim();
     if (!prompt) return;
-    const before = this.threads[id] ?? [];
-    this.threads[id] = truncateAtUser(before, ordinal);
+    this.#step(id, (items) => truncateAtUser(items, index));
     try {
-      this.#upsert(await this.api.call('ai.session_edit', { id, index: ordinal, text: prompt }));
+      this.#upsert(await this.api.call('ai.session_edit', { id, index, text: prompt }));
     } catch (err) {
-      this.threads[id] = before;
+      // The core may have cut the transcript before failing (it rewinds, then restarts the
+      // agent): show what it has now rather than the old thread.
+      this.#resetThread(id);
+      await this.ensureThread(id);
       throw err;
     }
   }
@@ -295,8 +362,7 @@ export class AiStore {
   async reopen(id: string): Promise<void> {
     const session = await this.api.call('ai.session_reopen', { id });
     this.history = this.history.filter((s) => s.id !== id);
-    delete this.threads[id];
-    this.#loaded.delete(id);
+    this.#resetThread(id);
     this.#upsert({ ...session, archived: false });
     await this.open(id);
   }
@@ -367,7 +433,7 @@ export class AiStore {
     // The ai.permission events do the same; this keeps the card from lingering if they are late.
     for (const r of resolved) {
       this.pending = applyPermission(this.pending, r);
-      this.threads[r.session] = applyAiEvent(this.threads[r.session] ?? [], { type: 'ai.permission', payload: r });
+      this.#step(r.session, (items) => applyAiEvent(items, { type: 'ai.permission', payload: r }));
       this.#countPending(r.session);
     }
   }
@@ -445,8 +511,21 @@ export class AiStore {
     this.activeId = afterClose(order, id, this.activeId);
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.pending = this.pending.filter((p) => p.session !== id);
+    this.#resetThread(id);
+  }
+
+  /** Apply a change to a thread (and keep it for the replay when its transcript is loading). */
+  #step(id: string, step: ThreadStep): void {
+    this.threads[id] = step(this.threads[id] ?? []);
+    this.#buffers.get(id)?.push(step);
+  }
+
+  /** Forget a thread; the next open loads it again (a load in flight is dropped). */
+  #resetThread(id: string): void {
     delete this.threads[id];
     this.#loaded.delete(id);
+    this.#buffers.delete(id);
+    this.#loading.delete(id);
   }
 
   #upsert(session: AiSession): void {
@@ -465,7 +544,14 @@ export class AiStore {
   #applySession(p: ApiEvents['ai.session']): void {
     const s = this.sessions.find((x) => x.id === p.session);
     if (!s) {
-      if (!p.archived) this.#refreshSoon();
+      if (p.archived) {
+        // A closed chat changed (renamed, say): History shows it as it is now.
+        this.history = this.history.map((h) => (h.id === p.session ? this.#merged(h, p) : h));
+        return;
+      }
+      // Reopened elsewhere: it is open again, not in History (where Delete would remove it).
+      if (p.archived === false) this.history = this.history.filter((h) => h.id !== p.session);
+      this.#refreshSoon();
       return;
     }
     if (p.archived) {
@@ -476,7 +562,19 @@ export class AiStore {
     s.status = p.status;
     const fields = s as unknown as Record<string, unknown>;
     for (const key of SESSION_FIELDS) if (p[key] !== undefined) fields[key] = p[key];
-    if (p.queued !== undefined && this.threads[p.session]) this.threads[p.session] = settleQueued(this.threads[p.session], p.queued);
+    // A stopped or failed chat keeps its queued messages: they go with the next message
+    // (ai.message_taken then moves each into the conversation), so none is settled here.
+    const queued = p.queued;
+    if (queued !== undefined && !isEnded(p.status) && this.threads[p.session]) {
+      this.#step(p.session, (items) => settleQueued(items, queued));
+    }
+  }
+
+  /** A session with the SessionInfo fields an `ai.session` event carries. */
+  #merged(s: AiSession, p: ApiEvents['ai.session']): AiSession {
+    const next = { ...s, status: p.status } as unknown as Record<string, unknown>;
+    for (const key of SESSION_FIELDS) if (p[key] !== undefined) next[key] = p[key];
+    return next as unknown as AiSession;
   }
 
   #refreshSoon(): void {

@@ -306,13 +306,15 @@ describe('AiStore: names, history, models, queue, edit', () => {
     expect(ai.sessions.map((s) => s.id)).toEqual(['a']);
   });
 
-  it('edit cuts the thread at once and puts it back if the core refuses', async () => {
+  it('edit cuts the thread at once; if the core fails, the thread is what the core has now', async () => {
     let fail = false;
     const api = new FakeApi({
       'ai.session_edit': () => {
         if (fail) throw new Error('nope');
         return titled('a', 't', { status: 'running' });
       },
+      // The core rewound before it failed to start the agent again.
+      'ai.session_transcript': () => ({ id: 'a', entries: [{ type: 'user', text: 'one', index: 0 }] }),
     });
     const ai = new AiStore(api);
     ai.sessions = [titled('a', 't')];
@@ -328,8 +330,103 @@ describe('AiStore: names, history, models, queue, edit', () => {
     expect(ai.threads.a.map((i) => i.kind)).toEqual(['user', 'assistant']);
     fail = true;
     ai.threads.a = thread;
-    await expect(ai.edit('a', 0, 'x')).rejects.toThrow('nope');
-    expect(ai.threads.a).toEqual(thread);
+    await expect(ai.edit('a', 1, 'x')).rejects.toThrow('nope');
+    expect(ai.threads.a).toEqual([{ kind: 'user', text: 'one', index: 0 }]);
+  });
+
+  it('a chat first seen through live events still loads its history; edit sends the core number', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const api = new FakeApi({
+      'ai.session_transcript': () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      'ai.session_edit': () => titled('a', 't', { status: 'running' }),
+    });
+    const ai = new AiStore(api);
+    ai.start();
+    ai.sessions = [titled('a', 't', { status: 'running' })];
+    // A reloaded window: the chat already has 7 messages, the 8th streams in.
+    api.emit('ai.message', { session: 'a', role: 'user', text: 'eighth', index: 7 });
+    api.emit('ai.message', { session: 'a', role: 'assistant', text_delta: 'Wor' });
+    const opened = ai.open('a');
+    expect(api.methods()).toContain('ai.session_transcript');
+    // Arrives while the transcript loads: replayed on top of it.
+    api.emit('ai.message', { session: 'a', role: 'assistant', text_delta: 'king' });
+    const entries = [
+      { type: 'user', text: 'first', index: 0 },
+      { type: 'assistant', text: 'A1' },
+      ...Array.from({ length: 6 }, (_, k) => ({ type: 'user', text: `m${k + 1}`, index: k + 1 })),
+      { type: 'user', text: 'eighth', index: 7 },
+    ];
+    answer({ id: 'a', entries });
+    await opened;
+    const items = ai.threads.a;
+    expect(items.filter((i) => i.kind === 'user')).toHaveLength(8);
+    expect(items.at(-1)).toMatchObject({ kind: 'assistant', text: 'Working', streaming: true });
+
+    // Editing the 8th message names message 7, whatever row it is on.
+    const row = items.findIndex((i) => i.kind === 'user' && i.text === 'eighth');
+    expect(await ai.userIndex('a', row)).toBe(7);
+    await ai.edit('a', 7, 'eighth, again');
+    expect(api.calls.at(-1)).toEqual({ method: 'ai.session_edit', params: { id: 'a', index: 7, text: 'eighth, again' } });
+    expect(ai.threads.a.filter((i) => i.kind === 'user')).toHaveLength(7);
+    ai.stop();
+  });
+
+  it('a row without its number in a partial thread is looked up in the reloaded transcript', async () => {
+    const api = new FakeApi({
+      'ai.session_transcript': () => ({
+        id: 'a',
+        entries: [
+          { type: 'user', text: 'one' },
+          { type: 'user', text: 'two' },
+          { type: 'user', text: 'three' },
+        ],
+      }),
+    });
+    const ai = new AiStore(api);
+    ai.start();
+    ai.sessions = [titled('a', 't')];
+    // An older core: live messages without numbers.
+    api.emit('ai.message', { session: 'a', role: 'user', text: 'three' });
+    expect(await ai.userIndex('a', 0)).toBe(2);
+    expect(api.methods()).toEqual(['ai.session_transcript']);
+    ai.stop();
+  });
+
+  it('a stopped chat keeps its queued messages (they go with the next message), marked until taken', async () => {
+    const api = new FakeApi({});
+    const ai = new AiStore(api);
+    ai.start();
+    ai.sessions = [titled('a', 't', { status: 'running' })];
+    ai.threads.a = [
+      { kind: 'user', text: 'one', index: 0 },
+      { kind: 'user', text: 'two', queued: true, index: 1 },
+    ];
+    api.emit('ai.session', { session: 'a', status: 'stopped', queued: 0 });
+    expect(ai.threads.a[1]).toEqual({ kind: 'user', text: 'two', queued: true, index: 1 });
+    api.emit('ai.session', { session: 'a', status: 'failed', queued: 1 });
+    expect(ai.threads.a[1]).toEqual({ kind: 'user', text: 'two', queued: true, index: 1 });
+    // The next message delivers it.
+    api.emit('ai.message_taken', { session: 'a', index: 1 });
+    expect(ai.threads.a[1]).toEqual({ kind: 'user', text: 'two', index: 1 });
+    ai.stop();
+  });
+
+  it('History follows ai.session updates of closed chats; one reopened elsewhere leaves it', async () => {
+    const api = new FakeApi({
+      'ai.sessions_list': () => ({ sessions: [] }),
+      'ai.permissions_list': () => ({ permissions: [] }),
+    });
+    const ai = new AiStore(api);
+    ai.start();
+    ai.history = [titled('h', 'Old', { archived: true, status: 'stopped' }), titled('k', 'Kept', { archived: true, status: 'stopped' })];
+    api.emit('ai.session', { session: 'h', status: 'stopped', archived: true, title: 'Renamed' });
+    expect(ai.history.map((s) => s.title)).toEqual(['Renamed', 'Kept']);
+    api.emit('ai.session', { session: 'k', status: 'idle', archived: false });
+    expect(ai.history.map((s) => s.id)).toEqual(['h']);
+    ai.stop();
   });
 
   it('models: loaded once per provider; the new-chat model is passed and remembered', async () => {

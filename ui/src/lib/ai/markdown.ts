@@ -42,11 +42,24 @@ export function safeHref(url: string): string | null {
 // ---- blocks ---------------------------------------------------------------------------
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/;
-const HEADING = /^ {0,3}(#{1,6})(?:\s+(.*?))?\s*#*\s*$/;
+// No nested or adjacent whitespace quantifiers (they backtrack badly on long runs of
+// spaces, and this runs on every streamed chunk): the closing #s go in `headingText`.
+const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
 const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+
+/** A heading's text without trailing spaces and its optional closing `#`s (`## Title ##`). */
+export function headingText(raw: string): string {
+  const text = raw.trimEnd();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '#') end--;
+  if (end === text.length) return text;
+  // Closing #s count only after a space (or as the whole text): `# C#` keeps its #.
+  if (end === 0) return '';
+  return /[ \t]/.test(text[end - 1]) ? text.slice(0, end).trimEnd() : text;
+}
 
 const indentOf = (line: string) => line.replace(/\t/g, '    ').match(/^ */)![0].length;
 const blank = (line: string) => line.trim() === '';
@@ -117,7 +130,7 @@ function parseBlocks(lines: string[]): Block[] {
     }
     const heading = HEADING.exec(line);
     if (heading) {
-      out.push({ t: 'h', level: heading[1].length as 1, c: parseInline(heading[2] ?? '') });
+      out.push({ t: 'h', level: heading[1].length as 1, c: parseInline(headingText(heading[2] ?? '')) });
       i++;
       continue;
     }

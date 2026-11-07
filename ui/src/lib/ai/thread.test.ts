@@ -16,7 +16,7 @@ import {
   threadMarkdown,
   toolLabel,
   truncateAtUser,
-  userOrdinal,
+  userIndexAt,
   withPending,
   type AiEvent,
   type ChatItem,
@@ -25,7 +25,7 @@ import {
 const S = 'anthropic-1';
 const msg = (
   role: 'user' | 'assistant' | 'system',
-  p: { text?: string; text_delta?: string; queued?: boolean; taken?: boolean },
+  p: { text?: string; text_delta?: string; queued?: boolean; taken?: boolean; index?: number },
 ): AiEvent => ({
   type: 'ai.message',
   payload: { session: S, role, ...p },
@@ -266,6 +266,40 @@ describe('messages sent while the agent works', () => {
     expect(applyAiEvent(again, msg('user', { text: 'zzz', taken: true }))).toEqual(again);
   });
 
+  it('a message taken mid-answer goes before that answer, which keeps streaming (no split, no repeat)', () => {
+    const items = fold([
+      msg('user', { text: 'go', index: 0 }),
+      msg('assistant', { text_delta: 'Hel' }),
+      msg('user', { text: 'also this', queued: true, index: 1 }),
+      { type: 'ai.message', payload: { session: S, role: 'user', taken: true, index: 1 } },
+      msg('assistant', { text_delta: 'lo' }),
+      msg('assistant', { text: 'Hello world' }),
+    ]);
+    expect(items).toEqual([
+      { kind: 'user', text: 'go', index: 0 },
+      { kind: 'user', text: 'also this', index: 1 },
+      { kind: 'assistant', text: 'Hello world', streaming: false },
+    ]);
+    // Same when the core's queued count settles it.
+    const settled = settleQueued(
+      fold([msg('user', { text: 'go' }), msg('assistant', { text_delta: 'Hel' }), msg('user', { text: 'more', queued: true })]),
+      0,
+    );
+    expect(fold([msg('assistant', { text_delta: 'lo' }), msg('assistant', { text: 'Hello.' })], settled)).toEqual([
+      { kind: 'user', text: 'go' },
+      { kind: 'user', text: 'more' },
+      { kind: 'assistant', text: 'Hello.', streaming: false },
+    ]);
+  });
+
+  it('events seen twice change nothing: a taken number not queued here, a message already shown', () => {
+    const items = fold([msg('user', { text: 'a', index: 0 }), msg('user', { text: 'b', queued: true, index: 2 })]);
+    // Message 1 was taken already (or sent from another window): b keeps waiting.
+    expect(applyAiEvent(items, { type: 'ai.message', payload: { session: S, role: 'user', taken: true, index: 1 } })).toEqual(items);
+    expect(applyAiEvent(items, msg('user', { text: 'a', index: 0 }))).toEqual(items);
+    expect(applyAiEvent(items, msg('user', { text: 'b', queued: true, index: 2 }))).toEqual(items);
+  });
+
   it('the queued count from the core settles messages whose follow-up was missed', () => {
     const items = fold([msg('user', { text: 'a' }), msg('user', { text: 'b', queued: true }), msg('user', { text: 'c', queued: true })]);
     expect(queuedCount(settleQueued(items, 2))).toBe(2);
@@ -293,12 +327,44 @@ describe('editing an earlier message', () => {
     msg('user', { text: 'three', queued: true }),
   ]);
 
-  it('user ordinals skip other rows and queued messages', () => {
-    expect(userOrdinal(thread, 0)).toBe(0);
-    expect(userOrdinal(thread, 2)).toBe(1);
-    expect(userOrdinal(thread, 1)).toBe(-1);
-    expect(userOrdinal(thread, 5)).toBe(-1);
+  it('user numbers skip other rows and queued messages', () => {
+    expect(userIndexAt(thread, 0)).toBe(0);
+    expect(userIndexAt(thread, 2)).toBe(1);
+    expect(userIndexAt(thread, 1)).toBe(-1);
+    expect(userIndexAt(thread, 5)).toBe(-1);
     expect(lastUserIndex(thread)).toBe(2);
+  });
+
+  // The thread of a chat seen only from its 8th message on (a second window, a reload).
+  const partial = fold([
+    msg('user', { text: 'eighth', index: 7 }),
+    msg('assistant', { text: 'A8' }),
+    msg('user', { text: 'ninth', index: 8 }),
+    msg('assistant', { text: 'A9' }),
+  ]);
+
+  it('a row is the message the core numbered, not its place in what is shown', () => {
+    expect(userIndexAt(partial, 0)).toBe(7);
+    expect(userIndexAt(partial, 2)).toBe(8);
+    // ai.session_rewound {index: 8} cuts at the ninth message, not at the 9th row.
+    expect(truncateAtUser(partial, 8).map((i) => i.kind)).toEqual(['user', 'assistant']);
+    // A cut before everything shown leaves nothing of it.
+    expect(truncateAtUser(partial, 3)).toEqual([]);
+    expect(truncateAtUser(partial, 9)).toBe(partial);
+  });
+
+  it('a transcript keeps each message number and what still waits', () => {
+    const items = threadFromTranscript([
+      { type: 'user', text: 'one', index: 0 },
+      { type: 'assistant', text: 'A' },
+      { type: 'user', text: 'two', index: 1, queued: true },
+    ]);
+    expect(items).toEqual([
+      { kind: 'user', text: 'one', index: 0 },
+      { kind: 'assistant', text: 'A', streaming: false },
+      { kind: 'user', text: 'two', index: 1, queued: true },
+    ]);
+    expect(userIndexAt(items, 0)).toBe(0);
   });
 
   it('truncates to just before that message (later rows and queued ones go)', () => {
