@@ -234,9 +234,21 @@ export function buildKeyIndex(keymap: Keymap, opts: { mac?: boolean } = {}): Key
   return index;
 }
 
+/**
+ * Clipboard, undo and select-all keys (Ctrl+C/V/X/A/Z/Y, Ctrl+Shift+Z, Ctrl/Shift+Insert,
+ * Shift+Delete) always stay with the text field or selection, so copy & paste work in every
+ * panel even if keymap.json binds one of them to a browser command.
+ */
+const EDITING_CHORDS = new Set(['ctrl+c', 'ctrl+v', 'ctrl+x', 'ctrl+a', 'ctrl+z', 'ctrl+y', 'ctrl+shift+z', 'ctrl+shift+v', 'ctrl+insert', 'shift+insert', 'shift+delete']);
+
+export function isEditingChord(chord: Chord): boolean {
+  return EDITING_CHORDS.has(chordId(chord));
+}
+
 export function commandForEvent(index: KeyIndex, e: KeyLike): CommandId | null {
   const chord = chordFromEvent(e);
-  return chord ? (index.get(chordId(chord)) ?? null) : null;
+  if (!chord || isEditingChord(chord)) return null;
+  return index.get(chordId(chord)) ?? null;
 }
 
 export interface KeymapParseResult {

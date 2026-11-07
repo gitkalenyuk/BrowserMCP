@@ -115,6 +115,7 @@ export const tabs = chapter(
       'Vertical or horizontal tabs: [[cmd:ui.toggleVerticalTabs]] or Settings → General.',
       'Zoom with [[cmd:zoom.in]] / [[cmd:zoom.out]] / [[cmd:zoom.reset]]; it is remembered per site and the address bar shows it when it is not 100 % (click it to reset).',
       'Right-click a page for Back / Reload / Print, open a link in a new tab or in another workspace, copy or save images, **Ask AI about this** and **Inspect** (DevTools in a window of its own).',
+      'Copy and paste also work in the browser’s own screens (side panels, settings, the new tab page): select text such as a chat answer, a log line or request details and press [[Ctrl+C]], or right-click it for **Copy** / **Select all**; in text fields **Cut**, **Paste** and **Undo** are there too ([[Ctrl+X]], [[Ctrl+V]], [[Ctrl+Z]], [[Ctrl+A]]), and on a link **Copy link address**. Buttons and tabs are not selectable, so dragging them never selects text.',
       'When a site asks for the camera, microphone or notifications, a bar asks you: Allow / Block, with “Remember for this site”.',
     ),
   ),
@@ -210,6 +211,7 @@ export const tabs = chapter(
       'An automation call never closes your last window: it opens a new tab page there first.',
       'Ctrl+mouse wheel zoom is not verified in this engine build; the keys work.',
       'Workspace changes made by an agent show the next time the workspace menu opens.',
+      'The right-click menu is in English for now, also when the interface is in Ukrainian.',
     ),
   ),
 );
@@ -423,7 +425,8 @@ export const newtab = chapter(
     steps(
       'Open a new tab ([[cmd:tab.new]]).',
       'Click **Customize** and switch widgets on or off; or use **Settings → General → New tab page**.',
-      'Type a task into **Ask the AI**, pick the agent and send it: a new agent session starts. Its tabs appear in its own group; follow it in the AI panel.',
+      'Type a task into **Ask the AI**, pick the agent and, next to it, the **model** (**Default** = the agent’s own choice; the box remembers your last model per agent), then press **Start** or Enter: a new agent session starts. Its tabs appear in its own group.',
+      'Under the box a short note names the new chat; **Open in the AI panel** shows it in the panel of this window, where you can follow it and answer it.',
     ),
     p('Whether a new tab shows this page at all, a blank page or an address of your choice is set under **A new tab shows** in **Settings → Startup & tabs**.'),
     settings('general'),
@@ -442,6 +445,9 @@ export const newtab = chapter(
   section(
     'limits',
     'Limits and known issues',
-    list('Widgets are fixed to the four above; there is no widget API for plugins yet.'),
+    list(
+      'Widgets are fixed to the four above; there is no widget API for plugins yet.',
+      'The model list comes from the core (`ai.models`); an older core without it shows no model picker and the agent uses its default model.',
+    ),
   ),
 );
