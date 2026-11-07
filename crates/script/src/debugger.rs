@@ -72,6 +72,9 @@ use deno_core::{
 /// Prefix of a protocol line on stdout in `--inspect pipe` mode.
 pub const DEBUG_PREFIX: &str = "##bmcp:debug ";
 
+/// Error of a CDP request that got no answer because the script finished first.
+const ENDED: &str = "the script has ended";
+
 /// Longest value string in `scopes` (longer ones end with `…`).
 const MAX_VALUE_CHARS: usize = 120;
 /// At most this many variables per scope.
@@ -248,6 +251,19 @@ pub fn attach(
     }
 }
 
+/// Result of a command that lets the script run (`continue`, a step, the start).
+///
+/// V8's answer travels through the forwarder thread, but `Finished` comes straight from
+/// the script thread: a short script can end before the answer is forwarded. The command
+/// did its job then (the script ran), so that is a success; `ended` follows.
+fn let_it_run(sent: Result<Value, String>) -> Result<Value, String> {
+    match sent {
+        Ok(_) => Ok(json!({})),
+        Err(err) if err == ENDED => Ok(json!({})),
+        Err(err) => Err(err),
+    }
+}
+
 /// Everything the controller thread waits for.
 enum Input {
     /// A CDP message from V8 (response or notification), JSON text.
@@ -323,12 +339,12 @@ impl Controller {
         }
         self.to_v8
             .unbounded_send(request.to_string())
-            .map_err(|_| "the script has ended".to_string())?;
+            .map_err(|_| ENDED.to_string())?;
         let mut kept = VecDeque::new();
         let result = loop {
             let input = match self.inputs.recv() {
                 Ok(input) => input,
-                Err(_) => break Err("the script has ended".to_string()),
+                Err(_) => break Err(ENDED.to_string()),
             };
             match input {
                 Input::V8(text) => {
@@ -347,7 +363,7 @@ impl Controller {
                 // The script finished while we waited: no answer will come.
                 end @ (Input::Finished(_) | Input::V8Gone) => {
                     kept.push_back(end);
-                    break Err("the script has ended".to_string());
+                    break Err(ENDED.to_string());
                 }
                 other => kept.push_back(other),
             }
@@ -408,8 +424,8 @@ impl Controller {
             }
             return self.start();
         }
-        self.cdp(cdp_method, json!({}))?;
-        Ok(json!({}))
+        let sent = self.cdp(cdp_method, json!({}));
+        let_it_run(sent)
     }
 
     fn pause(&mut self) -> Result<Value, String> {
@@ -423,8 +439,8 @@ impl Controller {
     /// Let the V8 thread evaluate the module.
     fn start(&mut self) -> Result<Value, String> {
         self.started = true;
-        self.cdp("Runtime.runIfWaitingForDebugger", json!({}))?;
-        Ok(json!({}))
+        let sent = self.cdp("Runtime.runIfWaitingForDebugger", json!({}));
+        let_it_run(sent)
     }
 
     /// Replace all breakpoints. Returns the TS lines they really landed on (an empty line
