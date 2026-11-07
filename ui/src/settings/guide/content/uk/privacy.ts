@@ -35,8 +35,8 @@ export const stealth = chapter(
       'Відкривайте вкладки в цьому профілі (меню робочих просторів або `tabs.open {profile}`).',
       'Перевірте: `stealth.check` досліджує сторінку так, як це робить скрипт збору відбитків, і повертає таблицю «пройдено / сумнівно / провал».',
     ),
-    // VERIFY-AFTER-MERGE: розділ налаштувань «Профілі та відбитки».
-    settings('profiles', 'Профілі, особистості та мови для сайтів (розділ «Профілі та відбитки»).'),
+    // VERIFY-AFTER-MERGE: розділ налаштувань «Профілі та особистості».
+    settings('profiles', 'Профілі, особистості та мови для сайтів (розділ «Профілі та особистості»).'),
     api('identity.generate', { os: 'windows', save: true, id: 'work-id' }),
     api('profile.create', { id: 'shop', identity: 'work-id' }),
     api('stealth.check', {}),
@@ -236,8 +236,8 @@ export const notifications = chapter(
   section(
     'ai',
     'Для ШІ та скриптів',
-    api('notify.send', { title: 'Report ready', body: '12 rows exported', level: 'success' }),
-    api('ui.ask_user', { question: 'Publish the post?', choices: ['Publish', 'Not now'], timeout_secs: 600 }),
+    api('notify.send', { title: 'Звіт готовий', body: 'Експортовано 12 рядків', level: 'success' }),
+    api('ui.ask_user', { question: 'Опублікувати допис?', choices: ['Опублікувати', 'Не зараз'], timeout_secs: 600 }),
   ),
   section(
     'limits',

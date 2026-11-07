@@ -1,6 +1,7 @@
 // Plumbing between the chrome and the settings page (bmcp://ui/settings.html), the same way as
 // the library: the URL carries no query (the browser lets content tabs load exactly
-// `bmcp://ui/settings.html`), the section to show travels through localStorage (same origin).
+// `bmcp://ui/settings.html`, or with a `#guide/…` anchor), the section to show travels through
+// localStorage (same origin).
 
 import { load, save, watch } from '../storage';
 

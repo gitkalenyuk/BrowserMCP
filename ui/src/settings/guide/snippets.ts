@@ -26,8 +26,10 @@ export function snippet(flavor: ApiFlavor, command: string, args: Record<string,
     case 'mcp':
       return `${wireName(command)} ${argsJson(args)}`;
     case 'powershell':
-      // Single quotes: PowerShell takes the JSON literally (no escaping of " needed).
-      return `Invoke-RestMethod -Method Post ${API_BASE}/v1/cmd/${command} -ContentType application/json -Body '${body.replace(/'/g, "''")}'`;
+      // Single quotes: PowerShell takes the JSON literally (no escaping of " needed). The charset
+      // matters: without it Windows PowerShell 5.1 sends the body as ISO-8859-1, which mangles
+      // any non-Latin text (a Ukrainian prompt) before it reaches the API.
+      return `Invoke-RestMethod -Method Post ${API_BASE}/v1/cmd/${command} -ContentType 'application/json; charset=utf-8' -Body '${body.replace(/'/g, "''")}'`;
     case 'curl':
       return `curl -X POST ${API_BASE}/v1/cmd/${command} -H "content-type: application/json" -d '${body.replace(/'/g, "'\\''")}'`;
     case 'sdk': {

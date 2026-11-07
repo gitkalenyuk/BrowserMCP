@@ -10,16 +10,23 @@
   import { GUIDE } from './content';
   import GuideBlock from './GuideBlock.svelte';
   import { highlight, queryWords } from './inline';
+  import { provideKeymap } from './keymap-context';
   import { lastChapter, rememberChapter } from './prefs.svelte';
   import { searchGuide } from './search';
 
   let {
     target,
+    onconsumed,
     onopen,
     onfail,
   }: {
-    /** Where to go; a new object each time (the Help link, a deep link). */
+    /**
+     * Where to go once (the Help link, a deep link). The guide calls `onconsumed` after going
+     * there and the parent clears it, so coming back to the guide later shows the remembered
+     * chapter instead of replaying an old jump.
+     */
     target: { anchor: GuideAnchor | null } | null;
+    onconsumed: () => void;
     onopen: (section: SettingsSection) => void;
     onfail: (message: string) => void;
   } = $props();
@@ -34,6 +41,8 @@
 
   $effect(() => onOverrides(() => (overrides = loadOverrides())));
   const keymap = $derived(effectiveKeymap(overrides));
+  // Inline `[[cmd:<id>]]` marks in any block show the same (current) keys.
+  provideKeymap(() => keymap);
 
   const index = $derived(chapters.findIndex((c) => c.id === chapterId));
   const chapter = $derived(index >= 0 ? chapters[index] : null);
@@ -45,7 +54,11 @@
   $effect(() => {
     const next = target;
     // Only a new target navigates: go() reads state that must not re-run this effect.
-    if (next) untrack(() => void go(next.anchor));
+    if (next)
+      untrack(() => {
+        void go(next.anchor);
+        onconsumed();
+      });
   });
 
   /** Show a chapter (null = the overview), scrolled to `anchor.section` when given. */
@@ -166,13 +179,13 @@
             {#if index > 0}
               <button class="btn" onclick={() => go({ chapter: chapters[index - 1].id })}>
                 <Icon name="arrow-left" size={14} />
-                {t('guide.prev')}: {chapters[index - 1].title}
+                {t('guide.prev', { title: chapters[index - 1].title })}
               </button>
             {/if}
             <span class="grow"></span>
             {#if index < chapters.length - 1}
               <button class="btn" onclick={() => go({ chapter: chapters[index + 1].id })}>
-                {t('guide.next')}: {chapters[index + 1].title}
+                {t('guide.next', { title: chapters[index + 1].title })}
                 <Icon name="arrow-right" size={14} />
               </button>
             {/if}

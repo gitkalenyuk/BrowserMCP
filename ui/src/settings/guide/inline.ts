@@ -1,6 +1,12 @@
 // Inline marks of guide text and search highlighting, as plain data for the Svelte renderer.
 
-export type Mark = 'text' | 'code' | 'strong' | 'kbd';
+import { COMMAND_IDS, DEFAULT_KEYMAP, type CommandId, type Keymap } from '../../lib/keymap';
+
+/**
+ * `kbd` = a fixed key written in the text (`[[Ctrl+K]]`); `cmd` = a keymap command
+ * (`[[cmd:panel.ai]]`, span text = the command id) shown with the user's current key.
+ */
+export type Mark = 'text' | 'code' | 'strong' | 'kbd' | 'cmd';
 export interface Span {
   mark: Mark;
   text: string;
@@ -14,6 +20,8 @@ export interface Piece {
 // `code` first: backticks protect `**` and `[[` inside them.
 const TOKEN = /`([^`]+)`|\*\*(.+?)\*\*|\[\[(.+?)\]\]/g;
 
+const CMD_PREFIX = 'cmd:';
+
 /** "Press [[Ctrl+K]] and type `tabs`" → text / kbd / text / code spans. */
 export function parseInline(text: string): Span[] {
   const out: Span[] = [];
@@ -23,6 +31,7 @@ export function parseInline(text: string): Span[] {
     if (at > last) out.push({ mark: 'text', text: text.slice(last, at) });
     if (m[1] !== undefined) out.push({ mark: 'code', text: m[1] });
     else if (m[2] !== undefined) out.push({ mark: 'strong', text: m[2] });
+    else if (m[3].startsWith(CMD_PREFIX)) out.push({ mark: 'cmd', text: m[3].slice(CMD_PREFIX.length) });
     else out.push({ mark: 'kbd', text: m[3] });
     last = at + m[0].length;
   }
@@ -30,10 +39,19 @@ export function parseInline(text: string): Span[] {
   return out;
 }
 
-/** The text without marks (for search and snippets). */
+export function isKeymapCommand(id: string): id is CommandId {
+  return (COMMAND_IDS as readonly string[]).includes(id);
+}
+
+/** The key a `cmd` mark shows: the command's first shortcut, null when it has none. */
+export function commandKey(id: string, keymap: Keymap = DEFAULT_KEYMAP): string | null {
+  return isKeymapCommand(id) ? (keymap[id][0] ?? null) : null;
+}
+
+/** The text without marks (for search and snippets; `cmd` marks become their default key). */
 export function plainText(text: string): string {
   return parseInline(text)
-    .map((s) => s.text)
+    .map((s) => (s.mark === 'cmd' ? (commandKey(s.text) ?? '') : s.text))
     .join('');
 }
 

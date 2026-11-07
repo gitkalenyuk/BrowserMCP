@@ -138,9 +138,33 @@ pub(crate) fn is_allowed_in_content(url: &str) -> bool {
         // The script library page may also be opened in a tab (exactly, no query).
         return url == newtab_url()
             || url == format!("{UI_PREFIX}library.html")
-            || url == format!("{UI_PREFIX}settings.html");
+            || is_settings_page(url);
     }
     true
+}
+
+/// The settings page, exactly, or with a user-guide anchor
+/// (`bmcp://ui/settings.html#guide/<chapter>[/<section>]`, ui/src/lib/settings/open.ts).
+/// Never with a query, and no other fragment: the page reads nothing else from its URL.
+fn is_settings_page(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix(UI_PREFIX)
+        .and_then(|u| u.strip_prefix("settings.html"))
+    else {
+        return false;
+    };
+    rest.is_empty() || rest.strip_prefix("#guide/").is_some_and(is_guide_anchor)
+}
+
+/// `chapter` or `chapter/section`, each 1–40 of `a-z 0-9 -` (the same rule as the page's
+/// `parseGuideHash`).
+fn is_guide_anchor(anchor: &str) -> bool {
+    let id = |p: &str| {
+        (1..=40).contains(&p.len())
+            && p.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    (1..=2).contains(&anchor.split('/').count()) && anchor.split('/').all(id)
 }
 
 /// `cef_transition_type_t` bits used by [`content_navigation_allowed`].
@@ -439,6 +463,51 @@ mod tests {
         assert!(!is_allowed_in_content("bmcp://ui/palette.html"));
         assert!(!is_allowed_in_content("bmcp://cmd/palette"));
         assert!(is_allowed_in_content("https://example.com/"));
+    }
+
+    #[test]
+    fn the_settings_page_may_carry_a_guide_anchor_and_nothing_else() {
+        assert!(is_allowed_in_content("bmcp://ui/settings.html"));
+        assert!(is_allowed_in_content("bmcp://ui/settings.html#guide/tabs"));
+        assert!(is_allowed_in_content(
+            "bmcp://ui/settings.html#guide/traffic/limits"
+        ));
+        assert!(is_allowed_in_content(
+            "bmcp://ui/settings.html#guide/ai-panel/modes"
+        ));
+        for bad in [
+            "bmcp://ui/settings.html?x=1",
+            "bmcp://ui/settings.html?api=ws#guide/tabs",
+            "bmcp://ui/settings.html#",
+            "bmcp://ui/settings.html#x",
+            "bmcp://ui/settings.html#guide/",
+            "bmcp://ui/settings.html#guide/Tabs",
+            "bmcp://ui/settings.html#guide/a/b/c",
+            "bmcp://ui/settings.html#guide/tabs/",
+            "bmcp://ui/settings.html#guide//tabs",
+            "bmcp://ui/settings.html#guide/tabs?x=1",
+            "bmcp://ui/settings.html#guide/%3Cx%3E",
+            "bmcp://ui/settings.htmlx",
+            "bmcp://ui/settings.html/x",
+            "bmcp://ui/index.html#guide/tabs",
+        ] {
+            assert!(!is_allowed_in_content(bad), "{bad}");
+        }
+        let long = format!("bmcp://ui/settings.html#guide/{}", "a".repeat(41));
+        assert!(!is_allowed_in_content(&long));
+        // The rest of the tab rules still apply: a web page cannot send a tab there.
+        let anchored = "bmcp://ui/settings.html#guide/tabs";
+        let (direct, link) = (TT_DIRECT_LOAD_FLAG | 1, 0);
+        assert!(content_navigation_allowed(
+            anchored, "", direct, false, true
+        ));
+        assert!(!content_navigation_allowed(
+            anchored,
+            "https://evil.test/",
+            link,
+            false,
+            true
+        ));
     }
 
     #[test]

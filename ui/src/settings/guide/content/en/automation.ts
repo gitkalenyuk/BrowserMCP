@@ -11,7 +11,7 @@ export const traffic = chapter(
     'what',
     'What it is',
     p(
-      'The Traffic panel ([[Ctrl+Shift+1]]) records the network traffic of the active tab: every request with method, status, type, size and time, its headers and bodies, and WebSocket frames. On top of that you can change traffic: rules that apply automatically, and breakpoints that pause a request until you decide, like in Burp.',
+      'The Traffic panel ([[cmd:panel.traffic]]) records the network traffic of the active tab: every request with method, status, type, size and time, its headers and bodies, and WebSocket frames. On top of that you can change traffic: rules that apply automatically, and breakpoints that pause a request until you decide, like in Burp.',
     ),
   ),
   section(
@@ -29,7 +29,7 @@ export const traffic = chapter(
     'how',
     'How to use it',
     steps(
-      'Open the panel ([[Ctrl+Shift+1]]) and switch **capture** on for the tab, then reload the page.',
+      'Open the panel ([[cmd:panel.traffic]]) and switch **capture** on for the tab, then reload the page.',
       'Filter the list: words, `method:post`, `status:4xx`, `-word` to exclude, and the type chips (XHR, document, script…).',
       'Click a request for its headers, request body, response body and WebSocket frames.',
       '**Export HAR** writes a file to `data\\har\\` (the path is shown).',
@@ -72,14 +72,14 @@ export const recording = chapter(
     'what',
     'What it is',
     p(
-      'The Recording panel ([[Ctrl+Shift+2]]) records the steps done in the active tab — your clicks and typing as well as an agent’s commands — optionally with a video of the page and a log of its network traffic. A recording can be turned into a TypeScript script in one click.',
+      'The Recording panel ([[cmd:panel.recording]]) records the steps done in the active tab — your clicks and typing as well as an agent’s commands — optionally with a video of the page and a log of its network traffic. A recording can be turned into a TypeScript script in one click.',
     ),
   ),
   section(
     'how',
     'How to use it',
     steps(
-      'Open the tab you want to record and the panel ([[Ctrl+Shift+2]]).',
+      'Open the tab you want to record and the panel ([[cmd:panel.recording]]).',
       'Choose the options (**video**, **network traffic**) and press record.',
       'Do the task. The steps appear live; typed passwords show as `***`.',
       'Press stop. The recording is saved in `data\\recordings\\<id>\\` (`actions.jsonl`, `meta.json`, and `video.webm` / `traffic.jsonl` when chosen).',
@@ -138,7 +138,7 @@ export const scripts = chapter(
     'editor',
     'The Scripts panel and the debugger',
     steps(
-      'Open the Scripts panel ([[Ctrl+Shift+5]]): the list of saved scripts and an editor (Monaco, with completion and docs for every `browser.*` command).',
+      'Open the Scripts panel ([[cmd:panel.scripts]]): the list of saved scripts and an editor (Monaco, with completion and docs for every `browser.*` command).',
       'Save with [[Ctrl+S]]. **Run** asks for the inputs the code uses and shows the console and the result; an error’s line is a link.',
       'Click the gutter (or [[F9]]) to set breakpoints, then **Debug** ([[F5]]): the script stops there, showing the current line, variables and the call stack.',
     ),
@@ -220,7 +220,7 @@ export const runs = chapter(
     'How to start a run',
     steps(
       'Save a script (by hand or from a recording).',
-      'Open the Runs panel ([[Ctrl+Shift+6]]) → new run.',
+      'Open the Runs panel ([[cmd:panel.runs]]) → new run.',
       'Pick the script and the data: a file path (`.csv`, `.json`, `.xlsx`) or rows pasted as CSV / JSON.',
       'Set parallel rows (default 4, limited by CPU cores and free memory), retries (default 1, with backoff), the timeout per row, what to do on selector errors, and whether to stop at the first failure.',
       'Watch the progress bar and the results table; filter by status, open a row for its error, inputs and output.',

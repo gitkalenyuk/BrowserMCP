@@ -46,7 +46,7 @@
   const requested = takeSettingsRequest();
   const stored = load<string>('settings.section', 'general');
   let section = $state<SettingsSection>(hashAnchor ? 'guide' : (requested ?? (isSettingsSection(stored) ? stored : 'general')));
-  /** Where the guide should go next (a new object per jump). */
+  /** Where the guide should go next (a new object per jump; cleared once the guide went there). */
   let guideTarget = $state<{ anchor: GuideAnchor | null } | null>(
     hashAnchor || requestAnchor ? { anchor: hashAnchor ?? requestAnchor } : null,
   );
@@ -69,7 +69,8 @@
       const anchor = parseAnchor(peekGuideAnchor());
       const req = takeSettingsRequest();
       if (req) section = req;
-      if (req === 'guide') guideTarget = { anchor };
+      // Without an anchor the guide opens where the user left it (as on first load).
+      if (req === 'guide' && anchor) guideTarget = { anchor };
     }),
   );
   $effect(() => {
@@ -81,9 +82,10 @@
   });
 
   /**
-   * The browser lets a tab load exactly bmcp://ui/settings.html (crates/cef scheme.rs: no query,
-   * no fragment), so a reload or a restored session with `#guide/…` in the URL would be
-   * refused. The anchor is read once, then removed from the address.
+   * A tab may load bmcp://ui/settings.html exactly or with a `#guide/<chapter>[/<section>]`
+   * anchor (crates/cef scheme.rs `is_settings_page`). The anchor is a one-time jump: it is read
+   * once and removed from the address, so a reload or a restored session opens where the user
+   * was, not at the old anchor.
    */
   function clearHash() {
     if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
@@ -162,7 +164,12 @@
         {:else if section === 'plugins'}
           <PluginsSection {api} {notify} {fail} />
         {:else if section === 'guide'}
-          <Guide target={guideTarget} onopen={(id) => (section = id)} onfail={(m) => notify(m, true)} />
+          <Guide
+            target={guideTarget}
+            onconsumed={() => (guideTarget = null)}
+            onopen={(id) => (section = id)}
+            onfail={(m) => notify(m, true)}
+          />
         {:else}
           <KeyboardSection {notify} />
         {/if}

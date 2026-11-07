@@ -11,8 +11,8 @@ export default {
   'guide.overviewHead': 'Chapters',
   'guide.chapterOf': 'Chapter {n} of {total}',
   'guide.onThisPage': 'In this chapter',
-  'guide.prev': 'Previous',
-  'guide.next': 'Next',
+  'guide.prev': 'Previous: {title}',
+  'guide.next': 'Next: {title}',
   'guide.backToResults': 'Back to the search results',
   // English uses only .one / .other; .few / .many keep the key set equal to Ukrainian's.
   'guide.results.one': '{n} chapter found',
@@ -26,6 +26,7 @@ export default {
   'guide.openSettings': 'Open settings: {name}',
   'guide.settingsPath': 'Settings → {name}',
   'guide.keys.none': 'no key (assign one in Settings → Keyboard)',
+  'guide.keys.unbound': 'no shortcut',
   'guide.code.label': 'Code',
   'guide.copyFailed': 'Copying is not available here: select the text and press Ctrl+C.',
   'guide.api.label': 'How to call it',

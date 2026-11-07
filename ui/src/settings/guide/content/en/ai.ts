@@ -11,7 +11,7 @@ export const aiPanel = chapter(
     'what',
     'What it is',
     p(
-      'The AI side panel ([[Ctrl+Shift+3]]) is a chat with an agent that can use the browser’s tools: it opens tabs, reads pages, clicks and types, watches traffic. Its tabs go into its own colored group, so you always see what it touches and can take over.',
+      'The AI side panel ([[cmd:panel.ai]]) is a chat with an agent that can use the browser’s tools: it opens tabs, reads pages, clicks and types, watches traffic. Its tabs go into its own colored group, so you always see what it touches and can take over.',
     ),
     p('Three kinds of providers:'),
     list(
@@ -87,7 +87,7 @@ export const aiPanel = chapter(
     'terminal',
     'Terminal',
     p(
-      'The Terminal panel ([[Ctrl+`]]) is a real shell inside the browser: PowerShell (default), cmd or Git Bash, in tabs. Agents can open and use terminals too (`term.*`); their output is shown when you open the panel.',
+      'The Terminal panel ([[cmd:panel.terminal]]) is a real shell inside the browser: PowerShell (default), cmd or Git Bash, in tabs. Agents can open and use terminals too (`term.*`); their output is shown when you open the panel.',
     ),
     keys(cmd('panel.terminal', 'Terminal panel'), cmd('panel.ai', 'AI panel'), cmd('panel.close', 'Close the side panel')),
   ),

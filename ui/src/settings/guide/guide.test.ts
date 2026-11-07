@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { COMMANDS } from '../../../../sdk/protocol/src/generated/commands';
 import { DICTS } from '../../lib/i18n/index.svelte';
-import { COMMAND_IDS, parseChord } from '../../lib/keymap';
+import { COMMAND_IDS, DEFAULT_KEYMAP, parseChord } from '../../lib/keymap';
 import { SETTINGS_SECTIONS, isSettingsUrl, openGuide, parseGuideHash, peekGuideAnchor, takeSettingsRequest } from '../../lib/settings/open';
 import { HELP_FOR, parseAnchor, resolveAnchor } from './anchors';
 import { GUIDE } from './content';
-import { highlight, parseInline, plainText, queryWords } from './inline';
+import { commandKey, highlight, parseInline, plainText, queryWords } from './inline';
 import { CHAPTER_IDS, PENDING_SECTIONS, type Block, type Chapter } from './model';
 import { searchGuide, snippetAround } from './search';
 import { argsJson, snippet, wireName } from './snippets';
@@ -26,7 +26,8 @@ function shape(b: Block): unknown {
     case 'settings':
       return [b.type, b.section, !!b.text];
     case 'api':
-      return [b.type, b.command, b.args, !!b.text];
+      // The same fields, but the values may be localised (a prompt, a question, a search).
+      return [b.type, b.command, argShape(b.args), !!b.text];
     case 'see':
       return [b.type, b.chapter, b.section ?? null, !!b.text];
     case 'code':
@@ -34,6 +35,13 @@ function shape(b: Block): unknown {
     default:
       return [b.type];
   }
+}
+
+/** The structure of example arguments: keys and value types, not the values. */
+function argShape(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(argShape);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, argShape(x)]));
+  return typeof v;
 }
 
 /** Every prose string of a block (inline marks allowed). */
@@ -135,6 +143,32 @@ describe('guide content', () => {
     }
   });
 
+  it('shortcuts written in the text are keymap commands or keys the parser understands', () => {
+    for (const loc of LOCALES) {
+      for (const { c, s, b } of allBlocks(GUIDE[loc])) {
+        for (const span of prose(b).flatMap(parseInline)) {
+          const where = `${loc} ${c.id}/${s.id}: [[${span.text}]]`;
+          if (span.mark === 'cmd') expect((COMMAND_IDS as readonly string[]).includes(span.text), where).toBe(true);
+          if (span.mark === 'kbd') expect(parseChord(span.text), where).not.toBeNull();
+        }
+      }
+    }
+  });
+
+  it('both languages show the same shortcuts in the same blocks', () => {
+    const keysOf = (b: Block) =>
+      prose(b)
+        .flatMap(parseInline)
+        .filter((sp) => sp.mark === 'kbd' || sp.mark === 'cmd')
+        .map((sp) => `${sp.mark}:${sp.text}`)
+        .sort();
+    GUIDE.en.forEach((en, i) =>
+      en.sections.forEach((s, j) =>
+        s.blocks.forEach((b, k) => expect(keysOf(GUIDE.uk[i].sections[j].blocks[k]), `${en.id}/${s.id} #${k}`).toEqual(keysOf(b))),
+      ),
+    );
+  });
+
   it('API examples name real commands with their MCP tool names', () => {
     const blocks = allBlocks(GUIDE.en).filter(({ b }) => b.type === 'api');
     expect(blocks.length).toBeGreaterThan(40);
@@ -187,6 +221,20 @@ describe('inline marks', () => {
     expect(plainText('**Settings → AI**')).toBe('Settings → AI');
   });
 
+  it('[[cmd:<id>]] names a keymap command and shows its current key', () => {
+    expect(parseInline('AI panel ([[cmd:panel.ai]])')).toEqual([
+      { mark: 'text', text: 'AI panel (' },
+      { mark: 'cmd', text: 'panel.ai' },
+      { mark: 'text', text: ')' },
+    ]);
+    expect(commandKey('panel.ai')).toBe('Ctrl+Shift+3');
+    expect(commandKey('panel.ai', { ...DEFAULT_KEYMAP, 'panel.ai': ['Alt+A', 'Alt+B'] })).toBe('Alt+A');
+    expect(commandKey('panel.ai', { ...DEFAULT_KEYMAP, 'panel.ai': [] })).toBeNull();
+    expect(commandKey('no.such')).toBeNull();
+    // Search sees the default key, like the rest of the plain text.
+    expect(plainText('Open it with [[cmd:panel.ai]].')).toBe('Open it with Ctrl+Shift+3.');
+  });
+
   it('highlights every case-insensitive match and merges overlaps', () => {
     expect(highlight('Tabs and tab groups', ['tab', 'tabs'])).toEqual([
       { text: 'Tabs', hit: true },
@@ -233,7 +281,7 @@ describe('API snippets', () => {
     const args = { url: "https://example.com/?q=it's" };
     expect(snippet('mcp', 'nav.goto', args)).toBe(`nav_goto { "url": "https://example.com/?q=it's" }`);
     expect(snippet('powershell', 'nav.goto', args)).toBe(
-      `Invoke-RestMethod -Method Post http://127.0.0.1:47800/v1/cmd/nav.goto -ContentType application/json -Body '{"url":"https://example.com/?q=it''s"}'`,
+      `Invoke-RestMethod -Method Post http://127.0.0.1:47800/v1/cmd/nav.goto -ContentType 'application/json; charset=utf-8' -Body '{"url":"https://example.com/?q=it''s"}'`,
     );
     expect(snippet('curl', 'nav.goto', args)).toBe(
       `curl -X POST http://127.0.0.1:47800/v1/cmd/nav.goto -H "content-type: application/json" -d '{"url":"https://example.com/?q=it'\\''s"}'`,

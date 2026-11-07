@@ -1,5 +1,8 @@
 // Guide, English: troubleshooting and the glossary. Facts: xtask/src/dist.rs (packaged README),
-// crates/app/src/main.rs (port error), crates/app/src/stdio_proxy.rs, crates/record/src/video.rs.
+// crates/app/src/main.rs (port error; release builds are windows_subsystem = "windows", so there
+// is no console and the log on stderr is lost unless redirected), crates/app/src/stdio_proxy.rs,
+// crates/record/src/video.rs. If the app gets its own log file or an error dialog, update the
+// port / start / logs sections.
 import { api, chapter, code, list, p, section, see, steps, terms } from '../../model';
 
 export const troubleshooting = chapter(
@@ -23,7 +26,7 @@ export const troubleshooting = chapter(
   section(
     'port',
     'The API port is busy',
-    p('The browser stops with “cannot use API port 47800 on 127.0.0.1 (another BrowserMCP may be running …)”. Usually another BrowserMCP already runs on the same data folder or port.'),
+    p('The browser window does not appear: the browser stopped because it could not get its API port. The packaged browser has no console window, so the reason is not shown on screen; when you capture it (see “Where are the logs?”) it reads “cannot use API port 47800 on 127.0.0.1 (another BrowserMCP may be running …)”. Usually another BrowserMCP already runs on the same data folder or port.'),
     list(
       'Look at `data\\runtime\\endpoint.json`: it holds the pid of the running instance. Close that browser, or end the process in Task Manager.',
       'Or start this one on another port: `browsermcp.exe --api-port 47801`, or `--api-port 0` for any free port. MCP clients then need that port (it is written to `endpoint.json`).',
@@ -35,7 +38,7 @@ export const troubleshooting = chapter(
     list(
       'Unzip it into a folder you can write to (not “Program Files”) and keep all files together: the CEF files (`libcef.dll`, `*.pak`, `locales\\`…) must stay next to the exe.',
       'Only one browser per data folder: see “The API port is busy”.',
-      'Start it from a terminal to see its messages: `.\\browsermcp.exe`. More detail: `$env:RUST_LOG="debug"; .\\browsermcp.exe`.',
+      'See why it stopped: the packaged browser has no console window, so its error messages are not shown anywhere. In PowerShell, in the browser’s folder, run `Start-Process .\\browsermcp.exe -RedirectStandardError err.txt -Wait` and read `err.txt` once it exits. For more detail run `$env:RUST_LOG="debug"` first.',
       'An MCP client that says “the browser did not start its API within 30 s” started `mcp-stdio`, which launches the browser in the background: start the browser by hand once to see the error.',
     ),
   ),
@@ -43,8 +46,9 @@ export const troubleshooting = chapter(
     'logs',
     'Where are the logs?',
     terms(
-      ['Terminal output', 'the browser writes its own log to the console it was started from (`RUST_LOG` sets the level: `info` by default, `debug` for more)'],
+      ['`data\\runtime\\endpoint.json`', 'check it first: it is written once the API is up (pid and ports of the running browser) and removed on a normal exit. No file while the browser seems to run means its API did not start.'],
       ['`data\\logs\\cef.log`', 'the log of the Chromium engine'],
+      ['The browser’s own messages', 'errors and the `RUST_LOG` log go to standard error, which the packaged build (no console window) shows nowhere. Capture them with `Start-Process .\\browsermcp.exe -RedirectStandardError err.txt -Wait` (`RUST_LOG`: `info` by default, `debug` for more). The errors of `browsermcp mcp-stdio` appear in the MCP client’s server log.'],
       ['Plugins', 'Settings → Plugins & userscripts → logs, or `plugins.logs`'],
       ['Scripts', 'the console of the Scripts panel, and `stdout` / `error` in the result of `script.run`'],
     ),
