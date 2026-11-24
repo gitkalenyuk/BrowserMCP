@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BrowserMCP — браузер для людей і AI-агентів</title>
+<meta name="description" content="BrowserMCP — портативний браузер на Chromium, яким керуєте і ви, і ваш AI-агент (Claude Code, Codex). Кожна функція — це API: MCP, REST, WebSocket, CDP. Відкритий код, MIT.">
+<meta property="og:title" content="BrowserMCP — браузер для людей і AI-агентів">
+<meta property="og:description" content="Chromium + Rust. Кожна функція браузера — команда MCP/REST/WebSocket. Агенти читають сторінку текстом, без скріншотів.">
+<meta property="og:image" content="https://gitkalenyuk.github.io/BrowserMCP/og.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2311161d'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2342e6a4' stroke-width='3'/%3E%3Cpath d='M12 16h8M16 12v8' stroke='%2342e6a4' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f7f4; --bg2:#eceee8; --card:#ffffff; --ink:#11161d; --ink2:#46505c; --ink3:#727c88;
+  --line:#dcdfd7; --accent:#0f9d6c; --accent-ink:#ffffff; --accent-soft:#d9f3e8;
+  --code-bg:#11161d; --code-ink:#d7dde4; --code-dim:#7d8996; --code-acc:#42e6a4; --code-str:#f3c86b;
+  --warn:#9a5b00; --warn-bg:#fff3dc;
+  --shadow:0 1px 2px rgba(17,22,29,.06),0 8px 24px rgba(17,22,29,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1015; --bg2:#121820; --card:#151c25; --ink:#eef2f6; --ink2:#a9b4c0; --ink3:#7b8794;
+    --line:#232d39; --accent:#42e6a4; --accent-ink:#06281b; --accent-soft:#123326;
+    --code-bg:#070a0e; --warn:#ffcf7a; --warn-bg:#2a2012; --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1015; --bg2:#121820; --card:#151c25; --ink:#eef2f6; --ink2:#a9b4c0; --ink3:#7b8794;
+  --line:#232d39; --accent:#42e6a4; --accent-ink:#06281b; --accent-soft:#123326;
+  --code-bg:#070a0e; --warn:#ffcf7a; --warn-bg:#2a2012; --shadow:none;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+code,pre,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace}
+:not(pre)>code{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:.88em;word-break:break-word}
+
+/* nav */
+nav{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;gap:20px;height:60px}
+.logo{display:flex;align-items:center;gap:10px;font:700 17px Unbounded,Inter,sans-serif;text-decoration:none;letter-spacing:-.01em}
+.logo svg{width:28px;height:28px}
+nav .links{display:flex;gap:22px;margin-left:auto;font-size:14.5px;color:var(--ink2)}
+nav .links a{text-decoration:none}
+nav .links a:hover{color:var(--ink)}
+.gh{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:14px;text-decoration:none;background:var(--card)}
+.gh svg{width:16px;height:16px}
+@media (max-width:760px){nav .links{display:none} .gh{margin-left:auto}}
+
+/* hero */
+.hero{padding:72px 0 40px}
+.hero .grid{display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center}
+.pill{display:inline-flex;gap:8px;align-items:center;background:var(--accent-soft);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:13px;font-weight:500}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--accent);display:block}
+h1{font:700 clamp(34px,5.2vw,56px)/1.06 Unbounded,Inter,sans-serif;letter-spacing:-.03em;margin:18px 0 18px}
+h1 em{font-style:normal;color:var(--accent)}
+.lead{font-size:18.5px;color:var(--ink2);max-width:540px;margin:0 0 28px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:10px;border-radius:12px;padding:13px 20px;font-weight:600;font-size:15.5px;text-decoration:none;border:1px solid var(--line);background:var(--card);cursor:pointer;color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn svg{width:18px;height:18px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:18px;font-size:13.5px;color:var(--ink3)}
+.meta span::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ink3);margin-right:8px;vertical-align:middle;opacity:.6}
+
+.term{background:var(--code-bg);color:var(--code-ink);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;border:1px solid var(--line)}
+.term .bar{display:flex;align-items:center;gap:7px;padding:12px 14px;border-bottom:1px solid #ffffff12}
+.term .bar b{width:11px;height:11px;border-radius:50%;background:#2a333e;display:block}
+.term .bar span{margin-left:8px;font:12px "JetBrains Mono",monospace;color:var(--code-dim)}
+.term pre{margin:0;padding:18px 18px 20px;font-size:13px;line-height:1.65;overflow-x:auto;white-space:pre}
+.c-dim{color:var(--code-dim)} .c-acc{color:var(--code-acc)} .c-str{color:var(--code-str)}
+
+/* sections */
+section{padding:64px 0}
+.sec-head{max-width:680px;margin-bottom:34px}
+.kicker{font:600 12.5px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h2{font:700 clamp(26px,3.4vw,36px)/1.15 Unbounded,Inter,sans-serif;letter-spacing:-.02em;margin:10px 0 12px}
+.sec-head p{color:var(--ink2);margin:0;font-size:17px}
+.alt{background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+
+.why{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:var(--shadow)}
+.card h3{margin:12px 0 6px;font-size:17px;letter-spacing:-.01em}
+.card p{margin:0;color:var(--ink2);font-size:15px}
+.ico{width:40px;height:40px;border-radius:11px;background:var(--accent-soft);display:grid;place-items:center}
+.ico svg{width:21px;height:21px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+.feats{display:grid;grid-template-columns:repeat(2,1fr);gap:0;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--card)}
+.feat{padding:20px 22px;border-bottom:1px solid var(--line)}
+.feat:nth-child(odd){border-right:1px solid var(--line)}
+.feat:nth-last-child(-n+2){border-bottom:0}
+.feat h4{margin:0 0 4px;font-size:15.5px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.feat h4 code{font-size:11.5px;color:var(--ink3);font-weight:400}
+.feat p{margin:0;color:var(--ink2);font-size:14.5px}
+
+/* steps */
+.steps{display:grid;gap:18px;counter-reset:s}
+.step{display:grid;grid-template-columns:52px 1fr;gap:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
+.step::before{counter-increment:s;content:counter(s);width:40px;height:40px;border-radius:12px;background:var(--ink);color:var(--bg);display:grid;place-items:center;font:700 17px Unbounded,sans-serif}
+.step h3{margin:6px 0 6px;font-size:19px;letter-spacing:-.01em}
+.step p{margin:0 0 10px;color:var(--ink2)}
+.step p:last-child{margin-bottom:0}
+.step ol,.step ul{margin:0 0 10px;padding-left:20px;color:var(--ink2)}
+.step li{margin:3px 0}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 14px;font-size:14.5px;margin-top:12px}
+.note b{color:inherit}
+
+.code{position:relative;background:var(--code-bg);color:var(--code-ink);border-radius:12px;margin:10px 0 12px;border:1px solid var(--line)}
+.code pre{margin:0;padding:14px 16px;padding-right:86px;font-size:13.5px;line-height:1.6;overflow-x:auto}
+.copy{position:absolute;top:8px;right:8px;background:#ffffff14;color:var(--code-ink);border:1px solid #ffffff22;border-radius:8px;padding:5px 10px;font:500 12px Inter,sans-serif;cursor:pointer}
+.copy:hover{background:#ffffff24}
+.copy.ok{color:var(--code-acc);border-color:var(--code-acc)}
+
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 4px}
+.tab{border:1px solid var(--line);background:var(--bg);color:var(--ink2);border-radius:9px;padding:7px 13px;font:500 14px Inter,sans-serif;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.panel[hidden]{display:none}
+
+.endpoints{width:100%;border-collapse:collapse;font-size:14.5px;margin:6px 0 10px}
+.endpoints td{padding:9px 10px;border-top:1px solid var(--line);vertical-align:top}
+.endpoints td:first-child{white-space:nowrap;width:1%;font-weight:600}
+.endpoints code{font-size:12.5px}
+
+/* scripts */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start}
+.split ul{padding-left:20px;color:var(--ink2);margin:0}
+.split li{margin:8px 0}
+.split li b{color:var(--ink)}
+
+/* faq */
+details{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:10px}
+summary{cursor:pointer;padding:16px 20px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font:400 22px/1 Inter,sans-serif;color:var(--ink3);transition:transform .2s}
+details[open] summary::after{transform:rotate(45deg)}
+details .a{padding:0 20px 18px;color:var(--ink2)}
+details .a p{margin:0 0 8px}
+
+footer{padding:40px 0 48px;border-top:1px solid var(--line);color:var(--ink3);font-size:14px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center}
+footer a{color:var(--ink2)}
+.theme-btn{margin-left:auto;background:none;border:1px solid var(--line);color:var(--ink2);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit}
+
+@media (max-width:900px){
+  .hero{padding:44px 0 24px}
+  .hero .grid,.split{grid-template-columns:1fr;gap:32px}
+  .why{grid-template-columns:1fr}
+  .feats{grid-template-columns:1fr}
+  .feat:nth-child(odd){border-right:0}
+  .feat:nth-last-child(2){border-bottom:1px solid var(--line)}
+  section{padding:48px 0}
+}
+@media (max-width:560px){
+  .wrap{padding:0 16px}
+  .step{grid-template-columns:1fr;gap:10px;padding:20px}
+  .term pre{font-size:11.5px}
+  .btn{width:100%;justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#top" aria-label="BrowserMCP">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--ink)"/><circle cx="16" cy="16" r="9" fill="none" stroke="#42e6a4" stroke-width="3"/><path d="M12 16h8M16 12v8" stroke="#42e6a4" stroke-width="3" stroke-linecap="round"/></svg>
+      BrowserMCP
+    </a>
+    <div class="links">
+      <a href="#why">Для чого</a>
+      <a href="#features">Можливості</a>
+      <a href="#install">Встановлення</a>
+      <a href="#scripts">Скрипти</a>
+      <a href="#faq">Питання</a>
+    </div>
+    <a class="gh" href="https://github.com/gitkalenyuk/BrowserMCP">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap grid">
+    <div>
+      <span class="pill"><i></i>Відкритий код · версія 0.1.0</span>
+      <h1>Браузер, яким керуєте <em>ви і ваш AI</em></h1>
+      <p class="lead">BrowserMCP — це звичайний браузер на Chromium для щоденної роботи. Різниця в тому, що будь-яку його функцію може викликати AI-агент: Claude Code, Codex або ваш власний скрипт. Він відкриває вкладки, читає сторінки, натискає кнопки й записує мережевий трафік.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/gitkalenyuk/BrowserMCP/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+          Завантажити для Windows
+        </a>
+        <a class="btn" href="#install">Як встановити</a>
+      </div>
+      <div class="meta"><span>Windows 10/11, 64-біт</span><span>Портативний, без інсталятора</span><span>Архів ≈ 210 МБ</span><span>MIT</span></div>
+    </div>
+    <div class="term" aria-label="Приклад: агент читає сторінку">
+      <div class="bar"><b></b><b></b><b></b><span>claude · browsermcp</span></div>
+<pre><span class="c-dim">› Увійди на acme.com і скажи, що заважає</span>
+
+<span class="c-acc">●</span> nav_goto <span class="c-str">{"url":"https://acme.com/login"}</span>
+<span class="c-acc">●</span> page_snapshot
+<span class="c-dim">  snap 7 tab=3 "Sign in – Acme" vp=1280x720</span>
+<span class="c-dim">  - main</span>
+<span class="c-dim">    - heading "Sign in" h1</span>
+    - textbox "Email" <span class="c-acc">@7:e3</span> req
+    - button "Sign in" <span class="c-acc">@7:e6</span> disabled
+<span class="c-acc">●</span> page_act <span class="c-str">{"ref":"@7:e3","action":"fill",
+             "value":"me@acme.com"}</span>
+
+<span class="c-dim">Кнопка неактивна, поки не введено email.</span>
+<span class="c-dim">Ввів його, кнопка увімкнулась.</span></pre>
+    </div>
+  </div>
+</header>
+
+<section id="why" class="alt">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Для чого</div>
+      <h2>Агент працює у вашому браузері, а не в окремому headless-процесі</h2>
+      <p>Агент бачить ті самі вкладки, логіни й профілі, що й ви. Сторінку він читає як короткий текст із посиланнями на елементи, тому токенів іде в рази менше, ніж на скріншоти.</p>
+    </div>
+    <div class="why">
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div>
+        <h3>AI-агент керує браузером</h3>
+        <p>Claude Code, Codex або будь-який MCP-клієнт підключається одним рядком. Агент отримує понад 190 команд: вкладки, клік, введення тексту, читання сторінки, трафік.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></div>
+        <h3>Записав раз, запустив тисячу</h3>
+        <p>Запишіть дії на сторінці, і браузер перетворить їх на TypeScript-скрипт. Потім запускайте його по CSV чи Excel у кілька потоків, за розкладом або з вебхука.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+        <h3>Трафік і профілі під контролем</h3>
+        <p>Перехоплення запитів, підміна відповідей і експорт HAR. Окремі профілі зі своїм проксі, мовою й відбитком браузера, вбудований блокувальник реклами.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Можливості</div>
+      <h2>Кожна функція — це команда API</h2>
+      <p>Усі команди зібрані в одному реєстрі. З нього браузер сам будує MCP-інструменти, REST API з OpenAPI, WebSocket JSON-RPC і TypeScript SDK, тож через будь-який інтерфейс доступно те саме.</p>
+    </div>
+    <div class="feats">
+      <div class="feat"><h4>Вкладки й навігація <code>core</code></h4><p>Відкрити, закрити, заморозити, групи вкладок. Кожен агент отримує свою кольорову групу, і чужі вкладки йому заблоковані.</p></div>
+      <div class="feat"><h4>Читання сторінок <code>core</code></h4><p>Знімок дерева доступності зі стабільними посиланнями <code>@7:e3</code>, пошук елементів, дії й пакети дій, різниця між знімками, режим читання.</p></div>
+      <div class="feat"><h4>Передача людині <code>core</code></h4><p>Якщо треба увійти в акаунт або пройти CAPTCHA, агент просить вас зробити це в його вкладці й чекає.</p></div>
+      <div class="feat"><h4>Трафік <code>net</code></h4><p>Запис запитів і WebSocket-кадрів, правила (блок, редирект, заголовки, моки), точки зупинки, повтор запиту, генерація коду з API.</p></div>
+      <div class="feat"><h4>Запис і кодогенерація <code>record</code></h4><p>Лог дій людини й агента перетворюється на TypeScript-скрипт. Також можна записати відео екрана (потрібен ffmpeg).</p></div>
+      <div class="feat"><h4>Масові запуски <code>run</code></h4><p>Черга, паралельні потоки, повтори, пауза й продовження, експорт у CSV, Excel, JSON чи SQLite. Коли сайт змінився, AI сам пропонує виправлення селектора.</p></div>
+      <div class="feat"><h4>Профілі й прихований режим <code>profile</code> <code>stealth</code></h4><p>Окремі cookies, кеш, проксі й мова для кожного профілю. Відбитки браузера, емуляція пристроїв, пули проксі.</p></div>
+      <div class="feat"><h4>Щоденний браузер <code>data</code></h4><p>Закладки, історія, паролі, імпорт із Chrome, PDF і MHTML. Блокувальник реклами Brave з EasyList і вимкнення JS, картинок чи шрифтів для окремих сайтів.</p></div>
+      <div class="feat"><h4>Вбудований AI і термінал <code>ai</code></h4><p>Бічна панель із Claude Code, Codex або API-провайдерами (Anthropic, Gemini, OpenAI-сумісні). Поруч термінал PowerShell, cmd чи Git Bash.</p></div>
+      <div class="feat"><h4>Сповіщення <code>ui</code></h4><p>Сповіщення в інтерфейсі браузера, у Windows, у Telegram (з кнопками відповіді) і через вебхук. Підказки для переходу за посиланнями в стилі Vim.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install" class="alt">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Встановлення</div>
+      <h2>Від архіву до агента за п'ять хвилин</h2>
+      <p>Інсталятора немає: розпакували й запустили. Усе, що браузер зберігає, лежить у папці <code>data</code> поруч із програмою, тож його можна носити на флешці.</p>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>Завантажте архів</h3>
+          <p>Відкрийте <a href="https://github.com/gitkalenyuk/BrowserMCP/releases/latest">останній реліз</a> і завантажте <code>BrowserMCP-0.1.0-win64.zip</code> (≈ 210 МБ). Розпакуйте його в будь-яку папку, наприклад <code>C:\Tools\BrowserMCP</code>.</p>
+          <p>Розпаковуйте повністю. Якщо запускати програму прямо з архіву, вона не знайде своїх бібліотек.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div>
+          <h3>Запустіть <code>browsermcp.exe</code></h3>
+          <p>Програма поки не підписана сертифікатом, тому під час першого запуску Windows може показати синє вікно SmartScreen.</p>
+          <ol>
+            <li>Натисніть <b>«Докладніше»</b> (More info).</li>
+            <li>Натисніть <b>«Виконати в будь-якому разі»</b> (Run anyway).</li>
+          </ol>
+          <p>Відкриється звичайне вікно браузера. Поки воно відкрите, API працює на <code>127.0.0.1:47800</code> і доступне тільки з вашого комп'ютера.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div>
+          <h3>Підключіть AI-агента</h3>
+          <p>Виберіть свій клієнт. Шлях <code>C:\Tools\BrowserMCP</code> замініть на свою папку.</p>
+          <div class="tabs" role="tablist">
+            <button class="tab" role="tab" aria-selected="true" data-tab="cc">Claude Code</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="codex">Codex</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="other">Інший MCP-клієнт</button>
+          </div>
+
+          <div class="panel" data-panel="cc">
+            <p>Якщо браузер уже відкритий, виконайте в терміналі:</p>
+            <div class="code"><pre>claude mcp add --transport http browsermcp http://127.0.0.1:47800/mcp</pre></div>
+            <p>Щоб агент сам запускав браузер, коли він потрібен, підключіть його через stdio:</p>
+            <div class="code"><pre>claude mcp add browsermcp -- C:\Tools\BrowserMCP\browsermcp.exe mcp-stdio</pre></div>
+            <p>Перезапустіть Claude Code і попросіть, наприклад: «Відкрий github.com у BrowserMCP і скажи, що на головній».</p>
+          </div>
+
+          <div class="panel" data-panel="codex" hidden>
+            <p>Додайте в <code>%USERPROFILE%\.codex\config.toml</code>:</p>
+            <div class="code"><pre>[mcp_servers.browsermcp]
+command = 'C:\Tools\BrowserMCP\browsermcp.exe'
+args = ["mcp-stdio"]</pre></div>
+            <p>Codex запустить браузер сам, коли агенту знадобиться перший інструмент.</p>
+          </div>
+
+          <div class="panel" data-panel="other" hidden>
+            <table class="endpoints">
+              <tr><td>MCP</td><td><code>http://127.0.0.1:47800/mcp</code>, Streamable HTTP. Більше груп інструментів дає <code>?toolsets=core,net,record</code></td></tr>
+              <tr><td>stdio</td><td><code>browsermcp.exe mcp-stdio</code> (сам запускає браузер)</td></tr>
+              <tr><td>REST</td><td><code>POST /v1/cmd/{команда}</code>, список: <code>GET /v1/commands</code></td></tr>
+              <tr><td>OpenAPI</td><td><code>http://127.0.0.1:47800/openapi.json</code></td></tr>
+              <tr><td>WebSocket</td><td><code>ws://127.0.0.1:47800/v1/ws</code>, JSON-RPC 2.0 і події</td></tr>
+              <tr><td>CDP</td><td>запуск з <code>--cdp-port 9222</code> для Playwright і Puppeteer</td></tr>
+            </table>
+            <p>Перевірка без агента (у PowerShell пишіть саме <code>curl.exe</code>):</p>
+            <div class="code"><pre>curl.exe http://127.0.0.1:47800/v1/health</pre></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div>
+          <h3>Додайте інструменти, коли знадобляться</h3>
+          <p>Щоб не засмічувати контекст агента, MCP за замовчуванням віддає тільки групи <code>core</code> і <code>system</code>. Решту підключайте в адресі:</p>
+          <div class="code"><pre>claude mcp add --transport http browsermcp "http://127.0.0.1:47800/mcp?toolsets=core,net,record,run"</pre></div>
+          <p>Групи: <code>core</code>, <code>profile</code>, <code>net</code>, <code>record</code>, <code>script</code>, <code>run</code>, <code>data</code>, <code>stealth</code>, <code>ai</code>, <code>ui</code>, <code>system</code>.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="scripts">
+  <div class="wrap split">
+    <div>
+      <div class="kicker">Скрипти</div>
+      <h2>Автоматизація, яка не ламається від першої зміни на сайті</h2>
+      <ul>
+        <li><b>Скрипти на TypeScript</b> лежать у <code>data/scripts</code> і працюють в окремому процесі V8. Якщо скрипт впаде, браузер продовжить працювати.</li>
+        <li><b>Масовий запуск:</b> рядки беруться з CSV, JSON або Excel, кожен рядок обробляється окремо, є повтори, пауза й продовження.</li>
+        <li><b>Самовідновлення:</b> якщо селектор перестав знаходити елемент, запуск ставиться на паузу, AI пропонує виправлення, і після вашого підтвердження робота йде далі.</li>
+        <li><b>Тригери:</b> розклад cron або вебхук із підписом HMAC.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="code"><pre><span class="c-dim">// data/scripts/title.ts</span>
+const { tab } = await browser.tabs.open({ url: inputs.url });
+await browser.nav.wait({ tab, for: "load" });
+const t = (await browser.tabs.list()).tabs
+  .find((x) => x.id === tab)?.title;
+browser.output({ url: inputs.url, title: t });</pre></div>
+      <div class="code"><pre><span class="c-dim"># запустити по таблиці у 4 потоки</span>
+run.start {script: "title",
+  data: {csv_path: "C:/urls.csv"},
+  parallel: 4, retries: 1}
+run.export {id, to: "xlsx"}</pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" class="alt">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Питання</div>
+      <h2>Що варто знати</h2>
+    </div>
+    <details>
+      <summary>Чим це відрізняється від Playwright MCP чи розширень для Chrome?</summary>
+      <div class="a"><p>BrowserMCP — це сам браузер, а не надбудова над ним. Агент працює у ваших вкладках і профілях, бачить сторінку текстом, а не скріншотами, і має доступ до трафіку, профілів, запису й масових запусків. Ті самі команди доступні через MCP, REST, WebSocket і SDK.</p></div>
+    </details>
+    <details>
+      <summary>Це безпечно? Хтось ззовні може керувати моїм браузером?</summary>
+      <div class="a"><p>API слухає тільки <code>127.0.0.1</code> і перевіряє заголовки Host та Origin, тому сайти, відкриті в браузері, не можуть до нього звертатися. Ззовні комп'ютера він недоступний.</p><p>Версія 0.1.0 рання: пісочниця процесів Chromium поки вимкнена, а паролі в <code>data</code> зберігаються без шифрування. Для банків і важливих акаунтів краще поки користуватися основним браузером.</p></div>
+    </details>
+    <details>
+      <summary>Де зберігаються мої дані?</summary>
+      <div class="a"><p>Усе зберігається в папці <code>data</code> поруч із <code>browsermcp.exe</code>: профілі, історія, закладки, скрипти, записи й налаштування у звичайному JSON. Іншу папку можна задати параметром <code>--data-dir</code>. Щоб перенести браузер, скопіюйте всю папку.</p></div>
+    </details>
+    <details>
+      <summary>Чи можна запускати без вікна, на сервері?</summary>
+      <div class="a"><p>Так: <code>browsermcp.exe --headless --window-size 1280x800</code>. Вкладки рендеряться поза екраном, скріншоти, відео й введення працюють. Процес не завершується, поки не надійде команда <code>system.quit</code>.</p></div>
+    </details>
+    <details>
+      <summary>Є версія для macOS чи Linux?</summary>
+      <div class="a"><p>Поки тільки Windows. Версію для macOS заплановано. Код відкритий, тож зібрати його можна й самому, інструкції є в <a href="https://github.com/gitkalenyuk/BrowserMCP#build-and-run-windows">README</a>.</p></div>
+    </details>
+    <details>
+      <summary>Як зібрати з вихідного коду?</summary>
+      <div class="a"><p>Потрібні Rust (MSVC), Visual Studio Build Tools із C++ і Windows 11 SDK, CMake, Ninja, Node 22+ та pnpm. Далі виконайте:</p>
+      <div class="code"><pre>cargo xtask doctor
+pnpm install
+pnpm -C ui build
+cargo xtask run</pre></div>
+      <p>Під час першої збірки завантажиться CEF (≈ 500 МБ). Портативний архів збирає команда <code>cargo xtask dist</code>.</p></div>
+    </details>
+    <details>
+      <summary>Відео не записується</summary>
+      <div class="a"><p>Для запису відео потрібен <code>ffmpeg.exe</code>, у архів він не входить. Покладіть його поруч із <code>browsermcp.exe</code> або додайте до <code>PATH</code>.</p></div>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>BrowserMCP · MIT · J0hnD03</span>
+    <a href="https://github.com/gitkalenyuk/BrowserMCP">Вихідний код</a>
+    <a href="https://github.com/gitkalenyuk/BrowserMCP/releases">Релізи</a>
+    <a href="https://github.com/gitkalenyuk/BrowserMCP/issues">Повідомити про помилку</a>
+    <button class="theme-btn" id="theme" type="button">Тема</button>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('.code').forEach(function(box){
+  var b=document.createElement('button'); b.className='copy'; b.type='button'; b.textContent='Копіювати';
+  b.addEventListener('click',function(){
+    var txt=box.querySelector('pre').innerText;
+    var done=function(){b.textContent='Скопійовано'; b.classList.add('ok'); setTimeout(function(){b.textContent='Копіювати'; b.classList.remove('ok');},1600);};
+    if(navigator.clipboard){navigator.clipboard.writeText(txt).then(done,function(){});}
+  });
+  box.appendChild(b);
+});
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click',function(){
+    var id=t.dataset.tab;
+    document.querySelectorAll('.tab').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false');});
+    document.querySelectorAll('.panel').forEach(function(p){p.hidden=p.dataset.panel!==id;});
+  });
+});
+(function(){
+  var root=document.documentElement, key='bmcp-theme';
+  try{var s=localStorage.getItem(key); if(s) root.dataset.theme=s;}catch(e){}
+  document.getElementById('theme').addEventListener('click',function(){
+    var dark=root.dataset.theme?root.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme=dark?'light':'dark';
+    try{localStorage.setItem(key,root.dataset.theme);}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>
