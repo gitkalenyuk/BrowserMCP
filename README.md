@@ -10,6 +10,9 @@ a WebSocket JSON-RPC API with events, a typed TypeScript SDK, and the `browser.*
 automation scripts. Agents read pages through the accessibility tree as compact text with
 stable refs (`@7:e3`), not screenshots.
 
+**Website and install guide (Ukrainian): https://gitkalenyuk.github.io/BrowserMCP/** ·
+**Download:** [latest release](https://github.com/gitkalenyuk/BrowserMCP/releases/latest) (portable Windows zip).
+
 Status: Windows only for now (macOS later). The plan, in Ukrainian, is
 [docs/plan.md](docs/plan.md). All other docs are listed in [docs/README.md](docs/README.md).
 
@@ -308,6 +311,10 @@ pnpm -C ui check                 # svelte-check, fails on warnings
   workspace); every crate uses `serde_json.workspace = true`.
 * UI development without the browser: `pnpm ui:dev` (in-memory mock backend); see
   [ui/README.md](ui/README.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled third-party components keep their own licenses (`THIRD_PARTY.txt` and `LICENSES/` in the release zip).
 
 ## Crate map
 
